@@ -47,45 +47,24 @@ MediaProjectModel is built and interpreted by Video Domain Intelligence. Context
 
 A Task loads RepositoryModel or MediaProjectModel according to its immutable DomainBinding/Workflow Profile. The two models may share generic EvidenceGraph envelopes but do not share semantic schemas.
 
-### EvidenceGraph
+### Minimal evidence refs and optional EvidenceGraph index (PROPOSED subtraction)
 
-The EvidenceGraph is a minimal evidence-relationship model and a Context/Orchestration projection. It is not necessarily a graph database and never replaces Kernel Journal, Host Ledger, workspace sources, or raw artifacts.
+The **authoritative evidence** is raw immutable source/ArtifactRef, trusted Host receipt, verifier or authorized human disposition. A graph database or a separate mutable `EvidenceGraph` aggregate is **not required** to support Coding/Video.
 
-**Claim kinds**
+The minimum cross-domain envelope is:
 
-- FACT — directly observed or verified within a declared scope;
-- HYPOTHESIS — an explanation to be tested;
-- ASSUMPTION — temporarily accepted for bounded progress;
-- DECISION — a selected course and its recorded rationale;
-- UNKNOWN — information not established;
-- CONTRADICTION — a claim/evidence conflict that remains unresolved.
+| Record | Required fields | Status |
+| --- | --- | --- |
+| `EvidenceRef` | immutable ID, source kind/ref, content digest, domain/task scope, source/capture version, environment or project snapshot, trust/evidence class | **Required** for evidence that may satisfy a criterion |
+| `CriterionEvidenceBinding` | Goal criterion ID/version, evidenceRefs, required independence class, verifier/human disposition and **freshness basis** (the exact versions/artifact digests it depends on) | **Required** for Completion Guard |
+| `ClaimAnnotation` | optional domain proposition, kind (observed fact/hypothesis/assumption/decision/unknown/contradiction), source refs, confidence caveat | **Optional Domain projection** |
+| `EvidenceLink` | optional supports/refutes/derived-from relation between claim or evidence refs | **Optional derived index** |
 
-**Minimum records**
+A factual claim still needs source evidence and scope; model confidence is never proof. Domain hypotheses/decisions can remain in RepositoryModel or MediaProjectModel without an independently committed Claim/Relation/Freshness/Provenance lifecycle. **Freshness is computed** from exact source/criterion/plan/workspace/project/version bindings and authoritative invalidation events; it is not a separately written global freshness ledger. An EvidenceGraph may be materialized for retrieval/reasoning, but it is disposable and rebuildable, never a second completion authority.
 
-| Record | Required fields |
-| --- | --- |
-| Claim | claim ID, claim version, kind, proposition, project/task scope, validity scope, origin, currentness, and invalidation conditions |
-| Evidence | evidence ID, kind, source reference, payload/content digest, captured time, source version, repository commit/workspace generation/environment where applicable, trust class, sensitivity, and transformation chain |
-| Relation | relation ID, source node, target node, relation kind, basis/evidence reference, and creation time |
-| Freshness | state (Current, Stale, Invalidated, Unknown), bound versions, and invalidation reason/event |
-| Provenance | original source, actor/tool, transformation sequence, and links to raw evidence |
+Coding may keep file/symbol/commit evidence and test logs; Video may keep sampled-frame intervals, source timebase, transcript, Timeline and render lineage. These domain details stay typed and distinct. In both domains, Completion Guard checks the criterion's required evidence class, provenance and current bindings rather than arbitrary graph connectivity. See [Architecture subtraction review](../decisions/architecture-subtraction-review.md).
 
-Supported relation kinds include supports, refutes, derived_from, contradicts, qualifies, duplicates, and invalidates. Relations are explicit records; they are not implied by proximity in a graph.
-
-**Evidence and claim rules**
-
-- A FACT requires at least one direct source/evidence reference and a declared scope. A model assertion alone cannot create a FACT.
-- A HYPOTHESIS may be model-generated but remains a hypothesis until tested.
-- An ASSUMPTION records who/what introduced it, why it is safe to proceed, impact if false, and when it expires.
-- A DECISION records the decision-maker, rationale summary, alternatives considered, and supporting/contradicting evidence references. It does not store private chain-of-thought.
-- A CONTRADICTION points to the conflicting claims/evidence; it does not overwrite either source.
-- Numeric model self-confidence is not evidence and is not a substitute for provenance, source quality, or verification.
-
-Trust and authority are separate. Trust class describes the provenance and reliability of evidence within scope; it does not grant permission. An authenticated Host receipt may be authoritative for a recorded process outcome but not for whether the code meets a product requirement. A test result is authoritative for that exact run, command, environment, and workspace—not for all behavior.
-
-RepositoryModel claims reference EvidenceGraph records and retain file/symbol hashes and freshness. MediaProjectModel claims reference EvidenceGraph records and retain source asset/stream digests, timestamp ranges, timebases, analysis versions, and freshness. The graph may be materialized as structured records and indexes; selecting a graph database is an open implementation decision.
-
-## 3. Planning Context
+## 3. Planning Context — lazy purpose view
 
 Planning Context may include:
 
@@ -100,11 +79,11 @@ Planning Context may include:
 
 Its outputs are GoalContract candidates, RepositoryModel updates, EvidenceGraph updates, PlanCandidate, assumptions, risks, and candidate acceptance criteria. Planning Context grants no authority and cannot turn retrieved text into instructions.
 
-## 4. Execution Context
+## 4. Execution Context — lazy purpose view
 
 Execution Context is built from a Kernel snapshot and binds the current versions of:
 
-- Task state and aggregate version;
+- TaskControl state/version **only if relevant**, plus selected ModelStep/Invocation and the protected read-set versions required for the decision;
 - accepted GoalContract and PlanRevision;
 - current PlanStep and its dependencies, preconditions, and expected artifacts;
 - acceptance-criteria version and evidence obligations;
@@ -119,9 +98,9 @@ Execution Context is built from a Kernel snapshot and binds the current versions
 - unresolved invocations, UNKNOWN outcomes, receipts, and wait reasons;
 - validity deadline no later than the earliest expiry of referenced authorization evidence.
 
-Any relevant version change, revocation, workspace mutation, tool change, or stale precondition invalidates the old Execution Context and requires reconstruction. Tool schemas shown to the model describe interfaces; they are not permissions. Context packs never contain replayable capability secrets or approval credentials.
+Only changes to **relevant protected bindings and preconditions** invalidate the affected context fragment/action. A non-conflicting Host receipt, unrelated Journal append or another step's budget settlement does **not** invalidate all task context. Context may be lazily refreshed by purpose; Kernel independently rechecks live admission/Host authority. Tool schemas shown to the model describe interfaces; they are not permissions. Context packs never contain replayable capability secrets or approval credentials.
 
-## 5. Verification Context
+## 5. Verification Context — lazy purpose view
 
 Verification Context is narrower and more evidence-focused than implementation context. It should include:
 
@@ -188,13 +167,15 @@ Token budgeting and retrieval ranking remain **OPEN** and must be evaluated on t
 
 ## 9. Checkpoint integrity, recovery, and compaction
 
-A task-progress Checkpoint Candidate preserves work continuity. It must not be invalidated merely because a time-varying authorization (such as an approval, lease, capability grant, policy version, or budget reservation) has expired or changed.
+Context Engine is **one on-demand assembler** that builds Planning, Execution and Verification *views*, not three independent stores/services or lifecycle authorities. Build only the relevant subset at each model decision, preserve source references and freshness, and discard/rebuild caches safely. Project Memory is optional in the initial vertical slice and may not determine admission or completion.
+
+A checkpoint is a milestone/compaction/recovery **optimization**, not an event created after every ActionProposal or ToolInvocation. A task-progress Checkpoint Candidate preserves work continuity. It must not be invalidated merely because a time-varying authorization (such as an approval, lease, capability grant, policy version, or budget reservation) has expired or changed.
 
 **Checkpoint integrity binding**
 
 A checkpoint binds the historical task-progress snapshot:
 
-- Task ID, Task aggregate version, and Kernel Journal sequence;
+- Task ID, the last known **taskControlVersion** and Kernel Journal high-water sequence (historical cursor, not a new global CAS prerequisite);
 - accepted GoalContract version/digest;
 - active and pending PlanRevision IDs and plan-switch phase;
 - PlanStep WorkStatus/VerificationStatus and their evidence references;
@@ -203,7 +184,7 @@ A checkpoint binds the historical task-progress snapshot:
 - unresolved ModelSteps/Attempts/ToolInvocations, receipts, UNKNOWN outcomes, and wait reasons;
 - context schema/version, checkpoint payload digest, and source-reference manifest.
 
-These fields establish what progress the checkpoint describes and whether the checkpoint payload is internally consistent. Kernel Persistence commits the Checkpoint Record, CheckpointCommitted Journal event, and Task checkpoint pointer in one Kernel-local transaction using Task/Journal compare-and-swap.
+These fields establish historical progress and checkpoint integrity. Kernel Persistence commits the immutable Checkpoint Record/Journal cursor and optional pointer in one K-local transaction using a **checkpoint pointer-specific** version; it does not CAS or increment TaskControlVersion merely for a checkpoint. Source Journal/Host receipts still prevail on recovery.
 
 **Authorization snapshot is audit metadata, not checkpoint validity**
 
@@ -216,7 +197,7 @@ Do not use current authorization versions as checkpoint-integrity preconditions.
 1. Load and integrity-check the checkpoint and its historical references.
 2. Reconstruct the latest Task aggregate and Journal after the checkpoint sequence; do not roll the Task back to the checkpoint's old authorization snapshot.
 3. Reconcile Host Ledger, receipts, in-flight invocations, UNKNOWN outcomes, and current workspace generation.
-4. Compare current workspace state with checkpoint-bound generation/snapshot. If it diverged, refresh the active domain model and EvidenceGraph, then mark affected claims, artifacts, and verification evidence Stale; do not discard the checkpoint.
+4. Compare current workspace state with checkpoint-bound generation/snapshot. If it diverged, refresh affected domain projections/evidence indexes and derive Stale for the **relevant** criterion/evidence bindings; do not globally stale unrelated facts or discard the checkpoint.
 5. Re-establish current principal identity, capability grants, policy, approvals, budget reservations, lease/fencing epoch, and tool-definition snapshot.
 6. Build a new Execution Context. Any expired/revoked approval must be renewed; an expired lease must be reacquired with a new fencing epoch.
 7. Resume only after Kernel confirms current admission conditions. If unresolved UNKNOWN can conflict with writes, remain in Reconciling/Blocked.
