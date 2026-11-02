@@ -296,8 +296,11 @@ No numeric quality/resource thresholds or production technology choices are intr
 
 ## 13. Validation record and authorization boundary
 
-- Repository target: **PASS** — edits are on design/autonomous-coding-agent only.
-- Main branch: **UNCHANGED**.
+- Repository target: **PASS** — all second-round commits are on design/autonomous-coding-agent.
+- Baseline relation: **PASS** — 20 commits and 19 Markdown files changed since baseline HEAD a22dfb6.
+- Relation to main: **PASS** — branch is 53 commits ahead and 0 behind; no non-Markdown files differ from main.
+- Markdown relative-link audit: **PASS** — 18 second-round documents checked; 174 relative link targets resolved with no missing targets. Newly added cross-references in Architecture Decision Proposals were separately checked.
+- Coding/shared reference preservation: **PASS** — blob digests for Coding design/evaluation/failure/reference review, Coding README, shared Kernel reference/evaluation, and the prior second-round Coding contract review are unchanged from the baseline.
 - Change type: **Markdown documentation only**.
 - Runtime, production dependencies, tests, and CI: **NOT MODIFIED**.
 - Real-model/media experiments: **NOT RUN**.
@@ -308,4 +311,4 @@ No numeric quality/resource thresholds or production technology choices are intr
 - Runtime implementation authorization: **NOT GRANTED**.
 - Pull request creation/merge: **NOT PERFORMED**.
 
-Markdown links and cross-document bindings must be rechecked against the final branch tree before this review package is considered ready for owner evaluation. Any passing documentation audit does not imply runtime or security verification.
+The link audit verifies relative target existence, not runtime behavior, schema correctness, or security enforcement. Any passing documentation audit does not imply runtime or security verification.
