@@ -1,15 +1,17 @@
 # Autonomous Coding Agent intelligence
 
-> **Status: PROPOSED SECOND-ROUND DESIGN DRAFT — OWNER REVIEW PENDING.** The first-round direction was accepted conditionally for revision; this second-round contract refinement is not an architecture freeze or implementation authorization. No runtime code, dependency stack, or production capability is authorized by these documents.
+> **Status: CODING DOMAIN PROPOSAL — OWNER REVIEW PENDING.** The first- and second-round research is retained as the Coding Domain Intelligence design within the approved unified Agent Kernel direction. It is not the complete platform architecture or an implementation authorization. No runtime code, dependency stack, or production capability is authorized.
 
 ## 1. Objective
 
-Design an agent that can independently complete complex software-engineering tasks: understand the goal, inspect the repository, construct and revise a plan, make coherent changes, debug through evidence, verify acceptance criteria, and recover safely across long-running or interrupted work.
+Design the Coding Domain Intelligence that can independently complete complex software-engineering tasks: understand the goal, inspect the repository, construct and revise a plan, make coherent changes, debug through evidence, verify acceptance criteria, and recover safely across long-running or interrupted work. The shared Kernel and Video Editing domain are specified separately.
 
 The central design question is not how many agents or tool calls are used. It is whether the system can reliably own a software outcome from request through verified completion.
 
 ## 2. Design documents
 
+- [Unified domain architecture](../../architecture/domain-architecture.md) — shared Kernel and independent domain responsibilities.
+- [Shared Kernel reference review](../shared-kernel/reference-review.md) — cross-domain execution-layer findings.
 - [Intelligent execution architecture](design.md) — GoalContract versioning, RepositoryModel, EvidenceGraph, PlanRevision/PlanStep, ActionProposal, decision arbitration, verification independence, continuity, human control, and Kernel boundaries.
 - [PlanRevision and PlanStep lifecycle](../../contracts/plan-revision.md) — plan-switch barrier, old-work convergence, carry-forward, orthogonal statuses, and Kernel's deterministic acceptance boundary.
 - [Reference implementation review](reference-review.md) — source-grounded comparison of Pi, Codex, DeepSeek Harness, and Claude Agent SDK.

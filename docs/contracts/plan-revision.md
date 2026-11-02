@@ -1,12 +1,12 @@
 # PlanRevision and PlanStep lifecycle contract
 
-> **Status: PROPOSED second-round contract.** This document closes the design gaps identified in the first architecture review. It defines deterministic state and cutover rules; it does not approve a runtime implementation, storage schema, or technology choice.
+> **Status: PROPOSED second-round and cross-domain contract.** The original PlanRevision/PlanStep lifecycle remains shared. DomainBinding and typed domain payloads extend its envelopes; this document does not approve a runtime implementation, storage schema, or technology choice.
 
 ## 1. Purpose and authority
 
-A PlanRevision is an immutable, versioned outcome plan for one Task and one accepted GoalContract version. It is not a transcript of model calls. A PlanStep is an outcome-oriented unit within that revision.
+A PlanRevision is an immutable, versioned outcome plan for one Task, one accepted GoalContract version, and one immutable DomainBinding/Workflow Profile version. It is not a transcript of model calls. A PlanStep is an outcome-oriented unit within that revision and may carry a typed domain_step_payload.
 
-- Orchestration owns semantic adequacy: whether the plan actually solves the user's problem, whether the repository model is sufficient, whether the technical approach is sound, and whether replanning is warranted.
+- Orchestration/Domain Intelligence owns semantic adequacy: whether the plan actually solves the user's problem, whether the domain model is sufficient (RepositoryModel for Coding or MediaProjectModel for Video), whether the domain approach is sound, and whether replanning is warranted.
 - Kernel owns deterministic contract validation and authoritative commitment: identity, version, schema, graph structure, scope containment, required references, legal transition, budget constraints, admission freeze, and plan-version pointer.
 - Kernel does **not** judge whether an architecture or implementation strategy is technically wise. It does not call a second Planner to approve a plan.
 - A PlanCandidate is not executable authority. Only a PlanRevision in **Active** state, with a **Ready** PlanStep and current preconditions, can authorize new work proposals. Every side-effecting ToolInvocation still requires its own Kernel admission.
@@ -47,7 +47,9 @@ A PlanRevision binds at minimum:
 
 - Task ID, revision ID, monotonically increasing revision number, and parent revision ID;
 - accepted GoalContract version and digest;
-- source RepositoryModel/EvidenceGraph snapshot references and workspace generation;
+- DomainBinding ID/digest and Workflow Profile version;
+- typed domain PlanStep payload schema/version references;
+- source domain-model/EvidenceGraph snapshot references and workspace/project generation;
 - PlanStep definitions and dependency DAG;
 - criterion-to-step mapping and any explicit human-review obligation;
 - preconditions, expected artifacts, effect/risk classes, capability requirements, and approval boundaries;
@@ -126,7 +128,8 @@ Deterministic checks include:
 - scope is contained within the accepted GoalContract and existing authorization envelope;
 - requested capabilities, approvals, effect classes, and external targets are declared and policy-compatible;
 - budget estimate and reservations fit the remaining hard budget while preserving required verification/repair reserve;
-- workspace, RepositoryModel, and evidence snapshot references are present and current for the candidate's declared base;
+- workspace/project, domain-model, and evidence snapshot references are present and current for the candidate's declared base;
+- the DomainBinding and Workflow Profile version are active and compatible with the Task and GoalContract;
 - each step declares preconditions, expected artifacts, risk/effect, evidence obligations, and a recovery disposition;
 - the command is legal for the current Task and revision-switch phase.
 
@@ -219,3 +222,17 @@ After cutover, a late receipt for an old revision is appended as historical evid
 10. Kernel validates structure and authority; Orchestration evaluates semantic adequacy.
 
 All runtime transition atomicity, concurrent admission behavior, and recovery properties remain UNVERIFIED until implemented and fault-injection tested.
+
+
+## 9. Domain payload extension
+
+The common PlanRevision lifecycle is reused by both domains; domain-specific semantics remain in typed payloads.
+
+- The Task and PlanRevision bind one immutable DomainBinding and Workflow Profile version.
+- Each PlanStep may carry a domain_step_payload with schema ID/version, expected domain artifact kinds, and domain-specific evidence obligations.
+- Coding payloads may describe repository inspection, implementation, test, migration, and compatibility work.
+- Video payloads may describe media probing, shot/audio analysis, source-range selection, TimelineRevision creation, rendering, and output inspection.
+- Kernel validates schema, identity, version, DAG, scope, capability/effect envelope, budget, and artifact references. It does not judge code quality, narrative coherence, shot selection, or edit pacing.
+- A Workflow Profile cannot grant permission. Every invocation is still admitted under current Kernel policy, principal, approval, budget, Host, and fencing state.
+
+See [Domain Workflow binding contract](domain-workflow.md).

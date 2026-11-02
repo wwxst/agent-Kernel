@@ -1,13 +1,15 @@
 # Lifecycle and state model
 
-> **Status: PROPOSED second-round lifecycle contract.** This document aligns Task, GoalContract, PlanRevision, PlanStep, runtime Step, ModelStep, Attempt, and ToolInvocation semantics. Runtime transitions, transaction behavior, and crash recovery remain unimplemented and unverified. See [PlanRevision and PlanStep lifecycle contract](../contracts/plan-revision.md) for the normative cutover protocol.
+> **Status: PROPOSED cross-domain lifecycle contract.** This document aligns Task, DomainBinding, GoalContract, PlanRevision, PlanStep, runtime Step, ModelStep, Attempt, and ToolInvocation semantics for Coding and Video Editing. Runtime transitions, transaction behavior, and crash recovery remain unimplemented and unverified. See [PlanRevision and PlanStep lifecycle contract](../contracts/plan-revision.md) and [Domain Workflow contract](../contracts/domain-workflow.md).
 
 ## 1. Core entities
 
 - **Session** — durable conversation and execution-history boundary.
 - **UserIntent** — immutable original user request plus append-only clarification references. It is never replaced by a model-generated GoalContract.
-- **Task** — durable unit of user intent, accepted GoalContract, active plan, budget, execution, verification, and completion.
-- **GoalContract** — immutable accepted version of desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, risk, and workspace binding. Orchestration proposes; Kernel records acceptance after deterministic checks and required confirmation evidence.
+- **Task** — durable unit of user intent, one active DomainBinding, accepted GoalContract, active plan, budget, execution, verification, and completion.
+- **DomainBinding** — immutable domain ID and Workflow Profile/schema/policy version snapshot bound to a Task; it is not a permission grant.
+- **Workflow Profile** — versioned composition of domain schemas, context projections, tool snapshots, resource limits, and verification obligations.
+- **GoalContract** — immutable accepted version of desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, risk, DomainBinding, and typed domain payload. Orchestration proposes; Kernel records acceptance after deterministic checks and required confirmation evidence.
 - **Turn** — one interaction cycle within a Task/Session.
 - **PlanRevision** — immutable accepted version of the dependency-aware outcome plan. It moves through Proposed, AcceptedPendingCutover, Active, Superseding, Superseded, or Rejected.
 - **PlanStep** — outcome-oriented work unit in one PlanRevision. WorkStatus and VerificationStatus are separate dimensions.
@@ -16,8 +18,10 @@
 - **ModelAttempt** — one actual provider request associated with a ModelStep.
 - **ActionProposal** — durable typed decision record from Orchestration; not an authorization or execution ticket.
 - **ToolInvocation** — uniquely identified proposed/admitted side-effect operation, independently authorized and reconciled.
-- **EvidenceReference** — provenance-bound reference to repository observations, provider evidence, Host receipts, command outputs, tests, diffs, or artifacts.
+- **EvidenceReference** — provenance-bound reference to repository or media observations, provider evidence, Host receipts, command outputs, tests, diffs, timelines, renders, or artifacts.
 - **EvidenceGraph** — Context/Orchestration projection over claims, evidence, and explicit relations; not an authority ledger.
+- **DomainArtifact** — immutable, digest-bound artifact with domain schema, profile, provenance, and lineage; payload remains domain-specific.
+- **TimelineRevision / RenderJob** — Video-domain artifact and long-running execution records governed by the shared artifact/ToolInvocation/Host contracts.
 - **VerificationReport** — criterion-to-evidence report bound to GoalContract, PlanRevision, workspace, environment, and actual verification runs.
 - **Receipt** — authenticated Host evidence for a specific execution or workspace operation.
 - **Checkpoint** — immutable task-progress snapshot; readable as historical progress independently of whether the authorizations recorded at checkpoint time are still current.
@@ -149,3 +153,17 @@ A timeout, process kill, disconnected socket, or AbortSignal does not prove roll
 - Context and EvidenceGraph projections are rebuilt from authoritative state and provenance-bound sources.
 
 Runtime state transitions, transaction atomicity, and crash-recovery correctness remain UNVERIFIED until implemented and fault-injection tested.
+
+
+## 10. Domain binding and typed artifacts
+
+The unified platform binds each Task to exactly one domain and one immutable Workflow Profile version at a time.
+
+- Coding Tasks load RepositoryModel and Coding-specific GoalContract/PlanStep/evidence schemas.
+- Video Editing Tasks load MediaProjectModel and Video-specific GoalContract/PlanStep/evidence schemas.
+- GoalContract and PlanRevision retain common lifecycle, version, authority, and provenance envelopes. Their domain payloads are typed and versioned.
+- Kernel validates schema/version bindings, graph structure, scope, capabilities, budgets, legal transitions, and artifact references. Domain Intelligence remains responsible for semantic adequacy.
+- Domain tools use the same ToolInvocation, policy/approval, resource reservation, Host receipt, cancellation, UNKNOWN, and recovery path.
+- Cross-domain artifacts may be linked by immutable references. A Task does not silently change domain, and the first platform scope does not include composite cross-domain autonomous workflows.
+
+Video TimelineRevision and RenderJob contracts are specified in [Media Timeline](../contracts/media-timeline.md) and [RenderJob](../contracts/render-job.md). These are domain extensions over the common artifact and execution envelopes, not separate Kernel authorities.

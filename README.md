@@ -1,16 +1,68 @@
 # Agent Kernel
 
-> **Project status: Second-round architecture contract revision — proposed and under owner review.**
->
-> This repository is the new, independent home for the Agent Kernel. It starts with a clean Git history. The documentation baseline re-authors approved architecture principles. The autonomous Coding Agent design and second-round Kernel reconciliation remain proposals, not a frozen implementation specification, and do not authorize runtime development by themselves.
+> **Project status: Unified two-domain product direction APPROVED; cross-domain architecture PROPOSED and under owner review.** The project is one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing. The domain models, workflow profiles, and execution capabilities remain separate. No Runtime implementation or final technology stack is authorized.
 
 ## Purpose
 
-Build a reliable, autonomous Coding Agent system that can understand development goals, inspect a codebase, build a repository/problem model, plan and revise work, modify code, run and interpret verification, debug failures, and recover from long-running or interrupted tasks.
+Build a unified autonomous Agent platform that can understand different classes of work, create and revise plans, execute through a trusted boundary, recover from interruption, verify the actual deliverable, and return useful artifacts.
 
-The Kernel must make execution safe and auditable without becoming the place where all planning intelligence is hard-coded. The boundary between adaptive Orchestration and deterministic Kernel authority is a central design concern.
+The first two domains are:
 
-The primary goal is **verified completion of complex software-engineering tasks**, not faster tool calls or a larger number of agents.
+- **Autonomous Coding** — understand code repositories, plan development work, modify code, run tests, diagnose/repair, and deliver verified code.
+- **Autonomous Video Editing** — understand natural-language editing instructions, analyze source media, construct a timeline, render a finished video, inspect the output, and deliver the video.
+
+The product principle is **one Kernel, two independent domains**. Coding and Video share execution authority and lifecycle mechanics; they do not share a forced cognitive model.
+
+## Video Editing first-phase scope
+
+The first Video Editing capability is natural-language-driven automatic editing, not a full video editor.
+
+In scope for domain research:
+
+- media ingest and technical probing;
+- source shot/scene/audio/transcript analysis;
+- natural-language editing intent interpretation;
+- persistent, versioned timeline generation and revision;
+- FFmpeg rendering through Trusted ToolHost;
+- technical and content/perceptual output checks;
+- delivery of video, timeline, render manifest, and verification evidence.
+
+Out of scope for the first phase:
+
+- full visual nonlinear editor or manual multitrack editing workstation;
+- advanced VFX/compositing/color-grading workstation;
+- Multi-Agent / D9;
+- Runtime implementation during the current research stage.
+
+## Architecture baseline
+
+The platform has three logical layers:
+
+1. **Shared Agent Kernel** — Task/Turn/Step, GoalContract/PlanRevision envelopes, Model Gateway, Context Engine infrastructure, Tool Runtime, Permission, Budget, Journal, Trusted ToolHost boundary, Recovery, Verification envelope, and Delivery.
+2. **Domain Intelligence** — independent Coding Intelligence and Video Editing Intelligence, each with its own domain model, planning semantics, evidence interpretation, and verifier.
+3. **Domain Execution** — independent domain tool/capability sets executed under shared Kernel admission, resource accounting, Host process control, cancellation, and receipts.
+
+See [Unified domain architecture](docs/architecture/domain-architecture.md) and [Architecture overview](docs/architecture/overview.md).
+
+## Research map
+
+- [Autonomous Coding Agent design](docs/research/autonomous-coding-agent/README.md) — retained first/second-round Coding Domain Intelligence design.
+- [Multimedia Domain Architecture](docs/research/multimedia-domain-architecture/README.md) — natural-language Video Editing design, timeline, render, and evaluation.
+- [Shared Kernel reference review](docs/research/shared-kernel/reference-review.md) — Pi, Codex, DeepSeek Harness, and Claude Agent SDK execution-layer review.
+- [Unified domain direction](docs/decisions/unified-domain-direction.md) — owner-approved product scope and authorization boundary.
+- [Cross-domain architecture review](docs/decisions/cross-domain-architecture-review.md) — consistency review and remaining questions.
+
+## Current state
+
+- Unified one-Kernel/two-domain product direction: **APPROVED**.
+- Coding Domain Intelligence: first- and second-round research retained; proposed.
+- Video Editing Domain Intelligence: proposed first-phase design.
+- DomainBinding and Workflow Profile contract: proposed.
+- MediaProjectModel, TimelineRevision, and RenderJob contracts: proposed.
+- Runtime implementation and production dependencies: not started / not authorized.
+- Technology choices: open.
+- Multi-Agent / D9: deferred and not authorized.
+- Legacy code migration: not started.
 
 ## Repository rules
 
@@ -22,38 +74,8 @@ The primary goal is **verified completion of complex software-engineering tasks*
 - Architecture principles and contracts are versioned here. Unresolved design and technology choices remain explicitly open.
 - No production implementation, dependency stack, or security capability is claimed until it is implemented and verified.
 
-## Architecture baseline
-
-The initial design separates:
-
-- **Kernel** — authoritative state, accepted plan versions, legal transitions, hard budgets, admission, durable intent, and completion gates.
-- **Orchestration** — goal understanding, repository reconnaissance, evidence modeling, adaptive planning, action selection, debugging, verification decisions, and human escalation.
-- **Model Gateway** — provider protocols, complete-response normalization, usage evidence, and provider errors.
-- **Context Engine** — provenance-aware repository/evidence projections, Planning/Execution/Verification Context, checkpoint candidates, compaction, and memory projections.
-- **Tool Runtime** — immutable tool-definition snapshots, effect/conflict-aware scheduling, and Host dispatch; it does not grant authority.
-- **Trusted ToolHost** — isolated side-effect execution, Host Ledger, receipts, and process/workspace controls.
-- **Policy & Security / Persistence** — authorization evidence and Kernel-owned durable facts, with the Host Ledger kept as a separate fact boundary.
-
-See [Architecture overview](docs/architecture/overview.md).
-
-## Autonomous Coding Agent design
-
-The second-round intelligent-execution design refines the first-round proposal with GoalContract versioning, PlanRevision cutover, orthogonal PlanStep status, ActionProposal lifecycle, EvidenceGraph minimum records, decision arbitration, layered verification independence, checkpoint recovery, and staged evaluation gates.
-
-Start with [the design](docs/research/autonomous-coding-agent/design.md) and the [PlanRevision lifecycle contract](docs/contracts/plan-revision.md), then review the [reference comparison](docs/research/autonomous-coding-agent/reference-review.md), [failure model](docs/research/autonomous-coding-agent/failure-model.md), [evaluation protocol](docs/research/autonomous-coding-agent/evaluation.md), and [second-round consistency review](docs/decisions/second-round-contract-review.md).
-
-## Current state
-
-- Documentation baseline: established.
-- Autonomous Coding Agent intelligent-execution design: second-round proposed draft; owner review pending.
-- Kernel architecture reconciliation: second-round proposed draft; owner review pending.
-- Technology choices: open.
-- Runtime implementation: not started in this repository.
-- Legacy code migration: not started.
-- Multi-Agent / D9: deferred and not authorized.
-
 ## How to work in this repository
 
-Read [AGENTS.md](AGENTS.md) before changing project files. Use [Open decisions](docs/decisions/open-decisions.md) and the research documents to distinguish approved principles, proposals, and unknowns.
+Read [AGENTS.md](AGENTS.md) before changing project files. Use [Open decisions](docs/decisions/open-decisions.md) and the research documents to distinguish approved direction, proposed contracts, and unknowns.
 
-The first milestone is to make the architecture coherent enough to review and evolve. Implementation starts only after the relevant contracts, experiments, and scope have been explicitly agreed.
+The current milestone is cross-domain architecture research and contract reconciliation. Implementation starts only after the relevant contracts, experiments, and scope have been explicitly agreed.

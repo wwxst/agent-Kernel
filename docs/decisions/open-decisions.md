@@ -1,91 +1,106 @@
 # Open decisions
 
-> **Status: Open register.** Nothing in this file is approved merely because it is listed here. The intelligent execution architecture and Kernel reconciliation are proposals pending owner review.
+> **Status: Mixed register.** The one-Kernel/two-domain product direction and Video Editing first-phase scope are approved. Detailed cross-domain architecture, domain contracts, technology choices, and implementation decisions remain proposed/open.
 
-The current starting point is [Architecture overview](../architecture/overview.md). The new cognitive design is [Autonomous Coding Agent — Intelligent Execution Architecture](../research/autonomous-coding-agent/design.md). Concrete technology and implementation decisions require research, trade-off analysis, and explicit review.
+The current product direction is recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md). No item is approved merely because it appears in this register.
 
-## 1. Autonomous Coding Agent intelligence
+## 1. Approved product direction
 
-**SECOND-ROUND CONTRACTS PROPOSED — owner review pending.**
+- One shared Agent Kernel supports Autonomous Coding and Autonomous Video Editing.
+- Domain Intelligence remains independent: RepositoryModel for Coding; MediaProjectModel for Video.
+- Domain Execution uses separate domain capability sets over shared Kernel admission, budgets, Journal, Trusted ToolHost, cancellation, recovery, and completion controls.
+- Each Task binds one immutable Workflow Profile version at a time.
+- Video Editing first phase is natural-language-driven automatic editing, not a full visual editor.
+- Multi-Agent / D9 remains deferred and unauthorized.
+- Current work remains architecture research and documentation only.
 
-The first-round design skeleton is retained. The second-round draft now closes the following design gaps:
+See [unified domain direction](unified-domain-direction.md).
 
-| Review item | Proposed resolution | Status |
-| --- | --- | --- |
-| P0-1 PlanRevision / Task lifecycle | Freeze → drain → reconcile → refresh → validate → atomic activate; explicit Running → Planning and Reconciling transitions | PROPOSED |
-| P0-1 PlanStep status | Separate WorkStatus and VerificationStatus; FailedKnown remains an invocation/attempt outcome | PROPOSED |
-| P0-2 Kernel plan acceptance | Deterministic structural/authority contract validation only; semantic plan quality remains Orchestration | PROPOSED |
-| P0-2 GoalContract acceptance | Immutable UserIntent, append-only clarifications, immutable accepted versions, confirmation for protected-field changes | PROPOSED |
-| P0-3 Verification independence | Machine evidence, fresh independent review, risk-based external assurance; Verifier output is not completion proof | PROPOSED |
-| P1-2 ActionProposal | Version-bound durable decision record, bounded items, independent invocation admission, partial execution, stale invalidation | PROPOSED |
-| P1-3 EvidenceGraph | Minimum Claim/Evidence/Relation/Freshness/Provenance records; no graph database assumption; no model self-confidence as evidence | PROPOSED |
-| P1-4 Checkpoint | Separate historical integrity/readability from current execution authorization and resumability | PROPOSED |
-| P1-5 Loop arbitration | One task-level Orchestration decision coordinator with explicit priority and Kernel CAS | PROPOSED |
-| P1-6 Evaluation gates | Design method → task set → baseline → target confirmation → formal evaluation | PROPOSED |
+## 2. Shared Kernel contracts
 
-The detailed contracts are in [PlanRevision lifecycle](../contracts/plan-revision.md), [intelligent execution design](../research/autonomous-coding-agent/design.md), [Context Engine](../context/context-engine.md), [completion contract](../contracts/completion.md), and [evaluation protocol](../research/autonomous-coding-agent/evaluation.md). The cross-document consistency findings are recorded in [Second-round contract review](second-round-contract-review.md).
+**PROPOSED — owner review pending.**
 
-Remaining open questions:
+- Which fields belong in the minimal common GoalContract/PlanRevision envelope versus typed domain payloads?
+- How should DomainBinding and Workflow Profile versions be accepted, revoked, migrated, and recovered?
+- What is the minimal generic artifact envelope needed for both code and media deliverables?
+- Which non-token resource dimensions can be hard-enforced across supported hosts?
+- How should long-running jobs and progress events be represented in the common ToolInvocation/Host lifecycle?
+- How should cross-domain linked tasks exchange artifacts without sharing domain authority?
+
+See [Domain Workflow contract](../contracts/domain-workflow.md).
+
+## 3. Autonomous Coding domain
+
+**PROPOSED — retained first/second-round design; owner review pending.**
 
 - Which plan-switch UNKNOWN cases can a future Host prove non-blocking?
-- What exact protected GoalContract fields and confirmation policy should apply to different product risk classes?
-- What evidence-independence level should each risk class require?
+- What exact protected GoalContract fields and confirmation policy should apply to different risk classes?
+- What evidence-independence level should each criterion risk class require?
 - How should semantic plan quality and RepositoryModel sufficiency be measured without moving those judgments into Kernel?
-- What task suite and hidden-test design best expose plan churn, false completion, and weak debugging?
 - What is the minimum useful PlanStep granularity for cross-package and migration work?
+- Which task suite and hidden-test design best expose plan churn, false completion, and weak debugging?
 
-No item above is approved solely because it is written here. Owner review is still required.
+See [Coding design](../research/autonomous-coding-agent/design.md), [Coding reference review](../research/autonomous-coding-agent/reference-review.md), and [Coding evaluation](../research/autonomous-coding-agent/evaluation.md).
 
-## 2. Reference implementation applicability
+## 4. Autonomous Video Editing domain
 
-**OPEN.** Source-grounded review exists for Pi, Codex, DeepSeek Harness, and Claude Agent SDK. The review recommends adapting lifecycle, event, session, context, and scheduling patterns while retaining Kernel-specific authority and completion contracts. No reference architecture is adopted wholesale.
+**PROPOSED — first-phase design and contracts drafted.**
 
-See [reference review](../research/autonomous-coding-agent/reference-review.md).
+- What is the minimum editing operation set for the first useful automatic-editing slice?
+- Are captions/titles and richer audio treatment part of the first phase or a follow-up?
+- Which visual/audio/transcription analysis capabilities are required for initial task families?
+- How should source PTS, VFR conversion, audio sample alignment, and rounding be represented across supported media?
+- Which output profiles/containers/codecs should be offered initially?
+- Which media checks are deterministic and which require independent model/human review?
+- How much preview/contact-sheet interaction is useful without building a full editor?
+- Which subjective edit-quality criteria require human acceptance?
+- Which render resource limits and segmented-render strategies are practical across hosts?
 
-## 3. Loop and orchestration strategy
+See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md).
 
-**OPEN.** Compare a minimal/native loop with adapter-based reuse of established agent cores. Evaluate event semantics, streaming, tool scheduling, steering/follow-up, cancellation, retry ownership, state recovery, debugging observability, and long-task completion quality.
+## 5. Reference implementation applicability
 
-Do not decide based on superficial API similarity or line count.
+**REVIEWED AT THE EXECUTION-LAYER LEVEL; ADOPTION DECISIONS PROPOSED.**
 
-## 4. Runtime and language
+- Pi, Codex, DeepSeek Harness, and Claude Agent SDK provide transferable patterns for loops, session/event lifecycles, user control, tool scheduling, permissions, context, and observability.
+- None establishes the complete Kernel authority, Host receipt, UNKNOWN recovery, or criterion-level completion contract required here.
+- None supplies a complete Video Editing domain model or proves perceptual editing quality.
 
-**OPEN.** No language, runtime, package manager, module system, or build stack is selected by this baseline. Evaluate maintainability, process control, streaming, type safety, ecosystem, testability, and cross-platform requirements.
+See [Shared Kernel reference review](../research/shared-kernel/reference-review.md).
 
-## 5. Persistence
+## 6. Runtime, language, persistence, and Host
 
-**OPEN.** Evaluate event journal, aggregate reconstruction, transaction isolation, fsync/durability, checkpoint co-commit, inbox/outbox, migrations, backup, and crash recovery. SQLite is a candidate to study, not a decision.
+**OPEN.**
 
-## 6. Trusted ToolHost and sandbox
+- Runtime/language/package manager/module system/build stack.
+- Event journal, aggregate reconstruction, transaction isolation, fsync/durability, inbox/outbox, checkpoint co-commit, migrations, backup, and crash recovery.
+- OS identity binding, process-tree containment, namespaces/seccomp/cgroups, filesystem/network confinement, workspace/media snapshots, receipt authenticity, and cross-platform support.
+- Generic artifact storage, large media/proxy storage, retention, and streaming.
+- FFmpeg packaging/build policy and media-analysis provider/model selection.
+- Deployment and application surfaces.
 
-**OPEN.** Evaluate OS identity binding, process-tree containment, namespaces, seccomp, cgroup v2, filesystem confinement, network policy, workspace snapshots, receipt authenticity, and cross-platform support. Historical Bubblewrap/seccomp/cgroup experiments are evidence only for their exact environment and scope.
+No technology is selected by implication.
 
-## 7. Tool concurrency and execution policy
+## 7. Evaluation
 
-**OPEN.** Define effect metadata, read-only parallelism, disjoint write scopes, conflicting writes, exclusive barriers, drain semantics, cancellation, scheduling fairness, deterministic result projection, idempotency classification, and workspace-generation invalidation.
+**PROPOSED METHOD; NO BASELINE RUN.**
 
-## 8. Context, repository model, and memory
+- Coding and Video require separate task sets, metrics, baselines, and quality thresholds.
+- Shared Kernel safety/recovery metrics should be measured across both domains.
+- Thresholds are selected only after frozen task sets and measured baselines exist.
+- Real-model and external-media benchmark runs require separate explicit authorization.
 
-**OPEN.** Evaluate repository indexing, symbol graph freshness, evidence graph representation, Planning/Execution/Verification Context separation, prompt-injection handling, token budgeting, compaction, checkpoint consistency, project memory quality, and stale-source invalidation.
+See [Coding evaluation](../research/autonomous-coding-agent/evaluation.md) and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md).
 
-## 9. Workspace and completion evidence
-
-**OPEN.** Define acceptance-criterion schema, verifier independence, hash scope, symlink/submodule/LFS behavior, test side effects, environment digest, final snapshot, receipt profile, evidence lifetime, and remediation lifecycle.
-
-## 10. Evaluation and benchmark
-
-**OPEN.** Build a reproducible task suite with fixed base commits, environments, budgets, policies, and hidden tests. Agree primary metrics and safety gates before reporting success-rate claims. No runtime benchmark has been run.
-
-See [evaluation protocol](../research/autonomous-coding-agent/evaluation.md).
-
-## 11. Extensions and Multi-Agent
+## 8. Extensions and Multi-Agent
 
 - Extension host isolation and lifecycle: **OPEN**.
 - Multi-Agent / D9, ChildTask ownership, distributed workers, and capability inheritance: **DEFERRED / NOT AUTHORIZED**.
+- Full visual Video Editor and professional post-production workstation: **DEFERRED / OUT OF FIRST-PHASE SCOPE**.
 
-## 12. Decision record requirements
+## 9. Decision record requirements
 
-For each decision, record:
+For each future decision, record:
 
 - problem and constraints;
 - alternatives considered;

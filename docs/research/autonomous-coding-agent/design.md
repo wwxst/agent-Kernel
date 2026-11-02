@@ -1,10 +1,12 @@
 # Autonomous Coding Agent — Intelligent Execution Architecture
 
-> **Status: PROPOSED second-round revision.** The first-round direction was conditionally accepted for revision; this draft closes identified contract gaps but is not an approved or frozen implementation specification. No runtime, language, package topology, provider, database, sandbox product, or multi-agent design is selected by this document.
+> **Status: CODING DOMAIN INTELLIGENCE PROPOSAL.** This first/second-round design is retained as the Coding domain's cognitive model within the approved unified Agent Kernel direction. It does not define the entire platform and does not authorize Runtime implementation. No runtime, language, package topology, provider, database, or sandbox product is selected by this document.
 >
 > The proposal is deliberately expressed as cognitive responsibilities, state contracts, and execution invariants. It is not a module list to translate directly into code.
 
 ## 1. Design thesis
+
+This document specifies Coding Domain Intelligence only. The shared three-layer platform and Workflow Profile boundary are defined in [Unified domain architecture](../../architecture/domain-architecture.md); Video's separate cognition is defined in [Video Editing domain design](../multimedia-domain-architecture/design.md).
 
 The central problem is not how quickly an agent calls tools or how many agents can be started. It is whether one autonomous system can reliably take responsibility for a non-trivial software outcome:
 

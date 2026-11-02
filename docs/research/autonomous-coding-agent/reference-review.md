@@ -1,6 +1,6 @@
-# Autonomous Coding Agent — Reference Implementation Review
+# Autonomous Coding Agent — Coding-Domain Reference Implementation Review
 
-> **Status: PROPOSED research report.** This is a source-grounded mechanism review, not a benchmark ranking. Source snapshots and official documentation were inspected on 2026-11-02. No runtime experiment was executed as part of this review.
+> **Status: PROPOSED Coding-domain research report.** This review is limited to coding-oriented references and is not the cross-domain execution-layer review. See [Shared Agent Kernel reference review](../shared-kernel/reference-review.md). This is a source-grounded mechanism review, not a benchmark ranking. Source snapshots and official documentation were inspected on 2026-11-02. No runtime experiment was executed as part of this review.
 
 ## 1. Research method
 

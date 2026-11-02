@@ -1,6 +1,6 @@
 # Context Engine
 
-> **Status: Initial architecture contract reconciled with a PROPOSED Coding Agent context model.** Retrieval, indexing, evidence projection, compaction, checkpoint, and memory implementations remain open and unverified.
+> **Status: PROPOSED cross-domain context architecture.** Context infrastructure is shared; domain semantic projections remain independent. Retrieval, indexing, evidence projection, compaction, checkpoint, and memory implementations remain open and unverified.
 
 ## 1. Context is a projection, not authority
 
@@ -30,6 +30,22 @@ RepositoryModel may include:
 - known constraints, compatibility boundaries, and risk areas.
 
 Each claim retains source references, commit/file hashes, capture time, evidence status/source quality, and invalidation conditions. Do not treat model self-reported numeric confidence as evidence. Indexes and summaries are accelerators; source files and trusted observations remain the evidence.
+
+### MediaProjectModel
+
+MediaProjectModel is the Video Editing domain's sibling projection to RepositoryModel. It is not a universal replacement for RepositoryModel and is not an authority ledger.
+
+It may include:
+
+- immutable MediaAsset IDs, original source references, content digests, ingest status, and derived-proxy lineage;
+- container and stream metadata, durations, stream IDs, rational time bases, frame-rate/VFR facts, dimensions, rotation, color metadata, audio sample rate, and channel layout;
+- shot/scene boundaries, representative-frame references, transcript segments, audio events, and domain content observations;
+- exact source asset/stream/time ranges, analysis tool/model version, capture time, evidence quality, and invalidation conditions for every derived claim;
+- timeline and render artifact references, with explicit lineage to the source assets and analysis evidence.
+
+MediaProjectModel is built and interpreted by Video Domain Intelligence. Context Engine supplies common retrieval, provenance, freshness, checkpoint, and compaction facilities. A shot detector output is evidence of a detector boundary, not proof of semantic scene meaning; a transcript is not proof of visual content. Unknown observations remain UNKNOWN.
+
+A Task loads RepositoryModel or MediaProjectModel according to its immutable DomainBinding/Workflow Profile. The two models may share generic EvidenceGraph envelopes but do not share semantic schemas.
 
 ### EvidenceGraph
 

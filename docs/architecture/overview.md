@@ -1,159 +1,157 @@
 # Architecture overview
 
-> **Status: Second-round reconciliation proposal.** The authority boundaries remain the adopted starting principles. The cognitive execution model and revised GoalContract/PlanRevision/PlanStep/ActionProposal/verification contracts remain proposals pending owner review. No runtime implementation or technology stack is approved.
+> **Status: Cross-domain architecture proposal.** The one-Kernel/two-domain product direction is approved. The shared execution contracts, DomainBinding, Workflow Profiles, and domain-specific extensions remain proposed. No Runtime implementation or technology stack is approved.
 
 ## 1. Product objective
 
-Build an autonomous Coding Agent system that can take a software-engineering goal, understand the repository and constraints, formulate and revise a plan, make controlled changes, diagnose failures, run meaningful verification, and recover safely across long tasks.
+Build one autonomous Agent platform with two initial execution domains:
 
-The system must combine:
+- **Autonomous Coding** — understand software repositories, plan changes, edit code, run tests, debug/repair, verify, and deliver code.
+- **Autonomous Video Editing** — understand natural-language editing instructions, analyze media, generate a timeline, render, inspect the output, and deliver video.
 
-- **Adaptive intelligence:** goal understanding, repository reconnaissance, planning, prioritization, implementation strategy, debugging, verification decisions, and adaptation.
-- **Deterministic authority:** identity, authoritative state, accepted plan versions, hard budgets, permissions, durable intent, side-effect evidence, recovery, and completion gates.
+The platform must combine:
 
-The target is verified software-task completion, not merely a completed model turn or a successful tool-call loop.
+- **Shared execution authority:** task lifecycle, model calls, scheduling, permission, budgets, durable state, trusted process execution, cancellation, recovery, and completion gating.
+- **Independent domain intelligence:** each domain owns its semantic model, goal interpretation, planning quality, evidence interpretation, and verifier.
+- **Typed domain execution:** domain tools use a shared admission/Host boundary but have separate capabilities and artifacts.
 
-The detailed cognitive design is [Autonomous Coding Agent — Intelligent Execution Architecture](../research/autonomous-coding-agent/design.md). Its current status is **PROPOSED**.
+The product is not two agents joined by a common UI. It is one Kernel that hosts separate domain workflows. The detailed proposal is [Unified domain architecture](domain-architecture.md).
 
 ## 2. Architectural principles
 
-1. **One primary task controller by default.** Orchestration owns the end-to-end goal and adaptive execution policy. Specialized reasoning modes are ModelStep purposes, not a requirement for multiple agents. Multi-Agent / D9 remains deferred.
-2. **Orchestration proposes; Kernel commits.** Planning, diagnosis, and action selection are adaptive. Authoritative state, budget, permission, admission, and completion remain deterministic.
-3. **The repository must be understood before it is changed.** RepositoryModel and EvidenceGraph projections make source facts, hypotheses, assumptions, unknowns, and freshness explicit.
-4. **Plans are versioned outcome contracts.** PlanRevision/PlanStep define dependencies, expected artifacts, criterion coverage, risk, and verification. A PlanCandidate is not executable authority until Kernel validates and safely activates the revision; AcceptedPendingCutover is not executable.
-5. **Actions are evidence-producing operations.** Every side effect is admitted and attributable to the accepted plan, workspace generation, tool snapshot, and authorization evidence.
-6. **Debugging is hypothesis-driven.** Repeated attempts require new evidence or a documented retry condition.
-7. **Completion is an evidence-gated state transition.** No model message, diff, or exit code alone can complete a Task.
-8. **Context is a projection, not authority.** Context, plans, summaries, memory, and model output cannot rewrite execution facts.
-9. **External side effects are not transactionally atomic with Kernel state.** Kernel Journal and Host Ledger remain separate fact boundaries.
+1. **One shared Kernel.** Both domains use the same authoritative Task, model, tool, budget, Journal, Host, recovery, and completion controls.
+2. **Separate domain cognition.** Coding uses RepositoryModel; Video uses MediaProjectModel. Their planners, evidence semantics, and verifiers remain independent.
+3. **Orchestration proposes; Kernel commits.** Semantic interpretation and technical strategy are adaptive. State, budget, permission, admission, and completion are deterministic.
+4. **Common contracts, typed payloads.** GoalContract and PlanRevision share lifecycle and authority envelopes; domain-specific payload schemas are versioned and validated without importing their semantics into Kernel.
+5. **Workflow Profiles bind domain behavior.** Each Task binds one immutable domain/profile version, tool snapshot set, resource policy, and verification obligations.
+6. **All side effects use one trusted path.** Domain tools do not bypass Kernel admission, Tool Runtime, or Trusted ToolHost.
+7. **Evidence before completion.** A tool exit code or model statement is not proof that the domain deliverable satisfies the user's request.
+8. **Artifacts are versioned.** Code changes and media timelines/renders are immutable, provenance-bound artifacts with explicit lineage.
+9. **Context is a projection, not authority.** RepositoryModel, MediaProjectModel, EvidenceGraph, summaries, and memory cannot rewrite execution facts.
 10. **No implementation topology is implied.** Logical responsibilities may be separately testable modules without becoming microservices.
 
-## 3. Logical responsibilities
+## 3. Three architectural layers
 
-These are responsibilities and authority boundaries, not a commitment to package names, separate processes, or a technology stack.
-
-| Responsibility | Owns | Must not own |
+| Layer | Responsibility | Must not own |
 | --- | --- | --- |
-| Agent Application | CLI / SDK / API / IDE / Desktop entry points, user interaction, progress and approval UI | Authoritative task state or direct side-effect authority |
-| Orchestration | GoalContract candidates, repository/problem modeling, EvidenceGraph projections, PlanCandidate, adaptive action selection, debugging hypotheses, verification decisions, and user escalation | Direct provider calls, direct tool execution, or authoritative state writes |
-| Kernel | Task/Turn/Step state, accepted GoalContract and PlanRevision/PlanStep facts, deterministic contract validation, plan-switch barriers, ModelStep/Attempt and ToolInvocation state, hard budgets, legal transitions, admission, durable intent, and Completion Guard | Semantic goal interpretation, technical plan quality, business strategy, provider-specific protocol, physical OS side effects |
-| Model Gateway | Provider credentials boundary, request/stream protocol, complete-response normalization, usage evidence, and provider errors | Task state, plan acceptance, budget authorization, tool admission, tool execution |
-| Context Engine | RepositoryModel and EvidenceGraph projections, Planning/Execution Context, retrieval, checkpoint candidates, compaction, and memory projections | Authorization, state mutation, or rewriting execution facts |
-| Tool Runtime | Immutable tool-definition snapshots, effect/conflict-aware scheduling, dispatch, Host client, and result projection | Permission grants or authoritative task-state changes |
-| Policy & Security | Principal, capability, policy and approval evidence used by Kernel | Independent authority to dispatch side effects |
-| Kernel Persistence | Journal, aggregates, accepted plan state, budget ledger, durable inbox/outbox, and transactional checkpoint records | Physical execution evidence |
-| Trusted ToolHost | OS-level isolation, worker lifecycle, workspace controls, Host Ledger and receipts | Kernel task state or next-step reasoning |
-| Extension Host | Scoped extension lifecycle and public APIs | Direct access to Kernel internals, persistence, or Trusted ToolHost |
+| Shared Agent Kernel | Task/Turn/Step, GoalContract/PlanRevision envelopes, Model Gateway admission, Context Engine infrastructure, Tool Runtime, Permission, Budget, Journal, Host receipts, cancellation, recovery, Completion Guard, delivery | Domain semantic models, technical plan quality, narrative/pacing judgment |
+| Domain Intelligence | Domain goal interpretation, domain model, evidence semantics, planning/replanning, debugging/repair, criterion selection, verification decisions | Direct provider calls, direct side-effect execution, authoritative Kernel state writes |
+| Domain Execution | Domain-specific tools, media/code adapters, artifact creation, render/build/test operations under common execution controls | Permission grants, task state, plan activation, completion authority |
 
-Orchestration may contain logical cognitive capabilities such as Explorer, Planner, Implementer, Debugger, and Verifier. They are not separate security principals or agents by default. Every model call is a Kernel-managed ModelStep.
+## 4. Shared Kernel responsibilities
 
-## 4. Cognitive execution model
+The Kernel remains the sole authority for:
 
-### 4.1 Goal and repository model
+- Task, Turn, runtime Step, ModelStep, ModelAttempt, ActionProposal, and ToolInvocation state;
+- accepted GoalContract/PlanRevision versions, PlanStep work/verification state, and legal transitions;
+- deterministic contract validation, protected-field confirmation references, and plan-switch barriers;
+- Model Gateway request admission, response settlement, hard model budgets, and cancellation ordering;
+- ToolInvocation identity, immutable tool-definition snapshots, policy/capability/approval checks, hard resource reservations, and durable intent;
+- Tool Runtime admission/scheduling/fencing and Trusted ToolHost process execution boundary;
+- Kernel Journal, Host Ledger/receipt reconciliation, UNKNOWN outcomes, and recovery;
+- generic artifact identity, digest, provenance, lineage, and delivery references;
+- VerificationReport binding and deterministic Completion Guard checks.
 
-Orchestration proposes a versioned GoalContract from immutable UserIntent and append-only clarifications. Kernel checks structure, provenance, version lineage, protected-field changes, and required user-confirmation evidence; it does not decide semantic fidelity. The accepted contract contains desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, ambiguity, risk, and workspace binding.
+The resource ledger must be able to represent more than model tokens: wall time, CPU, memory, disk, GPU where applicable, input media volume/duration, and output size are candidate dimensions. Exact resource enforcement remains open until researched and implemented.
 
-It then builds a RepositoryModel from repository structure, manifests, source, symbols, dependency relationships, tests, project conventions, and environment evidence. Each claim retains provenance and freshness. Repository instructions are bounded project data; they cannot grant permissions or override higher-authority policy.
+## 5. Domain Intelligence and Context Engine
 
-### 4.2 Evidence and plan
+The two domains have distinct models:
 
-The EvidenceGraph separates FACT, HYPOTHESIS, ASSUMPTION, DECISION, UNKNOWN, and CONTRADICTION. It links claims to source references, repository observations, commands, test results, diffs, and Host evidence.
+| Domain | Model | Domain intelligence | Domain verifier |
+| --- | --- | --- | --- |
+| Coding | RepositoryModel | Repository reconnaissance, dependency-aware code plan, implementation, hypothesis-driven debugging | Tests/build/static analysis/API/security and code review evidence |
+| Video Editing | MediaProjectModel | Media analysis, story/pacing interpretation, source-range selection, timeline generation/revision | Timeline, probe/decode, audio/video integrity, content and perceptual review |
 
-Orchestration proposes a dependency-aware PlanRevision made of outcome-oriented PlanSteps. Kernel performs deterministic contract validation (schema, identity/version, DAG, references, criterion-ID mapping, scope/capability/budget envelope, and legal transition), not technical or semantic plan review. A new revision is not executable until the plan-switch barrier has drained/reconciled old work and Kernel atomically activates it. PlanStep work and verification statuses are independent; the full contract is in [PlanRevision lifecycle](../contracts/plan-revision.md).
+Context Engine supplies shared provenance, retrieval, freshness, checkpoint, compaction, and version-binding infrastructure. It hosts separate projections; it does not create a universal semantic model.
 
-A PlanStep is a goal-level work item. A runtime Step is an execution unit such as planning, model invocation, tool batch, verification, or checkpoint work. ModelStep and ModelAttempt remain the model-specific lifecycle.
+## 6. Workflow Profiles and DomainBinding
 
-### 4.3 Adaptive control loops
+Each Task binds one immutable Workflow Profile version. The profile selects:
 
-The execution model has three cooperating logical loops:
+- domain and contract/schema versions;
+- GoalContract domain payload and PlanStep kinds;
+- domain context projections and evidence types;
+- tool-definition snapshots and effect/conflict declarations;
+- resource dimensions, hard limits, and verification/repair reserve;
+- criterion-to-evidence mapping and required assurance level;
+- output artifact and delivery requirements;
+- cancellation/recovery rules for long-running operations.
 
-- **Strategic loop:** maintain the goal model, identify missing facts, evaluate progress and dependencies, and decide continue / inspect / replan / ask / wait / verify / stop.
-- **Tactical loop:** build a version-bound Execution Context, request a typed ActionProposal, obtain Kernel admission, dispatch through Tool Runtime and Trusted ToolHost, then update evidence.
-- **Assurance loop:** map acceptance criteria to actual checks, diagnose verification failures, run an independent verifier pass, freeze the workspace, and submit evidence to Completion Guard.
+The profile can narrow available capabilities but cannot grant permission. Kernel still checks current principal, policy, approval, budget, workspace/project, and fencing at each invocation.
 
-The loops are responsibilities of Orchestration, not a fixed multi-agent topology. One task-level decision coordinator serializes their proposals by safety, reconciliation, user intent, approval, assurance, replan, normal execution, and delivery priority.
+A profile change is not a prompt edit. It creates a new binding candidate and triggers impact analysis; protected scope/capability/evidence changes require confirmation and a safe plan switch.
 
-## 5. High-level execution path
+See [Domain Workflow binding contract](../contracts/domain-workflow.md).
 
-1. Application submits a stable, idempotent task command.
-2. Kernel validates identity, idempotency, task envelope, initial budget, and admission.
-3. Orchestration creates a GoalContract candidate and identifies material ambiguity.
-4. Kernel admits bounded reconnaissance; Context Engine builds the initial RepositoryModel and EvidenceGraph projections.
-5. Orchestration submits a PlanCandidate. Kernel validates it deterministically; the first revision is activated only when its bindings are current. Revisions after the first use freeze → drain → reconcile → refresh → validate → atomic activate.
-6. For each ready PlanStep, Context Engine builds an Execution Context bound to current task, plan, workspace, policy, budget, and tool snapshots.
-7. Orchestration requests a ModelStep through Kernel and Model Gateway; the model proposes an action or bounded tool batch.
-8. Kernel validates each invocation, policy, approval, capability, budget, workspace generation, tool version, and durable intent.
-9. Tool Runtime dispatches only admitted requests to Trusted ToolHost.
-10. Host records physical execution facts and returns an authenticated receipt or an explicitly unknown outcome.
-11. Kernel reconciles evidence. Orchestration updates RepositoryModel/EvidenceGraph projections; the single-task decision coordinator decides continue, debug, replan, ask, wait, or verify. A replan freezes old-revision admissions and reconciles already-started work before cutover.
-12. Verification runs against the accepted plan, criterion set, environment, and workspace generation.
-13. Completion Guard validates current evidence and the frozen final snapshot before TaskCompleted.
-14. Orchestration delivers a bounded user-facing summary only after durable completion/delivery rules permit it.
+## 7. High-level execution path
 
-A simplified control flow:
+1. Application submits a task and immutable user-intent reference.
+2. Kernel admits the Task and binds the selected DomainBinding/Workflow Profile.
+3. Domain Intelligence proposes a GoalContract with a typed domain payload; material ambiguity is clarified.
+4. Context Engine builds the appropriate domain projection: RepositoryModel or MediaProjectModel.
+5. Domain Intelligence proposes a PlanRevision using the shared PlanRevision envelope and typed domain PlanSteps.
+6. Kernel validates and safely activates the revision; a subsequent revision uses freeze → drain → reconcile → refresh → validate → atomic activate.
+7. Context Engine assembles a version-bound Execution Context.
+8. Model Gateway runs a Kernel-managed ModelStep; Orchestration proposes an ActionProposal.
+9. Kernel independently admits each ToolInvocation under current policy, approval, capability, budget, domain profile, and fencing.
+10. Tool Runtime dispatches admitted work through Trusted ToolHost.
+11. Host records physical process/job facts and returns receipt, artifacts, and output evidence; UNKNOWN is reconciled rather than blindly retried.
+12. Domain Intelligence updates its model and decides continue, debug, replan, ask, wait, verify, or stop.
+13. Domain verifier produces criterion-specific evidence; Completion Guard checks the common VerificationReport envelope and current bindings.
+14. Delivery publishes the domain artifact only after required evidence and finalization rules pass.
 
-    User Goal
-      -> GoalContract
-      -> Repository Reconnaissance
-      -> RepositoryModel + EvidenceGraph
-      -> PlanCandidate
-      -> Kernel accepts PlanRevision
-      -> [PlanStep execution loop]
-           Execution Context
-           -> ModelStep / ActionProposal
-           -> Kernel admission
-           -> Tool Runtime
-           -> Trusted ToolHost
-           -> Receipt + Evidence
-           -> strategic/tactical reassessment
-      -> Acceptance Verification
-      -> Workspace Freeze
-      -> Kernel Completion Guard
-      -> TaskCompleted
-      -> Delivery
+## 8. Domain execution examples
 
-Read-only reconnaissance may occur before plan acceptance only within an explicitly admitted discovery profile. Source modifications and other side effects require an accepted plan and normal Kernel admission.
+### Autonomous Coding
 
-## 6. Authority and evidence boundaries
+RepositoryModel → coding GoalContract/PlanRevision → file/Git/build/test tools → Host receipts and diffs → code verification → verified repository artifacts.
 
-- Kernel Journal and reconstructable aggregates are authoritative for Task, Turn, Step, accepted PlanRevision/PlanStep progress, ModelStep, ModelAttempt, and ToolInvocation state.
-- Kernel Budget Ledger is authoritative for reservations, consumption, settlement, adjustments, overrun, and enforcement holds.
-- Policy and Approval systems provide evidence; Kernel makes the final admission decision.
-- Provider responses and usage records are evidence supplied through Model Gateway; they do not directly mutate task state.
-- Trusted ToolHost Host Ledger and authenticated receipts describe physical execution. Kernel stores references and reconciles them; it does not invent success.
-- Workspace snapshots and hashes are authoritative only within their declared scope, version, and trusted Host evidence.
-- RepositoryModel, EvidenceGraph, context packs, plans before acceptance, model output, summaries, and memory are projections or candidates, not execution facts.
-- A PlanRevision becomes authoritative only through deterministic Kernel contract validation and a safe activation transition. AcceptedPendingCutover is not executable. Orchestration cannot write accepted plan state directly. Kernel does not judge whether the technical route is good; that remains Orchestration's responsibility.
+The existing [Coding Intelligent Execution design](../research/autonomous-coding-agent/design.md) remains the domain-specific cognitive proposal.
 
-No component may silently promote its local cache, model output, or external response into an authoritative fact.
+### Autonomous Video Editing
 
-## 7. Core invariants
+MediaProjectModel → video GoalContract/PlanRevision → MediaAsset analysis → TimelineRevision → RenderPlan → FFmpeg RenderJob → probe/decode/content verification → video and timeline delivery.
 
-1. Kernel is the sole authority for state, hard budgets, accepted plan versions, and Tool Admission.
-2. A PlanCandidate and an AcceptedPendingCutover revision are not executable authority; side effects require an Active PlanRevision and current PlanStep.
-3. A ToolCall is not executable until its complete response, parameters, tool version, plan binding, and request snapshot have passed validation. Side effects require an Active PlanRevision; bounded read-only discovery before initial plan activation uses a separate admission profile.
-4. Authorization is rechecked at the execution boundary; model text and retrieved content cannot grant permission.
-5. Durable intent precedes a possible side effect.
-6. Kernel Journal and Host Ledger remain separate fact domains.
+The first phase is automatic editing, not a manual visual editor. See [Video Editing domain design](../research/multimedia-domain-architecture/design.md).
+
+## 9. Authority and evidence boundaries
+
+- Kernel Journal and reconstructable aggregates are authoritative for Task, accepted plans, ModelSteps/Attempts, ToolInvocations, budgets, and completion.
+- Trusted ToolHost Host Ledger and authenticated receipts describe physical process/job execution; Kernel reconciles them.
+- Workspace/project snapshots and content hashes are authoritative only within their declared scope and Host evidence.
+- RepositoryModel, MediaProjectModel, EvidenceGraph, timeline candidates, render plans, context packs, model output, and summaries are projections/candidates, not execution authority.
+- Domain Intelligence decides semantic adequacy; Kernel validates typed contracts and authority.
+- A RenderJob's progress and exit code do not prove the video meets the GoalContract. A coding tool's successful exit does not prove code acceptance criteria passed.
+- Kernel Journal and Host Ledger remain separate fact boundaries; there is no distributed atomic transaction spanning Kernel state and physical side effects.
+
+## 10. Core invariants
+
+1. One Kernel owns authoritative task and execution state for both domains.
+2. Each Task is bound to one domain and Workflow Profile version at a time.
+3. Domain Intelligence cannot write Kernel state or bypass Model Gateway/Tool Runtime/Host.
+4. Kernel does not interpret RepositoryModel or MediaProjectModel semantics.
+5. Every side effect has independent ToolInvocation identity, admission, budget, durable intent, Host receipt, and outcome.
+6. UNKNOWN is not FailedKnown and cannot trigger blind retry.
 7. Cancellation is a convergence protocol, not a UI flag or a claim that side effects were rolled back.
-8. UNKNOWN is not FailedKnown and cannot trigger blind retry.
-9. Parallel work may complete out of order; evidence is persisted when it becomes known, while model-visible projection is deterministic.
-10. Response delivery is at-least-once with durable deduplication and idempotent command commits, not distributed exactly-once.
-11. Budget settlement is append-only. Late overrun evidence cannot reopen a terminal Task.
-12. Completion requires evidence bound to the accepted PlanRevision, acceptance criteria, workspace snapshot, environment, and actual verification runs.
-13. Extensions, tools, memory, context, and future sub-agents cannot bypass Kernel or Host security contracts.
+8. Domain artifacts are versioned and provenance-bound; user revisions create new versions.
+9. Completion requires criterion-linked evidence bound to the current GoalContract, PlanRevision, DomainBinding, and final artifact snapshot.
+10. A successful loop stop, command exit, or renderer exit is not Task completion.
+11. Multi-Agent / D9 and a full Video Editor remain out of scope.
+12. Current work is documentation/research only; Runtime development is not authorized.
 
-## 8. Deployment principle
+## 11. Deployment principle
 
-The initial design does not assume microservices. Application, Orchestration, Kernel, Gateway, Context Engine, and Tool Runtime may begin as separately testable responsibilities in one application process. Trusted ToolHost must retain a real process/OS trust boundary from untrusted tool code. Persistence is a durable authority boundary, not automatically a network service.
+The initial design does not assume microservices. Application, Orchestration, Kernel, Gateway, Context Engine, and Tool Runtime may begin as separately testable responsibilities in one application process. Trusted ToolHost must retain a real process/OS trust boundary from untrusted tool code.
 
-Concrete process topology, runtime, language, database, sandbox product, and deployment model remain **OPEN**.
+Concrete process topology, runtime, language, database, sandbox product, media-analysis models, and deployment model remain **OPEN**.
 
-## 9. Explicit non-goals for this baseline
+## 12. Explicit non-goals for this baseline
 
 - No old Kernel source is treated as the implementation foundation.
 - No technology stack is selected by implication.
 - No production readiness or security certification is claimed.
 - Multi-Agent / D9 remains deferred and unauthorized.
+- No full Video Editing workstation or manual timeline editor is included in the first phase.
 - No package list or microservice topology is mandated by the cognitive design.
-- No runtime implementation, dependency addition, or legacy code migration is authorized by this architecture draft.
+- No runtime implementation, dependency addition, real-model benchmark, external media processing, or legacy code migration is authorized by this architecture draft.

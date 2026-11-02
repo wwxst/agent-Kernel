@@ -1,109 +1,109 @@
 # Development roadmap and gates
 
-> **Status: Provisional sequencing reconciled with the second-round proposed contracts.** This roadmap is a planning aid, not blanket authorization to begin every phase.
+> **Status: Provisional roadmap aligned to the APPROVED one-Kernel/two-domain product direction.** Architecture details remain proposed. This roadmap does not authorize Runtime implementation or real-model/media execution.
 
 ## Stage 0 — Establish the new project baseline
 
-- Create this repository with a clean Git history.
-- Re-author the approved architecture principles and contracts.
-- Record source provenance and explicit adoption exclusions.
-- Establish research, decision, testing, and documentation conventions.
+- Maintain the clean, self-contained repository and decision discipline.
+- Re-author the approved Kernel authority boundaries and contracts.
+- Preserve provenance and explicit adoption exclusions.
+- Keep Runtime and technology choices open.
 
-**Current state:** documentation baseline established. This does not mean the architecture is approved or complete.
+**Current state:** documentation baseline established.
 
-## Stage 1 — Design autonomous Coding Agent intelligence
+## Stage 1 — Retain and close Autonomous Coding domain research
 
-- Study source implementations and official documentation in Pi, Codex, DeepSeek Harness, and Claude Agent SDK.
-- Model the end-to-end autonomous coding lifecycle, not only the low-level tool loop.
-- Define GoalContract versioning, RepositoryModel, minimum EvidenceGraph records, PlanRevision cutover, orthogonal PlanStep states, and ActionProposal contracts.
-- Define strategic, tactical, debugging, assurance, arbitration, stopping, human-control, and recovery behavior.
-- Define long-task checkpoint integrity separately from current authorization and resumability.
-- Define evidence independence levels and Completion Guard obligations.
-- Define evaluation metrics, task families, safety floors, and staged experimental method.
+- Retain the first- and second-round Coding Domain Intelligence design.
+- Keep RepositoryModel, coding workflow, debugging, and code verification semantics domain-specific.
+- Reconcile the Coding design with the shared DomainBinding/Workflow Profile contract.
+- Keep the coding task benchmark and safety gates separate from Video evaluation.
 
-**Current state:** first- and second-round design drafts exist. No runtime benchmark or fault-injection experiment has been run.
+**Exit:** owner-reviewed Coding Domain Intelligence proposal and its Kernel contract bindings.
 
-**Exit:** owner-reviewed intelligent-execution design, explicit state/decision contracts, evidence map, trade-off report, failure model, and staged evaluation protocol. A measured baseline is not required at this design gate.
+## Stage 2 — Design Autonomous Video Editing domain
 
-## Stage 2 — Reconcile and review Kernel architecture
+- Define the first-phase scope as natural-language-driven automatic editing, not a full video editor.
+- Define MediaProjectModel, media ingest/probe/analysis evidence, and source provenance.
+- Define TimelineRevision as a persistent, non-destructive, versioned artifact.
+- Define RenderPlan and long-running RenderJob over the shared ToolInvocation/Host/budget/cancel/recovery path.
+- Define technical, temporal, content, perceptual, and human verification obligations.
+- Define natural-language EditIntent and timeline revision behavior.
+- Define video task families and the evaluation method.
 
-- Integrate the intelligent-execution design with Kernel authority and Trusted ToolHost contracts.
-- Clarify the distinction between PlanStep and runtime Step.
-- Define which plan/evidence facts Kernel owns and which remain Orchestration/Context projections.
-- Reconcile ModelStep purposes, budget reserve, context/checkpoint bindings, plan switching, and Completion Guard.
-- Resolve contradictions and identify contracts that need revision.
-- Mark every statement as approved, proposed, open, deferred, or unverified.
+**Exit:** owner-reviewed Video Editing domain proposal and scope boundary. No Runtime is implied.
 
-**Exit:** owner-reviewed architecture and explicit implementation scope. This is an architecture approval gate, not permission to implement.
+## Stage 3 — Cross-domain Kernel and reference review
 
-## Stage 3 — Implementation planning (not implementation authorization)
+- Define common DomainBinding and immutable Workflow Profile contracts.
+- Reconcile shared GoalContract/PlanRevision envelopes with typed domain payloads.
+- Add MediaProjectModel as a sibling Context Engine projection to RepositoryModel.
+- Ensure both domains use the same Kernel admission, budgets, Journal, Host, receipts, cancellation, UNKNOWN, recovery, and Completion Guard contracts.
+- Re-review Pi, Codex, DeepSeek Harness, and Claude Agent SDK for common execution-layer mechanisms and adoption limits.
+- Resolve terminology and cross-document authority/scope contradictions.
 
-- Translate the reviewed contracts into a proposed implementation plan.
-- Evaluate runtime, persistence, provider strategy, and sandbox alternatives with evidence and trade-offs; do not silently select a stack.
-- Define testable contracts, module responsibilities, ports, schemas, threat model, rollback strategy, and implementation verification gates.
-- Define the benchmark task schema and scoring method; freeze the evaluation design before comparative runs.
+**Exit:** coherent cross-domain architecture proposal and source-grounded reference review.
 
-**Exit:** owner-approved implementation plan and evaluation method. This gate does not authorize runtime code, production dependencies, or real-model execution.
+## Stage 4 — Cross-domain consistency and owner review
 
-## Stage 4 — Contract verification and benchmark task-set preparation
+- Review shared-versus-domain-specific responsibility boundaries.
+- Review Task/Profile binding and profile migration rules.
+- Review timeline persistence, rational time representation, render cancellation/recovery, and final video verification.
+- Review separate Coding and Video evaluation protocols and shared Kernel safety metrics.
+- Check every local link, status label, and implementation authorization boundary.
 
-- If separately authorized, use controlled fake providers/hosts and deterministic traces to test critical state, budget, delivery, cancellation, recovery, plan revision, checkpoint, and completion contracts.
-- Prepare the reproducible task set, difficulty strata, pinned repositories/commits, acceptance criteria, hidden tests/reviewer rubric, and scoring controls.
-- Validate that task difficulty and acceptance criteria are not biased toward easy or overly familiar tasks.
+**Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
+
+## Stage 5 — Implementation planning (not implementation authorization)
+
+- Translate approved contracts into a proposed implementation plan.
+- Evaluate runtime, persistence, provider strategy, media analysis, and sandbox alternatives with evidence and trade-offs.
+- Define module responsibilities, ports, schemas, threat model, rollback strategy, and verification gates.
+- Freeze separate Coding and Video benchmark task schemas and scoring methods.
+
+**Exit:** owner-approved implementation plan and evaluation method. No runtime code or production dependency is authorized by this gate.
+
+## Stage 6 — Contract verification and task-set preparation
+
+- If separately authorized, use controlled fake providers/hosts/renderers and deterministic traces to test state, budgets, delivery, cancellation, recovery, plan revision, checkpoint, render lifecycle, and completion contracts.
+- Prepare reproducible Coding repositories/tasks and Video source assets/tasks with pinned digests, acceptance criteria, hidden checks, and reviewer rubrics.
 - Report PASS / FAIL / NOT RUN / SKIP / PARTIAL / UNVERIFIED without overclaiming.
 
-**Exit:** frozen task-set version, scoring rubric, environment controls, and contract-verification report. No comparative quality threshold is inferred yet.
+**Exit:** frozen task-set versions, scoring rubrics, environment controls, and contract-verification report.
 
-## Stage 5 — Baseline measurement
+## Stage 7 — Separate domain baselines
 
-- With separate explicit authorization, run a declared reference system or the first controlled real-model implementation against the frozen task set.
-- Pin provider/model, disposable workspace, tools, network policy, environment, budgets, and stop conditions.
-- Use the same task definitions, hidden tests, tool policy, and budget envelope for each compared system.
-- Publish baseline distributions, failure taxonomy, confidence limits, and confounders.
-- If no comparable reference system is available, label the first controlled implementation as the baseline rather than implying an external comparison.
+- With separate explicit authorization, run a declared reference system or first controlled implementation on each frozen domain task set.
+- Pin provider/model, tool snapshots, source assets/repositories, workspace isolation, network policy, environment, budgets, and stop conditions.
+- Publish Coding and Video baseline distributions and failure taxonomies separately.
+- Do not infer Video quality from Coding success or vice versa.
 
-A fixture-only provider does not count as a real-model Coding Agent baseline.
+**Exit:** reproducible baseline reports for each domain. Baselines are evidence, not target thresholds.
 
-**Exit:** reproducible baseline report. The baseline is evidence, not a target threshold.
+## Stage 8 — Target confirmation and formal evaluation
 
-## Stage 6 — Target confirmation
+- Set separate Coding and Video quality targets using measured baselines, task difficulty, confidence intervals, and risk.
+- Set shared Kernel safety floors for unauthorized execution, false completion, UNKNOWN reconciliation, cancellation, and budget enforcement.
+- Run repeated comparisons and one-capability-at-a-time ablations.
+- Publish all outcomes, including failed, blocked, incomplete, unsafe, and unverified runs.
 
-- Use baseline distributions, task difficulty strata, confidence intervals, safety requirements, and intended deployment risk to propose quality thresholds.
-- Set false-completion and unauthorized-execution safety gates separately from average task-success targets.
-- Review threshold sensitivity and the effect of blocked/incomplete/unsafe runs.
-- Obtain explicit owner approval of target thresholds before formal comparison claims.
+**Exit:** evidence-backed adoption/adaptation/rejection decisions. No benchmark result alone implies production readiness.
 
-**Exit:** approved target metrics and safety gates. Do not choose thresholds retroactively to make observed results look successful.
+## Stage 9 — Trusted execution and productization
 
-## Stage 7 — Formal evaluation and ablation
-
-- Run repeated controlled comparisons against the approved baseline and thresholds.
-- Perform one-capability-at-a-time ablations for GoalContract, reconnaissance, plan graph/revision, EvidenceGraph, debugging, independent verification, checkpoint/compaction, and effect-aware scheduling.
-- Report distributions, all failure classes, safety violations, resource costs, and confidence limits.
-- Preserve full traces and reproduce representative failures.
-
-**Exit:** evidence-backed adoption/adaptation/rejection decisions. A benchmark result does not imply production readiness.
-
-## Stage 8 — Strengthen long-task context and trusted execution
-
-- Validate checkpoint integrity and recovery-time authorization revalidation.
-- Test compaction and memory freshness.
-- Fault-inject Host crashes, process-tree leaks, receipt delays, UNKNOWN outcomes, lease expiry, and workspace divergence.
-- Verify plan-switch drain/cutover, process convergence, receipt authenticity, and Completion Guard under adversarial conditions.
+- Fault-inject Host crashes, process-tree leaks, receipt delays, UNKNOWN outcomes, lease expiry, workspace/project divergence, long render cancellation, and partial-output recovery.
+- Verify process convergence, receipt authenticity, final artifact publication, and Completion Guard under adversarial conditions.
+- Only after core contracts are demonstrated, evaluate SDK/API/CLI/IDE/Desktop integrations and any minimal user-facing preview/approval surface.
 
 **Exit:** bounded, environment-specific evidence for recovery and trusted execution claims.
 
-## Stage 9 — Productization
-
-Only after the core contracts and controlled execution are demonstrated, evaluate SDK/API/CLI/IDE/Desktop integration, remote workers, multi-user deployment, and extension lifecycle.
-
 ## Hard gates
 
-- A phase does not automatically authorize the next phase.
+- Product direction approval does not approve every detailed contract.
 - Architecture approval does not equal implementation authorization.
 - Implementation planning does not authorize runtime code or production dependencies.
-- Real-model baseline runs require separate explicit authorization.
+- Real-model benchmark runs and external media processing require separate explicit authorization.
 - Passing a contract spike or baseline run does not equal production readiness.
-- Target thresholds are set only after a frozen task set and measured baseline exist.
+- Coding and Video quality thresholds are set only after their own frozen task sets and measured baselines exist.
 - D9 / Multi-Agent remains deferred until separately reopened and authorized.
+- A full visual Video Editor remains outside the first-phase scope.
 - No legacy code migration without per-asset review and explicit approval.

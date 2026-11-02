@@ -1,12 +1,12 @@
 # Verification and completion contract
 
-> **Status: Approved completion principles re-authored as an initial contract and extended by a PROPOSED intelligent-execution model.** Completion Guard implementation, verifier quality, and evidence interoperability remain unverified.
+> **Status: Approved completion principles re-authored as a cross-domain proposal.** Completion Guard uses one common evidence envelope; Coding and Video supply independent domain-specific evidence and verifiers. Implementation, verifier quality, and evidence interoperability remain unverified.
 
 ## 1. Completion is a guarded state transition
 
 A Task is not complete because the model says it is complete, because a command returned exit code zero, because a PlanStep is verified, or because a diff exists.
 
-Kernel may commit TaskCompleted only after a VerificationReport is validated against the current accepted GoalContract, PlanRevision, acceptance criteria, workspace snapshot, environment, and trusted execution evidence.
+Kernel may commit TaskCompleted only after a VerificationReport is validated against the current accepted GoalContract, PlanRevision, DomainBinding/Workflow Profile, acceptance criteria, final workspace/project snapshot, environment, delivered artifact digests, and trusted execution evidence.
 
 The agent's final text is a delivery artifact. It is not completion evidence.
 
@@ -31,7 +31,7 @@ Verification is a layered evidence process. Process independence, judgment indep
 
 ### 3.1 Machine-verifiable evidence
 
-Run the checks required by the accepted GoalContract and plan: tests, build, type checks, static analysis, API/contract checks, hidden tests, reproducible experiments, or other objective probes. Each run must use the trusted execution path and record actual command, environment, workspace, Host run ID, receipt, exit/signal, output digest, and artifacts.
+Run the checks required by the accepted GoalContract and plan. Coding examples include tests, builds, type checks, static analysis, API/contract checks, and hidden tests. Video examples include ffprobe metadata checks, frame/packet decode checks, timeline/source-range invariants, audio/video synchronization, and media-profile checks. The domain Workflow Profile defines the required evidence classes. Each run must use the trusted execution path and record actual command, environment, workspace, Host run ID, receipt, exit/signal, output digest, and artifacts.
 
 A test authored or modified by the Implementer is useful evidence that the test ran and that the implementation satisfies that particular test. It is not automatically an independent oracle. The evidence record must retain test provenance and whether its oracle was authored/modified by the implementation path, independently authored, hidden, or externally supplied.
 
