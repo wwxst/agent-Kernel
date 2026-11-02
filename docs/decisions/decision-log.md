@@ -39,7 +39,7 @@ Every decision entry records the final selection, rationale, alternatives not se
 - **Final selection:** Deliver a genuinely autonomous natural-language video-editing Agent that can complete an end-to-end editing task within a bounded core operation set. The task-level loop is: understand the request → analyze source media → identify/select useful moments → organize a basic narrative → create an immutable timeline revision → render → inspect the actual output → revise from user feedback → re-render/re-verify → deliver.
 - **Included first-phase capabilities:**
   1. Ingest, fingerprint, and technically probe user-supplied source media.
-  2. Perform task-conditioned basic video/content/shot analysis. Exact analysis modalities, coverage, trigger policy, and model/provider are deferred to ADP-02.
+  2. Perform task-conditioned basic video/content/shot analysis under the four-stage progressive-analysis and modality-scoped coverage policy approved by ADP-02; provider/model and task-family-specific evidence calibration remain detailed design.
   3. Identify and select task-relevant moments/highlights with evidence, rationale, and uncertainty.
   4. Understand natural-language editing intent and form a basic, genre-flexible NarrativePlan with message, useful beats/moments, necessary context, sequence, and simple duration/pacing allocation.
   5. Support trim, reorder, hard cut, concatenate, simple fade/crossfade, and limited source-audio preserve/mute/per-clip gain/simple fades.
@@ -55,7 +55,7 @@ Every decision entry records the final selection, rationale, alternatives not se
   - An ultra-minimal trim/reorder/concatenate-only first phase was not selected because it risks visually crude outputs and under-exercises the editing loop.
   - A full visual editor was not selected because it is outside the natural-language autonomous-editing product boundary.
   - These are not permanent product rejections; future scope requires a separate decision.
-- **Risks and limitations:** Basic moment selection/narrative planning may be insufficient for complex genres; weak or conflicting analysis evidence may require clarification/human review; simple transitions still require timebase/audio/render validation; a bounded operation set will not satisfy every professional workflow; technical validity does not prove semantic correctness. Detailed analysis, temporal, output, verification, resource, and interaction contracts remain open under ADP-02 through ADP-10.
+- **Risks and limitations:** Basic moment selection/narrative planning may be insufficient for complex genres; weak or conflicting analysis evidence may require clarification/human review; simple transitions still require timebase/audio/render validation; a bounded operation set will not satisfy every professional workflow; technical validity does not prove semantic correctness. Provider/model and task-family-specific evidence calibration remain detailed design under ADP-02; temporal, output, verification, resource, and interaction contracts remain open under ADP-03 through ADP-10.
 - **Acceptance conditions:**
   1. A task starts from a natural-language request and authorized source set without the user specifying every operation.
   2. The Agent produces task-conditioned source understanding and evidence-backed moment selection.
@@ -104,6 +104,6 @@ Every decision entry records the final selection, rationale, alternatives not se
 
 ADP-02 is now **REVISED/APPROVED** and recorded above. The remaining first-batch drafts — ADP-03, ADP-05, and ADP-09 — have been refined on the architecture branch and remain **OPEN** pending explicit owner disposition. Their contracts specify Host launch/revocation ordering, piecewise stream-to-asset time mapping, and resolver-mediated ScopedReadGrant boundaries; none is empirically verified. Documentation approval does not authorize Runtime implementation, experiments, technology selection, or deployment.
 
-## 5. Remaining decisions
+## 6. Remaining decisions
 
 ADP-03 through ADP-11 remain OPEN. ADP-01 and ADP-02 are recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
