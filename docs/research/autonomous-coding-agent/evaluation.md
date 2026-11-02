@@ -1,6 +1,6 @@
 # Autonomous Coding Agent — Coding Domain Evaluation and Experiment Protocol
 
-> **Status: PROPOSED Coding-domain evaluation.** Video evaluation is separate; shared Kernel safety metrics are defined in the [Video evaluation protocol](../multimedia-domain-architecture/evaluation.md) and cross-domain architecture. This document defines how the intelligent execution architecture should be evaluated. No benchmark run, runtime result, or performance claim is reported here.
+> **Status: PROPOSED Coding-domain evaluation.** Video evaluation is separate. Shared Kernel safety, authority, lifecycle, and recovery metrics are defined in the [Shared Agent Kernel evaluation protocol](../shared-kernel/evaluation.md). This document defines how the Coding domain should be evaluated. No benchmark run, runtime result, or performance claim is reported here.
 
 ## 1. Evaluation objective
 
