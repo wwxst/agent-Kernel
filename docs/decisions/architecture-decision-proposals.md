@@ -51,7 +51,7 @@ Within the accepted task GoalContract, authorized source set, bounded operation 
 ### Included first-phase capability scope
 
 1. **Material intake:** ingest user-supplied assets, fingerprint them, and perform technical probing sufficient to identify files, streams, duration, time bases, and known warnings.
-2. **Basic media understanding:** analyze video content and shots/scenes sufficiently to navigate the source material and support the current editing task. Exact modalities, coverage, trigger policy, and provider/model remain ADP-02 decisions.
+2. **Basic media understanding:** analyze video content and shots/scenes sufficiently to navigate the source material and support the current editing task under the four-stage progressive-analysis and modality-scoped coverage policy approved by ADP-02. Provider/model and task-family-specific evidence calibration remain detailed design.
 3. **Moment/highlight selection:** identify and select task-relevant candidate moments from source evidence; preserve selection rationale and uncertainty. Advanced multi-objective ranking is not implied.
 4. **Natural-language intent understanding:** turn the user's message into explicit editing criteria, required/excluded content, desired duration/style, and relevant constraints.
 5. **Basic narrative planning:** create a genre-flexible NarrativePlan with the intended message, a small set of useful beats/moments, sequence/order, necessary context, and simple duration/pacing allocation. A universal story template and advanced cross-scene narrative reasoning are not required.
@@ -91,7 +91,7 @@ These alternatives are not permanent product rejections; future scope requires a
 - Even simple crossfades require correct timebase, overlap, audio, and render validation.
 - A bounded operation registry may not satisfy every social-video or professional workflow.
 - The Agent can produce a technically valid but semantically misleading edit; factual/context criteria and independent review remain necessary.
-- Exact analysis strategy, temporal contracts, output profiles, verification policy, resource enforcement, and preview interaction are governed by ADP-02 through ADP-10 and remain open.
+- The logical progressive-analysis and coverage policy is approved under ADP-02; provider/model and task-family-specific evidence calibration remain detailed design. Temporal contracts, output profiles, verification policy, resource enforcement, and preview interaction remain open under ADP-03 through ADP-10.
 
 ### Acceptance conditions
 
