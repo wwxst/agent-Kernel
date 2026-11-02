@@ -112,7 +112,7 @@ Typed schemas, fixtures, tests, thresholds, and Host-specific enforcement are la
 
 ### Related decisions and documents
 
-- ADP-02: analysis modalities, coverage, and progressive-analysis policy.
+- ADP-02: approved progressive-analysis and coverage policy; provider/model selection and task-family-specific evidence calibration remain detailed design.
 - ADP-03 through ADP-09: profile authority, artifacts, temporal model, output profiles, verification, Host resources, and cross-domain handoff.
 - ADP-10: preview/progress/approval interaction surface.
 - ADP-11: staged implementation and separate authorization.
