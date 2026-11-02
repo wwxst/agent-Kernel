@@ -128,3 +128,19 @@ The [Decision Log](decision-log.md) records ADP-01 and ADP-02 as REVISED/APPROVE
 The current documentation is ready for continued owner review as a coherent cross-domain architecture proposal. ADP-01's revised Video capability boundary is already approved; the remaining ADP decisions and shared/domain contracts still require disposition.
 
 It should not be interpreted as authorization for Runtime code, production dependencies, external media processing, real-model benchmark runs, final technology selection, or legacy migration. Those require separate explicit approval.
+
+## 8. Draft PR #1 architecture subtraction — subsequent non-approval review
+
+The [architecture subtraction review](architecture-subtraction-review.md) preserves the approved one-Kernel/two-Domain product target while reducing operational control machinery. It is **NOT** an empirical or approval result.
+
+| Boundary | New candidate design | Status |
+| --- | --- | --- |
+| Cognition | One primary Task Orchestrator loop with Strategic/Tactical/Assurance purposes, not three controllers | PROPOSED |
+| Task/versions | TaskControl CAS for accepted goal/structural plan/cancel/terminal; per-ModelStep/Invocation/Budget CAS plus relevant protected read-set | G1 NOT RUN |
+| Plan/ActionProposal | L2-only structural plan revisions; bounded immutable decision intent; no duplicate ActionProposal execution lifecycle | PROPOSED |
+| Evidence/Context | Minimum EvidenceRefs/criterion bindings, optional EvidenceGraph index, lazy context views, milestone checkpoints | PROPOSED |
+| Scheduling | Sequential default; bounded parallel reads/isolated operations only if proven | G1/G3/G4 NOT RUN |
+| Trusted boundaries | RevocationRequested/HostFenceInstalled/Revoked, K/O/H ownership, Coding ExecutionViewManifest, hard budgets, UNKNOWN, Completion Guard | P0 CONTRACTS RETAINED; G1/G2 NOT RUN |
+| Domain scope | Autonomous Coding repair/verify and full Video intent→analysis→timeline→render→inspect→revise | PRODUCT TARGET RETAINED; G3–G5 NOT RUN |
+
+**Verdict:** G0 ARCHITECTURE REVIEW **NOT APPROVED**. Historic PASS labels about document consistency remain scoped to those earlier reviews, not a runtime assertion. ADP-01/02 are unchanged; ADP-03–11 still OPEN. No merge/deployment authorization.
