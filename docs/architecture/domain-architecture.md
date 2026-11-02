@@ -102,7 +102,7 @@ See [Video Editing Intelligence](../research/multimedia-domain-architecture/inte
 
 Each task is bound to one immutable **Workflow Profile**. A profile composes a domain's schemas, cognitive policy, tool capabilities, resource envelope, and verification obligations.
 
-A Workflow Profile is a configuration/policy snapshot, not an agent process, microservice, or new security principal. It cannot grant permissions by itself. Kernel admission and current authorization remain authoritative.
+A Workflow Profile is a configuration/policy snapshot, not an agent process, microservice, or new security principal. It cannot grant permissions by itself. Kernel admission and current authorization remain authoritative. Profile pins preserve historical provenance; they do not authorize new launches after supersession/revocation. Kernel admission and the pre-launch dispatch gate must check the current effective profile version and authority epoch. A stale accepted plan cannot bypass revocation.
 
 A Workflow Profile declares at least:
 
@@ -145,8 +145,10 @@ For the first platform scope:
 2. Each Task is bound to exactly one domain and one Workflow Profile version.
 3. Each domain has its own context projection, planner semantics, tool capability set, and verifier.
 4. The domains share Task/Plan/Tool/Host/Journal/Budget/Recovery/Completion contracts.
-5. A task that requires a Coding task and a Video task may be represented as separately authorized tasks linked by artifact references; a composite cross-domain autonomous workflow is **OPEN / DEFERRED** until separately designed.
-6. Domain-specific artifacts and evidence are not silently interpreted by the other domain.
+5. A task that requires a Coding task and a Video task is represented as separately authorized Tasks linked by exact immutable typed ArtifactRefs and an auditable handoff record; a composite cross-domain autonomous workflow is **OPEN / DEFERRED** until separately designed.
+6. ArtifactRef is a reference, not a capability. The consuming Task receives a separate narrowly scoped authorization and validates exact digest, schema, classification, provenance, and suitability.
+7. The consuming Task has its own principal, DomainBinding, Workflow Profile, GoalContract, PlanRevision, tools, approvals, budget, and verifier. It does not inherit producer permissions, approvals, profile, secrets, workspace/project access, or private context.
+8. Domain-specific artifacts and evidence are not silently interpreted by the other domain.
 
 This avoids turning the Kernel into a universal semantic model and keeps cross-domain coupling explicit.
 
