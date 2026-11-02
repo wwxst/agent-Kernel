@@ -15,20 +15,21 @@ Prepare a reproducible task set with pinned source assets/digests, provenance an
 Candidate task families:
 
 1. **Technical ingest and media understanding:** mixed streams, metadata, VFR/CFR, rotation, timebase, audio/subtitle streams, decode defects, and incomplete coverage.
-2. **Query-conditioned moment retrieval:** select source intervals relevant to a message or requested event, including low-salience but contextually necessary moments.
-3. **Highlight ranking and diversity:** distinguish salience, query relevance, narrative utility, coverage, and redundancy.
-4. **Message-driven narrative edit:** same source material, different editing messages; produce distinct valid beat sequences without losing factual context.
-5. **Long-form story construction:** identify scene/beat structure, preserve prerequisites/context, and avoid unsupported causal or chronological implications.
-6. **Multi-source montage:** reconcile source chronology, participants, visual style, and audio across multiple immutable assets.
-7. **Interview/talk edit:** remove pauses/redundancy while preserving utterance meaning, speaker turns, qualifications, and audio continuity.
-8. **Pacing and rhythm:** change tempo or emotional progression without dropping required content; compare pacing curves and expert judgments.
-9. **Visual/semantic continuity:** action, screen direction, eyeline, shot scale, location/time, participant, and intentional discontinuity.
-10. **Audiovisual coordination:** dialogue intelligibility, ambience bridges, music/beat alignment where authorized, sample timing, sync, clipping/loudness.
-11. **Factual/context integrity:** prevent quote splicing, false cause/effect, omitted caveats, misleading chronology, and unsupported attribution.
-12. **Natural-language revision:** apply a follow-up instruction locally, preserve unrelated beats, and correctly invalidate/reuse evidence.
-13. **Output adaptation:** apply declared container/codec/resolution/aspect/frame-rate/color/audio/subtitle profiles without confusing format conversion with editorial quality.
-14. **Source provenance:** trace each output interval to source asset/stream/range or declared generated/third-party ingredient and transformations.
-15. **Recovery and security:** cancellation, Host restart, lost receipt, UNKNOWN, partial output, stale plan, malicious playlist/path/filter input, and resource exhaustion.
+2. **Progressive analysis and escalation:** compare source-wide coverage accounting, task-conditioned modality selection, adaptive evidence expansion, unnecessary analysis, unresolved UNKNOWN, and privacy/retention behavior.
+3. **Query-conditioned moment retrieval:** select source intervals relevant to a message or requested event, including low-salience but contextually necessary moments.
+4. **Highlight ranking and diversity:** distinguish salience, query relevance, narrative utility, coverage, and redundancy.
+5. **Message-driven narrative edit:** same source material, different editing messages; produce distinct valid beat sequences without losing factual context.
+6. **Long-form story construction:** identify scene/beat structure, preserve prerequisites/context, and avoid unsupported causal or chronological implications.
+7. **Multi-source montage:** reconcile source chronology, participants, visual style, and audio across multiple immutable assets.
+8. **Interview/talk edit:** remove pauses/redundancy while preserving utterance meaning, speaker turns, qualifications, and audio continuity.
+9. **Pacing and rhythm:** change tempo or emotional progression without dropping required content; compare pacing curves and expert judgments.
+10. **Visual/semantic continuity:** action, screen direction, eyeline, shot scale, location/time, participant, and intentional discontinuity.
+11. **Audiovisual coordination:** dialogue intelligibility, ambience bridges, music/beat alignment where authorized, sample timing, sync, clipping/loudness.
+12. **Factual/context integrity:** prevent quote splicing, false cause/effect, omitted caveats, misleading chronology, and unsupported attribution.
+13. **Natural-language revision:** apply a follow-up instruction locally, preserve unrelated beats, and correctly invalidate/reuse evidence.
+14. **Output adaptation:** apply declared container/codec/resolution/aspect/frame-rate/color/audio/subtitle profiles without confusing format conversion with editorial quality.
+15. **Source provenance:** trace each output interval to source asset/stream/range or declared generated/third-party ingredient and transformations.
+16. **Recovery and security:** cancellation, Host restart, lost receipt, UNKNOWN, partial output, stale plan, malicious playlist/path/filter input, and resource exhaustion.
 
 Each task declares which dimensions are relevant and the required evidence class. Not every task needs every analysis modality or a human review.
 
@@ -57,11 +58,15 @@ Compared systems receive the same source media, message, constraints, profile, p
 | Moment retrieval | Temporal IoU, Recall@K, precision/recall, ranking metrics where annotations support them | A correct interval may still be a poor narrative choice |
 | Highlight selection | Salience ranking, query relevance, coverage/diversity, redundancy, reviewer preference | Salience is not message utility |
 | Source-range accuracy | Boundary error, temporal overlap, correct stream/asset selection | Does not prove context is sufficient |
+| Analysis coverage and evidence gaps | Coverage-manifest completeness, sampled/unsampled/unavailable interval accounting, relevant-event miss rate where annotated | Coverage accounting is not exhaustive semantic recall |
+| Progressive analysis efficiency | Analysis cost per source-minute/task, unnecessary modality runs, escalation trigger precision/recall, unresolved UNKNOWN | Compare only on matched task criteria and source sets |
+| Timestamp conversion correctness | PTS/timebase round-trip, frame/sample boundary inclusion, VFR mapping preservation, deterministic rounding | Exact arithmetic does not alone prove rendered A/V quality |
 | Narrative structure | Beat coverage, beat order/dependency validity, message transmission, contextual depth | Rubric/judgment required for many genres |
 | Factual/context integrity | Unsupported causal links, quote distortion, omitted qualifications, chronology errors, required-context recall | Must be checked against source evidence and task criteria |
 | Semantic continuity | Action/eyeline/screen-direction/speaker/location/time continuity; intentional discontinuity rationale | No universal continuity score |
 | Pacing | Beat-level duration allocation, cut-tempo curve, reviewer rubric for progression/emotional pacing | Average shot duration is insufficient |
 | Audiovisual coordination | Dialogue integrity, audio continuity, A/V sync, beat alignment where intended, loudness/clipping | Beat alignment is not a universal requirement |
+| Temporal synchronization | Measured source-to-output timestamp mapping, cumulative drift, A/V offset and sync error against declared profile tolerance | Tolerance remains profile-specific and must be frozen before a run |
 | Technical output validity | Probe/decode/container/stream/profile/duration/timing checks | Technical validity is not editorial correctness |
 | Revision fidelity | Instruction satisfaction, edit locality, unaffected-region preservation, regression rate | Depends on a declared change-impact oracle |
 | Provenance completeness | Output-interval-to-source mapping coverage, digest verification, ingredient lineage | Provenance does not prove factual truth or usage rights |
@@ -109,7 +114,8 @@ A high-severity unauthorized execution, false completion, unresolved UNKNOWN rep
 
 After a stable baseline exists, vary one capability at a time:
 
-- metadata-only probing versus progressive multimodal analysis;
+- metadata-only probing versus source-wide coverage accounting plus task-conditioned progressive analysis;
+- fixed sparse sampling versus adaptive evidence expansion triggered by criterion-level gaps;
 - uniform frame sampling versus task-conditioned temporal coverage;
 - generic salience ranking versus query/message-conditioned moment retrieval;
 - single-score ranking versus dimension-level multi-objective selection;
