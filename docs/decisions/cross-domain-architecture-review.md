@@ -89,7 +89,7 @@ These remain OPEN; no target thresholds are invented before a frozen task set an
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
 - Technical/perceptual verification boundary: **PASS — evidence obligations proposed**.
-- Local Markdown link audit: **PENDING final branch-tree check**.
+- Local Markdown link audit: **PASS** — all 32 Markdown files and all relative links resolve against the reviewed branch tree.
 - Runtime tests and fault injection: **NOT RUN**.
 - Media processing and benchmark: **NOT RUN**.
 - Host process convergence, render recovery, and media quality: **UNVERIFIED**.
