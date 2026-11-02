@@ -467,6 +467,17 @@ Artifact handoff adds orchestration and authorization overhead. A consumer may s
 
 **Related contracts/evaluation:** [Domain Workflow binding contract](../contracts/domain-workflow.md), [Completion](../contracts/completion.md), [Shared Kernel evaluation](../research/shared-kernel/evaluation.md), [Unified domain architecture](../architecture/domain-architecture.md), and ADP-04 artifact lifecycle.
 
+### First-batch decision-to-evaluation traceability
+
+| Decision | Contract surface | Evaluation surface | Required evidence before any later implementation approval |
+| --- | --- | --- | --- |
+| ADP-02 | MediaProject / MediaAnalysis coverage manifest, claim scope, freshness, and privacy rules | Video task families for ingest/progressive analysis; coverage completeness, relevant-event miss rate where annotated, false detections, escalation quality, analysis cost | Frozen coverage annotations and gap fixtures; no claim that coverage accounting equals exhaustive semantic recall |
+| ADP-03 | DomainBinding/Profile lifecycle, Kernel admission, Trusted Host dispatch gate, cancellation and UNKNOWN | Shared Kernel profile freshness metrics and revocation/stale-dispatch/cancellation/recovery scenarios | Deterministic revoke-before-admission, revoke-after-admission-before-launch, revoke-during-run, and UNKNOWN fixtures; any unauthorized launch blocks |
+| ADP-05 | Media Timeline source/timebase coordinates, conversion records, VFR and audio mappings | Video timestamp-conversion, source-range, A/V synchronization, and technical-output metrics | CFR/VFR, irregular PTS, non-zero/negative starts, missing timing, differing time bases, sample-rate and offset fixtures; tolerances declared before measurement |
+| ADP-09 | Domain Workflow handoff record, scoped ArtifactRef capability, Completion provenance | Shared Kernel cross-domain isolation and handoff metrics/scenarios | Positive and negative handoff fixtures for digest/schema, scope, expiry/revocation, producer-context access, and capability inheritance |
+
+These are architecture-level verification obligations, not completed tests. Fixture construction, Runtime/fault-injection execution, real-media/model runs, and numeric threshold selection remain subject to separate authorization.
+
 ## 11. ADP-10 — Minimal preview and approval surface
 
 **Recommendation — PROPOSED**
