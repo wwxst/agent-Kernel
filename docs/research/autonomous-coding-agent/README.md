@@ -1,6 +1,6 @@
 # Autonomous Coding Agent intelligence
 
-> **Status: PROPOSED DESIGN DRAFT — OWNER REVIEW PENDING.** The first end-to-end intelligent execution architecture and supporting research documents have been drafted. They are not approved implementation contracts. No runtime code, dependency stack, or production capability is authorized by these documents.
+> **Status: PROPOSED SECOND-ROUND DESIGN DRAFT — OWNER REVIEW PENDING.** The first-round direction was accepted conditionally for revision; this second-round contract refinement is not an architecture freeze or implementation authorization. No runtime code, dependency stack, or production capability is authorized by these documents.
 
 ## 1. Objective
 
@@ -10,7 +10,8 @@ The central design question is not how many agents or tool calls are used. It is
 
 ## 2. Design documents
 
-- [Intelligent execution architecture](design.md) — GoalContract, RepositoryModel, EvidenceGraph, PlanRevision/PlanStep, strategic/tactical/assurance loops, debugging, verification, continuity, human control, and Kernel boundaries.
+- [Intelligent execution architecture](design.md) — GoalContract versioning, RepositoryModel, EvidenceGraph, PlanRevision/PlanStep, ActionProposal, decision arbitration, verification independence, continuity, human control, and Kernel boundaries.
+- [PlanRevision and PlanStep lifecycle](../../contracts/plan-revision.md) — plan-switch barrier, old-work convergence, carry-forward, orthogonal statuses, and Kernel's deterministic acceptance boundary.
 - [Reference implementation review](reference-review.md) — source-grounded comparison of Pi, Codex, DeepSeek Harness, and Claude Agent SDK.
 - [Failure model and recovery policy](failure-model.md) — failure taxonomy, hypothesis-driven debugging, no-progress control, and recovery matrix.
 - [Evaluation and experiment protocol](evaluation.md) — real coding task benchmark, metrics, controls, ablations, and acceptance gates.
@@ -38,13 +39,13 @@ Pinned source snapshots and official documentation are recorded in [reference-re
 
 Orchestration owns reasoning and proposals. Kernel owns authoritative task and plan state, hard budgets, legal transitions, Tool Admission, approvals, durable intent, and Completion Guard. Trusted ToolHost owns physical execution evidence. Context Engine owns provenance-aware projections, not authority.
 
-The proposed design must be reconciled with the existing contracts before implementation planning. See [Architecture overview](../../architecture/overview.md).
+The second-round proposal is reconciled with the current Kernel documents but remains pending owner review. See [Architecture overview](../../architecture/overview.md) and [PlanRevision lifecycle](../../contracts/plan-revision.md).
 
 ## 6. Required next work
 
 - Review and challenge the cognitive execution model.
-- Validate the PlanRevision/PlanStep and EvidenceGraph contracts.
-- Build the proposed benchmark task set and run a baseline after separate implementation authorization.
+- Review the PlanRevision/PlanStep, GoalContract, ActionProposal, EvidenceGraph, checkpoint, arbitration, and verification contracts.
+- Prepare the benchmark task set; run a baseline only after separate explicit execution authorization.
 - Resolve the remaining questions in [Open decisions](../../decisions/open-decisions.md).
 - Keep all runtime and technology choices open until evidence and trade-offs are reviewed.
 

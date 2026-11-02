@@ -77,7 +77,7 @@ Waiting and Blocked carry structured reasons. Typical transitions:
 - Verifying → Running for authorized bounded repair under the same valid plan.
 - Verifying → Planning when the plan or criterion coverage must change.
 - Running → Waiting / Blocked when an external condition prevents safe progress.
-- Running → Cancelling after durable cancellation intent; new ModelSteps and admissions are blocked.
+- Any active non-terminal Task state (Admitted, Planning, Ready, Running, Waiting, Blocked, Verifying, or Reconciling) → Cancelling after durable cancellation intent; new ModelSteps and admissions are blocked.
 - Cancelling → Cancelled only when all admitted operations are known to have converged and no UNKNOWN remains.
 - Cancelling → Reconciling when started work has not converged.
 - Reconciling → Blocked when outcome remains unknown; otherwise resume only through a current legal transition.

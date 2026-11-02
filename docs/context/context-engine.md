@@ -29,7 +29,7 @@ RepositoryModel may include:
 - project conventions and architecture decisions;
 - known constraints, compatibility boundaries, and risk areas.
 
-Each claim retains source references, commit/file hashes, capture time, confidence, and invalidation conditions. Indexes and summaries are accelerators; source files and trusted observations remain the evidence.
+Each claim retains source references, commit/file hashes, capture time, evidence status/source quality, and invalidation conditions. Do not treat model self-reported numeric confidence as evidence. Indexes and summaries are accelerators; source files and trusted observations remain the evidence.
 
 ### EvidenceGraph
 

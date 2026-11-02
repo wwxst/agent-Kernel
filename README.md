@@ -1,8 +1,8 @@
 # Agent Kernel
 
-> **Project status: Initial architecture baseline with a proposed intelligent-execution design — under owner review.**
+> **Project status: Second-round architecture contract revision — proposed and under owner review.**
 >
-> This repository is the new, independent home for the Agent Kernel. It starts with a clean Git history. The documentation baseline re-authors approved architecture principles; the autonomous Coding Agent design and Kernel reconciliation are proposals, not a frozen implementation specification and do not authorize runtime development by themselves.
+> This repository is the new, independent home for the Agent Kernel. It starts with a clean Git history. The documentation baseline re-authors approved architecture principles. The autonomous Coding Agent design and second-round Kernel reconciliation remain proposals, not a frozen implementation specification, and do not authorize runtime development by themselves.
 
 ## Purpose
 
@@ -38,15 +38,15 @@ See [Architecture overview](docs/architecture/overview.md).
 
 ## Autonomous Coding Agent design
 
-The first intelligent-execution design is drafted for review. It defines a single-primary-controller model, GoalContract, RepositoryModel, EvidenceGraph, PlanRevision/PlanStep, strategic/tactical/assurance loops, hypothesis-driven debugging, independent verification, long-task continuity, and a reproducible evaluation protocol.
+The second-round intelligent-execution design refines the first-round proposal with GoalContract versioning, PlanRevision cutover, orthogonal PlanStep status, ActionProposal lifecycle, EvidenceGraph minimum records, decision arbitration, layered verification independence, checkpoint recovery, and staged evaluation gates.
 
 Start with [the design](docs/research/autonomous-coding-agent/design.md), then review the [reference comparison](docs/research/autonomous-coding-agent/reference-review.md), [failure model](docs/research/autonomous-coding-agent/failure-model.md), and [evaluation protocol](docs/research/autonomous-coding-agent/evaluation.md).
 
 ## Current state
 
 - Documentation baseline: established.
-- Autonomous Coding Agent intelligent-execution design: proposed draft; owner review pending.
-- Kernel architecture reconciliation: proposed draft; owner review pending.
+- Autonomous Coding Agent intelligent-execution design: second-round proposed draft; owner review pending.
+- Kernel architecture reconciliation: second-round proposed draft; owner review pending.
 - Technology choices: open.
 - Runtime implementation: not started in this repository.
 - Legacy code migration: not started.

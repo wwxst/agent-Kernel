@@ -21,7 +21,7 @@ Proposed GoalContract lifecycle:
 
 **Candidate → NeedsClarification | ReadyForAcceptance → Accepted → Superseded**
 
-A rejected candidate is retained as **Rejected**; accepted versions are immutable and monotonically versioned.
+A candidate requiring clarification remains non-authoritative. A user clarification is appended to UserIntent and produces a new GoalContract candidate; it does not mutate the prior candidate. A rejected candidate is retained as **Rejected**; accepted versions are immutable and monotonically versioned.
 
 Every version binds:
 

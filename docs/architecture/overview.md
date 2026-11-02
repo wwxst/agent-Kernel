@@ -1,6 +1,6 @@
 # Architecture overview
 
-> **Status: Initial baseline reconciled with a PROPOSED intelligent-execution design.** The authority boundaries remain the adopted starting principles. The cognitive execution model, PlanRevision/PlanStep contracts, and several integration details are proposals pending owner review. No runtime implementation or technology stack is approved.
+> **Status: Second-round reconciliation proposal.** The authority boundaries remain the adopted starting principles. The cognitive execution model and revised GoalContract/PlanRevision/PlanStep/ActionProposal/verification contracts remain proposals pending owner review. No runtime implementation or technology stack is approved.
 
 ## 1. Product objective
 
@@ -20,7 +20,7 @@ The detailed cognitive design is [Autonomous Coding Agent — Intelligent Execut
 1. **One primary task controller by default.** Orchestration owns the end-to-end goal and adaptive execution policy. Specialized reasoning modes are ModelStep purposes, not a requirement for multiple agents. Multi-Agent / D9 remains deferred.
 2. **Orchestration proposes; Kernel commits.** Planning, diagnosis, and action selection are adaptive. Authoritative state, budget, permission, admission, and completion remain deterministic.
 3. **The repository must be understood before it is changed.** RepositoryModel and EvidenceGraph projections make source facts, hypotheses, assumptions, unknowns, and freshness explicit.
-4. **Plans are versioned outcome contracts.** PlanRevision/PlanStep define dependencies, expected artifacts, criterion coverage, risk, and verification. A PlanCandidate is not authoritative until Kernel accepts it.
+4. **Plans are versioned outcome contracts.** PlanRevision/PlanStep define dependencies, expected artifacts, criterion coverage, risk, and verification. A PlanCandidate is not executable authority until Kernel validates and safely activates the revision; AcceptedPendingCutover is not executable.
 5. **Actions are evidence-producing operations.** Every side effect is admitted and attributable to the accepted plan, workspace generation, tool snapshot, and authorization evidence.
 6. **Debugging is hypothesis-driven.** Repeated attempts require new evidence or a documented retry condition.
 7. **Completion is an evidence-gated state transition.** No model message, diff, or exit code alone can complete a Task.

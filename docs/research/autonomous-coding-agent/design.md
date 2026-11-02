@@ -1,6 +1,6 @@
 # Autonomous Coding Agent — Intelligent Execution Architecture
 
-> **Status: PROPOSED.** This is the first complete design proposal for the intelligent execution system. It is not an approved implementation specification. No runtime, language, package topology, provider, database, sandbox product, or multi-agent design is selected by this document.
+> **Status: PROPOSED second-round revision.** The first-round direction was conditionally accepted for revision; this draft closes identified contract gaps but is not an approved or frozen implementation specification. No runtime, language, package topology, provider, database, sandbox product, or multi-agent design is selected by this document.
 >
 > The proposal is deliberately expressed as cognitive responsibilities, state contracts, and execution invariants. It is not a module list to translate directly into code.
 
@@ -130,7 +130,7 @@ The RepositoryModel is a versioned, provenance-aware working model of the codeba
 - test suites, test ownership, fixtures, build and verification commands;
 - project conventions, contribution instructions, and relevant architecture decisions;
 - likely impact areas, compatibility boundaries, and known risks;
-- confidence, freshness, source references, and invalidation conditions for each projection.
+- evidence status, source quality, freshness, source references, and invalidation conditions for each projection. Numeric model self-confidence is not a repository fact or evidence.
 
 The model is not assumed complete. It should answer: what has been inspected, what is inferred, what remains unknown, and which observations may be stale.
 
@@ -314,7 +314,7 @@ Reconnaissance is a deliberate, bounded activity—not indiscriminate file readi
 3. Read relevant source and architecture documents before proposing changes.
 4. Trace the affected behavior across callers, implementations, interfaces, tests, and configuration.
 5. Run read-only or low-risk diagnostic commands when needed to establish the baseline.
-6. Record the facts, confidence, and unknowns in the RepositoryModel and EvidenceGraph.
+6. Record the facts, evidence quality/provenance, and unknowns in the RepositoryModel and EvidenceGraph; do not store model self-reported confidence as fact.
 
 Before a plan is accepted, only the narrowly admitted reconnaissance capabilities may be used. Code writes and other side effects require an accepted plan and normal Kernel admission.
 
@@ -542,13 +542,15 @@ All Planner, Explorer, Implementer, Debugger, and Verifier model calls pass thro
 
 The proposal is ready for implementation planning only when it has:
 
-- a coherent GoalContract, RepositoryModel, EvidenceGraph, PlanRevision, and PlanStep model;
-- explicit strategic, tactical, debugging, assurance, and stopping policies;
+- a coherent GoalContract, RepositoryModel, EvidenceGraph, PlanRevision, PlanStep, and ActionProposal model;
+- explicit strategic, tactical, debugging, assurance, arbitration, and stopping policies;
 - precise Orchestration/Kernel/Context/Tool Runtime/Host boundaries;
-- defined long-task checkpoint and recovery semantics;
+- defined plan-switch, long-task checkpoint, and recovery semantics;
 - a threat and failure model;
-- an evaluation benchmark and reproducible experiment protocol;
+- reviewed metric definitions, task families, safety floors, and a staged reproducible evaluation method;
 - explicit unresolved decisions and owner review.
+
+A frozen benchmark task set and measured baseline are later evaluation stages; neither is required to define the architecture-level evaluation method or begin implementation planning. Runtime execution and baseline measurement still require separate explicit authorization.
 
 The proposal is not empirically validated. The evaluation protocol is specified in [evaluation.md](evaluation.md); the current evidence and limitations are recorded in [reference-review.md](reference-review.md).
 
