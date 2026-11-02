@@ -76,7 +76,9 @@ A long-running operation such as FFmpeg rendering remains a Kernel ToolInvocatio
 
 The Host must:
 
-- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, tool snapshot, budget reservation, and fencing epoch;
+- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, profile-authority epoch, tool snapshot, budget reservation, and fencing epoch;
+- immediately before physical process creation, consume a one-use dispatch authorization bound to the current effective Active profile version/digest and epoch; a previously accepted plan or cached allowlist is not sufficient;
+- establish a deterministic ordering between profile revocation/cutover and process launch. If the Host cannot prove that the dispatch authorization is current at the launch boundary, it must fail closed and not create the process;
 - record process/job creation before reporting the operation as started;
 - contain the process tree and retain stdout/stderr/progress channels under the declared resource limits;
 - report progress as non-authoritative telemetry associated with the Host run ID;
@@ -84,7 +86,7 @@ The Host must:
 - record exit/signal, resource consumption, partial-output state, output digest, and an authenticated receipt;
 - preserve OutcomeUnknown when it cannot prove whether a process or output side effect completed.
 
-A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication.
+A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication. A profile revoked or superseded after plan approval invalidates any not-yet-consumed dispatch authorization. If the revocation/authority epoch cannot be checked because Kernel state is unavailable, no new process is launched. Already-running processes retain their original profile binding and follow the predeclared drain/cancel policy; UNKNOWN remains held and cannot be cleared by profile migration.
 
 For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md) and [FFmpeg RenderPlan security contract](../contracts/render-plan-security.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.
 
