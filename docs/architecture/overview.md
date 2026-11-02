@@ -34,7 +34,7 @@ The product is not two agents joined by a common UI. It is one Kernel that hosts
 
 | Layer | Responsibility | Must not own |
 | --- | --- | --- |
-| Shared Agent Kernel | Task/Turn/Step, GoalContract/PlanRevision envelopes, Model Gateway admission, Context Engine infrastructure, Tool Runtime, Permission, Budget, Journal, Host receipts, cancellation, recovery, Completion Guard, delivery | Domain semantic models, technical plan quality, narrative/pacing judgment |
+| Shared Agent Kernel | Minimal authority for Task/Plan/Attempt/Invocation state commits, policy admission, budget reservations, Kernel Journal/Inbox/Outbox, recovery decisions, Completion Guard, delivery | Domain semantic models, Host physical launch/ledger facts, cognitive strategy |
 | Domain Intelligence | Domain goal interpretation, domain model, evidence semantics, planning/replanning, debugging/repair, criterion selection, verification decisions | Direct provider calls, direct side-effect execution, authoritative Kernel state writes |
 | Domain Execution | Domain-specific tools, media/code adapters, artifact creation, render/build/test operations under common execution controls | Permission grants, task state, plan activation, completion authority |
 
@@ -45,12 +45,14 @@ The Kernel remains the sole authority for:
 - Task, Turn, runtime Step, ModelStep, ModelAttempt, ActionProposal, and ToolInvocation state;
 - accepted GoalContract/PlanRevision versions, PlanStep work/verification state, and legal transitions;
 - deterministic contract validation, protected-field confirmation references, and plan-switch barriers;
-- Model Gateway request admission, response settlement, hard model budgets, and cancellation ordering;
+- model request admission, candidate selection and hard budget reservations/settlement; Model Gateway observes provider facts rather than committing Kernel authority;
 - ToolInvocation identity, immutable tool-definition snapshots, policy/capability/approval checks, hard resource reservations, and durable intent;
-- Tool Runtime admission/scheduling/fencing and Trusted ToolHost process execution boundary;
-- Kernel Journal, Host Ledger/receipt reconciliation, UNKNOWN outcomes, and recovery;
+- Tool Runtime admission authority and fencing requirements; Tool Runtime schedules and Trusted ToolHost independently owns the physical launch gate and process facts;
+- Kernel Journal/Inbox/Outbox, authenticated import and reconciliation of the **Host-owned** Ledger/receipts, scoped UNKNOWN holds and recovery decisions;
 - generic artifact identity, digest, provenance, lineage, and delivery references;
 - VerificationReport binding and deterministic Completion Guard checks.
+
+These are logical authority boundaries, not an instruction to implement a monolithic Kernel class or deploy separate services. [Core protocol](../contracts/core-protocol.md) defines the fast path and cross-module feasibility gates.
 
 The resource ledger must be able to represent more than model tokens: wall time, CPU, memory, disk, GPU where applicable, input media volume/duration, and output size are candidate dimensions. Exact resource enforcement remains open until researched and implemented.
 
