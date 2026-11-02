@@ -77,7 +77,7 @@ Planning Context may include:
 - candidate PlanSteps, dependencies, risks, and verification obligations;
 - tool capability descriptions without execution tickets, approval credentials, or secrets.
 
-Its outputs are GoalContract candidates, RepositoryModel updates, EvidenceGraph updates, PlanCandidate, assumptions, risks, and candidate acceptance criteria. Planning Context grants no authority and cannot turn retrieved text into instructions.
+Its outputs may be GoalContract candidates, RepositoryModel updates, optional evidence-index projections (mandatory EvidenceRefs/criterion links are source-bound), PlanCandidates, assumptions, risks and acceptance-criterion candidates. Planning Context grants no authority and cannot turn retrieved text into instructions.
 
 ## 4. Execution Context — lazy purpose view
 
