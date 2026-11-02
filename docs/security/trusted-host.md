@@ -39,7 +39,7 @@ A model statement that a tool is approved is not approval evidence.
 
 ### 2.1 Serialized Host LaunchGate
 
-An AdmissionTicket is evidence of admission, not a self-sufficient launch permission. The dispatch authorization is short-lived, one-use, and bound to the exact invocation, tool/argument digest, profile ID/version/digest, profile-authority epoch, principal/capability/approval versions, budget reservation, Host target, fencing epoch, expiry, and nonce.
+An AdmissionTicket is evidence of admission, not a self-sufficient launch permission. The dispatch authorization is short-lived, one-use, and bound to the exact invocation, tool/argument digest, profile ID/version/digest, profile-authority epoch, principal/capability/policy/approval versions, workspace/project identity, budget reservation, Host target, fencing epoch, expiry, and nonce.
 
 The Trusted ToolHost must expose a serialized LaunchGate whose process-creation operation and profile-authority fence advancement share one linearizable ordering boundary. The gate revalidates current authority and consumes the ticket at the physical launch boundary; it must not validate a cached ticket and spawn outside the gate.
 
@@ -54,7 +54,7 @@ A revocation request stops new Kernel admissions and ticket issuance. The author
 
 ### 2.2 Scoped ArtifactResolver
 
-Artifact IDs and ArtifactRefs are identifiers, not filesystem authority. The Host resolves payload bytes through a trusted ArtifactResolver using a server-side ScopedReadGrant bound to the exact handoff, artifact ID/digest/schema, consumer Task/DomainBinding, purpose, access mode, expiry, and revocation epoch. No model-supplied path, producer workspace path, signed URL, or bearer secret is accepted as a payload locator.
+Artifact IDs and ArtifactRefs are identifiers, not filesystem authority. The Host resolves payload bytes through a trusted ArtifactResolver using a server-side ScopedReadGrant bound to the exact handoff, artifact ID/digest/schema, consumer Task/DomainBinding, purpose, access mode, authorizing principal/policy version, expiry, and revocation epoch. No model-supplied path, producer workspace path, signed URL, or bearer secret is accepted as a payload locator.
 
 The resolver verifies the artifact digest and grant before opening the payload and before each subsequent range/stream read. It exposes only the exact authorized payload; it does not traverse parent, derived-from, sibling, project, workspace, or producer-Task references. Each related artifact requires a separate grant. Grant material remains outside model context and ordinary tool output.
 
