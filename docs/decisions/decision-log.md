@@ -72,7 +72,7 @@ Every decision entry records the final selection, rationale, alternatives not se
 
 ## 4. First-batch draft readiness
 
-Detailed proposal and linked contract/evaluation drafts for ADP-02, ADP-03, ADP-05, and ADP-09 have been prepared on the architecture branch. Their Decision Register statuses remain **OPEN** until explicit owner disposition. Draft preparation is not ACCEPTED/REVISED approval and does not authorize Runtime implementation, experiments, technology selection, or deployment.
+Detailed first-batch decision and linked contract/evaluation drafts for ADP-02, ADP-03, ADP-05, and ADP-09 have been refined on the architecture branch. The drafts now define modality-scoped coverage-manifest closure, linearizable Host launch/revocation ordering, piecewise stream-to-asset time mapping, and resolver-mediated ScopedReadGrant boundaries. Their Decision Register statuses remain **OPEN** until explicit owner disposition. Draft preparation is not ACCEPTED/REVISED approval and does not authorize Runtime implementation, experiments, technology selection, or deployment.
 
 ## 5. Remaining decisions
 
