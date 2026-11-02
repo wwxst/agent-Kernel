@@ -81,17 +81,21 @@ For the first plan:
 4. If the initial workspace and task bindings remain current and there are no prior operations to drain, Kernel atomically activates the revision and updates the Task's active-plan pointer.
 5. The Task can move from Planning to Ready; execution begins only when a PlanStep becomes Ready.
 
-### 3.1.1 Change classification and tactical fast path (PROPOSED refinement)
+### 3.1.1 Tactical/rework/structural classification and **per-invocation approval**
 
-A plan switch applies only when an accepted structural authority/goal constraint must change. Domain Orchestration proposes one of three reasoned change classes; Kernel validates **protected-field diffs** rather than trusting the model's label:
+A structural PlanRevision switch is required only when the **accepted plan/GoalContract's protected authorization envelope** changes, not when an ordinary ToolInvocation receives a one-time approval. Domain Orchestration proposes a reasoned L0/L1/L2 class; Kernel checks exact protected-field diffs against the accepted plan rather than trusting the model classification.
 
-| Class | Permitted changes | Protocol |
+| Class | Change type | Required protocol |
 | --- | --- | --- |
-| L0 TacticalAdjustment | Investigation/search method, debugging hypothesis, tool selection, localized execution tactics within existing PlanStep objective, dependencies, authority and accepted criteria | No new PlanRevision; record appropriate ActionProposal/ExecutionTrace, re-admit every effectful ToolInvocation |
-| L1 PlanStepRework | Re-attempt the *same* PlanStep outcome after failed verification or implementation, without a protected-field change | Explicit `PlanStepReworkStarted`; preserve prior attempts, artifacts and failed evidence, mark affected verification Stale; current PlanRevision remains Active |
-| L2 StructuralReplan | GoalContract/scope, protected acceptance obligation, capability/approval, dependency graph, relevant resource envelope, material precondition or execution authority change | Full `PlanSwitchRequested` freeze/drain/reconcile/refresh/validate/cutover in section 3.2 |
+| L0 TacticalAdjustment | Search/debug strategy, tool choice or **one-use InvocationApproval** inside accepted PlanStep's tool capability, effect class, scope, risk ceiling, verification obligations and budget | Keep PlanRevision Active. Obtain required approval through normal Invocation Approval/Admission; approval reference binds exact Invocation/tool/argument digest, authority epoch/version, expiry/nonce. Revalidate again at Host launch. |
+| L1 PlanStepRework | Same engineering objective and **same plan-level authorization/acceptance envelope**; new attempt after failed implementation/test | Record PlanStepReworkStarted and stale affected evidence; per-tool one-use approvals remain separately enforced. |
+| L2 StructuralReplan | Changed GoalContract/scope, PlanRevision capability/effect/risk **envelope**, approval **policy or required class of approver**, plan-wide resource permissions, dependency graph, protected criteria or material precondition | Full PlanSwitchRequested freeze/drain/reconcile/refresh/validate/cutover. |
 
-L0/L1 cannot expand authorization, escape budget/admission/fence checks, overwrite source/evidence lineage or weaken required verification. When an L0/L1 classification cannot be proved from the current authoritative snapshot, classify as L2 or block for clarification; no model-generated justification bypasses the guard. The first implementation has **no partial/hot L2 plan cutover**. Routine failed tests or searches do not create a new PlanRevision when the PlanStep contract is unchanged. See [Core protocol](core-protocol.md).
+A one-time InvocationApproval **does not** mutate immutable PlanRevision or allow elevation beyond existing capability/scope/risk. Approval denial also does not inherently require L2; the planner may ask, try another already admitted route, safely stop, or propose L2 only if the accepted plan itself must change.
+
+**Permission revocation is immediate in Kernel Admission and ticket issuance, but not retroactive physical Host revocation.** Kernel records RevocationRequested and fences affected Host scope under [Trusted Host](../security/trusted-host.md); already-launched operations are reconciled. A revocation does not automatically replace a plan. Domain impact analysis determines whether an alternative operation remains within the current authorization envelope (L0/L1), whether the plan is blocked, or whether a true protected-field change requires L2. No planner classification can bypass Host fencing or replay a revoked approval.
+
+L0/L1 cannot change authorized effects, lower required independent evidence, or bypass budget checks. Unprovable impact is held/escalated to L2 or clarification. First implementation does not introduce partial L2 hot-cutover. See [Core protocol](core-protocol.md).
 
 ### 3.2 Replanning and version switch
 
