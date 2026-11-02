@@ -94,6 +94,10 @@ These are not two names for one generic cognition model. The shared EvidenceGrap
 
 A domain may reuse generic orchestration primitives such as hypothesis records, dependency DAGs, evidence relations, and bounded replan policies. Reuse does not imply sharing its semantic model.
 
+Planning granularity is also domain-specific. Coding may prefer fine-grained inspect/edit/test/debug steps; Video may use coarser analysis/story/timeline/render/verify steps, with several separately admitted ToolInvocations under one PlanStep. Kernel shares the PlanRevision envelope, dependency/authority checks, invocation admission, resource accounting, and evidence binding—not a universal PlanStep size, operation vocabulary, cognitive loop, or verifier algorithm. A RenderJob is a Video-domain correlation record over shared ToolInvocation/Host state, not a new Kernel lifecycle.
+
+See [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md) for the Video-specific cognitive pipeline and [Domain Workflow contract](../contracts/domain-workflow.md) for the shared envelope boundary.
+
 ## 5. Domain Execution and Workflow Profiles
 
 Each task is bound to one immutable **Workflow Profile**. A profile composes a domain's schemas, cognitive policy, tool capabilities, resource envelope, and verification obligations.
