@@ -22,7 +22,7 @@ The first useful vertical slice should cover:
 8. Deliver the video, timeline revision, render manifest, and verification report.
 9. Accept a follow-up natural-language instruction and create a new timeline/render revision.
 
-The minimum useful edit operations should start with source-range selection, trim, reorder, concatenate, simple transitions, simple audio handling, and output-profile constraints. Captions/titles and richer audio treatment are candidate extensions within the automatic-editing scope, but their exact inclusion and priority remain **OPEN**.
+The scope is separated into three distinct capability classes: (1) **core automatic-editing foundation** — source-range selection, trim, reorder, hard cut, concatenate, simple fade/crossfade, limited source-audio preserve/mute/gain/fades, immutable timeline, bounded render, verification, and natural-language revision; (2) **enhanced editorial intelligence** — deeper cross-scene narrative planning, query-conditioned highlight ranking, semantic continuity, music-aware pacing, generated captions/titles, richer audio mixing, speed ramps, overlays, reframing, and color matching; and (3) **post-production/platform adaptation** — codec/container/resolution/aspect/frame-rate/color/audio-output profiles, metadata, subtitles mux/sidecar, thumbnails, platform safe areas, packaging, and optional platform delivery. Only the first class defines the proposed first implementation slice. The other classes are roadmap capabilities, not implied first-phase support. See [Video Editing Intelligence](intelligence.md).
 
 ### 1.2 Explicit non-goals
 
@@ -32,7 +32,7 @@ The minimum useful edit operations should start with source-range selection, tri
 - Multi-Agent / D9 or distributed specialist agents.
 - Runtime implementation or final language, database, deployment, or media-analysis model selection.
 
-A preview, contact sheet, simple asset list, or approval surface may be useful in a future application layer; none of these implies building a full editor. The timeline is a canonical machine-readable artifact, not a GUI editor.
+A preview, contact sheet, simple asset list, or approval surface may be useful in a future application layer; none implies a full editor. Output adaptation is a separate stage from story selection and timeline construction. The timeline is a canonical machine-readable artifact, not a GUI editor.
 
 ## 2. Domain boundary in the unified platform
 
@@ -45,8 +45,8 @@ Video Editing is a separate Domain Intelligence and Domain Execution profile ove
 | ToolInvocation, permission, budget, Journal | Media ingest/probe/analysis tools |
 | Trusted ToolHost process control and receipts | TimelineRevision and RenderPlan |
 | Cancellation, UNKNOWN reconciliation, checkpoint | FFmpeg render and media-specific resource profile |
-| Artifact identity and delivery | Media quality verifier and video deliverables |
-| Completion Guard envelope | Video acceptance criteria and perceptual review |
+| Artifact identity and delivery | MediaProject, MediaAnalysis, MediaProjectModel, NarrativePlan, TimelineRevision, RenderPlan, and video deliverables |
+| Completion Guard envelope | Video criterion evidence, perceptual review, and source-to-output provenance |
 
 The Video Workflow Profile binds the media schemas, tool snapshot set, resource policy, output profile, and verification obligations. Kernel remains unaware of the semantics of a shot, a scene, pacing, or narrative coherence.
 
@@ -74,7 +74,7 @@ A new user instruction is an append-only EditIntent. It does not overwrite the o
 
 MediaProject is the persistent domain container for source assets, derived analysis/proxy artifacts, timelines, render records, and verification reports. It groups durable artifacts across editing Tasks but is not execution authority.
 
-MediaProjectModel is the Video domain's structured, provenance-aware projection of that project and its media evidence. It is not a media database or execution authority.
+MediaProjectModel is the Video domain's structured, provenance-aware projection of that project and its media evidence. It is not a media database or execution authority. MediaProject, ProjectSnapshot, MediaAsset, MediaAnalysis, and MediaProjectModel version relationships and evidence inheritance are specified in [MediaProject contract](../../contracts/media-project.md).
 
 ### 4.1 Source assets and streams
 
@@ -119,13 +119,14 @@ Proposed end-to-end flow:
 2. **Ingest and probe:** validate source access, fingerprint files, inspect streams/metadata, and record decode/probe warnings.
 3. **Analyze:** create only the analysis needed for the task—representative frames, shot boundaries, audio/transcript segments, and content observations.
 4. **Build MediaProjectModel:** link all facts and hypotheses to source timestamps, assets, tools, versions, and freshness.
-5. **Plan:** create a domain PlanRevision with outcome-oriented steps such as probe assets, analyze media, select ranges, create timeline, render, inspect output, and deliver.
-6. **Timeline candidate:** select source ranges and order, define tracks/overlaps/transitions/audio/captions as required, and validate timeline structure.
-7. **Render planning:** compile the accepted TimelineRevision into a deterministic RenderPlan bound to source digests, FFmpeg build, arguments/filtergraph, environment, output profile, and resource estimate.
-8. **Render:** admit a long-running RenderJob through Kernel and execute through Trusted ToolHost.
-9. **Inspect:** run technical media checks and criterion-specific content/perceptual review against the actual output.
-10. **Deliver:** publish only validated output artifacts and the corresponding report.
-11. **Revise:** convert follow-up instructions into new EditIntent, TimelineRevision, RenderPlan, RenderJob, and VerificationReport versions.
+5. **Understand and select:** retrieve candidate moments against the accepted message/criteria, rank them by relevance, evidence, salience, coverage, redundancy, continuity, audio value, and duration cost.
+6. **Narrative planning:** create a versioned NarrativePlan with beats, selected moments, ordering/context constraints, pacing intent, and rationale.
+7. **Timeline candidate:** compile the NarrativePlan into exact source ranges and typed TimelineRevision operations; validate structure, timebase, evidence, and change impact.
+8. **Render planning:** compile the accepted TimelineRevision into a deterministic RenderPlan bound to source digests, FFmpeg build, typed filtergraph, protocol/filesystem/network policy, environment, output profile, and resource estimate.
+9. **Render:** admit a long-running RenderJob through Kernel and execute through Trusted ToolHost.
+10. **Inspect:** run technical media checks, source-to-output traceability checks, and criterion-specific content/perceptual review against the actual output.
+11. **Deliver:** publish only validated immutable output artifacts and the corresponding report.
+12. **Revise:** convert follow-up instructions or verifier findings into new EditIntent, NarrativePlan, TimelineRevision, RenderPlan, RenderJob, and VerificationReport versions.
 
 The common PlanRevision switch barrier applies when the user changes the goal or when an existing timeline/render plan is superseded. Already-started renders must drain or reconcile; conflicting UNKNOWN outputs block a new render publication.
 
@@ -164,7 +165,7 @@ Important boundaries:
 - Arbitrary FFmpeg encodes are not assumed checkpoint-resumable. The first implementation should restart a reconciled failed render as a new invocation unless a separately verified segmented-render contract is introduced.
 - Render output is staged at a unique temporary target and only published after required technical and content checks.
 
-See [RenderJob contract](../../contracts/render-job.md).
+See [RenderJob contract](../../contracts/render-job.md) and [FFmpeg RenderPlan security contract](../../contracts/render-plan-security.md). RenderJob status is a projection of Kernel invocation state, Host physical facts, domain verification, and artifact publication—not an independent state authority.
 
 ## 8. Verification: validate the video, not only the process
 
@@ -185,10 +186,12 @@ Depending on the accepted output profile:
 ### 8.2 Timeline and content checks
 
 - source ranges are valid and all required clips are present;
-- selected content, order, and exclusions match the GoalContract;
-- duration and pacing constraints are met;
-- transitions, captions, titles, and audio treatment match the accepted timeline;
-- the rendered output corresponds to the exact accepted TimelineRevision and RenderPlan.
+- selected content, order, required context, and exclusions match GoalContract and NarrativePlan;
+- beat coverage/order, factual/causal integrity, and source-range selection are supported by evidence;
+- pacing, shot/action/speaker/spatial continuity, and audiovisual coordination meet criterion-specific obligations;
+- transitions, captions/titles where supported, and audio treatment match the accepted timeline;
+- every output interval maps to exact source ingredient(s) or an explicitly declared generated/externally supplied asset;
+- the rendered output corresponds to the exact accepted ProjectSnapshot, NarrativePlan, TimelineRevision, and RenderPlan.
 
 ### 8.3 Perceptual and human assurance
 
@@ -209,7 +212,7 @@ The user may continue with instructions such as:
 
 These are examples of interaction shape, not a promise that every editing operation is supported in the first slice.
 
-Each instruction creates an immutable EditIntent and a candidate TimelineRevision. The system identifies affected clips, ranges, tracks, criteria, and verification obligations; reuses only still-current source analysis; and renders a new version. The prior timeline and video remain available as historical artifacts.
+Each instruction creates an immutable EditIntent and a candidate NarrativePlan/TimelineRevision. The system identifies affected beats, clips, ranges, tracks, criteria, analysis claims, and verification obligations; carries forward unaffected evidence only through explicit freshness-checked EvidenceCarryForward records; and renders a new version. A fresh verifier finding can also trigger a targeted revision. The prior plan, timeline, render, and report remain immutable historical artifacts. The revision loop is bounded by accepted budgets, repair reserve, authorization, and stop conditions.
 
 Ask the user when the instruction has multiple materially different interpretations or changes a protected output/scope/risk field. Do not silently add external assets, overwrite original sources, or publish over a prior deliverable.
 
@@ -230,16 +233,17 @@ Ask the user when the instruction has multiple materially different interpretati
 
 ## 11. Open decisions
 
-- Minimum first-phase editing operations and exact support boundaries.
-- Which visual/audio/transcription analysis capabilities are required for the first task families.
-- How to represent source PTS, VFR conversion, audio sample alignment, and rounding across supported media formats.
-- Which output profiles/containers/codecs should be offered initially.
-- Which media checks are deterministic and which require model/human review.
-- How much preview/contact-sheet interaction is needed without building an editor.
-- How to define objective or blinded human scoring for subjective edit quality.
-- Which resource limits and segmented-render strategies are practical across target hosts.
+- Owner disposition of the core/enhanced/platform-adaptation capability boundary and the exact core operation registry.
+- MediaAnalysis taxonomy, temporal coverage requirements, confidence calibration, and raw-evidence retention/privacy policy.
+- NarrativePlan schema, beat vocabulary flexibility, factual/chronology guardrails, and multi-objective moment-ranking policy.
+- EvidenceCarryForward compatibility rules for changed analysis versions, proxies, and criteria.
+- Output Profile values and supported media/container/stream matrix.
+- Platform-specific Host isolation, enforceable resource dimensions, and FFmpeg build/demuxer/decoder/filter allowlists.
+- Human-review triggers and independent-evidence classes for narrative, factuality, and perceptual criteria.
+- Benchmark task-set selection, source/media rights, reviewer rubrics, and baseline thresholds.
+- Whether optional content credentials (for example C2PA) are needed for any delivery target.
 
-Candidate resolutions for the operation set, analysis policy, time model, output-profile strategy, verification, resources, and preview boundary are recorded in [Architecture Decision Proposals](../../decisions/architecture-decision-proposals.md). These remain proposals and do not select a media-analysis provider or production stack.
+First-round candidate resolutions remain in [Architecture Decision Proposals](../../decisions/architecture-decision-proposals.md). The second-round additions are tracked in [Second-round architecture revision](../../decisions/second-round-architecture-revision.md). All remain PROPOSED/OPEN and do not select a media-analysis provider or production stack.
 
 No threshold or technology choice is inferred merely from this design draft.
 
@@ -252,4 +256,4 @@ The media execution proposal is grounded in the following official documentation
 - [ffprobe documentation](https://ffmpeg.org/ffprobe.html) describes machine-readable container, stream, packet, and frame inspection. Probe success establishes inspectability and metadata facts, not that the requested story or pacing is correct.
 - [PySceneDetect documentation](https://www.scenedetect.com/docs/latest/) describes shot-change detection and splitting. Shot boundaries are useful temporal evidence but do not by themselves establish semantic scene understanding.
 
-The first phase uses FFmpeg as the named render backend. It does not select the media-analysis model/provider, storage system, packaging strategy, or host deployment.
+The first phase uses FFmpeg as the named render backend. It does not select the media-analysis model/provider, storage system, packaging strategy, or host deployment. FFmpeg's own protocol, demuxer, filtergraph, and escaping behavior must be treated as a security surface; see [RenderPlan security contract](../../contracts/render-plan-security.md).
