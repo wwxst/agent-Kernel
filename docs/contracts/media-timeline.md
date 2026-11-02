@@ -49,6 +49,26 @@ Floating-point seconds are not the canonical frame-accurate representation.
 
 Illustrative values such as a 1/90000 source timebase or 25/1 timeline rate are examples, not defaults.
 
+### 3.1 Canonical coordinates and conversion records
+
+A source timestamp is interpreted only together with the identity of its stream and that stream's time base. PTS is preserved as a signed integer; a rational time base has a positive denominator and is reduced to canonical numerator/denominator form where representable. The exact wire encoding and integer-width choice remain open.
+
+For VFR video, preserve each available frame's presentation PTS and duration (or explicitly record duration as unknown). Do not derive per-frame PTS from average/nominal FPS. Decode timestamps such as DTS, when retained for decoder diagnostics, are not substituted for presentation coordinates.
+
+For audio, preserve integer sample positions and sample rate together with the selected stream identity, PTS/time base, and any offset or resampling map. Audio sample ranges are end-exclusive. A/V alignment is represented by explicit per-stream origins/offsets and, where necessary, a piecewise mapping; streams are not independently reset to zero without a declared normalization operation.
+
+Every conversion among source PTS, rational timeline ticks, output frame timestamps, and audio sample positions records a TimeMapping/conversion entry containing:
+- source stream and source coordinate/time base;
+- target coordinate/time base;
+- exact rational value before quantization;
+- rounding-policy ID/version and operation semantics;
+- resulting integer coordinate and the declared quantization error/bound;
+- any normalization, resampling, or frame-rate conversion operation and its provenance.
+
+Rounding is explicit per operation. For an interval whose semantics require preserving all covered source material, the declared policy may round the start down and the end up. A nearest-boundary policy is permitted only when the edit operation explicitly defines that behavior and a deterministic tie rule. No implicit default is inferred from the renderer or host language. Missing/invalid PTS or sample timing remains unknown; an estimated mapping must identify its method and uncertainty and cannot be relabelled as original source timing.
+
+Floating-point seconds and timecode strings are presentation values only. They may be generated for UI display but cannot be the sole basis for source-range identity, cut boundaries, or provenance. The conversion policy/version and resulting mappings are included in the TimelineRevision/RenderPlan digests.
+
 ## 4. Canonical structures
 
 ### 4.1 Media references and provenance
