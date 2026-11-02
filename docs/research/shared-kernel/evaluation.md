@@ -79,6 +79,13 @@ At minimum, prepare deterministic scenarios for:
 25. **Hard budget certificate rejection:** missing enforceable provider retry ceiling, unknown cache fee, unpinned price, or uncapped billable modality rejects Hard Budget admission; explicit Soft Budget is independently authorized.
 26. **Approval granularity:** one-time approval inside unchanged plan does not trigger L2, but revocation fences affected ticket. Plan-wide capability/policy/risk change triggers L2.
 27. **Multi-Host non-claim:** a second independent Host is not covered by the first Host's launch/fence proof; record unsupported until a separately approved membership/fencing protocol exists.
+28. **Independent Invocation progress without global Task CAS:** two separately admitted disjoint operations (or an unrelated Host receipt) advance Invocation versions concurrently; neither fails solely because TaskControlVersion or Journal sequence changed, and both retain unique audit IDs.
+29. **Protected admission read-set invalidation:** structurally activate a new PlanRevision, revoke an authority, or change an overlapping workspace generation between an Invocation's read and K-local admission commit. Admission must reject/retry the affected stale read-set; it must never launch under a stale plan or fence.
+30. **Budget enforcement versus CompletionGuard:** race a late authoritative overrun (BudgetScopeVersion hold) against TaskControl completion. A K-local serialization must yield either completion blocked by the prior hold or immutable terminal Completed plus post-terminal debt, without requiring blanket Task CAS on budget updates.
+31. **ActionProposal projection replay:** duplicate and reorder child Invocation outcomes and reconstruct proposal batch view without a second Settled/Executing state authority; no extra side effect or fake batch-complete.
+32. **Evidence/Context checkpoint reconstruction:** rebuild optional EvidenceGraph and lazy Context projections from source EvidenceRefs/criterion mappings and Journal facts; an unrelated checkpoint append or context compaction must not invalidate safe independent Invocation admission.
+33. **Sequential-first scheduler safety:** unknown-conflict writes never parallelize; any separately enabled parallel read or disjoint write path must have an enforceable isolation/conflict proof and still use individual Admission and Host receipts.
+
 
 
 Use analogous domain fixtures where meaningful: a repository build/test process for Coding and an FFmpeg RenderJob for Video. The exact host process, resource dimensions, and artifacts differ, while the admission, receipt, cancellation, UNKNOWN, and recovery invariants remain the same.
