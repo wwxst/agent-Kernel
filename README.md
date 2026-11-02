@@ -49,6 +49,7 @@ See [Unified domain architecture](docs/architecture/domain-architecture.md) and 
 - [Autonomous Coding Agent design](docs/research/autonomous-coding-agent/README.md) — retained first/second-round Coding Domain Intelligence design.
 - [Multimedia Domain Architecture](docs/research/multimedia-domain-architecture/README.md) — natural-language Video Editing design, timeline, render, and evaluation.
 - [Shared Kernel reference review](docs/research/shared-kernel/reference-review.md) — Pi, Codex, DeepSeek Harness, and Claude Agent SDK execution-layer review.
+- [Shared Kernel evaluation](docs/research/shared-kernel/evaluation.md) — common cross-domain safety, authority, lifecycle, and recovery metrics.
 - [Unified domain direction](docs/decisions/unified-domain-direction.md) — owner-approved product scope and authorization boundary.
 - [Cross-domain architecture review](docs/decisions/cross-domain-architecture-review.md) — consistency review and remaining questions.
 
