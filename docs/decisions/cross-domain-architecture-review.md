@@ -86,7 +86,7 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 The current proposal is internally aligned at the contract level, but these items still require owner review or empirical evidence:
 
 - the exact typed timeline schemas, deterministic compiler mappings, and per-operation evidence obligations for the ADP-01-approved core editing operations;
-- Workflow Profile acceptance, revocation, and migration semantics during long-running tasks (ADP-03 draft now specifies linearizable Host launch/revocation ordering, fence acknowledgement, and UNKNOWN holds);
+- Workflow Profile and effective-authority revocation during long-running tasks (ADP-03 draft now specifies a shared AuthorityFenceEpoch, linearizable Host LaunchGate, durable one-use ticket consumption, execution-snapshot revalidation, fence acknowledgement, and UNKNOWN holds);
 - the common artifact/storage/streaming envelope for large media and derived proxies;
 - source PTS, variable-frame-rate handling, piecewise stream-to-asset clock mappings, audio sample alignment, codec priming/padding, and rounding across supported formats (ADP-05 draft now specifies exact mappings and conversion records);
 - FFmpeg packaging/build policy and media-analysis provider/model choices;
