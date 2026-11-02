@@ -70,7 +70,7 @@ A report should bind at least:
 - DomainBinding ID/digest and Workflow Profile version;
 - criterion-to-PlanStep and criterion-to-evidence mapping;
 - workspace/project ID, base commit or source-asset digest set, workspace/project generation, and hash-scope version;
-- pre-execution, post-execution, and final-acceptance workspace/project snapshot digests;
+- for Coding, the approved ProtectedInputScope version, immutable SourceSnapshot ID, sourceDigestBefore/sourceDigestAfter/sourceDigestAtGuard, and isolated verification-output manifest; for Video, the applicable source/project/timeline/render/output digests;
 - environment digest, runtime/compiler/toolchain/renderer versions, FFmpeg build identity where applicable, and dependency-lock hash;
 - each required command or render invocation's actual argv/argument digest, filtergraph digest where applicable, working directory, Host run ID, start/finish times, exit code or signal;
 - stdout/stderr digests and controlled log references;
@@ -153,14 +153,14 @@ Before TaskCompleted, Kernel verifies:
 - Verifier disposition is not treated as criterion proof; the required machine/external/human evidence classes are independently present.
 - Per-criterion evidence-independence class meets the risk-based requirement in the accepted GoalContract/policy.
 - Workspace or media-project identity, DomainBinding, generation, and final artifact snapshot match the report.
-- Coding final acceptance hash or Video source/timeline/render/output digests equal the trusted digests of the same immutable artifacts.
+- Coding protected-input digest (including the guard's independent reread) or Video source/timeline/render/output digests equal trusted digests of the same immutable artifacts; generated Coding test outputs remain separately bound as evidence.
 - Execution environment, dependency/toolchain, renderer, and FFmpeg build digests match the task contract where applicable.
 - Every required test, probe, decode check, or render invocation has a real Host Run, trusted receipt, terminal outcome, and output digest.
 - Artifacts are attributable and content-addressed.
 - Every cross-domain ArtifactRef read is backed by a ScopedReadGrant bound to the exact consumer Task/DomainBinding, artifact digest, purpose, and access mode; each read was authorized at its access time, no read occurred after expiry/revocation fencing, and any copied bytes follow the declared retention/deletion policy. The report contains no inherited producer authority or private context.
 - No required approval, dependency, or external condition is pending.
-- No unresolved UNKNOWN invocation or cancellation remains.
-- Budget and usage settlement conditions are satisfied.
+- No unresolved UNKNOWN invocation, cancellation or writable process remains **if it can affect the accepted final snapshot, deliverable, acceptance evidence or protected external target**. Proven isolated non-conflicting work may be explicitly excluded under trusted policy with its separate unresolved responsibility retained.
+- All hard-budget exposure remains covered by credible reservations and no active enforcement hold invalidates completion. Final provider invoices for fully bounded exposure may settle later; missing usage is not zero and does not release its reservation.
 - Report is current, not revoked or superseded.
 - Verification did not exceed the task's authorization.
 - Host has proven the relevant workspace/project write or render processes/handles are quiescent and the final workspace snapshot or domain artifact is sealed.
