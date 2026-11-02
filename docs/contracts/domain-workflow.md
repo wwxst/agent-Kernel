@@ -64,7 +64,7 @@ The accepted PlanRevision's profile pin is a provenance and compatibility bindin
 
 A queued or admitted-but-not-launched invocation must be rejected at dispatch if the profile was revoked/superseded or its authority epoch changed after admission. A stale dispatch authorization cannot be replayed. If current authority cannot be established, Host launch fails closed. An old accepted plan cannot bypass revocation by presenting its historical approval.
 
-Revocation immediately blocks new admission. For operations whose process has already started, the predeclared revocation policy determines graceful drain versus cancellation request. A cancellation request is not process convergence; the Host must reconcile descendants and writable handles. An invocation in UNKNOWN blocks migration, replay, and conflicting new side effects until reconciled; changing the profile cannot clear that hold.
+A revocation request immediately blocks new admission and dispatch-ticket issuance. Any concurrent launch is ordered by the Host LaunchGate described in Section 3.2: a launch boundary committed before the authority fence is treated as already in flight; a fence committed first rejects the old ticket without process creation. After the fence commits, no queued/admitted invocation under the old epoch may launch. For operations already across the launch boundary, the predeclared revocation policy determines graceful drain versus cancellation request. A cancellation request is not process convergence; the Host must reconcile descendants and writable handles. An invocation in UNKNOWN blocks migration, replay, and conflicting new side effects until reconciled; changing the profile cannot clear that hold.
 
 A same-domain migration uses freeze → stop admission → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new DomainBinding and accepted PlanRevision activation. No old PlanRevision is silently rebound. New operations begin only after the new binding is current. A Coding ↔ Video change always requires a new Task and explicit artifact handoff.
 
@@ -205,6 +205,7 @@ A handoff record binds at least:
 - exact Artifact ID, kind, schema/version, digest, and producer provenance;
 - intended consumer domain/Task, purpose, permitted access mode, and retention scope;
 - user/principal authorization reference bound to the exact Artifact ID/digest, source Task, consumer domain/Task, purpose, access mode, and expiry/revocation state where applicable;
+- ScopedReadGrant ID/version, consumer audience, authority/revocation epoch, issue/expiry state, and resolver access-event/receipt references;
 - consumer validation result and resulting derived-artifact lineage.
 
 ArtifactRef identifies an immutable typed artifact; it is not a bearer capability. The consumer receives a separate narrowly scoped capability for the exact artifact digest, consumer Task, purpose, and access mode. The default is read-only. Producer authorization to create an artifact does not authorize cross-domain disclosure or consumption.
