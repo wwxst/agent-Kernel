@@ -85,12 +85,13 @@ No technology is selected by implication.
 
 **PROPOSED METHOD; NO BASELINE RUN.**
 
-- Coding and Video require separate task sets, metrics, baselines, and quality thresholds.
-- Shared Kernel safety/recovery metrics should be measured across both domains.
-- Thresholds are selected only after frozen task sets and measured baselines exist.
+- Coding and Video require separate task sets, metrics, baselines, and domain-quality thresholds.
+- Shared Kernel safety/authority/lifecycle/recovery metrics are defined once and measured across both domains.
+- Numeric Kernel safety/service thresholds are selected only after the implementation environment and measured fault-injection baselines exist.
+- Domain-quality thresholds are selected only after each domain's frozen task set and measured baseline exist.
 - Real-model and external-media benchmark runs require separate explicit authorization.
 
-See [Coding evaluation](../research/autonomous-coding-agent/evaluation.md) and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md).
+See [Coding evaluation](../research/autonomous-coding-agent/evaluation.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), and [Shared Kernel evaluation](../research/shared-kernel/evaluation.md).
 
 ## 8. Extensions and Multi-Agent
 
