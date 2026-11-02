@@ -61,6 +61,12 @@ Video Editing is a separate Domain Intelligence and Domain Execution profile ove
 
 The Video Workflow Profile binds the media schemas, tool snapshot set, resource policy, output profile, and verification obligations. Kernel remains unaware of the semantics of a shot, a scene, pacing, or narrative coherence.
 
+### Shared orchestration simplification (Draft PR #1 — PROPOSED)
+
+Video remains an **end-to-end autonomous editing Domain**, not a manual clip picker or partial analysis-only tool. The same **single primary Task Orchestrator loop** selects Strategic/Tactical/Assurance *decision purposes* while Video Intelligence independently handles natural-language goal understanding, progressive source analysis, message-conditioned selection, NarrativePlan, TimelineRevision compilation, FFmpeg render, final technical/content/perceptual validation, and instruction-driven revisions. These are **domain capabilities**, not separate Kernel state machines. Preserve the ADP-01/02 REVISED/APPROVED scope unchanged.
+
+Shared ActionProposal is a bounded immutable action-intent envelope; each long-running render retains a unique ToolInvocation and a Domain RenderJob projection over authenticated Host state. Context and evidence may use minimal EvidenceRefs/criterion bindings and optional indexes without losing raw media provenance, source timestamp integrity, coverage or independent output inspection. Sequential launch is the default; independent read-only media probes may run concurrently only if bounded and individually admitted. No new kernel-level Video scheduler or global Artifact/EvidenceGraph state authority is necessary. See [Architecture subtraction review](../../decisions/architecture-subtraction-review.md). G0 OPEN; real render and quality proof NOT RUN.
+
 ## 3. Video GoalContract
 
 The common GoalContract envelope is defined by the shared domain contract. The Video payload should capture, where relevant:
