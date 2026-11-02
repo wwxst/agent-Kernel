@@ -106,11 +106,13 @@ The recommendation packet [Architecture Decision Proposals](architecture-decisio
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
+- Second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority/recovery, source provenance, and capability-scope matrix: **PASS — proposed documentation contracts; implementation not verified**.
 - Shared Kernel evaluation metric definitions: **PASS — common protocol drafted; no runs performed**.
 - Technical/perceptual verification boundary: **PASS — evidence obligations proposed**.
-- Local Markdown link audit: **PASS** — all relative Markdown targets resolve against the reviewed branch tree (rechecked during this continuation; no missing relative targets found).
+- Markdown relative-link audit: **PASS** — 18 second-round design/contract/review documents and 174 relative link targets checked; no missing targets. Newly added links in Architecture Decision Proposals were separately resolved.
+- Coding and shared Kernel research/reference evidence: **PASS — protected document blob digests unchanged from the second-round baseline**.
 - Runtime tests and fault injection: **NOT RUN**.
-- Media processing and benchmark: **NOT RUN**.
+- Media processing and real-model benchmark: **NOT RUN**.
 - Host process convergence, render recovery, and media quality: **UNVERIFIED**.
 - Final architecture freeze: **NOT APPROVED**.
 
