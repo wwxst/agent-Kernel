@@ -83,6 +83,8 @@ The current proposal is internally aligned at the contract level, but these item
 
 These remain OPEN; no target thresholds are invented before a frozen task set and measured baseline exist.
 
+The recommendation packet [Architecture Decision Proposals](architecture-decision-proposals.md) now gives candidate dispositions, alternatives, risks, and acceptance criteria for the first-phase operation set, analysis policy, profile lifecycle, artifact envelope, temporal model, output profiles, verification/human review, Host resources, cross-domain handoff, and preview surface. The packet does not change any item's OPEN/PROPOSED status; owner disposition is still required.
+
 ## 6. Validation record
 
 - Product direction and Video first-phase scope: **PASS — explicit owner decision recorded**.
