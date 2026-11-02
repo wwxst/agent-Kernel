@@ -24,7 +24,8 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 
 ### Track B — Autonomous Video Editing
 
-- Deepen media-content understanding, message-conditioned moment/highlight selection, NarrativePlan, pacing, semantic/visual continuity, audiovisual coordination, and bounded iterative editing.
+- Implement planning only after separate authorization; the product scope is already REVISED/APPROVED under ADP-01 as a complete natural-language autonomous-editing loop with bounded core operations.
+- Deepen media-content understanding, message-conditioned moment/highlight selection, basic NarrativePlan, pacing, semantic/visual continuity, audiovisual coordination, and bounded iterative editing.
 - Define MediaProject/ProjectSnapshot, MediaAnalysis, MediaProjectModel, and TimelineRevision version/lineage/evidence-inheritance contracts.
 - Separate core automatic-editing operations, enhanced editorial capabilities, and post-production/platform adaptation.
 - Define a security-bounded FFmpeg RenderPlan: input protocols/formats, filesystem, filtergraph, network, process isolation, and enforceable resources.
@@ -52,7 +53,7 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 - Review timeline persistence, rational time representation, render cancellation/recovery, and final video verification.
 - Review second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority, source provenance, and independent acceptance in [Second-round architecture revision](../decisions/second-round-architecture-revision.md).
 - Review separate Coding and Video evaluation protocols and shared Kernel safety metrics.
-- Disposition the recommendation packet in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md) and the second-round revision decisions, recording accepted, rejected, or revised clauses in the decision log.
+- Continue disposition of ADP-02 through ADP-11 in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md) and the second-round revision decisions, recording accepted, rejected, deferred, or revised clauses in the [Decision Log](../decisions/decision-log.md). ADP-01 is already REVISED/APPROVED.
 - Check every local link, status label, and implementation authorization boundary.
 
 **Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
