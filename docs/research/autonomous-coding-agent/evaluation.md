@@ -115,6 +115,9 @@ After a stable baseline exists, remove or vary one capability at a time:
 - generic retry versus hypothesis-driven debugging;
 - no independent verification pass versus fresh verifier context;
 - no checkpoint versus milestone checkpoint and compaction;
+- simple single-controller inspect/edit/test loop versus the strategic/tactical/assurance three-mode loop with the **same** Kernel permissions, model budget, tool limits and acceptance oracle;
+- L0/L1 fast-path handling versus unnecessary full L2 cutovers, measuring safe progress and latency;
+- source snapshot with isolated test outputs versus broad mutable-workspace hash scope (the latter only under controlled integrity-preserving test fixtures);
 - naive parallel tool calls versus effect/conflict-aware scheduling;
 - no no-progress guard versus bounded retry/replan policy.
 
