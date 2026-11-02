@@ -177,7 +177,7 @@ A Task loads only the projection(s) authorized by its DomainBinding. Shared sess
 A domain verifier produces criterion-level evidence and a VerificationReport using the common envelope.
 
 - The domain verifier decides which observations, probes, tests, and perceptual assessments are relevant to its criteria.
-- Kernel Completion Guard validates report binding, evidence presence, provenance, freshness, independence class, required human disposition, workspace/project snapshot, budget settlement, and absence of unresolved UNKNOWN.
+- Kernel Completion Guard validates report binding, evidence presence, provenance, freshness, independence class, required human disposition, workspace/project snapshot, bounded outstanding budget exposure, and absence of **conflicting effectful** UNKNOWN. Final bounded provider invoices may settle later; the reservation is retained.
 - A model verifier's conclusion is not a substitute for trusted execution evidence or required human review.
 - Delivery references immutable domain artifacts and the exact accepted GoalContract, PlanRevision, DomainBinding, and VerificationReport.
 
