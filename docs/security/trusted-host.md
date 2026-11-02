@@ -52,6 +52,15 @@ The Host records a durable LaunchBoundaryCommitted fact with the Host run/proces
 
 A revocation request stops new Kernel admissions and ticket issuance. The authority is RevocationPending until every Host gate that could accept a ticket acknowledges the new fence or is verifiably disabled. Revoked means no stale ticket can cross an eligible gate; it does not mean existing processes have terminated. A Host that cannot contact current authority fails closed and cannot accept offline dispatch.
 
+### 2.2 Scoped ArtifactResolver
+
+Artifact IDs and ArtifactRefs are identifiers, not filesystem authority. The Host resolves payload bytes through a trusted ArtifactResolver using a server-side ScopedReadGrant bound to the exact handoff, artifact ID/digest/schema, consumer Task/DomainBinding, purpose, access mode, expiry, and revocation epoch. No model-supplied path, producer workspace path, signed URL, or bearer secret is accepted as a payload locator.
+
+The resolver verifies the artifact digest and grant before opening the payload and before each subsequent range/stream read. It exposes only the exact authorized payload; it does not traverse parent, derived-from, sibling, project, workspace, or producer-Task references. Each related artifact requires a separate grant. Grant material remains outside model context and ordinary tool output.
+
+When a grant expires or is revoked, the resolver denies new opens and stops further range/stream delivery after the revocation fence. Bytes already delivered or copied cannot be recalled and remain governed by the declared retention/deletion policy. The consumer's derived artifacts retain the source handoff/digest as provenance but do not inherit producer authority or usage rights.
+
+
 
 ## 3. Host isolation requirements
 
