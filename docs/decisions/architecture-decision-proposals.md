@@ -24,7 +24,7 @@ It is a repository-level design synthesis. It does not report a runtime spike, b
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | Complete autonomous editing loop within a bounded core operation set; defer editor-grade features | REVISED — APPROVED 2026-11-02 |
 | ADP-02 | Media analysis | Four-stage progressive analysis; modality-scoped, gap-accounted coverage manifests; task-conditioned depth and adaptive evidence expansion | REVISED — APPROVED 2026-11-02 |
-| ADP-03 | Workflow Profile lifecycle | Immutable versions; linearizable Host LaunchGate/revocation fence; current-effective authority; UNKNOWN remains held | Refined draft — OPEN |
+| ADP-03 | Workflow Profile lifecycle | Immutable versions; single-Host local LaunchGate/fence and acknowledged revocation; UNKNOWN held; multi-Host unapproved | Revised draft — OPEN |
 | ADP-04 | Artifact and media storage | Generic immutable artifact manifest plus opaque blob/object payload; journal stores references, not large media bytes | Confirm logical contract |
 | ADP-05 | Media time | Per-stream integer PTS/sample coordinates, piecewise asset-clock mappings, rational time bases, explicit conversion/rounding and A/V mapping | Refined draft — OPEN |
 | ADP-06 | Output profiles | Versioned profile registry; one compatibility profile candidate; no silent defaults | Confirm target profile values |
@@ -32,7 +32,7 @@ It is a repository-level design synthesis. It does not report a runtime spike, b
 | ADP-08 | Host and resource policy | Hard-enforce only Host-supported dimensions; bounded source/output admission; GPU optional | Confirm supported Host envelope |
 | ADP-09 | Cross-domain handoff | Separate Tasks, exact immutable ArtifactRef, resolver-mediated ScopedReadGrant, no inherited permissions/context | Refined draft — OPEN |
 | ADP-10 | Preview and approval surface | Contact sheet/low-resolution preview plus approve/revise/reject; no manual timeline editor | Confirm minimum user surface |
-| ADP-11 | Implementation order | Freeze logical contracts first, then isolated contract spikes, then separately authorized runtime work | Confirm stage gates |
+| ADP-11 | Implementation order | G0 architecture convergence → G1 protocol feasibility → G2 Host trust → G3 Coding → G4 Video → G5 cross-domain reuse; separate authorizations | Confirm revised stage gates |
 
 ## 2. ADP-01 — Video first-phase autonomous editing capability and operation boundary
 
@@ -550,7 +550,7 @@ Artifact handoff adds orchestration and authorization overhead. A consumer may s
 | Decision | Contract surface | Evaluation surface | Required evidence before any later implementation approval |
 | --- | --- | --- | --- |
 | ADP-02 | MediaProject / MediaAnalysis coverage manifest, claim scope, freshness, and privacy rules | Video task families for ingest/progressive analysis; modality-specific segment completeness, gap accounting, relevant-event miss rate where annotated, false detections, escalation quality, analysis cost | Frozen per-stream/per-modality coverage annotations; partition/gap, NotRequested-vs-NotSampled, modality mismatch, and unsupported-absence fixtures |
-| ADP-03 | DomainBinding/Profile lifecycle, Kernel admission, linearizable Trusted Host LaunchGate, cancellation and UNKNOWN | Shared Kernel profile freshness metrics and launch/revocation ordering, stale-dispatch, cancellation, and recovery scenarios | Both launch-wins and revoke-wins orderings; Host/authority outage; ticket replay; crash-before/after-process-creation; any launch after effective fence blocks |
+| ADP-03 | DomainBinding/Profile lifecycle, Kernel admission, single-Host local serialized LaunchGate and acknowledged fence, cancellation and UNKNOWN | Shared Kernel profile freshness metrics and launch/revocation ordering, stale-dispatch, cancellation, and recovery scenarios | Both launch-wins and revoke-wins orderings; Host/authority outage; ticket replay; crash-before/after-process-creation; any launch after effective fence blocks |
 | ADP-05 | Media Timeline source/timebase coordinates, piecewise stream-to-asset mappings, conversion records, VFR and audio mappings | Video timestamp-conversion, source-range, A/V synchronization, and technical-output metrics | CFR/VFR, irregular/discontinuous PTS, asset-clock anchors, non-zero/negative starts, codec priming/padding, resampling, overflow and boundary fixtures; tolerances declared before measurement |
 | ADP-09 | Domain Workflow handoff record, resolver-mediated ScopedReadGrant, Completion provenance | Shared Kernel cross-domain isolation and handoff metrics/scenarios | Positive/negative exact-scope fixtures, per-read authorization, revocation during stream, no locator leakage/traversal, and no producer-context/capability inheritance |
 
@@ -589,43 +589,33 @@ The review surface does not expose arbitrary track editing, drag-and-drop, or fr
 - Revision and rejection are append-only user events.
 - No preview interaction grants new tool or filesystem permissions.
 
-## 12. ADP-11 — Recommended implementation sequence and gates
+## 12. ADP-11 — Recommended architecture and validation gates
 
-**Recommendation — PROPOSED**
+**Recommendation — PROPOSED / OPEN; no implementation or experiment authorization is implied.**
 
-After the owner approves the relevant architecture decisions and explicitly authorizes implementation planning, use this sequence:
+The architecture first needs a small **provable protocol** rather than a broader set of prose obligations. Proposed gates, each independently reviewed:
 
-1. **Shared Kernel minimum foundation first:** define the authoritative Task/Plan lifecycle, admission, budget reservation/settlement, Journal/Host receipt boundary, UNKNOWN reconciliation, cancellation, generic ArtifactRef/manifest, and Completion Guard interfaces. Do not implement domain semantics in Kernel.
-2. **Coding vertical slice second:** use the retained Coding research to exercise repository snapshotting, read/write tool admission, tests, evidence freshness, plan revision, and criterion-level completion with deterministic fixtures.
-3. **Video vertical slice third, immediately after the shared path is stable:** exercise large immutable media artifacts, source/timebase provenance, long-running RenderJob, CPU/disk accounting, process-tree cancellation, UNKNOWN reconciliation, staged publication, and technical/content verification.
-4. **Schema/contract review:** produce examples and deterministic validation rules for GoalContract, DomainBinding, TimelineRevision, RenderPlan, RenderJob, ArtifactRef, and VerificationReport before domain implementation expands.
-5. **Isolated contract spikes:** only with separate authorization, test rational-time conversion, timeline compilation, artifact staging/finalization, and Host process convergence using deterministic fixtures/fake providers.
-6. **Evaluation preparation:** freeze separate Coding and Video task schemas/rubrics and the shared Kernel fault-injection matrix before any baseline run.
-7. **Runtime and external execution:** require separate explicit authorization for code, dependencies, real models, external media, network, budgets, and stop conditions.
+| Gate | Required artifact/evidence | Authorization boundary |
+| --- | --- | --- |
+| **G0: architecture convergence** | Authoritative state/transition table, illegal combinations, budget/candidate separation, scoped Host fence/revocation semantics, L0/L1/L2 replan classification, protected-input scope, fault scenario specifications, and updated ADP cross-references | Architecture documents only; owner approval required for decisions |
+| **G1: protocol feasibility** | Deterministic state-machine traces for Task/Plan/ModelStep/Invocation, Journal/Inbox/Outbox replay, concurrent winner selection without invoice barrier, cancellation/UNKNOWN and model budget exposure | Separate approval for any code, tests, tools, or experiments |
+| **G2: single-Host trust boundary** | Controlled local LaunchGate/fence race, durable nonce crash windows, Host incarnation/receipt, process descendants and writable-handle convergence, failure-to-contact-authority, scoped UNKNOWN recovery | No unproven global multi-Host revocation promise |
+| **G3: Coding vertical slice** | Real bounded repository task exploring/editing/testing/repairing/verifying; simple-loop versus strategic/tactical/assurance comparison under equal budgets/permissions | Separate Runtime/model authorization |
+| **G4: Video vertical slice** | Real bounded asset understanding → NarrativePlan → immutable TimelineRevision → render → independently inspect → revise; technical + content/human metrics | Separate Runtime/media authorization |
+| **G5: cross-domain reuse** | Both domains exercise identical Kernel admission, budget, Host receipt, artifact evidence and completion envelopes; no domain semantics in Kernel | Review before any production freeze |
 
-The Coding-first order is a sequencing recommendation, not permission to make Kernel code-repository-specific. The generic artifact and long-running Host contracts must exist before the Coding slice so that the subsequent Video slice validates shared abstractions rather than requiring a Kernel redesign.
+**Sequence:** G0 precedes implementation planning. If authorized, G1 must precede G2 and broad domain implementation; G2 precedes effectful real-world domain slices. G3 before G4 is recommended for complexity control, but Video's large artifacts and long-running renders must be represented in common contracts before Coding hardens them. G5 follows both slices.
 
-**Alternatives**
+**Failure and stopping rules:**
 
-- Implement Video first because its render lifecycle exposes long-running Host/resource behavior; this is preferable if Video is the immediate product priority and the shared artifact/Host contracts are already stable.
-- Implement a thin shared Kernel skeleton before either domain vertical slice, then run the two domain slices in parallel; this increases coordination and integration cost.
+- Any actual unauthorized launch, stale completion, automatic retry of conflicting UNKNOWN or unbounded hard-budget exposure is a safety-gate blocker.
+- A hung losing ModelAttempt or missing final invoice must not block a correctly bounded selected response; the money stays reserved and late overrun enforcement remains append-only.
+- Unknown external execution does not automatically become FailedKnown. An unresolved conflict may require manual hold rather than pretending the Task is live.
+- Required tests must bind immutable protected inputs; ordinary generated test outputs may be separated without silently excluding source or config.
+- Evaluation must include success, cost, latency, recovery and false-completion metrics. Compare the three cognitive loops against a simpler controlled loop before making them a production default.
+- Every experiment reports PASS / FAIL / NOT RUN from observed evidence. Written contracts never count as successful experiments.
 
-**Risks and trade-offs**
-
-- Coding-first may under-exercise large binary artifacts and long-running media operations.
-- Video-first may overfit common contracts to render jobs.
-- Kernel-only implementation can remain abstract without a domain vertical slice.
-- Parallel full implementation can create integration churn before authority and artifact boundaries are proven.
-
-**Acceptance criteria**
-
-- Every stage has explicit inputs, outputs, owner approval, and exit criteria.
-- The shared Kernel foundation passes deterministic authority, receipt, UNKNOWN, cancellation, budget, artifact-integrity, and completion-contract checks before domain-specific implementation expands.
-- The Coding slice validates repository/workspace/test/evidence behavior without introducing domain-specific authority into Kernel.
-- The Video slice validates large artifacts and long-running media execution through the same shared interfaces.
-- Contract spikes use deterministic fixtures and report PASS/FAIL/NOT RUN accurately.
-- No implementation or benchmark authorization is inferred from architecture approval.
-- The first vertical slices validate each domain end-to-end without merging their models.
+**No implicit approvals:** ADP-01/02 remain approved only in their recorded revised scopes; ADP-03 through ADP-11 remain OPEN. No new Runtime code, provider calls, sandbox setup, production dependency, external model/media run, budget expenditure or deployment is authorized by this proposal. See [Minimal provable Kernel protocol](../contracts/core-protocol.md), [Coding evaluation](../research/autonomous-coding-agent/evaluation.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), and [Shared Kernel evaluation](../research/shared-kernel/evaluation.md).
 
 ## 13. Owner decision record
 
@@ -635,7 +625,7 @@ The following choices require explicit owner disposition. "Accept" means accept 
 | --- | --- | --- |
 | ADP-01 | Approve complete autonomous editing loop in the revised bounded core scope; defer advanced/editor-grade features | REVISED — APPROVED 2026-11-02 |
 | ADP-02 | Accept four-stage progressive analysis with per-asset, per-stream, per-modality coverage manifests and adaptive evidence expansion | REVISED — APPROVED 2026-11-02 |
-| ADP-03 | Accept immutable profile versions, current-effective authority, linearizable Host launch/revocation fencing, and UNKNOWN hold | OPEN — refined draft; owner decision pending |
+| ADP-03 | Consider immutable profiles, live authority and single-Host local serialized LaunchGate/fence with acknowledged revocation, UNKNOWN hold; defer multi-Host global ordering | OPEN — revised draft; owner decision pending |
 | ADP-04 | Accept generic manifest + opaque immutable payload contract | OPEN |
 | ADP-05 | Accept per-stream integer/rational time, piecewise asset-clock mapping, explicit conversion/rounding, and A/V mapping | OPEN — refined draft; owner decision pending |
 | ADP-06 | Accept profile registry; decide compatibility-profile values separately | OPEN |
