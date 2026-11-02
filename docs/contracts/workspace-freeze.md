@@ -34,7 +34,7 @@ On an accepted PrepareFreeze:
 5. Confirm writable handles and mounts are quiescent within the declared host contract.
 6. If convergence cannot be proved, quarantine the workspace; do not continue to snapshot or finalize.
 7. Create an immutable, read-only final acceptance snapshot.
-8. Compute the final acceptance workspace hash from that snapshot and a versioned hash scope.
+8. For Coding compute the final acceptance **protected-input** digest from that snapshot and the trusted, predeclared versioned ProtectedInputScope; verification output/log/cache artifacts have separate provenance manifests. For Video retain the relevant immutable project/media/artifact digest bindings.
 9. Issue a receipt that binds the snapshot, hash, scope, epoch, challenge and host evidence.
 
 A process kill or timeout is not proof of convergence. The Host must provide evidence for the declared process/handle boundary.
@@ -46,7 +46,7 @@ A receipt payload must be canonical, versioned and authenticated. It binds at le
 - receipt version, canonicalization profile and digest algorithm;
 - receipt ID and PrepareFreeze request binding;
 - kernelChallenge, freezeId, workspaceId and fencingEpoch;
-- snapshot ID and final acceptance workspace hash;
+- snapshot ID and final acceptance protected-input/project snapshot digest (according to domain);
 - hash algorithm, hash-scope version and hash-scope descriptor digest;
 - process/handle convergence counts and evidence digests;
 - host identity, host key ID, Host Ledger sequence and capture time.
