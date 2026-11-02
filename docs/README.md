@@ -41,6 +41,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Coding evaluation and experiment protocol](research/autonomous-coding-agent/evaluation.md)
 - [Unified domain direction](decisions/unified-domain-direction.md)
 - [Cross-domain architecture review](decisions/cross-domain-architecture-review.md)
+- [Architecture subtraction and contract feasibility review](decisions/architecture-subtraction-review.md) — KEEP/SIMPLIFY/EXPERIMENT, one-loop minimal authority, selective version read-sets and G0–G5 (PROPOSED, G0 not approved).
 - [Architecture Decision Proposals](decisions/architecture-decision-proposals.md) — recommendations and remaining OPEN decisions.
 - [Decision Log](decisions/decision-log.md) — authoritative owner dispositions, including ADP-01 REVISED/APPROVED.
 - [Second-round architecture revision](decisions/second-round-architecture-revision.md) — targeted Video intelligence, data lineage, FFmpeg security, RenderJob authority/recovery, provenance, and cross-domain boundary review.
