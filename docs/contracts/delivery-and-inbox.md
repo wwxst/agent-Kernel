@@ -4,7 +4,7 @@
 
 ## 1. Delivery boundary
 
-Only a ModelStep that has atomically reached Completed with one immutable `selectedAttemptId` may be delivered to Orchestration. Candidate pointers, partial responses, truncated responses, unsettled candidates and OutcomeUnknown Attempts are not deliverable.
+Only a ModelStep that has atomically reached Completed with one immutable `selectedAttemptId` may be delivered to Orchestration. Candidate pointers, partial responses, truncated responses, and OutcomeUnknown execution results are not deliverable. A complete selected response **is deliverable before final provider billing settlement** when the owning Attempt and all concurrent charge-bearing Attempts remain covered by credible maximum reservations under hard-budget policy (or the Task has explicitly authorized soft-budget mode). A missing invoice is never treated as zero charge and never releases a reservation. See [Model and Budget](model-and-budget.md).
 
 The Kernel creates a durable ResponseDeliveryOutbox record in the same local transaction as ModelStep Completed and final response selection.
 
