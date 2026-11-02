@@ -13,6 +13,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Model execution and budget](contracts/model-and-budget.md)
 - [Response delivery and durable inbox](contracts/delivery-and-inbox.md)
 - [Workspace freeze and receipt](contracts/workspace-freeze.md)
+- [PlanRevision and PlanStep lifecycle](contracts/plan-revision.md)
 - [Verification and completion](contracts/completion.md)
 
 ## Security and context

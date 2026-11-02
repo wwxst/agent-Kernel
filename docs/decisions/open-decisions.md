@@ -6,22 +6,35 @@ The current starting point is [Architecture overview](../architecture/overview.m
 
 ## 1. Autonomous Coding Agent intelligence
 
-**PROPOSED DESIGN DRAFT — highest priority.**
+**SECOND-ROUND CONTRACTS PROPOSED — owner review pending.**
 
-A first end-to-end design is available. The following decisions remain open:
+The first-round design skeleton is retained. The second-round draft now closes the following design gaps:
 
-- What GoalContract schema is sufficient for real software tasks without overburdening simple tasks?
-- What evidence and freshness rules should RepositoryModel and EvidenceGraph enforce?
-- What is the right PlanStep granularity for cross-package and migration tasks?
-- How should PlanRevision preserve stable step identity while representing superseded work?
-- How much reconnaissance is sufficient, and how should no-progress exploration be detected?
-- What is the right strategic/tactical/assurance control policy?
-- How should hypothesis-driven debugging and retry limits adapt by failure class?
-- How should verifier independence and evidence sufficiency be evaluated?
-- Which project instruction files should be loaded, and how should their authority remain bounded?
-- Which task classes should be in the first controlled vertical slice?
+| Review item | Proposed resolution | Status |
+| --- | --- | --- |
+| P0-1 PlanRevision / Task lifecycle | Freeze → drain → reconcile → refresh → validate → atomic activate; explicit Running → Planning and Reconciling transitions | PROPOSED |
+| P0-1 PlanStep status | Separate WorkStatus and VerificationStatus; FailedKnown remains an invocation/attempt outcome | PROPOSED |
+| P0-2 Kernel plan acceptance | Deterministic structural/authority contract validation only; semantic plan quality remains Orchestration | PROPOSED |
+| P0-2 GoalContract acceptance | Immutable UserIntent, append-only clarifications, immutable accepted versions, confirmation for protected-field changes | PROPOSED |
+| P0-3 Verification independence | Machine evidence, fresh independent review, risk-based external assurance; Verifier output is not completion proof | PROPOSED |
+| P1-2 ActionProposal | Version-bound durable decision record, bounded items, independent invocation admission, partial execution, stale invalidation | PROPOSED |
+| P1-3 EvidenceGraph | Minimum Claim/Evidence/Relation/Freshness/Provenance records; no graph database assumption; no model self-confidence as evidence | PROPOSED |
+| P1-4 Checkpoint | Separate historical integrity/readability from current execution authorization and resumability | PROPOSED |
+| P1-5 Loop arbitration | One task-level Orchestration decision coordinator with explicit priority and Kernel CAS | PROPOSED |
+| P1-6 Evaluation gates | Design method → task set → baseline → target confirmation → formal evaluation | PROPOSED |
 
-See [design](../research/autonomous-coding-agent/design.md), [failure model](../research/autonomous-coding-agent/failure-model.md), and [evaluation protocol](../research/autonomous-coding-agent/evaluation.md).
+The detailed contracts are in [PlanRevision lifecycle](../contracts/plan-revision.md), [intelligent execution design](../research/autonomous-coding-agent/design.md), [Context Engine](../context/context-engine.md), [completion contract](../contracts/completion.md), and [evaluation protocol](../research/autonomous-coding-agent/evaluation.md).
+
+Remaining open questions:
+
+- Which plan-switch UNKNOWN cases can a future Host prove non-blocking?
+- What exact protected GoalContract fields and confirmation policy should apply to different product risk classes?
+- What evidence-independence level should each risk class require?
+- How should semantic plan quality and RepositoryModel sufficiency be measured without moving those judgments into Kernel?
+- What task suite and hidden-test design best expose plan churn, false completion, and weak debugging?
+- What is the minimum useful PlanStep granularity for cross-package and migration work?
+
+No item above is approved solely because it is written here. Owner review is still required.
 
 ## 2. Reference implementation applicability
 

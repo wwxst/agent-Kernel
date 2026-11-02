@@ -78,22 +78,45 @@ These are conceptual records and contracts. They do not prescribe storage tables
 
 ### 4.1 GoalContract
 
-The GoalContract converts the user's request into an inspectable target.
+The GoalContract converts the user's request into an inspectable target without replacing the original intent.
+
+**Source of intent and versioning**
+
+- The original user request is retained as an immutable, provenance-bound UserIntent record.
+- User clarifications and corrections are appended as new immutable references; they do not overwrite the original request.
+- Orchestration proposes GoalContract candidates. Kernel records accepted versions and their version lineage.
+- An accepted GoalContract is immutable. A changed target produces a new candidate and, if accepted, a new version.
+
+Proposed lifecycle:
+
+Candidate → NeedsClarification | ReadyForAcceptance → Accepted → Superseded
+
+Rejected candidates remain auditable as Rejected. A candidate is not task authority merely because a model generated it.
+
+**Fields**
 
 | Field | Meaning |
 | --- | --- |
 | Desired outcome | Observable behavior or deliverable the user expects |
-| Scope | In-scope repositories, packages, files, systems, and permitted change classes |
-| Exclusions | Behavior, files, interfaces, or operations that must not change |
-| Acceptance criteria | Individually identifiable conditions with a proposed verification method |
+| Scope and exclusions | In-scope repositories/packages/files/systems and what must not change |
+| Acceptance criteria | Stable criterion IDs, observable outcomes, and proposed evidence obligations |
 | Constraints | Compatibility, performance, security, style, API, migration, and operational requirements |
-| Assumptions | Facts not yet established, with confidence and impact if wrong |
-| Ambiguities | Questions that could materially change the plan or authorization |
-| Risk profile | Data loss, external side effects, security impact, irreversibility, and blast radius |
+| Assumptions | Reversible interpretations, source, impact if wrong, and disclosure status |
+| Ambiguities | Questions that could materially change behavior, scope, or authorization |
+| Risk profile | Data loss, external effects, irreversibility, and blast radius |
 | Workspace binding | Repository identity, base commit, workspace ID, and initial generation |
-| User-control policy | Which decisions can proceed autonomously and which require input or approval |
+| User-control policy | Decisions allowed autonomously and those requiring user input or approval |
+| Provenance | Original request, clarification refs, candidate derivation, and field-level change set |
 
-Acceptance criteria should be observable. If a criterion is subjective or cannot be verified automatically, the contract must say whether human review is required. The agent may proceed on a low-risk assumption when the choice is reversible and the assumption is disclosed. It should ask the user when an ambiguity materially changes scope, design, compatibility, or risk.
+**Acceptance boundary**
+
+Kernel performs deterministic checks: schema, stable IDs, provenance references, version lineage, field-level changes, and presence of required user-confirmation evidence. Kernel does not decide whether the interpretation is semantically faithful.
+
+The following are protected fields: desired behavior, scope, exclusions, required acceptance criteria, constraints, public/compatibility commitments, risk boundary, and external/destructive side effects. A change to a protected field requires explicit user confirmation unless the original user request already clearly authorized that exact change. Model-generated labels cannot downgrade a protected change to a harmless assumption.
+
+Orchestration may proceed without asking only on a low-risk, reversible, disclosed operational assumption that remains within the accepted scope and constraints, does not alter required criteria, and is permitted by the user's control policy. If ambiguity materially changes behavior, scope, compatibility, or risk, ask the user.
+
+A new accepted GoalContract version triggers plan impact analysis. If scope, criteria, or execution authority changes, use the PlanRevision switch protocol. Old work may be carried forward only under the lineage and evidence rules in [PlanRevision contract](../../contracts/plan-revision.md). A VerificationReport bound to an earlier GoalContract version cannot complete the new version; raw evidence may be reused only when its scope and freshness still match.
 
 ### 4.2 RepositoryModel
 
@@ -115,75 +138,91 @@ Repository instruction files such as AGENTS.md or CLAUDE.md may describe project
 
 ### 4.3 EvidenceGraph
 
-The EvidenceGraph links claims to their supporting or contradicting evidence.
+The EvidenceGraph is a minimal evidence-relationship model and a Context/Orchestration projection. It is not necessarily a graph database and never replaces Kernel Journal, Host Ledger, workspace sources, or raw artifacts.
 
-Claim kinds:
+**Claim kinds**
 
-- **FACT** — directly observed or verified within a stated scope;
-- **HYPOTHESIS** — an explanation to be tested;
-- **ASSUMPTION** — temporarily accepted to make progress;
-- **DECISION** — a selected course of action and its rationale;
-- **UNKNOWN** — information not established;
-- **CONTRADICTION** — evidence that conflicts with an existing claim.
+- FACT — directly observed or verified within a declared scope;
+- HYPOTHESIS — an explanation to be tested;
+- ASSUMPTION — temporarily accepted for bounded progress;
+- DECISION — a selected course and its recorded rationale;
+- UNKNOWN — information not established;
+- CONTRADICTION — a claim/evidence conflict that remains unresolved.
 
-Evidence kinds include repository observations, source references, command outputs, test results, diffs, environment facts, Host receipts, external research, and user clarification.
+**Minimum records**
 
-Each evidence item should retain its source, content or payload digest, repository commit or workspace generation, environment, capture time, trust class, and transformation history. The graph is a Context/Orchestration projection; it does not replace Kernel Journal, Host Ledger, or source files.
+| Record | Required fields |
+| --- | --- |
+| Claim | claim ID, claim version, kind, proposition, project/task scope, validity scope, origin, currentness, and invalidation conditions |
+| Evidence | evidence ID, kind, source reference, payload/content digest, captured time, source version, repository commit/workspace generation/environment where applicable, trust class, sensitivity, and transformation chain |
+| Relation | relation ID, source node, target node, relation kind, basis/evidence reference, and creation time |
+| Freshness | state (Current, Stale, Invalidated, Unknown), bound versions, and invalidation reason/event |
+| Provenance | original source, actor/tool, transformation sequence, and links to raw evidence |
 
-A claim is invalidated when its bound file, commit, environment, dependency, tool version, or authorization changes. A new source observation must not silently rewrite historical evidence.
+Supported relation kinds include supports, refutes, derived_from, contradicts, qualifies, duplicates, and invalidates. Relations are explicit records; they are not implied by proximity in a graph.
+
+**Evidence and claim rules**
+
+- A FACT requires at least one direct source/evidence reference and a declared scope. A model assertion alone cannot create a FACT.
+- A HYPOTHESIS may be model-generated but remains a hypothesis until tested.
+- An ASSUMPTION records who/what introduced it, why it is safe to proceed, impact if false, and when it expires.
+- A DECISION records the decision-maker, rationale summary, alternatives considered, and supporting/contradicting evidence references. It does not store private chain-of-thought.
+- A CONTRADICTION points to the conflicting claims/evidence; it does not overwrite either source.
+- Numeric model self-confidence is not evidence and is not a substitute for provenance, source quality, or verification.
+
+Trust and authority are separate. Trust class describes the provenance and reliability of evidence within scope; it does not grant permission. An authenticated Host receipt may be authoritative for a recorded process outcome but not for whether the code meets a product requirement. A test result is authoritative for that exact run, command, environment, and workspace—not for all behavior.
+
+RepositoryModel claims reference EvidenceGraph records and retain file/symbol hashes and freshness. The graph may be materialized as structured records and indexes; selecting a graph database is an open implementation decision.
 
 ### 4.4 PlanRevision and PlanStep
 
-A PlanCandidate becomes authoritative only after Kernel accepts it as a versioned PlanRevision.
+A PlanCandidate becomes authoritative only after Kernel's deterministic contract checks and safe activation. The full lifecycle, plan-switch barrier, status transitions, carry-forward rules, and UNKNOWN handling are specified in [PlanRevision and PlanStep lifecycle contract](../../contracts/plan-revision.md).
 
-A PlanRevision binds:
+A PlanRevision binds the accepted GoalContract version, RepositoryModel/EvidenceGraph snapshot, workspace generation, dependency-aware PlanStep graph, acceptance-criterion mapping, assumptions, risks, expected artifacts, capability/approval boundaries, verification obligations, recovery strategy, resource estimate, and verification/repair reserve.
 
-- GoalContract version and digest;
-- RepositoryModel snapshot and workspace generation;
-- a dependency-aware PlanStep graph;
-- acceptance-criterion coverage;
-- assumptions, risks, unresolved questions, and external dependencies;
-- expected artifacts and observable outcomes;
-- required capabilities and approval boundaries;
-- verification obligations and evidence expected from each step;
-- rollback or containment strategy for risky changes;
-- resource estimate and a verification/repair reserve.
+A PlanStep is a meaningful engineering outcome, not a model call or shell command. Its definition includes objective, dependencies, preconditions, expected artifacts, criterion links, effect/risk, capability needs, evidence obligations, verification, and recovery.
 
-A PlanStep is a meaningful unit of outcome, such as understanding an API boundary, implementing a migration, updating a compatibility layer, or proving a regression is fixed. It is not a single model call or shell command.
+**PlanStep has two independent state dimensions:**
 
-A PlanStep should define:
+- WorkStatus: NotStarted, Ready, Running, Blocked, Completed, Superseded.
+- VerificationStatus: NotRequired, Pending, Running, Passed, Failed, Stale, Inconclusive.
 
-| Field | Meaning |
-| --- | --- |
-| Objective | Outcome this step must produce |
-| Dependencies | PlanSteps that must be complete first |
-| Preconditions | Repository, environment, and state assumptions |
-| Expected artifacts | Files, interfaces, reports, or evidence to produce |
-| Criteria links | Acceptance criteria advanced by this step |
-| Risk and effect | Expected workspace and external effects |
-| Capability needs | Read, edit, execute, network, or approval requirements |
-| Verification | Checks that establish this step's outcome |
-| Recovery | Safe retry, rollback, replan, or escalation path |
+Thus WorkStatus=Completed with VerificationStatus=Failed is valid. A failed tool or model attempt is not a PlanStep failure. A PlanStep can be reworked only through an explicit event, preserving prior artifacts and verification history.
 
-PlanStep progress is a Kernel-owned fact once the plan is accepted. Orchestration proposes transitions and evidence; Kernel validates and records them. A new PlanRevision supersedes or amends prior work explicitly. It must not erase completed evidence or silently reopen a terminal Task.
+A new revision creates new PlanStep identities. It may explicitly carry forward old artifacts and evidence through lineage references, but it cannot reactivate or mutate a superseded step. Verification defaults to Pending in the new revision unless the evidence contract proves cross-revision reuse is valid.
 
 ### 4.5 ActionProposal and ExecutionTrace
 
-An ActionProposal is a typed suggestion from Orchestration. Typical action kinds are:
+An ActionProposal is a durable, typed decision record produced by Orchestration from a complete ModelStep response. It is not an execution ticket, approval, capability, or permission.
 
-- Inspect — read or search repository/environment state;
-- Experiment — run a bounded diagnostic experiment;
-- Edit — propose a code or configuration change;
-- Verify — run a required check or inspect verification evidence;
-- Ask — request missing user information;
-- RequestApproval — request authorization for a specific risk boundary;
-- Wait — wait for a dependency, lease, or external condition;
-- Replan — propose a new PlanRevision;
-- Stop — stop because the goal is met, blocked, unsafe, or infeasible.
+**Minimum ActionProposal binding**
 
-An ActionProposal binds the current PlanRevision, PlanStep, workspace generation, expected preconditions, effect class, proposed tool calls, expected outputs, and a verification method. It is not an execution ticket.
+- proposal ID and schema version;
+- Task ID, Task aggregate version, Turn ID, ModelStep ID, and selected ModelAttempt ID;
+- accepted GoalContract version, active PlanRevision ID, and current PlanStep ID when applicable;
+- workspace ID/generation and relevant precondition/evidence snapshot references;
+- immutable tool-definition snapshot ID;
+- proposed action kind, bounded proposal items, canonical argument digests, effect/risk class, target/scope, dependencies between items, expected outputs, and evidence obligations;
+- creation sequence, expiry, and invalidation conditions.
 
-The ExecutionTrace links the ModelStep and Attempt, accepted action proposal, ToolInvocations, Kernel admission decisions, Host run IDs, receipts, artifacts, and resulting evidence. It is the explanation chain for what the agent did and why.
+Action kinds include Inspect, Experiment, Edit, Verify, Ask, RequestApproval, Wait, Replan, and Stop. Non-tool actions are handled through the corresponding Orchestration/Kernel command contract; they do not manufacture a ToolInvocation.
+
+**Lifecycle and partial execution**
+
+An ActionProposal is recorded before its child ToolInvocations are admitted. Its record lifecycle is Recorded → Evaluated → PartiallyExecuted | Completed, with terminal alternatives Rejected, Expired, Superseded, and Cancelled. Evaluated means the proposal passed the relevant decision-record checks; it does not mean any tool is authorized.
+
+- A proposal contains a policy-bounded maximum number of invocation items; it cannot create an unbounded tool batch.
+- Each side-effecting item becomes a separate ToolInvocation with its own identity, payload digest, Kernel admission, approval, budget reservation, durable intent, Host execution, receipt, and outcome.
+- Batches are never atomic. Independent siblings may proceed if policy allows. A dependent item cannot start until its declared prerequisites have succeeded.
+- A denial or failure blocks dependent descendants; independent siblings may continue only if their own bindings and admission checks remain current.
+- Partial execution is represented explicitly; the proposal cannot be marked wholly Completed while required child items remain unresolved.
+- No invocation inherits another invocation's approval or admission.
+
+**Staleness**
+
+A proposal expires or is superseded if its Task version, GoalContract, active PlanRevision, PlanStep readiness, workspace generation, tool snapshot, relevant precondition, policy, approval, budget, or fencing binding changes. Kernel rechecks every invocation at admission. If an earlier item changes the workspace generation, remaining items bound to the old generation must be regenerated or explicitly revalidated under a contract that proves their preconditions remain valid.
+
+The ExecutionTrace links proposal and item IDs to ModelStep/Attempt, ToolInvocations, Kernel admission decisions, Host run IDs, receipts, artifacts, diffs, verification runs, and EvidenceGraph references. It is an auditable explanation chain, not a source of authority.
 
 ## 5. Control architecture
 
@@ -222,16 +261,38 @@ The model may propose multiple tool calls, but a tool batch is not an atomic tra
 
 The assurance loop answers: **Does the current workspace actually satisfy the requested outcome?**
 
-- Map each acceptance criterion to one or more required evidence obligations.
-- Select checks based on the affected code, risk, and criterion coverage.
-- Run checks through the trusted execution path.
-- Interpret failures as evidence, not merely as a red/green signal.
-- Re-run stale or invalidated checks after relevant changes.
-- Perform a fresh verification pass that does not rely on the implementer's self-reported success.
-- Request the trusted workspace freeze and final snapshot.
-- Submit the bound VerificationReport to Kernel Completion Guard.
+It uses three layers that must not be conflated:
+
+1. **Machine-verifiable evidence.** Run the required tests, builds, type checks, static analysis, contract checks, hidden tests, or reproducible experiments through Trusted ToolHost. Record actual commands, environment, workspace, receipts, exit status, output digests, and artifacts. A test written by the Implementer can be useful regression evidence, but its authorship is recorded and it is not automatically an independent oracle.
+2. **Independent review.** Start a fresh Verifier ModelStep with a separate context assembled from the original UserIntent, accepted GoalContract and PlanRevision, criterion definitions, current diff, and raw verification evidence. Do not provide the Implementer's summary, self-assessment, private reasoning, or prior verifier conclusion as evidence. The same model/provider may be used for ordinary-risk review if the context and decision are fresh. For higher-risk criteria, policy may require a different model/provider, an independently authored test suite, or an external reviewer.
+3. **External assurance.** Use human review, security audit, hidden/independently authored tests, staging or real-environment validation when the criterion's risk and nature require it. A model reviewer cannot substitute for a required human or external assurance step.
+
+The Verifier produces review findings: NoBlockingFinding, BlockingFinding, InsufficientEvidence, or HumanReviewRequired. These are review outputs, not criterion proof. A Verifier model judgment never creates a trusted test result and cannot directly mark a criterion Passed.
+
+The VerificationReport maps each required criterion to its required evidence class and actual evidence references. Completion Guard deterministically checks that the report is current, correctly bound, and contains the evidence classes required by the accepted GoalContract/policy. It checks evidence presence, provenance, freshness, and authorization—not whether a technical solution is semantically correct. Criteria requiring human judgment need an authenticated human disposition.
 
 The assurance loop may send the task back to execution or planning. It cannot declare TaskCompleted itself.
+
+### 5.4 Single-task decision arbitration
+
+The three loops are not independent task controllers. Each may produce a typed ControlProposal, but only one Orchestration decision coordinator owns the next task-level decision. The coordinator serializes decisions against the latest Kernel snapshot; Kernel aggregate-version compare-and-swap remains the authoritative commit gate.
+
+Every ControlProposal binds the Task aggregate version, decision sequence, GoalContract, active PlanRevision, workspace generation, relevant evidence references, proposed transition, and expiry. A stale proposal is discarded and recomputed. Loops may perform bounded analysis concurrently, but none may directly mutate Task state, accept a plan, authorize a tool, or dispatch work.
+
+The coordinator applies this precedence:
+
+1. **Hard safety and cancellation:** security stop, task cancellation, policy denial, revocation, or emergency containment.
+2. **Started-operation reconciliation:** UNKNOWN outcomes, process convergence, receipt import, and plan-switch drain.
+3. **New user intent:** record the user message immediately; resolve material clarification or GoalContract version changes before further conflicting work.
+4. **Required approval and external waits:** obtain explicit authorization or wait for a dependency/lease.
+5. **Assurance regression:** failed or stale required verification, criterion coverage gaps, or evidence conflicts.
+6. **Plan invalidation and replan:** failed assumptions, dependency changes, scope changes, or no-progress triggers.
+7. **Normal tactical execution:** perform the next ready action under the active plan.
+8. **Progress and delivery:** summarize durable milestones or deliver a final response when allowed.
+
+A higher-priority event preempts pending lower-priority proposals, not the physical history of already-started operations. Those operations still drain or reconcile. User input is retained even when execution is blocked by UNKNOWN. Safety and authorization barriers cannot be bypassed for throughput. Lower-priority work should not starve once higher-priority conditions are resolved.
+
+This is a logical serialization contract inside Orchestration, not a new agent, microservice, or distributed coordinator.
 
 ## 6. End-to-end execution lifecycle
 
@@ -460,18 +521,20 @@ Prompt-injection resistance, sandbox isolation, and receipt authenticity remain 
 
 ## 11. Kernel boundary required by this design
 
-| Concern | Orchestration may propose | Kernel must own or enforce |
+| Concern | Orchestration may propose or decide semantically | Kernel must own or enforce deterministically |
 | --- | --- | --- |
-| Goal | GoalContract and criteria candidate | Task identity, accepted scope version, immutable user intent references |
-| Repository | RepositoryModel and evidence projections | Workspace identity/generation and trusted snapshot references |
-| Planning | PlanCandidate and PlanRevision rationale | Accepted PlanRevision, legal revision transitions, PlanStep progress facts |
-| Model reasoning | Purpose, model strategy, context needs | ModelStep/Attempt identity, admission, hard budgets, cancellation and settlement |
-| Action | ActionProposal and tool-call batch | ToolInvocation identity, schema/snapshot checks, policy, approval, budget, durable intent |
-| Scheduling | Desired ordering and safe concurrency proposal | Admission, fencing, leases, execution constraints, state transitions |
-| Debugging | Hypotheses and experiments | Invocation admission, evidence references, retry safety, UNKNOWN reconciliation |
-| Verification | Check selection and criterion verdict proposal | Required evidence validation, workspace freeze, Completion Guard |
-| Continuity | Checkpoint Candidate and memory Candidate | Checkpoint commit, authoritative Task state, durable recovery |
+| Goal | GoalContract interpretation, assumptions, ambiguity, and semantic fidelity | Immutable UserIntent refs, version identity, schema/provenance checks, protected-field confirmation evidence, accepted GoalContract pointer |
+| Repository | RepositoryModel completeness and relevance; evidence interpretation | Workspace identity/generation and trusted snapshot references |
+| Planning | PlanCandidate, technical route, step granularity, criterion adequacy, replan rationale | PlanRevision identity/version, schema, DAG, references, scope envelope, budget envelope, legal transition, cutover barrier, accepted pointer |
+| Model reasoning | Purpose, model strategy, context needs | ModelStep/Attempt identity, admission, hard budgets, cancellation, and settlement |
+| Action | ActionProposal semantics, ordering, and expected progress | Proposal recording/binding checks; ToolInvocation identity, schema/snapshot checks, policy, approval, budget, durable intent |
+| Scheduling | Desired ordering and proposed safe concurrency | Admission, fencing, leases, execution constraints, state transitions |
+| Debugging | Hypotheses, experiments, and root-cause interpretation | Invocation admission, evidence references, retry safety, UNKNOWN reconciliation |
+| Verification | Check selection, evidence sufficiency assessment, review findings | Required evidence class/provenance/freshness checks, workspace freeze, Completion Guard |
+| Continuity | Checkpoint Candidate and memory Candidate | Checkpoint integrity commit, authoritative Task state, recovery-time authorization revalidation |
 | Delivery | User-facing summary | Selected response and durable delivery contract |
+
+Kernel's plan acceptance is deterministic contract validation, not semantic approval. It must not call a model or inspect source code to decide whether a technical route is wise. Criterion coverage is checked structurally by stable IDs; semantic coverage remains Orchestration's responsibility.
 
 All Planner, Explorer, Implementer, Debugger, and Verifier model calls pass through Model Gateway and Kernel-managed ModelSteps. No cognitive role bypasses Kernel to call a provider or execute a tool.
 
@@ -491,15 +554,18 @@ The proposal is not empirically validated. The evaluation protocol is specified 
 
 ## 13. Open design questions
 
-- How much reconnaissance is sufficient for different task classes, and how should the system detect that it is exploring without learning?
-- What is the smallest useful PlanStep granularity for cross-package changes?
-- Which evidence types and freshness rules should be mandatory for RepositoryModel claims?
-- How should plan revisions preserve stable step identity while representing superseded work?
-- How should a verifier's independence be measured without requiring another agent?
-- How should flaky tests and nondeterministic environments affect acceptance evidence?
-- Which action classes can be safely parallelized under a real workspace conflict model?
-- What no-progress thresholds are robust across different task types and model capabilities?
-- How should project-specific instruction files be discovered and bounded by user authority?
+The second-round draft now specifies GoalContract versioning, deterministic plan-contract validation, PlanRevision cutover, orthogonal PlanStep status, ActionProposal binding/partial execution, EvidenceGraph minimum records, decision arbitration, verification independence levels, and checkpoint/authorization separation.
+
+The following remain OPEN for owner review and empirical evaluation:
+
+- What reconnaissance depth and PlanStep granularity work best across task families?
+- What concrete field-level rules should define protected GoalContract changes for different product policies?
+- Which plan-switch UNKNOWN cases can a future Host prove non-blocking?
+- Which evidence kinds and independence levels are required for each risk class?
+- How should the system measure whether a RepositoryModel or plan is semantically adequate without moving that judgment into Kernel?
+- What benchmark tasks and hidden tests best expose false completion, plan churn, and weak debugging?
+- What context retrieval, graph projection, and checkpoint formats are effective at realistic repository scale?
 - Which task classes should be supported in the first controlled vertical slice?
 
-These remain **OPEN** until supported by experiments and owner decisions.
+These remain open; this design is still proposed and has not been empirically validated.
+

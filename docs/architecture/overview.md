@@ -36,7 +36,7 @@ These are responsibilities and authority boundaries, not a commitment to package
 | --- | --- | --- |
 | Agent Application | CLI / SDK / API / IDE / Desktop entry points, user interaction, progress and approval UI | Authoritative task state or direct side-effect authority |
 | Orchestration | GoalContract candidates, repository/problem modeling, EvidenceGraph projections, PlanCandidate, adaptive action selection, debugging hypotheses, verification decisions, and user escalation | Direct provider calls, direct tool execution, or authoritative state writes |
-| Kernel | Task/Turn/Step state, accepted PlanRevision/PlanStep facts, ModelStep/Attempt and ToolInvocation state, hard budgets, legal transitions, admission, durable intent, and Completion Guard | Business strategy, provider-specific protocol, physical OS side effects |
+| Kernel | Task/Turn/Step state, accepted GoalContract and PlanRevision/PlanStep facts, deterministic contract validation, plan-switch barriers, ModelStep/Attempt and ToolInvocation state, hard budgets, legal transitions, admission, durable intent, and Completion Guard | Semantic goal interpretation, technical plan quality, business strategy, provider-specific protocol, physical OS side effects |
 | Model Gateway | Provider credentials boundary, request/stream protocol, complete-response normalization, usage evidence, and provider errors | Task state, plan acceptance, budget authorization, tool admission, tool execution |
 | Context Engine | RepositoryModel and EvidenceGraph projections, Planning/Execution Context, retrieval, checkpoint candidates, compaction, and memory projections | Authorization, state mutation, or rewriting execution facts |
 | Tool Runtime | Immutable tool-definition snapshots, effect/conflict-aware scheduling, dispatch, Host client, and result projection | Permission grants or authoritative task-state changes |
@@ -51,7 +51,7 @@ Orchestration may contain logical cognitive capabilities such as Explorer, Plann
 
 ### 4.1 Goal and repository model
 
-Orchestration first creates a GoalContract containing desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, ambiguity, risk, and workspace binding.
+Orchestration proposes a versioned GoalContract from immutable UserIntent and append-only clarifications. Kernel checks structure, provenance, version lineage, protected-field changes, and required user-confirmation evidence; it does not decide semantic fidelity. The accepted contract contains desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, ambiguity, risk, and workspace binding.
 
 It then builds a RepositoryModel from repository structure, manifests, source, symbols, dependency relationships, tests, project conventions, and environment evidence. Each claim retains provenance and freshness. Repository instructions are bounded project data; they cannot grant permissions or override higher-authority policy.
 
@@ -59,7 +59,7 @@ It then builds a RepositoryModel from repository structure, manifests, source, s
 
 The EvidenceGraph separates FACT, HYPOTHESIS, ASSUMPTION, DECISION, UNKNOWN, and CONTRADICTION. It links claims to source references, repository observations, commands, test results, diffs, and Host evidence.
 
-Orchestration proposes a dependency-aware PlanRevision made of outcome-oriented PlanSteps. Kernel accepts and versions the plan. PlanStep progress becomes authoritative only through Kernel transitions and evidence references.
+Orchestration proposes a dependency-aware PlanRevision made of outcome-oriented PlanSteps. Kernel performs deterministic contract validation (schema, identity/version, DAG, references, criterion-ID mapping, scope/capability/budget envelope, and legal transition), not technical or semantic plan review. A new revision is not executable until the plan-switch barrier has drained/reconciled old work and Kernel atomically activates it. PlanStep work and verification statuses are independent; the full contract is in [PlanRevision lifecycle](../contracts/plan-revision.md).
 
 A PlanStep is a goal-level work item. A runtime Step is an execution unit such as planning, model invocation, tool batch, verification, or checkpoint work. ModelStep and ModelAttempt remain the model-specific lifecycle.
 
@@ -71,7 +71,7 @@ The execution model has three cooperating logical loops:
 - **Tactical loop:** build a version-bound Execution Context, request a typed ActionProposal, obtain Kernel admission, dispatch through Tool Runtime and Trusted ToolHost, then update evidence.
 - **Assurance loop:** map acceptance criteria to actual checks, diagnose verification failures, run an independent verifier pass, freeze the workspace, and submit evidence to Completion Guard.
 
-The loops are responsibilities of Orchestration, not a fixed multi-agent topology.
+The loops are responsibilities of Orchestration, not a fixed multi-agent topology. One task-level decision coordinator serializes their proposals by safety, reconciliation, user intent, approval, assurance, replan, normal execution, and delivery priority.
 
 ## 5. High-level execution path
 
@@ -79,13 +79,13 @@ The loops are responsibilities of Orchestration, not a fixed multi-agent topolog
 2. Kernel validates identity, idempotency, task envelope, initial budget, and admission.
 3. Orchestration creates a GoalContract candidate and identifies material ambiguity.
 4. Kernel admits bounded reconnaissance; Context Engine builds the initial RepositoryModel and EvidenceGraph projections.
-5. Orchestration submits a PlanCandidate. Kernel validates and accepts a versioned PlanRevision.
+5. Orchestration submits a PlanCandidate. Kernel validates it deterministically; the first revision is activated only when its bindings are current. Revisions after the first use freeze → drain → reconcile → refresh → validate → atomic activate.
 6. For each ready PlanStep, Context Engine builds an Execution Context bound to current task, plan, workspace, policy, budget, and tool snapshots.
 7. Orchestration requests a ModelStep through Kernel and Model Gateway; the model proposes an action or bounded tool batch.
 8. Kernel validates each invocation, policy, approval, capability, budget, workspace generation, tool version, and durable intent.
 9. Tool Runtime dispatches only admitted requests to Trusted ToolHost.
 10. Host records physical execution facts and returns an authenticated receipt or an explicitly unknown outcome.
-11. Kernel reconciles evidence. Orchestration updates the RepositoryModel/EvidenceGraph projections and decides continue, debug, replan, ask, wait, or verify.
+11. Kernel reconciles evidence. Orchestration updates RepositoryModel/EvidenceGraph projections; the single-task decision coordinator decides continue, debug, replan, ask, wait, or verify. A replan freezes old-revision admissions and reconciles already-started work before cutover.
 12. Verification runs against the accepted plan, criterion set, environment, and workspace generation.
 13. Completion Guard validates current evidence and the frozen final snapshot before TaskCompleted.
 14. Orchestration delivers a bounded user-facing summary only after durable completion/delivery rules permit it.
@@ -123,7 +123,7 @@ Read-only reconnaissance may occur before plan acceptance only within an explici
 - Trusted ToolHost Host Ledger and authenticated receipts describe physical execution. Kernel stores references and reconciles them; it does not invent success.
 - Workspace snapshots and hashes are authoritative only within their declared scope, version, and trusted Host evidence.
 - RepositoryModel, EvidenceGraph, context packs, plans before acceptance, model output, summaries, and memory are projections or candidates, not execution facts.
-- A PlanRevision becomes authoritative only through a Kernel acceptance transition. Orchestration cannot write accepted plan state directly.
+- A PlanRevision becomes authoritative only through deterministic Kernel contract validation and a safe activation transition. AcceptedPendingCutover is not executable. Orchestration cannot write accepted plan state directly. Kernel does not judge whether the technical route is good; that remains Orchestration's responsibility.
 
 No component may silently promote its local cache, model output, or external response into an authoritative fact.
 

@@ -120,18 +120,23 @@ After a stable baseline exists, remove or vary one capability at a time:
 
 Do not introduce Multi-Agent / D9 as a baseline dependency. The first question is whether one primary agent can complete the task reliably.
 
-## 8. Acceptance gates for the design
+## 8. Staged evaluation gates
 
-The architecture should not move to implementation planning until:
+Evaluation readiness is staged. A measured baseline cannot be a prerequisite for agreeing on the evaluation method, and a target threshold must not be invented before a baseline exists.
 
-- the benchmark task schema and evaluation controls are reviewed;
-- a baseline and target quality thresholds are agreed;
-- false-completion and unauthorized-execution gates are explicit;
-- recovery cases include process interruption, context compaction, and UNKNOWN side effects;
-- verification evidence is independently checked;
-- each claimed improvement is reproducible across a defined task set.
+| Stage | Required output | Gate |
+| --- | --- | --- |
+| Architecture design | Metric definitions, task families, safety floors, evidence rules, and experiment method | Owner review of the evaluation protocol; no runtime result is implied |
+| Task-set preparation | Reproducible task schema, pinned repositories/commits, difficulty strata, acceptance criteria, hidden tests/reviewer rubric, and scoring rules | Task set and scoring rubric reviewed before comparison runs |
+| Baseline | Run a declared reference system or the first controlled implementation on the frozen task set with pinned environment, policy, tools, and budgets | Publish baseline distributions, failure taxonomy, and confounders; if no comparable reference is available, label the first controlled implementation as the baseline |
+| Target confirmation | Set quality and safety thresholds using baseline distributions, task difficulty, confidence intervals, and the intended risk profile | Owner approves target thresholds and safety gates; do not backfill thresholds to fit results |
+| Formal evaluation | Repeated controlled comparisons, ablations, and regression runs against the approved baseline and thresholds | Report all outcomes, including failed, blocked, incomplete, and unsafe runs |
 
-Thresholds are **OPEN** until initial baseline results exist. Do not invent a target success percentage before the task set and scoring rubric are validated.
+**Implementation-planning gate:** architecture and implementation planning may proceed after the design-level metrics, task families, safety floors, and experimental method are reviewed. They do not need measured baseline thresholds that cannot exist before a runnable system or reference baseline is available.
+
+**Runtime / controlled-execution gate:** a real-model baseline requires separate explicit authorization of provider, disposable workspace, tools, network policy, hard budget, task set, and stop conditions. Architecture approval or implementation planning does not grant that authorization.
+
+A single high-severity unauthorized execution or false completion remains a safety blocker regardless of aggregate task success. Target thresholds remain OPEN until the baseline stage is complete.
 
 ## 9. Reporting template
 

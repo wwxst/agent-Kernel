@@ -25,18 +25,40 @@ Every required criterion must have sufficient current evidence. A criterion cann
 
 A PlanStep may be verified independently, but TaskCompleted requires all required Task-level criteria to pass.
 
-## 3. Verification strategy
+## 3. Verification strategy and independence
 
-The proposed assurance process uses multiple levels:
+Verification is a layered evidence process. Process independence, judgment independence, and evidence independence are different properties and must be recorded separately.
 
-1. **Change verification:** inspect the diff and run focused formatting, static analysis, type, or unit checks as relevant.
-2. **Component verification:** run the affected package/module tests.
-3. **Integration verification:** run cross-package, contract, or integration checks required by the acceptance criteria.
-4. **System verification:** run required full build, end-to-end, or system checks when specified by the task contract.
-5. **Acceptance verification:** evaluate every criterion against its evidence obligations.
-6. **Independent review:** run a fresh verifier decision step against the accepted plan, criteria, diff, and raw verification evidence. The verifier may use the same model/provider, but must not accept the implementer's completion claim as evidence.
+### 3.1 Machine-verifiable evidence
 
-The verification plan must distinguish required checks from optional risk-based checks. A skipped, unavailable, or unrun test is not a pass. If a criterion requires human judgment, the system must request that review rather than synthesize a model verdict as if it were objective evidence.
+Run the checks required by the accepted GoalContract and plan: tests, build, type checks, static analysis, API/contract checks, hidden tests, reproducible experiments, or other objective probes. Each run must use the trusted execution path and record actual command, environment, workspace, Host run ID, receipt, exit/signal, output digest, and artifacts.
+
+A test authored or modified by the Implementer is useful evidence that the test ran and that the implementation satisfies that particular test. It is not automatically an independent oracle. The evidence record must retain test provenance and whether its oracle was authored/modified by the implementation path, independently authored, hidden, or externally supplied.
+
+### 3.2 Fresh independent review
+
+After implementation and machine checks, create a fresh Verifier ModelStep. It must receive the original UserIntent, accepted GoalContract and PlanRevision, acceptance criteria, current diff, and raw verification evidence. It must not rely on the Implementer's summary, self-assessment, private reasoning, or prior conclusion as evidence.
+
+The same model/provider may be used for ordinary-risk tasks if the Verifier receives a fresh context and makes a separate decision. For higher-risk criteria, policy may require a different model/provider, an independent test author, or external review. A different model alone does not make evidence independent.
+
+The Verifier emits only review dispositions:
+
+- NoBlockingFinding — no blocking issue found in the inspected evidence;
+- BlockingFinding — a potential defect or criterion mismatch needs resolution;
+- InsufficientEvidence — evidence obligations are not met;
+- HumanReviewRequired — the criterion requires an authorized human decision.
+
+A Verifier disposition is a review artifact, not a trusted test result and not a criterion Pass. It may identify missing tests or request further verification; it cannot manufacture execution evidence.
+
+### 3.3 External assurance
+
+For criteria whose risk or nature requires it, use human review, security audit, hidden or independently authored tests, staging/real-environment validation, or an external evaluator. If the GoalContract requires a human judgment, only an authenticated, authorized human disposition can satisfy that obligation. Model agreement cannot substitute for it.
+
+### 3.4 Completion Guard's role
+
+The VerificationReport maps every required criterion to its required evidence class, evidence-independence level, provenance, freshness, and actual evidence references. Completion Guard deterministically checks the report's binding, required evidence presence, provenance, freshness, policy-required assurance level, and human dispositions.
+
+Completion Guard does not decide whether a technical approach is semantically correct, whether a test suite is intellectually sufficient beyond the declared evidence contract, or whether a Verifier's reasoning is correct. Those judgments belong to Orchestration, independent review, external assurance, or the user as required. The Guard must not accept a Verifier's NoBlockingFinding as a substitute for required evidence.
 
 ## 4. VerificationReport binding
 
@@ -54,7 +76,9 @@ A report should bind at least:
 - artifact paths, content hashes, and source execution IDs;
 - per-criterion verdicts and evidence references;
 - skipped/unavailable checks and reasons;
-- verifier identity/version/policy and report digest.
+- verifier identity/version/policy, fresh-context digest, input-source manifest, and review disposition;
+- per-criterion evidence-independence class (implementation-authored, independently authored/hidden, external, or human) and the policy-required class;
+- human/external review identity, authorization, decision reference, and timestamp where required.
 
 A model-generated hash or test summary is not trusted evidence.
 
@@ -83,7 +107,9 @@ Before TaskCompleted, Kernel verifies:
 - Every required PlanStep is verified or otherwise accounted for by the accepted plan.
 - All required acceptance criteria passed; no required criterion is NotRun, Skip, Partial, or Unverified.
 - Criterion evidence is attributable to actual trusted runs, source observations, or authorized human review.
-- Verifier report is current and does not rely solely on implementer self-report.
+- A fresh Verifier review record is present when required, and its input manifest excludes the Implementer's summary/self-assessment as evidence.
+- Verifier disposition is not treated as criterion proof; the required machine/external/human evidence classes are independently present.
+- Per-criterion evidence-independence class meets the risk-based requirement in the accepted GoalContract/policy.
 - Workspace ID, generation, snapshot, hash algorithm, and hash-scope version match.
 - Final acceptance hash equals the trusted hash of the same immutable snapshot.
 - Test environment and dependency/toolchain digests match the task contract.

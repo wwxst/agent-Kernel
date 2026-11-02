@@ -33,11 +33,41 @@ Each claim retains source references, commit/file hashes, capture time, confiden
 
 ### EvidenceGraph
 
-EvidenceGraph connects claims to supporting, contradicting, and derived evidence. Claim kinds include FACT, HYPOTHESIS, ASSUMPTION, DECISION, UNKNOWN, and CONTRADICTION.
+The EvidenceGraph is a minimal evidence-relationship model and a Context/Orchestration projection. It is not necessarily a graph database and never replaces Kernel Journal, Host Ledger, workspace sources, or raw artifacts.
 
-Evidence may include repository observations, source references, command output, test results, diffs, Host receipts, environment facts, external research, and user clarification.
+**Claim kinds**
 
-The graph is a provenance-aware projection over Kernel Journal, Host Ledger, workspace snapshots, repository sources, and external evidence. It is not a second authoritative ledger.
+- FACT — directly observed or verified within a declared scope;
+- HYPOTHESIS — an explanation to be tested;
+- ASSUMPTION — temporarily accepted for bounded progress;
+- DECISION — a selected course and its recorded rationale;
+- UNKNOWN — information not established;
+- CONTRADICTION — a claim/evidence conflict that remains unresolved.
+
+**Minimum records**
+
+| Record | Required fields |
+| --- | --- |
+| Claim | claim ID, claim version, kind, proposition, project/task scope, validity scope, origin, currentness, and invalidation conditions |
+| Evidence | evidence ID, kind, source reference, payload/content digest, captured time, source version, repository commit/workspace generation/environment where applicable, trust class, sensitivity, and transformation chain |
+| Relation | relation ID, source node, target node, relation kind, basis/evidence reference, and creation time |
+| Freshness | state (Current, Stale, Invalidated, Unknown), bound versions, and invalidation reason/event |
+| Provenance | original source, actor/tool, transformation sequence, and links to raw evidence |
+
+Supported relation kinds include supports, refutes, derived_from, contradicts, qualifies, duplicates, and invalidates. Relations are explicit records; they are not implied by proximity in a graph.
+
+**Evidence and claim rules**
+
+- A FACT requires at least one direct source/evidence reference and a declared scope. A model assertion alone cannot create a FACT.
+- A HYPOTHESIS may be model-generated but remains a hypothesis until tested.
+- An ASSUMPTION records who/what introduced it, why it is safe to proceed, impact if false, and when it expires.
+- A DECISION records the decision-maker, rationale summary, alternatives considered, and supporting/contradicting evidence references. It does not store private chain-of-thought.
+- A CONTRADICTION points to the conflicting claims/evidence; it does not overwrite either source.
+- Numeric model self-confidence is not evidence and is not a substitute for provenance, source quality, or verification.
+
+Trust and authority are separate. Trust class describes the provenance and reliability of evidence within scope; it does not grant permission. An authenticated Host receipt may be authoritative for a recorded process outcome but not for whether the code meets a product requirement. A test result is authoritative for that exact run, command, environment, and workspace—not for all behavior.
+
+RepositoryModel claims reference EvidenceGraph records and retain file/symbol hashes and freshness. The graph may be materialized as structured records and indexes; selecting a graph database is an open implementation decision.
 
 ## 3. Planning Context
 
@@ -140,23 +170,44 @@ Invalidate or refresh context when the base commit, file hash, workspace generat
 
 Token budgeting and retrieval ranking remain **OPEN** and must be evaluated on task success and evidence recall, not only prompt size.
 
-## 9. Checkpoint and compaction
+## 9. Checkpoint integrity, recovery, and compaction
 
-Context Engine produces a Checkpoint Candidate; it does not independently commit an authoritative checkpoint.
+A task-progress Checkpoint Candidate preserves work continuity. It must not be invalidated merely because a time-varying authorization (such as an approval, lease, capability grant, policy version, or budget reservation) has expired or changed.
 
-A task-progress checkpoint should bind a complete version tuple including Task/Journal sequence, GoalContract, PlanRevision, PlanStep progress, workspace, principal, capabilities, approvals, policy, budget, applicable lease/fencing, context schema, RepositoryModel/EvidenceGraph snapshot, tool snapshot, input context hash, and validity deadline.
+**Checkpoint integrity binding**
 
-Kernel Persistence commits, in one local transaction:
+A checkpoint binds the historical task-progress snapshot:
 
-1. the Checkpoint Record and its payload/hash/source references;
-2. the CheckpointCommitted Journal event;
-3. the Task pointer to the checkpoint.
+- Task ID, Task aggregate version, and Kernel Journal sequence;
+- accepted GoalContract version/digest;
+- active and pending PlanRevision IDs and plan-switch phase;
+- PlanStep WorkStatus/VerificationStatus and their evidence references;
+- workspace ID, generation, base commit, and snapshot/hash references;
+- RepositoryModel/EvidenceGraph projection IDs, source references, and freshness state;
+- unresolved ModelSteps/Attempts/ToolInvocations, receipts, UNKNOWN outcomes, and wait reasons;
+- context schema/version, checkpoint payload digest, and source-reference manifest.
 
-If any bound version changes, authorization is revoked, or the candidate expires, the transaction rolls back and the candidate is stale. A cache is reconstructable and never authoritative.
+These fields establish what progress the checkpoint describes and whether the checkpoint payload is internally consistent. Kernel Persistence commits the Checkpoint Record, CheckpointCommitted Journal event, and Task checkpoint pointer in one Kernel-local transaction using Task/Journal compare-and-swap.
 
-Compaction may alter context projection, not original Journal facts, Host receipts, source artifacts, or test outputs. Do not compact away unresolved tool calls, UNKNOWN outcomes, critical constraints, failed attempts, accepted plan versions, criterion evidence, approvals, or wait reasons.
+**Authorization snapshot is audit metadata, not checkpoint validity**
 
-Preserve the user's goal, current plan, completed/active/blocked steps, evidence references, failures, approvals/waits, remaining verification reserve, and next decision.
+The checkpoint may retain references to the principal, capability, approval, policy, budget, lease, and fencing evidence that governed prior actions. Those references explain historical authorization; they are not a requirement that the same authorization remain current for the checkpoint to be read or restored as historical progress. A revoked or expired approval does not erase completed work.
+
+Do not use current authorization versions as checkpoint-integrity preconditions. Budget state is reloaded from the authoritative ledger; it is not restored from a stale checkpoint copy.
+
+**Recovery protocol**
+
+1. Load and integrity-check the checkpoint and its historical references.
+2. Reconstruct the latest Task aggregate and Journal after the checkpoint sequence; do not roll the Task back to the checkpoint's old authorization snapshot.
+3. Reconcile Host Ledger, receipts, in-flight invocations, UNKNOWN outcomes, and current workspace generation.
+4. Compare current workspace state with checkpoint-bound generation/snapshot. If it diverged, refresh RepositoryModel/EvidenceGraph and mark affected claims, artifacts, and verification evidence Stale; do not discard the checkpoint.
+5. Re-establish current principal identity, capability grants, policy, approvals, budget reservations, lease/fencing epoch, and tool-definition snapshot.
+6. Build a new Execution Context. Any expired/revoked approval must be renewed; an expired lease must be reacquired with a new fencing epoch.
+7. Resume only after Kernel confirms current admission conditions. If unresolved UNKNOWN can conflict with writes, remain in Reconciling/Blocked.
+
+Separate two concepts: **checkpoint integrity/readability** is about the historical snapshot; **execution resumability** is about whether current state and authorization permit new work. A checkpoint can be valid and readable while the Task is not yet safe to resume.
+
+Compaction may alter context projection, not original Journal facts, Host receipts, source artifacts, or test outputs. Do not compact away unresolved tool calls, UNKNOWN outcomes, critical constraints, failed attempts, accepted plan versions, criterion evidence, approvals, or wait reasons. Preserve the user's goal, current plan, completed/active/blocked steps, evidence references, failures, approvals/waits, remaining verification reserve, and next decision.
 
 ## 10. Memory lifecycle
 
