@@ -12,6 +12,7 @@ The central design question is not how many agents or tool calls are used. It is
 
 - [Unified domain architecture](../../architecture/domain-architecture.md) — shared Kernel and independent domain responsibilities.
 - [Shared Kernel reference review](../shared-kernel/reference-review.md) — cross-domain execution-layer findings.
+- [Shared Kernel evaluation](../shared-kernel/evaluation.md) — common safety and recovery metrics measured alongside, but separately from, Coding quality.
 - [Intelligent execution architecture](design.md) — GoalContract versioning, RepositoryModel, EvidenceGraph, PlanRevision/PlanStep, ActionProposal, decision arbitration, verification independence, continuity, human control, and Kernel boundaries.
 - [PlanRevision and PlanStep lifecycle](../../contracts/plan-revision.md) — plan-switch barrier, old-work convergence, carry-forward, orthogonal statuses, and Kernel's deterministic acceptance boundary.
 - [Reference implementation review](reference-review.md) — source-grounded comparison of Pi, Codex, DeepSeek Harness, and Claude Agent SDK.
