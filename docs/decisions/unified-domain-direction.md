@@ -1,6 +1,6 @@
 # Unified Agent Kernel — approved product direction
 
-> **Status: APPROVED PRODUCT DIRECTION; ARCHITECTURE DETAILS PROPOSED.** This record captures the owner's explicit decision to develop Autonomous Coding and Autonomous Video Editing over one shared Agent Kernel. It does not approve runtime implementation or a final technology stack.
+> **Status: APPROVED PRODUCT DIRECTION; ADP-01 REVISED/APPROVED; REMAINING ARCHITECTURE DETAILS PROPOSED.** This record captures the owner's explicit one-Kernel/two-domain decision and the revised first-phase autonomous-editing capability boundary. It does not approve Runtime implementation or a final technology stack.
 
 ## 1. Approved direction
 
@@ -26,27 +26,29 @@ The domains share the Agent Kernel and execution controls. They do not share one
 
 ## 3. Approved Video Editing first-phase scope
 
-The first Video Editing capability is **natural-language-driven automatic editing**:
+ADP-01 was **REVISED and approved on 2026-11-02**. The first Video Editing capability is a **complete natural-language autonomous-editing loop within a bounded core operation set**, not a collection of individually invoked tools:
 
-- ingest and inspect source media;
-- analyze useful visual/audio/temporal evidence;
-- interpret editing instructions;
-- create and persist a canonical timeline revision;
-- render through FFmpeg;
-- inspect the actual rendered video;
-- accept natural-language revisions and produce new versions;
-- deliver the rendered output and supporting timeline/verification artifacts.
+- ingest, fingerprint, and technically probe user-supplied source media;
+- perform task-conditioned basic video/content/shot analysis (the exact progressive-analysis policy remains ADP-02);
+- identify and select task-relevant moments/highlights;
+- interpret editing instructions and create a basic, genre-flexible NarrativePlan;
+- trim, reorder, hard-cut, concatenate, apply simple fade/crossfade, and perform limited source-audio preserve/mute/gain/fade operations;
+- generate an immutable TimelineRevision and render through a bounded FFmpeg RenderPlan;
+- inspect the actual rendered artifact against technical and task/content criteria;
+- accept natural-language revisions, create new versions, re-render, re-verify, and deliver the video with supporting timeline/verification/provenance artifacts.
 
-This is not a full video editor.
+Within the accepted GoalContract, authorized source set, operation boundary, and resource envelope, the Agent should make ordinary editing decisions autonomously rather than asking the user to specify every clip or tool call. It must clarify or stop safely for material ambiguity, insufficient evidence, unauthorized scope, material factual risk, or exhausted budget.
 
-Explicitly excluded from the first phase:
+Advanced multi-objective highlight ranking, rich cross-scene narrative reasoning, advanced semantic continuity, music-aware pacing, generated captions/titles, music generation/acquisition, multi-track mixing, complex effects, and professional post-production remain outside the first phase. Output-format/platform adaptation is separate from story editing. External upload/publication requires separate authorization.
+
+This is not a full video editor. Explicitly excluded are:
 
 - full visual nonlinear editor or manual multitrack editing workstation;
 - advanced effects/compositing/color-grading/VFX workstation;
 - Multi-Agent / D9;
-- runtime implementation during the current research stage.
+- Runtime implementation during the current research stage.
 
-The exact minimum editing operation set and optional caption/title/audio features remain open for detailed scope review.
+The decision is recorded in [Decision Log — ADP-01](decision-log.md#adp-01-video-first-phase-autonomous-editing-capability-and-operation-boundary). ADP-02 through ADP-11 remain OPEN; detailed analysis, data, time, output, verification, resource, handoff, interaction, and implementation contracts are not approved by ADP-01.
 
 ## 4. Retained work
 
