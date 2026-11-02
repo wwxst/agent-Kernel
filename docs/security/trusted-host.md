@@ -39,13 +39,13 @@ A model statement that a tool is approved is not approval evidence.
 
 ## 3. Host isolation requirements
 
-The Host is responsible for the physical execution boundary, including as applicable:
+The Host is responsible for the physical execution boundary for both short commands and long-running jobs, including as applicable:
 
 - namespace / mount / process isolation;
 - filesystem allowlist and workspace confinement;
 - symlink, hardlink, path traversal and mount-boundary checks;
 - network restrictions and explicit destination allowlists;
-- CPU, memory, process-count and wall-clock limits;
+- CPU, memory, process-count, wall-clock, temporary/final disk and output-size limits, plus GPU limits where available and enforceable;
 - process-tree and writable-handle convergence;
 - secret and credential separation;
 - host identity and trustworthy receipt signing.
@@ -73,3 +73,22 @@ Multi-Agent / D9 remains **DEFERRED / NOT AUTHORIZED**. This baseline does not a
 ## 7. Verification status
 
 Production authentication, principal-to-OS identity binding, approval revocation propagation, sandbox enforcement, cgroup isolation, network policy, process-tree convergence, receipt signing, key rotation and cross-host recovery remain **UNVERIFIED**.
+
+
+## 8. Long-running Host jobs
+
+A long-running operation such as FFmpeg rendering remains a Kernel ToolInvocation executed by Trusted ToolHost; a typed RenderJob does not create a second execution authority.
+
+The Host must:
+
+- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, tool snapshot, budget reservation, and fencing epoch;
+- record process/job creation before reporting the operation as started;
+- contain the process tree and retain stdout/stderr/progress channels under the declared resource limits;
+- report progress as non-authoritative telemetry associated with the Host run ID;
+- on cancellation, stop dispatch, terminate the process tree under policy, drain pipes, and confirm descendants/writable handles are quiescent;
+- record exit/signal, resource consumption, partial-output state, output digest, and an authenticated receipt;
+- preserve OutcomeUnknown when it cannot prove whether a process or output side effect completed.
+
+A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication.
+
+For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.

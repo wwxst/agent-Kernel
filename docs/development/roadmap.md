@@ -1,6 +1,6 @@
 # Development roadmap and gates
 
-> **Status: Provisional roadmap aligned to the APPROVED one-Kernel/two-domain product direction.** Architecture details remain proposed. This roadmap does not authorize Runtime implementation or real-model/media execution.
+> **Status: Provisional roadmap aligned to the APPROVED one-Kernel/two-domain product direction.** Coding and Video domain research proceed in parallel and integrate through one shared Kernel contract stream. Architecture details remain proposed. This roadmap does not authorize Runtime implementation or real-model/media execution.
 
 ## Stage 0 — Establish the new project baseline
 
@@ -11,18 +11,20 @@
 
 **Current state:** documentation baseline established.
 
-## Stage 1 — Retain and close Autonomous Coding domain research
+## Stage 1 — Parallel domain intelligence research
+
+The Coding and Video design tracks proceed in parallel. Neither domain is required to finish before the other can be researched. A shared Kernel integration track reconciles common contracts continuously.
+
+### Track A — Autonomous Coding
 
 - Retain the first- and second-round Coding Domain Intelligence design.
 - Keep RepositoryModel, coding workflow, debugging, and code verification semantics domain-specific.
-- Reconcile the Coding design with the shared DomainBinding/Workflow Profile contract.
-- Keep the coding task benchmark and safety gates separate from Video evaluation.
+- Reconcile Coding GoalContract/PlanRevision payloads with DomainBinding and Workflow Profile.
+- Keep the coding task benchmark and quality thresholds separate from Video evaluation.
 
-**Exit:** owner-reviewed Coding Domain Intelligence proposal and its Kernel contract bindings.
+### Track B — Autonomous Video Editing
 
-## Stage 2 — Design Autonomous Video Editing domain
-
-- Define the first-phase scope as natural-language-driven automatic editing, not a full video editor.
+- Define first-phase scope as natural-language-driven automatic editing, not a full video editor.
 - Define MediaProjectModel, media ingest/probe/analysis evidence, and source provenance.
 - Define TimelineRevision as a persistent, non-destructive, versioned artifact.
 - Define RenderPlan and long-running RenderJob over the shared ToolInvocation/Host/budget/cancel/recovery path.
@@ -30,9 +32,9 @@
 - Define natural-language EditIntent and timeline revision behavior.
 - Define video task families and the evaluation method.
 
-**Exit:** owner-reviewed Video Editing domain proposal and scope boundary. No Runtime is implied.
+**Exit:** two independently coherent domain proposals, each with its own model, workflow, artifacts, tools, acceptance criteria, and evaluation method.
 
-## Stage 3 — Cross-domain Kernel and reference review
+## Stage 2 — Shared Kernel and reference review
 
 - Define common DomainBinding and immutable Workflow Profile contracts.
 - Reconcile shared GoalContract/PlanRevision envelopes with typed domain payloads.
@@ -41,9 +43,9 @@
 - Re-review Pi, Codex, DeepSeek Harness, and Claude Agent SDK for common execution-layer mechanisms and adoption limits.
 - Resolve terminology and cross-document authority/scope contradictions.
 
-**Exit:** coherent cross-domain architecture proposal and source-grounded reference review.
+**Exit:** coherent cross-domain architecture proposal and source-grounded shared execution-layer review.
 
-## Stage 4 — Cross-domain consistency and owner review
+## Stage 3 — Cross-domain consistency and owner review
 
 - Review shared-versus-domain-specific responsibility boundaries.
 - Review Task/Profile binding and profile migration rules.
@@ -53,7 +55,7 @@
 
 **Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
 
-## Stage 5 — Implementation planning (not implementation authorization)
+## Stage 4 — Implementation planning (not implementation authorization)
 
 - Translate approved contracts into a proposed implementation plan.
 - Evaluate runtime, persistence, provider strategy, media analysis, and sandbox alternatives with evidence and trade-offs.
@@ -62,7 +64,7 @@
 
 **Exit:** owner-approved implementation plan and evaluation method. No runtime code or production dependency is authorized by this gate.
 
-## Stage 6 — Contract verification and task-set preparation
+## Stage 5 — Contract verification and task-set preparation
 
 - If separately authorized, use controlled fake providers/hosts/renderers and deterministic traces to test state, budgets, delivery, cancellation, recovery, plan revision, checkpoint, render lifecycle, and completion contracts.
 - Prepare reproducible Coding repositories/tasks and Video source assets/tasks with pinned digests, acceptance criteria, hidden checks, and reviewer rubrics.
@@ -70,7 +72,7 @@
 
 **Exit:** frozen task-set versions, scoring rubrics, environment controls, and contract-verification report.
 
-## Stage 7 — Separate domain baselines
+## Stage 6 — Separate domain baselines
 
 - With separate explicit authorization, run a declared reference system or first controlled implementation on each frozen domain task set.
 - Pin provider/model, tool snapshots, source assets/repositories, workspace isolation, network policy, environment, budgets, and stop conditions.
@@ -79,7 +81,7 @@
 
 **Exit:** reproducible baseline reports for each domain. Baselines are evidence, not target thresholds.
 
-## Stage 8 — Target confirmation and formal evaluation
+## Stage 7 — Target confirmation and formal evaluation
 
 - Set separate Coding and Video quality targets using measured baselines, task difficulty, confidence intervals, and risk.
 - Set shared Kernel safety floors for unauthorized execution, false completion, UNKNOWN reconciliation, cancellation, and budget enforcement.
@@ -88,7 +90,7 @@
 
 **Exit:** evidence-backed adoption/adaptation/rejection decisions. No benchmark result alone implies production readiness.
 
-## Stage 9 — Trusted execution and productization
+## Stage 8 — Trusted execution and productization
 
 - Fault-inject Host crashes, process-tree leaks, receipt delays, UNKNOWN outcomes, lease expiry, workspace/project divergence, long render cancellation, and partial-output recovery.
 - Verify process convergence, receipt authenticity, final artifact publication, and Completion Guard under adversarial conditions.

@@ -181,6 +181,8 @@ The timeline is a canonical engineering artifact that the agent creates and revi
 
 ## 10. Open design questions
 
+The current cross-document consistency findings are recorded in [Cross-domain architecture review](../decisions/cross-domain-architecture-review.md). The following questions remain open:
+
 - Which fields belong in the minimal common GoalContract/PlanRevision envelope versus typed domain payloads?
 - How should a Workflow Profile be versioned, accepted, revoked, and migrated during a long-running Task?
 - Which generic artifact storage and streaming contracts are needed without choosing a storage technology?

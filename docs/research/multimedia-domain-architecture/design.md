@@ -238,3 +238,14 @@ Ask the user when the instruction has multiple materially different interpretati
 - Which resource limits and segmented-render strategies are practical across target hosts.
 
 No threshold or technology choice is inferred merely from this design draft.
+
+
+## 12. Media execution references and limits
+
+The media execution proposal is grounded in the following official documentation:
+
+- [FFmpeg documentation](https://ffmpeg.org/ffmpeg.html) describes stream selection, simple/complex filtergraphs, and machine-readable progress output. Its progress records are execution telemetry, not content-quality evidence.
+- [ffprobe documentation](https://ffmpeg.org/ffprobe.html) describes machine-readable container, stream, packet, and frame inspection. Probe success establishes inspectability and metadata facts, not that the requested story or pacing is correct.
+- [PySceneDetect documentation](https://www.scenedetect.com/docs/latest/) describes shot-change detection and splitting. Shot boundaries are useful temporal evidence but do not by themselves establish semantic scene understanding.
+
+The first phase uses FFmpeg as the named render backend. It does not select the media-analysis model/provider, storage system, packaging strategy, or host deployment.

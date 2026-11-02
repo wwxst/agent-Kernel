@@ -26,6 +26,7 @@ A candidate requiring clarification remains non-authoritative. A user clarificat
 Every version binds:
 
 - Task ID and GoalContract version;
+- DomainBinding ID/digest, Workflow Profile version, and domain goal-payload schema ID/version;
 - original user-request reference and digest;
 - all user clarification references and digests used to derive it;
 - immutable intake-time authorization references with explicit scope/effect/target boundaries when the original request is relied upon instead of a new confirmation;

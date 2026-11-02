@@ -8,14 +8,14 @@ Context Engine builds the information Orchestration needs to make a decision. It
 
 Two primary contexts remain distinct:
 
-- **Planning Context:** what is the goal, what is known about the repository, and what should be done?
+- **Planning Context:** what is the goal, what is known about the task's domain (RepositoryModel or MediaProjectModel), and what should be done?
 - **Execution Context:** what is the next authorized operation under the current accepted plan and authoritative state?
 
 A third useful projection is the **Verification Context**, which assembles the accepted criteria, relevant changes, environment, and raw verification evidence for the assurance pass.
 
-## 2. RepositoryModel and EvidenceGraph
+## 2. Domain models and EvidenceGraph
 
-The proposed intelligent execution design introduces two related projections.
+Context Engine hosts separate domain projections over common provenance and freshness infrastructure. RepositoryModel and MediaProjectModel are peers; neither is a universal semantic model.
 
 ### RepositoryModel
 
@@ -83,7 +83,7 @@ Supported relation kinds include supports, refutes, derived_from, contradicts, q
 
 Trust and authority are separate. Trust class describes the provenance and reliability of evidence within scope; it does not grant permission. An authenticated Host receipt may be authoritative for a recorded process outcome but not for whether the code meets a product requirement. A test result is authoritative for that exact run, command, environment, and workspace—not for all behavior.
 
-RepositoryModel claims reference EvidenceGraph records and retain file/symbol hashes and freshness. The graph may be materialized as structured records and indexes; selecting a graph database is an open implementation decision.
+RepositoryModel claims reference EvidenceGraph records and retain file/symbol hashes and freshness. MediaProjectModel claims reference EvidenceGraph records and retain source asset/stream digests, timestamp ranges, timebases, analysis versions, and freshness. The graph may be materialized as structured records and indexes; selecting a graph database is an open implementation decision.
 
 ## 3. Planning Context
 
@@ -91,7 +91,7 @@ Planning Context may include:
 
 - original user goal and GoalContract version;
 - explicit constraints, exclusions, and acceptance criteria;
-- repository structure, project brief, symbols, dependency information, and relevant source;
+- domain structure and evidence: repository/project structure and source for Coding, or media assets, streams, shot/scene/audio/transcript observations and source timestamps for Video;
 - project conventions and architecture decisions with bounded authority;
 - verified facts, assumptions, hypotheses, contradictions, and unknowns;
 - prior task progress, failed attempts, accepted PlanRevisions, and criterion coverage;
@@ -115,7 +115,7 @@ Execution Context is built from a Kernel snapshot and binds the current versions
 - policy version and budget ledger version;
 - applicable lease/fencing epoch;
 - immutable tool-definition snapshot and effect/conflict metadata;
-- relevant repository facts and verified project memory;
+- relevant domain facts and verified project memory;
 - unresolved invocations, UNKNOWN outcomes, receipts, and wait reasons;
 - validity deadline no later than the earliest expiry of referenced authorization evidence.
 
@@ -199,7 +199,7 @@ A checkpoint binds the historical task-progress snapshot:
 - active and pending PlanRevision IDs and plan-switch phase;
 - PlanStep WorkStatus/VerificationStatus and their evidence references;
 - workspace ID, generation, base commit, and snapshot/hash references;
-- RepositoryModel/EvidenceGraph projection IDs, source references, and freshness state;
+- domain-model/EvidenceGraph projection IDs, source references, and freshness state;
 - unresolved ModelSteps/Attempts/ToolInvocations, receipts, UNKNOWN outcomes, and wait reasons;
 - context schema/version, checkpoint payload digest, and source-reference manifest.
 
@@ -216,7 +216,7 @@ Do not use current authorization versions as checkpoint-integrity preconditions.
 1. Load and integrity-check the checkpoint and its historical references.
 2. Reconstruct the latest Task aggregate and Journal after the checkpoint sequence; do not roll the Task back to the checkpoint's old authorization snapshot.
 3. Reconcile Host Ledger, receipts, in-flight invocations, UNKNOWN outcomes, and current workspace generation.
-4. Compare current workspace state with checkpoint-bound generation/snapshot. If it diverged, refresh RepositoryModel/EvidenceGraph and mark affected claims, artifacts, and verification evidence Stale; do not discard the checkpoint.
+4. Compare current workspace state with checkpoint-bound generation/snapshot. If it diverged, refresh the active domain model and EvidenceGraph, then mark affected claims, artifacts, and verification evidence Stale; do not discard the checkpoint.
 5. Re-establish current principal identity, capability grants, policy, approvals, budget reservations, lease/fencing epoch, and tool-definition snapshot.
 6. Build a new Execution Context. Any expired/revoked approval must be renewed; an expired lease must be reacquired with a new fencing epoch.
 7. Resume only after Kernel confirms current admission conditions. If unresolved UNKNOWN can conflict with writes, remain in Reconciling/Blocked.

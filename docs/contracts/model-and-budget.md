@@ -72,7 +72,34 @@ If an authoritative late bill exceeds its Reservation:
 
 Task completion and a late budget overrun are linearized by Kernel Journal / Task-version CAS: whichever commits first determines whether the Task is blocked before completion or remains terminal with an independent post-terminal budget record.
 
-## 6. Open implementation questions
+
+
+## 7. Domain and Host resource budget extension
+
+This document defines ModelStep/Attempt usage accounting. It is not the complete resource vocabulary for the unified Kernel.
+
+The shared Kernel budget authority must also support reservations and settlement for admitted Host operations. These are separate resource dimensions from provider token/cost usage and must not be inferred from model usage.
+
+Candidate Host/domain dimensions include:
+
+- wall-clock execution time and timeout;
+- CPU time, thread/process count, and peak memory;
+- GPU time/memory where available and enforceable;
+- temporary and final disk usage;
+- input media bytes, duration, resolution, and estimated decoded workload;
+- output artifact size and duration;
+- network transfer where explicitly permitted;
+- verification and bounded-repair reserve.
+
+Each reservation binds the Task, DomainBinding/Workflow Profile, ToolInvocation, Host run/job ID, resource policy version, and hard limits. Kernel performs admission and reservation; Host reports measured consumption and terminal process facts; Kernel settles usage and records overruns/unknown usage.
+
+A long-running operation must not consume an unbounded resource merely because progress is still being reported. Progress telemetry is not a budget reservation or settlement record. If usage cannot be authoritatively bounded after a Host failure, preserve the reservation/UNKNOWN hold until reconciled.
+
+For Video, the Workflow Profile and RenderJob define render-specific limits. See [RenderJob contract](render-job.md). For Coding, the profile defines command/build/test limits under the same Host budget authority.
+
+The exact cross-platform enforcement mechanisms and accounting precision remain OPEN / UNVERIFIED. This extension does not select cgroups, a GPU scheduler, a storage system, or a process runtime.
+
+## 8. Open implementation questions
 
 The following are not decided by this contract:
 

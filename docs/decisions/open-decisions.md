@@ -2,7 +2,7 @@
 
 > **Status: Mixed register.** The one-Kernel/two-domain product direction and Video Editing first-phase scope are approved. Detailed cross-domain architecture, domain contracts, technology choices, and implementation decisions remain proposed/open.
 
-The current product direction is recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md). No item is approved merely because it appears in this register.
+The current product direction is recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and the consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). No item is approved merely because it appears in this register.
 
 ## 1. Approved product direction
 
