@@ -11,6 +11,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 
 ## Contracts
 
+- [Minimal provable Kernel protocol — PROPOSED](contracts/core-protocol.md) — cross-module state/guard invariants, single-Host gate, bounded budget liveness, L0/L1/L2 changes, protected input evidence, and G0–G5 validation gates.
 - [Model execution and budget](contracts/model-and-budget.md)
 - [Response delivery and durable inbox](contracts/delivery-and-inbox.md)
 - [Workspace freeze and receipt](contracts/workspace-freeze.md)
