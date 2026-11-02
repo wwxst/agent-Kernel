@@ -74,7 +74,7 @@ A report should bind at least:
 - environment digest, runtime/compiler/toolchain/renderer versions, FFmpeg build identity where applicable, and dependency-lock hash;
 - each required command or render invocation's actual argv/argument digest, filtergraph digest where applicable, working directory, Host run ID, start/finish times, exit code or signal;
 - stdout/stderr digests and controlled log references;
-- artifact paths/URIs, content hashes, domain artifact schema/version, and source execution IDs;
+- opaque artifact IDs/locators and controlled retrieval references (not bearer access tokens), content hashes, domain artifact schema/version, and source execution IDs;
 - for cross-domain consumption, exact handoff ID, producer Task/domain/DomainBinding, ArtifactRef ID/kind/schema/digest, consumer Task/domain/DomainBinding, scoped authorization reference and its validity at each access event, permitted access mode, and derived-output lineage;
 - for cross-domain consumption, the ScopedReadGrant ID/version, consumer audience, authority/revocation epoch, issue/expiry and revocation facts, and trusted resolver access-event/receipt references; each payload read must be shown as authorized at the time of access;
 - for Video, TimelineRevision, RenderPlan, RenderJob, Host receipt, and final rendered-output digest references;
