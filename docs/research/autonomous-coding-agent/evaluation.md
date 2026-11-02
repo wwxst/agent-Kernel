@@ -78,6 +78,7 @@ Report at least:
 - unsafe retry attempts;
 - stale verification evidence accepted or rejected;
 - workspace hash mismatches;
+- protected-input **effective execution view** mismatches and writable-overlay/symlink shadowing of config, source or test scripts despite unchanged immutable SourceSnapshot hashes;
 - process/handle convergence failures;
 - scope drift and unintended file changes;
 - context-critical facts lost after compaction or restart;
