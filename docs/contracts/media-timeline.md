@@ -4,7 +4,9 @@
 
 ## 1. Purpose and ownership
 
-A TimelineRevision is the canonical, non-destructive description of the intended edit. It is produced by Video Editing Intelligence, stored as an immutable artifact, and executed by the Video Domain Execution tools.
+A MediaProject is the persistent Video-domain container that groups immutable source MediaAssets, derived analysis/proxy artifacts, TimelineRevisions, RenderPlans, RenderJobs, and verification/delivery records. It has a stable project ID, a monotonically versioned project generation, and a manifest digest. It is not an editor session, a GUI requirement, or an execution authority; Kernel Task/Journal state remains authoritative for work.
+
+A TimelineRevision is the canonical, non-destructive description of the intended edit within a MediaProject. It is produced by Video Editing Intelligence, stored as an immutable artifact, and executed by the Video Domain Execution tools.
 
 - Domain Intelligence decides story, pacing, shot selection, ordering, and semantic edit quality.
 - Kernel records artifact identity, lineage, DomainBinding, GoalContract/PlanRevision binding, and authorized state transitions.
@@ -17,7 +19,7 @@ The canonical timeline must remain separate from the FFmpeg command line/filterg
 
 A revision binds at minimum:
 
-- project ID, timeline ID, revision ID, parent revision ID, and immutable content digest;
+- MediaProject ID, project generation, project manifest digest, timeline ID, revision ID, parent revision ID, and immutable content digest;
 - Task ID, accepted GoalContract version, active PlanRevision, and DomainBinding/profile version;
 - source MediaAsset IDs, source content digests, selected stream IDs, and analysis-evidence references;
 - timeline timebase and output profile;

@@ -72,7 +72,9 @@ A new user instruction is an append-only EditIntent. It does not overwrite the o
 
 ## 4. MediaProjectModel
 
-MediaProjectModel is the Video domain's structured, provenance-aware project projection. It is not a media database or execution authority.
+MediaProject is the persistent domain container for source assets, derived analysis/proxy artifacts, timelines, render records, and verification reports. It groups durable artifacts across editing Tasks but is not execution authority.
+
+MediaProjectModel is the Video domain's structured, provenance-aware projection of that project and its media evidence. It is not a media database or execution authority.
 
 ### 4.1 Source assets and streams
 

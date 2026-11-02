@@ -21,6 +21,7 @@
 - **EvidenceReference** — provenance-bound reference to repository or media observations, provider evidence, Host receipts, command outputs, tests, diffs, timelines, renders, or artifacts.
 - **EvidenceGraph** — Context/Orchestration projection over claims, evidence, and explicit relations; not an authority ledger.
 - **DomainArtifact** — immutable, digest-bound artifact with domain schema, profile, provenance, and lineage; payload remains domain-specific.
+- **MediaProject** — persistent Video-domain artifact container grouping source assets, analysis, timelines, renders, and reports; it is not Kernel execution authority.
 - **TimelineRevision / RenderJob** — Video-domain artifact and long-running execution records governed by the shared artifact/ToolInvocation/Host contracts.
 - **VerificationReport** — criterion-to-evidence report bound to GoalContract, PlanRevision, workspace, environment, and actual verification runs.
 - **Receipt** — authenticated Host evidence for a specific execution or workspace operation.

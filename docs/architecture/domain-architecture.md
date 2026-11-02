@@ -83,6 +83,7 @@ Each domain owns its own cognitive model and workflow.
 | Concern | Autonomous Coding | Autonomous Video Editing |
 | --- | --- | --- |
 | Domain model | RepositoryModel | MediaProjectModel |
+| Persistent project container | Repository/workspace identity and commit-bound artifacts | MediaProject ID/generation grouping immutable media assets, timeline revisions, renders, and reports |
 | Core evidence | Source/symbol/test/build/diff/Host evidence | Media metadata, stream facts, shot/scene analysis, transcript/audio observations, timeline/render evidence |
 | Planning semantics | Dependencies, code changes, migrations, tests, compatibility | Story/pacing, source ranges, shot selection/order, track layout, audio/subtitle timing, output profile |
 | Repair loop | Hypothesis-driven code/debug/test loop | Timeline adjustment, render diagnosis, targeted re-render and output inspection |
