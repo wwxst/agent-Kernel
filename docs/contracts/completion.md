@@ -106,16 +106,32 @@ If a test changes any in-scope source, configuration, dependency, or untracked i
 
 The Video domain does not use a Git workspace hash as a substitute for media provenance. Its final report binds:
 
-- immutable source MediaAsset IDs and content digests;
-- selected stream IDs, source PTS/timebase and analysis/proxy digests;
-- accepted TimelineRevision ID/digest and parent/EditIntent lineage;
-- RenderPlan ID/digest, FFmpeg build/environment identity, and canonical argument/filtergraph digest;
-- RenderJob/ToolInvocation IDs, Host run ID, receipt, exit/signal, resource settlement, and process convergence;
-- final rendered artifact digest, probe/decode report, and publication/verification state.
+- immutable source MediaAsset IDs and content digests, declared source/usage metadata, and exact ProjectSnapshot ID/generation/manifest digest;
+- selected stream identities, source PTS/timebase/sample positions, proxy digests, and verified source-to-proxy mappings;
+- MediaAnalysis IDs/configuration/coverage and MediaProjectModel projection version/digest used for planning;
+- NarrativePlan ID/version/digest, accepted TimelineRevision ID/digest, parent/EditIntent lineage, and EvidenceCarryForward records;
+- per-output-interval source-to-output mapping: source asset/stream digest, source PTS/sample range, timeline clip/transition, and applied transformation nodes; transitions may map one output interval to multiple source intervals;
+- RenderPlan ID/digest, compiler and FFmpeg build/environment identity, canonical argv/filtergraph digest, and Output Profile version;
+- RenderJob/ToolInvocation IDs, Host run ID, receipt, exit/signal, resource settlement, staging identity, process/handle convergence, and publication fencing;
+- final rendered artifact digest, independently obtained probe/decode report, technical checks, content/perceptual evidence, required human disposition, and final publication state.
 
-The source assets remain unchanged. A new edit instruction creates a new TimelineRevision and output artifact. If any bound source, timeline, render plan, profile, renderer, or output digest changes, the report is stale and the affected checks must be repeated.
+The source assets remain unchanged. A new edit instruction creates a new TimelineRevision and output artifact. If any bound source, stream mapping, analysis claim used by a criterion, timeline, render plan, profile, renderer, or output digest changes, the affected report/evidence becomes stale and checks must be repeated.
 
-The exact project snapshot and artifact digest must be independently re-read from the trusted storage/Host boundary; a model-generated filename or hash is not evidence.
+The exact project snapshot, source/output digests, and final artifact identity must be independently re-read from the trusted storage/Host boundary; a model-generated filename, source attribution, or hash is not evidence.
+
+### 5.3 Video source-to-output provenance and acceptance
+
+For each final output interval, the report must make it possible to trace back to one or more exact source intervals or to an explicitly declared generated/externally supplied ingredient. It records source digest, stream, PTS/sample interval, timeline clip/transition, render operation, output interval, and any audio/visual transformation. Unmapped output intervals are not silently accepted as source-derived content.
+
+Technical validity, editorial fulfillment, provenance completeness, and human acceptance are separate result dimensions:
+
+- **Technical validity:** container/stream/profile checks, complete decode under the declared scan policy, timing/synchronization, audio integrity, output digest, and trusted Host receipt.
+- **Editorial/content fulfillment:** required and excluded content, message/beat coverage, order/context, factual/causal consistency, and actual rendered output match.
+- **Perceptual quality:** continuity, pacing, audiovisual coherence, readability, and artifacts, using declared independent review evidence.
+- **Source provenance:** all source/derived ingredients and output intervals are traceable to immutable digests and transformation lineage.
+- **Rights/authenticity context:** declared licenses/permissions and any optional provenance credential are recorded separately. A content-provenance manifest can attest to a chain of edits/ingredients; it does not prove that depicted content is true, that a source is authentic in the real world, or that its use is legally licensed.
+
+A model verifier's opinion is a review finding, not proof. Subjective narrative/style or high-impact factual criteria require the human/external disposition declared by GoalContract and policy. The independent verifier must inspect the actual rendered output, not only the TimelineRevision, RenderPlan, editor rationale, or source summaries.
 
 ## 6. Completion Guard invariants
 
