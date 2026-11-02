@@ -73,3 +73,9 @@ The branch remains separate from main. No pull request or merge is created by th
 ## 7. Decision requested
 
 The second-round contracts are ready for owner review as a coherent proposal. Approval of this document would acknowledge the design direction and contracts for the next review stage; it would **not** authorize runtime implementation, technology selection, production dependencies, real-model execution, or legacy code migration.
+
+## 8. Subsequent Draft PR #1 architecture subtraction
+
+This is a **later proposal**, not a retroactive approval of the earlier contract review. One Task Orchestrator uses Strategic/Tactical/Assurance purposes; ActionProposal is bounded immutable intent with child Invocation-derived status; EvidenceGraph is an optional source-index over required EvidenceRefs/criterion bindings; PlanStep and Task presentation phases derive from events. Independent ModelStep/Invocation/Budget versions with a protected read-set replace blanket Task aggregate CAS; sequential-first scheduling and milestone checkpoints reduce protocol overhead.
+
+The new proposal **retains** protected Goal/Plan barriers, per-Invocation Admission, Host receipt/UNKNOWN recovery, actual Coding input-view proof, Hard Budget and independent Completion evidence. Autonomous Coding capability is unchanged. G0 still pending and G1–G5 NOT RUN.
