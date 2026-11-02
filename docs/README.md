@@ -30,6 +30,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Autonomous Coding Agent intelligence](research/autonomous-coding-agent/README.md) — retained Coding Domain Intelligence design, reference review, failure model, and evaluation.
 - [Multimedia Domain Architecture](research/multimedia-domain-architecture/README.md) — natural-language Video Editing domain design and evaluation.
 - [Shared Kernel reference review](research/shared-kernel/reference-review.md) — source-grounded review of Pi, Codex, DeepSeek Harness, and Claude Agent SDK.
+- [Shared Kernel evaluation](research/shared-kernel/evaluation.md) — cross-domain safety, authority, lifecycle, budget, provenance, and recovery metrics.
 - [Intelligent execution architecture](research/autonomous-coding-agent/design.md)
 - [Coding reference implementation review](research/autonomous-coding-agent/reference-review.md)
 - [Failure model and recovery policy](research/autonomous-coding-agent/failure-model.md)
