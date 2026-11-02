@@ -94,7 +94,7 @@ The current proposal is internally aligned at the contract level, but these item
 - objective versus subjective video-quality evidence and human-review thresholds;
 - how linked Coding/Video tasks share artifacts without introducing a composite cross-domain Task (ADP-09 draft now specifies separate Tasks, exact ArtifactRefs, server-side ScopedReadGrant resolution, per-read revocation, and no capability/context inheritance);
 - separate benchmark assets/task sets, hidden checks, and reviewer rubrics;
-- progressive media-analysis coverage accounting, task-conditioned modality selection, and adaptive evidence expansion (ADP-02 draft);
+- task-family-specific analysis-kind/evidence mapping and provider/model selection under the ADP-02-approved progressive-analysis and coverage policy;
 - cross-domain Kernel fault-injection fixtures and environment-specific process/resource controls;
 - whether a minimal preview/approval surface is sufficient without creating a full editor.
 
@@ -102,7 +102,7 @@ These remain OPEN; no target thresholds are invented before a frozen task set an
 
 The second-round targeted changes and owner questions are recorded in [Second-round architecture revision](second-round-architecture-revision.md). They deepen the Video domain and Host/render contracts without changing the approved product direction or rewriting the Coding research/reference evidence.
 
-The [Decision Log](decision-log.md) records ADP-01 as REVISED/APPROVED in its revised form on 2026-11-02. ADP-02 through ADP-11 remain OPEN. The [Architecture Decision Proposals](architecture-decision-proposals.md) packet continues to provide alternatives, risks, and acceptance criteria for those remaining decisions; its recommendations do not become approved without explicit owner disposition.
+The [Decision Log](decision-log.md) records ADP-01 and ADP-02 as REVISED/APPROVED on 2026-11-02. ADP-03 through ADP-11 remain OPEN. The [Architecture Decision Proposals](architecture-decision-proposals.md) packet continues to provide alternatives, risks, and acceptance criteria for those remaining decisions; its recommendations do not become approved without explicit owner disposition.
 
 ## 6. Validation record
 
@@ -111,7 +111,7 @@ The [Decision Log](decision-log.md) records ADP-01 as REVISED/APPROVED in its re
 - Shared GoalContract/PlanRevision lifecycle with typed domain payloads: **PASS — proposed contract alignment**.
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
-- First-batch ADP-02/03/05/09 decision and contract drafts: **REFINED DOCUMENTATION DRAFTED — owner disposition pending; all four remain OPEN**. Coverage closure, Host launch/revocation ordering, piecewise temporal mapping, and scoped artifact resolution are specified at the contract level; none is empirically verified.
+- First-batch decision status: **ADP-02 REVISED/APPROVED; ADP-03/05/09 remain OPEN**. The approved coverage closure and the remaining Host launch/revocation ordering, piecewise temporal mapping, and scoped artifact resolution are specified at the contract level; none is empirically verified.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
 - Second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority/recovery, source provenance, and capability-scope matrix: **PASS — proposed documentation contracts; implementation not verified**.
 - Shared Kernel evaluation metric definitions: **PASS — common protocol drafted; no runs performed**.
