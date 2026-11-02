@@ -14,7 +14,7 @@ The first phase must complete a natural-language editing task end to end, withou
 
 1. Accept user-supplied source media and a natural-language editing request.
 2. Fingerprint and technically probe the source assets; establish usable streams, duration, time bases, and warnings.
-3. Perform task-conditioned basic video/content/shot analysis. Exact analysis modalities, coverage, and progressive triggers are ADP-02 and remain OPEN.
+3. Perform task-conditioned basic video/content/shot analysis under the ADP-02-approved four-stage progressive policy and modality-scoped coverage contract. Provider/model selection and task-family-specific evidence calibration remain detailed design questions.
 4. Identify and select task-relevant moments/highlights with evidence, rationale, and uncertainty.
 5. Interpret the request and form a basic, genre-flexible NarrativePlan covering the intended message, useful beats/moments, necessary context, sequence, and simple duration/pacing allocation.
 6. Build an immutable TimelineRevision using the bounded core operations: trim, reorder, hard cut, concatenate, simple fade/crossfade, and limited source-audio preserve/mute/per-clip gain/simple fades.
@@ -25,7 +25,7 @@ The first phase must complete a natural-language editing task end to end, withou
 
 Within the accepted GoalContract, authorized source set, core operation boundary, and resource envelope, the Agent makes ordinary editing decisions autonomously. It asks for clarification or stops safely when material ambiguity, insufficient evidence, unauthorized scope, material factual risk, or exhausted budget prevents safe continuation.
 
-The accepted capability boundary does not freeze the detailed analysis policy, typed operation schemas, timebase rules, output-profile values, verification policy, resource enforcement, or user preview surface; those remain governed by ADP-02 through ADP-10.
+ADP-02 freezes the logical progressive-analysis and coverage policy, but does not select providers/models or numeric confidence/performance thresholds. Typed operation schemas, timebase rules, output-profile values, verification policy, resource enforcement, and user preview surface remain governed by ADP-03 through ADP-10.
 
 The scope is separated into three distinct capability classes:
 
