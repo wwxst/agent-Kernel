@@ -43,7 +43,8 @@ An AdmissionTicket is evidence of admission, not a self-sufficient launch permis
 
 The Trusted ToolHost must expose a serialized LaunchGate whose physical process-creation operation and AuthorityFenceEpoch advancement share one linearizable ordering boundary for the affected invocation-authority scope. At that boundary, the gate revalidates the current epoch and exact principal/capability/policy/approval/profile version vector, workspace/project generation, and live budget reservation. It must not validate a cached ticket and spawn outside the gate.
 
-The launch boundary has a total order with revocation:
+The launch boundary has a total order with revocation.
+
 Before process creation, the Host durably consumes the one-use ticket nonce and records a unique LaunchAttempt in the Host Ledger under the same serialized gate. This is the anti-replay boundary: a consumed nonce can never become launchable again, including after Host restart. If the Host crashes after nonce consumption but before process creation, preserve the attempt for reconciliation and do not replay the ticket or issue a replacement until non-execution is established. If process creation may have occurred before a durable receipt, preserve OutcomeUnknown.
 
 - If process creation crosses the gate before the new authority fence commits, the invocation is recorded as launched under the old epoch and follows the predeclared drain/cancel policy.
