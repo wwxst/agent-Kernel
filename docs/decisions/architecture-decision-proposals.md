@@ -136,7 +136,7 @@ Final-output inspection is a separate verification activity under ADP-07. Source
 ### Evidence and coverage rules
 
 - Every MediaAnalysis binds exact ProjectSnapshot/input manifest, source asset digest, selected stream identity, integer PTS/sample interval and rational time base, analysis method/build/configuration digest, coverage manifest, raw evidence references, and freshness/invalidation conditions.
-- A coverage manifest distinguishes **observed**, **sampled**, **not sampled**, **unavailable**, and **decode-failed** intervals. It records the method and resolution; it must not collapse unknown regions into negative findings.
+- A coverage manifest distinguishes **Observed**, **Sampled**, **NotSampled**, **NotRequested**, **Unavailable**, and **DecodeFailed** intervals. Status is scoped per asset, stream, and modality; it records method/resolution and never collapses unknown regions into negative findings.
 - A negative claim such as "the source contains no instance of X" requires evidence whose declared coverage and method are adequate for that claim. Sparse sampling, shot summaries, or transcript-only evidence cannot establish absence from the entire source.
 - Every derived claim carries uncertainty and a declared scope. A model summary or salience score is a navigation aid, not independent proof.
 - Analysis expansion is bounded by the Task's permissions and resource budget. Privacy/data-minimization policy controls retention of frames, audio, transcripts, and derived embeddings; analysis convenience alone is not a retention justification.
@@ -175,7 +175,7 @@ Progressive analysis can miss an unanticipated cue; coarse indexing is not exhau
 ### Acceptance and later evaluation conditions
 
 1. Every supplied source asset has a technical probe result or an explicit failed/unavailable record.
-2. Every source asset has a coverage manifest that accounts for observed/sampled and unobserved/unavailable intervals.
+2. Every source asset has a coverage manifest that enumerates probed streams and explicitly accounts for every declared stream/modality analysis scope, including all gaps and non-requested modalities.
 3. For content-based selection tasks, the coarse temporal index spans the selected source set and declares its sampling gaps/density.
 4. GoalContract criteria map to required analysis kinds and minimum evidence scopes; unnecessary modalities are not implicitly mandatory.
 5. The planner can request bounded additional analysis and records the evidence gap, reason, budget reservation, and resulting coverage.
@@ -204,7 +204,7 @@ Treat each Workflow Profile as an immutable, content-digested policy snapshot. A
 4. Each activation, supersession, or revocation advances a monotonic profile-authority epoch. The active DomainBinding records the effective profile version/digest and epoch.
 5. Every ToolInvocation records the exact DomainBinding/profile ID/version/digest, accepted PlanRevision, tool snapshot, authorization/approval references, and profile-authority epoch used at admission. Completed operations and their evidence retain that historical binding permanently; later profile changes do not rewrite history.
 6. Both admission and physical dispatch must check current authority. A previously accepted PlanRevision or queued/admitted invocation is not sufficient by itself to launch a new process. Immediately before Host launch, the dispatch gate must establish that the profile version is still current and Active, the authority epoch is current, and all capability/approval/budget/fencing conditions remain valid. A stale/revoked dispatch ticket is rejected. If the current authority state cannot be established, dispatch fails closed.
-7. Revocation immediately blocks new ToolInvocation admission. It also blocks any queued or admitted-but-not-yet-launched invocation from starting under the revoked profile. No old approved plan may be used to bypass this rule.
+7. A revocation request immediately blocks new ToolInvocation admission and dispatch-ticket issuance. Any launch already racing with that request is ordered by the Host LaunchGate: if the revocation fence commits first, the queued/admitted invocation is rejected; if process creation crosses the launch boundary first, it is treated as already in flight and follows the predeclared drain/cancel policy. After the fence commits, no queued or admitted invocation under the old epoch may start. No old approved plan may bypass this rule.
 8. An operation whose Host process has already started is reconciled under its exact invocation, profile, epoch, and Host identity. A predeclared policy determines whether it may drain or receives a cancellation request. A cancellation request is not proof of process convergence; Host descendants and writable handles must be reconciled.
 9. If any in-flight invocation is UNKNOWN, do not migrate around it, rebind it, replay it, or use a new profile to bypass its unresolved side-effect status. Preserve the hold until Host evidence establishes a safe outcome.
 10. A same-domain profile migration uses the existing freeze → stop new admissions → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new binding + accepted PlanRevision atomic activation barrier. New invocations use only the newly current binding/version after activation. An old plan is not silently rebound.
@@ -322,7 +322,7 @@ Adopt exact per-stream integer/rational temporal coordinates. Floating-point sec
 
 ### Stream-to-asset presentation mapping
 
-Each MediaAsset has an immutable asset-relative presentation clock represented as an exact rational time coordinate. Every selected stream maps to that clock through one or more explicit, piecewise StreamTimeMapping segments. A continuous video segment maps source PTS to asset time using its declared anchor and stream time base:
+Each MediaAsset has an immutable asset-relative presentation clock represented as an exact rational time coordinate. The clock has one asset-level origin and a recorded origin basis (container presentation origin or an explicit, versioned normalization); it is not independently zeroed per stream. Every selected stream maps to that clock through one or more explicit, piecewise StreamTimeMapping segments. A continuous video segment maps source PTS to asset time using its declared anchor and stream time base:
 
     asset_time = anchor_asset_time + (source_pts - anchor_source_pts) × stream_time_base
 
