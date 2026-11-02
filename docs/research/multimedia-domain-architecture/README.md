@@ -1,6 +1,6 @@
 # Multimedia Domain Architecture
 
-> **Status: PROPOSED domain design — aligned to an APPROVED product direction.** The Video Editing first-phase scope is natural-language-driven automatic editing, not a full video editor. No Runtime implementation or technology stack is authorized.
+> **Status: ADP-01 REVISED/APPROVED (2026-11-02); detailed domain architecture PROPOSED.** Video first phase is a complete natural-language autonomous-editing loop within a bounded core operation set, not a full video editor. No Runtime implementation or technology stack is authorized.
 
 ## 1. Objective
 
@@ -30,9 +30,9 @@ The architecture uses one shared Kernel and separate domain intelligence:
 
 ## 3. First-phase boundary
 
-**Core automatic-editing foundation:** ingest/probe, task-conditioned analysis, moment selection, simple narrative ordering, trim/reorder/cut/concatenate, simple fade/crossfade, limited source-audio controls, immutable timeline, bounded FFmpeg render, verification, and natural-language revision. Exact first-phase operation registry remains PROPOSED.
+**Core automatic-editing foundation — ADP-01 REVISED/APPROVED:** ingest/probe; task-conditioned basic video/shot analysis; task-relevant highlight/moment selection; basic NarrativePlan and simple sequencing/pacing; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio controls; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification, and delivery. Exact analysis policy and typed operation contracts remain OPEN under the relevant ADPs.
 
-**Enhanced editorial capabilities:** deeper cross-scene narrative planning, semantic continuity, music-aware pacing, generated captions/titles, richer audio mixing, speed ramps, overlays, reframing, color matching, and advanced perceptual critique. These are roadmap capabilities, not implied core support.
+**Enhanced editorial capabilities:** advanced multi-objective highlight ranking, rich cross-scene narrative planning, advanced semantic continuity, music-aware pacing, generated captions/titles, music generation/acquisition, multi-track audio mixing, voice synthesis, speed ramps, overlays, reframing, color matching, and advanced perceptual critique. These are roadmap capabilities, not implied core support.
 
 **Post-production/platform adaptation:** codec/container, resolution/aspect/frame-rate/color/audio output, subtitle mux/sidecar, metadata, thumbnail/cover, platform safe areas, packaging, and optional platform delivery. This is a separate Output Profile stage, not editorial intelligence.
 
@@ -42,4 +42,4 @@ The architecture uses one shared Kernel and separate domain intelligence:
 
 The design uses official FFmpeg/ffprobe documentation and PySceneDetect documentation to ground media probing, filtergraph rendering, progress reporting, and shot-boundary detection. These tools do not by themselves provide semantic editing intelligence or prove perceptual quality.
 
-All concrete media models, workflow policies, quality thresholds, and implementation choices remain proposed or open until reviewed and evaluated.
+The ADP-01 product capability boundary is approved in revised form; concrete media models, workflow policies, quality thresholds, typed operation contracts, and implementation choices remain proposed or open until separately reviewed and evaluated. See the [Decision Log](../../decisions/decision-log.md).
