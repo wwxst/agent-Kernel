@@ -6,6 +6,8 @@
 
 A Task is not complete because the model says it is complete, because a command returned exit code zero, because a PlanStep is verified, or because a diff exists.
 
+TaskCompleted is a **TaskControl terminal CAS** with a K-local serializable check of the **relevant** Plan/Goal/Workspace/Host evidence and BudgetScope enforcement-hold read-set. A parallel unrelated receipt or accounting adjustment does not require a global Task version restart; an actual conflicting mutation/hold must invalidate completion.
+
 Kernel may commit TaskCompleted only after a VerificationReport is validated against the current accepted GoalContract, PlanRevision, DomainBinding/Workflow Profile, acceptance criteria, final workspace/project snapshot, environment, delivered artifact digests, and trusted execution evidence.
 
 The agent's final text is a delivery artifact. It is not completion evidence.
@@ -64,7 +66,7 @@ Completion Guard does not decide whether a technical approach is semantically co
 
 A report should bind at least:
 
-- task ID and aggregate version;
+- task ID, accepted **TaskControlVersion**, current GoalContract/PlanRevision epoch and **only the relevant evidence/Host/Workspace/BudgetScope version read-set**; an unrelated Attempt, receipt or Journal append must not stale the report solely by incrementing a global Task sequence;
 - accepted GoalContract version and digest;
 - accepted PlanRevision and acceptance-criteria version;
 - DomainBinding ID/digest and Workflow Profile version;
