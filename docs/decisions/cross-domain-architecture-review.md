@@ -31,6 +31,12 @@ The approved direction is recorded in [Unified domain direction](unified-domain-
 | How is final video verified? | Technical probe/decode, timeline invariants, audio/video integrity, content match, perceptual review, and human review when required | [RenderJob](../contracts/render-job.md), [Video design](../research/multimedia-domain-architecture/design.md) | CONTRACT PROPOSED; QUALITY UNVERIFIED |
 | How can users revise an edit? | Append-only EditIntent creates a new TimelineRevision/RenderPlan/RenderJob; prior renders remain immutable | [Media Timeline](../contracts/media-timeline.md) | CONTRACT PROPOSED |
 | How are quality results compared? | Separate Coding and Video task sets/metrics/baselines; shared Kernel safety metrics across both | [Coding evaluation](../research/autonomous-coding-agent/evaluation.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), [Shared Kernel evaluation](../research/shared-kernel/evaluation.md) | METHOD PROPOSED |
+| How does Video select and sequence content? | Hierarchical media understanding, message-conditioned moment retrieval, NarrativePlan beat graph, multi-dimensional pacing/continuity/A-V constraints, and bounded evidence-driven revision | [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md) | DOMAIN PROPOSAL; QUALITY UNVERIFIED |
+| How are MediaProject and analysis versions related? | Immutable ProjectSnapshot, MediaAnalysis run records, MediaProjectModel projections, explicit evidence carry-forward and invalidation | [MediaProject contract](../contracts/media-project.md), [Media Timeline](../contracts/media-timeline.md) | CONTRACT PROPOSED |
+| How is FFmpeg constrained? | Deterministic typed RenderPlan compiler; input protocol/format, filesystem, filtergraph, network, process and resource allowlists | [RenderPlan security](../contracts/render-plan-security.md), [Trusted ToolHost](../security/trusted-host.md) | SECURITY CONTRACT PROPOSED; HOST UNVERIFIED |
+| Who owns RenderJob state? | Kernel owns ToolInvocation/authorization/budget/cancel/fencing; Host Ledger owns physical process/output facts; domain verifier owns findings; publication is separate | [RenderJob contract](../contracts/render-job.md) | CONTRACT PROPOSED; RUNTIME UNVERIFIED |
+| How is final video provenance checked? | Output-interval-to-source-interval mapping, independent digest/probe/decode, criterion-level content evidence, and required human disposition | [Completion](../contracts/completion.md), [RenderJob](../contracts/render-job.md) | CONTRACT PROPOSED; QUALITY UNVERIFIED |
+| Are plan-step sizes shared? | No. PlanStep semantics/granularity remain domain-defined; only generic DAG/authority/resource/evidence envelopes are shared | [Domain Workflow](../contracts/domain-workflow.md), [Domain architecture](../architecture/domain-architecture.md) | PROPOSED CROSS-DOMAIN BOUNDARY |
 | How are shared Kernel invariants tested? | Common authority, UNKNOWN, cancellation, budget, freshness, recovery, provenance, and user-control metrics with paired domain fixtures | [Shared Kernel evaluation](../research/shared-kernel/evaluation.md) | METHOD PROPOSED; RUNS NOT AUTHORIZED |
 | Is a full editor required? | No. Timeline is a canonical artifact; first phase is automatic editing only | [Unified domain direction](unified-domain-direction.md), [Video design](../research/multimedia-domain-architecture/design.md) | SCOPE APPROVED |
 | Is Multi-Agent required? | No. D9 remains deferred and unauthorized | [Open decisions](open-decisions.md), [Roadmap](../development/roadmap.md) | DEFERRED |
@@ -64,6 +70,11 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 7. Roadmap now plans Coding and Video domain research in parallel, followed by shared Kernel integration and cross-domain review.
 8. Video scope is explicitly constrained to natural-language automatic editing; no full editor or Multi-Agent implementation is implied.
 9. Shared Kernel safety metrics and fault scenarios are centralized in a cross-domain evaluation protocol rather than being defined by the Video evaluation document.
+10. Video cognition is deepened through a separate message-conditioned editing pipeline: MediaAnalysis → MediaProjectModel → NarrativePlan → TimelineRevision. This does not introduce Multi-Agent / D9.
+11. MediaProject, ProjectSnapshot, MediaAnalysis, and MediaProjectModel use immutable version/lineage bindings and explicit evidence carry-forward; prior evidence is never inherited solely through parent pointers.
+12. FFmpeg RenderPlan is constrained by typed compilation and explicit input/protocol, filesystem, filtergraph, network, process, and resource boundaries.
+13. RenderJob is a domain projection over Kernel ToolInvocation, Host Ledger, verification, and artifact-publication facts; it does not create a competing state authority.
+14. Coding and Video retain independent plan-step granularity, context projections, semantic vocabularies, repair loops, and verification algorithms.
 
 ## 5. Remaining design questions
 
@@ -82,6 +93,8 @@ The current proposal is internally aligned at the contract level, but these item
 - whether a minimal preview/approval surface is sufficient without creating a full editor.
 
 These remain OPEN; no target thresholds are invented before a frozen task set and measured baseline exist.
+
+The second-round targeted changes and owner questions are recorded in [Second-round architecture revision](second-round-architecture-revision.md). They deepen the Video domain and Host/render contracts without changing the approved product direction or rewriting the Coding research/reference evidence.
 
 The recommendation packet [Architecture Decision Proposals](architecture-decision-proposals.md) now gives candidate dispositions, alternatives, risks, and acceptance criteria for the first-phase operation set, analysis policy, profile lifecycle, artifact envelope, temporal model, output profiles, verification/human review, Host resources, cross-domain handoff, and preview surface. The packet does not change any item's OPEN/PROPOSED status; owner disposition is still required.
 
