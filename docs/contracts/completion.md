@@ -88,21 +88,26 @@ A model-generated hash or test summary is not trusted evidence.
 
 ## 5. Workspace and domain artifact snapshot
 
-### 5.1 Coding workspace hash sequence
+### 5.1 Coding protected-input snapshot and isolated verification (PROPOSED refinement)
 
-The Coding domain distinguishes three hashes:
+A build/test run often generates caches, coverage and temporary artifacts. These outputs must not cause spurious Stale verdicts, but a test must not alter required source or configuration without invalidating evidence.
 
-1. **Pre-test hash** — captured by the trusted Workspace Host before the first verification command.
-2. **Post-test hash** — captured after all verification processes and descendants have stopped.
-3. **Final acceptance hash** — captured from an immutable snapshot after all verification and permitted final preparation are complete.
+Before verification, the trusted Workspace Host materializes or pins an **immutable SourceSnapshot**. The Workflow Profile defines and versions a pre-approved **ProtectedInputScope**, covering relevant source, configuration, dependency manifests and lockfiles, verification/test scripts, necessary untracked inputs and any other input affecting the specified acceptance obligations. An agent cannot extend exclusions retroactively. Excluded generated directories must be demonstrably output-only; source, important config and verification inputs cannot be excluded merely to preserve a pass.
 
-Completion Guard independently checks the same immutable snapshot and requires its hash to equal the report's final acceptance hash. The hashes must use the same workspace ID, hash algorithm, and hash-scope version.
+Record separately:
 
-By default:
+1. `sourceDigestBefore`: exact protected-input snapshot digest before the verification run.
+2. `verificationOutputManifest`: independently referenced generated outputs, logs and coverage digests, with Host receipt and environment binding.
+3. `sourceDigestAfter`: protected-input digest after all verification processes/descendants have converged.
+4. `sourceDigestAtGuard`: Completion Guard's independent reread of the same immutable accepted source snapshot and scope.
 
-    preTestWorkspaceHash == postTestWorkspaceHash == finalAcceptanceWorkspaceHash == workspaceHashAtCompletionGuard
+Default invariant, with identical scope/version, environment binding and source identity:
 
-If a test changes any in-scope source, configuration, dependency, or untracked input, the old report is stale and the relevant verification must be rerun. Exclusions must be declared in a versioned hash scope; an agent cannot add exclusions after the fact to preserve a passing report.
+`sourceDigestBefore == sourceDigestAfter == sourceDigestAtGuard`
+
+Verification runs should use isolated output directories or a controlled writable layer, and may create ordinary declared cache/coverage files without affecting the protected-input digest. If isolation is not supported, the trusted Host must explicitly inspect the in-scope inputs after execution; unprovable input integrity cannot be treated as Passed.
+
+A changed in-scope source/config/dependency/test input invalidates affected verification evidence and requires rerunning the relevant checks on the final immutable snapshot. Completion Guard verifies current criterion evidence, final snapshot and process/handle convergence. It does not require output artifacts to have the same digest as source inputs. The report must bind `ProtectedInputScope` version, source snapshot identity, before/after/guard digests, environment and output manifest. See [Core protocol](core-protocol.md).
 
 ### 5.2 Video media artifact snapshot
 
