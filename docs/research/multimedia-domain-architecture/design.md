@@ -1,6 +1,6 @@
 # Autonomous Video Editing — Domain Architecture
 
-> **Status: PROPOSED domain design.** The owner has approved the product direction and first-phase scope: natural-language-driven automatic editing, not a full video editor. This document defines the domain proposal; runtime behavior, quality, and implementation choices remain unverified/open.
+> **Status: MIXED.** The owner REVISED/APPROVED the ADP-01 first-phase scope on 2026-11-02: a complete natural-language autonomous-editing loop within a bounded core operation set, not a full editor. Detailed domain design/contracts remain PROPOSED; runtime behavior, quality, and implementation choices remain UNVERIFIED/OPEN.
 
 ## 1. Product goal and scope
 
@@ -8,21 +8,32 @@ Build a Video Editing domain that accepts natural-language editing instructions 
 
 The system is an autonomous editing workflow, not a manual editor.
 
-### 1.1 First-phase capabilities
+### 1.1 First-phase capabilities — ADP-01 REVISED/APPROVED
 
-The first useful vertical slice should cover:
+The first phase must complete a natural-language editing task end to end, without requiring the user to specify every clip or individual editing operation:
 
-1. Accept source media and a natural-language editing request.
-2. Probe media files and identify usable streams and technical properties.
-3. Analyze shots/scenes and useful visual/audio/transcript evidence.
-4. Convert the user's intent into a versioned GoalContract.
-5. Select source ranges and construct a versioned timeline.
-6. Compile the timeline into a bounded render plan and render with FFmpeg.
-7. Inspect the actual rendered file against technical and user-facing criteria.
-8. Deliver the video, timeline revision, render manifest, and verification report.
-9. Accept a follow-up natural-language instruction and create a new timeline/render revision.
+1. Accept user-supplied source media and a natural-language editing request.
+2. Fingerprint and technically probe the source assets; establish usable streams, duration, time bases, and warnings.
+3. Perform task-conditioned basic video/content/shot analysis. Exact analysis modalities, coverage, and progressive triggers are ADP-02 and remain OPEN.
+4. Identify and select task-relevant moments/highlights with evidence, rationale, and uncertainty.
+5. Interpret the request and form a basic, genre-flexible NarrativePlan covering the intended message, useful beats/moments, necessary context, sequence, and simple duration/pacing allocation.
+6. Build an immutable TimelineRevision using the bounded core operations: trim, reorder, hard cut, concatenate, simple fade/crossfade, and limited source-audio preserve/mute/per-clip gain/simple fades.
+7. Compile a bounded RenderPlan and render through FFmpeg under the Trusted ToolHost contract.
+8. Inspect the actual rendered artifact against technical and task/content criteria; a successful FFmpeg exit alone is not acceptance.
+9. Accept follow-up natural-language instructions, create new EditIntent/TimelineRevision versions, re-render, re-verify, and preserve prior revisions/evidence.
+10. Deliver the video with the relevant timeline, render, verification, and source-provenance artifacts.
 
-The scope is separated into three distinct capability classes: (1) **core automatic-editing foundation** — source-range selection, trim, reorder, hard cut, concatenate, simple fade/crossfade, limited source-audio preserve/mute/gain/fades, immutable timeline, bounded render, verification, and natural-language revision; (2) **enhanced editorial intelligence** — deeper cross-scene narrative planning, query-conditioned highlight ranking, semantic continuity, music-aware pacing, generated captions/titles, richer audio mixing, speed ramps, overlays, reframing, and color matching; and (3) **post-production/platform adaptation** — codec/container/resolution/aspect/frame-rate/color/audio-output profiles, metadata, subtitles mux/sidecar, thumbnails, platform safe areas, packaging, and optional platform delivery. Only the first class defines the proposed first implementation slice. The other classes are roadmap capabilities, not implied first-phase support. See [Video Editing Intelligence](intelligence.md).
+Within the accepted GoalContract, authorized source set, core operation boundary, and resource envelope, the Agent makes ordinary editing decisions autonomously. It asks for clarification or stops safely when material ambiguity, insufficient evidence, unauthorized scope, material factual risk, or exhausted budget prevents safe continuation.
+
+The accepted capability boundary does not freeze the detailed analysis policy, typed operation schemas, timebase rules, output-profile values, verification policy, resource enforcement, or user preview surface; those remain governed by ADP-02 through ADP-10.
+
+The scope is separated into three distinct capability classes:
+
+- **Core automatic-editing foundation (ADP-01 REVISED/APPROVED):** source fingerprinting/probing; task-conditioned basic video/shot analysis; task-relevant moment/highlight selection; basic NarrativePlan and simple sequencing/pacing; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio preserve/mute/gain/fades; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification, and delivery.
+- **Enhanced editorial intelligence (not first phase):** advanced multi-objective highlight ranking; rich cross-scene narrative planning; advanced semantic continuity; music-aware pacing/beat alignment; generated captions/titles; music generation/acquisition; multi-track audio mixing/ducking; voice synthesis; advanced loudness mastering; speed ramps; advanced transitions; overlays; reframing; color matching; and richer perceptual critique.
+- **Post-production/platform adaptation (separate stage):** codec/container/resolution/aspect/frame-rate/color/audio output profiles, subtitle mux/sidecar, metadata, thumbnails, platform safe areas, packaging, and optional platform delivery. This is not story intelligence; external upload/publication requires separate authorization.
+
+Professional VFX/compositing/color-grading workstations, manual multitrack editing, full NLE UI, plugin marketplaces, and Multi-Agent / D9 remain deferred. See [Video Editing Intelligence](intelligence.md) and the [Decision Log](../../decisions/decision-log.md).
 
 ### 1.2 Explicit non-goals
 
@@ -233,7 +244,7 @@ Ask the user when the instruction has multiple materially different interpretati
 
 ## 11. Open decisions
 
-- Owner disposition of the core/enhanced/platform-adaptation capability boundary and the exact core operation registry.
+- Exact typed timeline operation schemas, deterministic compiler mappings, and per-operation evidence obligations for the ADP-01-approved core capability set.
 - MediaAnalysis taxonomy, temporal coverage requirements, confidence calibration, and raw-evidence retention/privacy policy.
 - NarrativePlan schema, beat vocabulary flexibility, factual/chronology guardrails, and multi-objective moment-ranking policy.
 - EvidenceCarryForward compatibility rules for changed analysis versions, proxies, and criteria.
