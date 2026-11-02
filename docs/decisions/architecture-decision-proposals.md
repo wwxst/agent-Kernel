@@ -1,6 +1,6 @@
 # Architecture Decision Proposals — Cross-Domain Convergence
 
-> **Status: MIXED.** ADP-01 is **REVISED (owner-approved 2026-11-02)** and recorded in the [Decision Log](decision-log.md). ADP-02 through ADP-11 remain **OPEN**; their recommendations remain **PROPOSED**. This packet is a decision aid and proposal register, not blanket approval. No decision authorizes Runtime implementation, selects a production technology stack, or claims empirical validation.
+> **Status: MIXED.** ADP-01 and ADP-02 are **REVISED (owner-approved 2026-11-02)** and recorded in the [Decision Log](decision-log.md). ADP-03 through ADP-11 remain **OPEN/PROPOSED**. This packet is a decision aid and proposal register, not blanket approval. No decision authorizes Runtime implementation, selects a production technology stack, or claims empirical validation.
 
 ## 1. Purpose and decision boundary
 
@@ -16,14 +16,14 @@ This packet is based on the current repository documents:
 - [Shared Kernel evaluation protocol](../research/shared-kernel/evaluation.md)
 - [Open decisions](open-decisions.md)
 
-It is a repository-level design synthesis. It does not report a runtime spike, benchmark, media processing, or fault-injection result. ADP-01 records an explicit owner decision; all other recommendations remain proposals rather than facts demonstrated by experiments.
+It is a repository-level design synthesis. It does not report a runtime spike, benchmark, media processing, or fault-injection result. ADP-01 and ADP-02 record explicit owner decisions; ADP-03 through ADP-11 remain proposals rather than facts demonstrated by experiments.
 
 ### Decision summary
 
 | ID | Decision area | Recommended direction | Owner decision / draft status |
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | Complete autonomous editing loop within a bounded core operation set; defer editor-grade features | REVISED — APPROVED 2026-11-02 |
-| ADP-02 | Media analysis | Whole-source technical accounting; modality-scoped, gap-accounted coverage manifests; task-conditioned depth and adaptive evidence expansion | Refined draft — OPEN |
+| ADP-02 | Media analysis | Four-stage progressive analysis; modality-scoped, gap-accounted coverage manifests; task-conditioned depth and adaptive evidence expansion | REVISED — APPROVED 2026-11-02 |
 | ADP-03 | Workflow Profile lifecycle | Immutable versions; linearizable Host LaunchGate/revocation fence; current-effective authority; UNKNOWN remains held | Refined draft — OPEN |
 | ADP-04 | Artifact and media storage | Generic immutable artifact manifest plus opaque blob/object payload; journal stores references, not large media bytes | Confirm logical contract |
 | ADP-05 | Media time | Per-stream integer PTS/sample coordinates, piecewise asset-clock mappings, rational time bases, explicit conversion/rounding and A/V mapping | Refined draft — OPEN |
@@ -120,11 +120,11 @@ Typed schemas, fixtures, tests, thresholds, and Host-specific enforcement are la
 
 ## 3. ADP-02 — Task-conditioned progressive media analysis
 
-**Recommendation — PROPOSED; decision draft prepared, owner disposition pending (OPEN).**
+**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative owner disposition is recorded in the [Decision Log — ADP-02](decision-log.md#adp-02-task-conditioned-progressive-media-analysis).
 
 Adopt a progressive analysis ladder that provides source-wide visibility and explicit coverage accounting without running every expensive modality over every asset by default. The analysis strategy is selected from the accepted GoalContract, source characteristics, evidence gaps, privacy policy, and remaining budget.
 
-### Proposed analysis ladder
+### Approved analysis ladder
 
 1. **Intake and technical baseline — always.** Fingerprint every supplied source asset and probe the streams needed to establish immutable asset/stream identity, duration, start timestamps, rational time bases, frame/sample characteristics, and decode warnings. This stage establishes technical facts, not semantic understanding.
 2. **Source-wide coverage accounting — always.** Every source asset receives a coverage manifest that declares the temporal extent considered, observed/sampled intervals, sampling/index method and density, known gaps, unavailable regions, and status. For content-based moment selection, create a coarse temporal navigation index across the selected source set (for example, representative frames and shot-boundary candidates). This is a coverage/indexing obligation, not a claim that every frame or semantic event was exhaustively understood.
@@ -637,7 +637,7 @@ The following choices require explicit owner disposition. "Accept" means accept 
 | ID | Recommended disposition | Owner response |
 | --- | --- | --- |
 | ADP-01 | Approve complete autonomous editing loop in the revised bounded core scope; defer advanced/editor-grade features | REVISED — APPROVED 2026-11-02 |
-| ADP-02 | Accept four-stage progressive analysis with per-asset, per-stream, per-modality coverage manifests and adaptive evidence expansion | OPEN — refined draft; owner decision pending |
+| ADP-02 | Accept four-stage progressive analysis with per-asset, per-stream, per-modality coverage manifests and adaptive evidence expansion | REVISED — APPROVED 2026-11-02 |
 | ADP-03 | Accept immutable profile versions, current-effective authority, linearizable Host launch/revocation fencing, and UNKNOWN hold | OPEN — refined draft; owner decision pending |
 | ADP-04 | Accept generic manifest + opaque immutable payload contract | OPEN |
 | ADP-05 | Accept per-stream integer/rational time, piecewise asset-clock mapping, explicit conversion/rounding, and A/V mapping | OPEN — refined draft; owner decision pending |
@@ -648,4 +648,4 @@ The following choices require explicit owner disposition. "Accept" means accept 
 | ADP-10 | Accept lightweight preview/approval surface; no full editor | OPEN |
 | ADP-11 | Accept staged implementation sequence and separate authorization gates | OPEN |
 
-ADP-01 is the only item with an explicit owner disposition so far: REVISED, approved in revised form and recorded in the Decision Log. Detailed first-batch drafts for ADP-02, ADP-03, ADP-05, and ADP-09 are now prepared, but all four remain OPEN pending explicit owner disposition. ADP-04, ADP-06 through ADP-08, and ADP-10 through ADP-11 also remain OPEN. Any later partial acceptance must identify the accepted clause and required revision. Approval of ADP-01 or draft readiness does not authorize Runtime implementation, production dependencies, real-model/media experiments, or technology selection.
+ADP-01 and ADP-02 are the items with explicit owner dispositions so far; both are REVISED and recorded in the Decision Log. ADP-03, ADP-05, and ADP-09 remain OPEN after first-batch draft refinement. ADP-04, ADP-06 through ADP-08, and ADP-10 through ADP-11 also remain OPEN. Any later partial acceptance must identify the accepted clause and required revision. Approval of ADP-01 or ADP-02 does not authorize Runtime implementation, production dependencies, real-model/media experiments, or technology selection.
