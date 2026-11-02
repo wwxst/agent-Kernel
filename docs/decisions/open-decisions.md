@@ -2,7 +2,7 @@
 
 > **Status: Mixed register.** The one-Kernel/two-domain product direction, revised ADP-01 Video first-phase capability boundary, and revised ADP-02 progressive media-analysis policy are approved. ADP-03 through ADP-11 and the remaining detailed cross-domain/domain contracts, technology choices, and implementation decisions remain OPEN/PROPOSED.
 
-The current product direction and ADP-01 disposition are recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md) and the [Decision Log](decision-log.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). ADP-01 and ADP-02 are REVISED/APPROVED; no other item is approved merely because it appears in the proposal packet.
+The current product direction and ADP-01/ADP-02 dispositions are recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md) and the [Decision Log](decision-log.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). ADP-01 and ADP-02 are REVISED/APPROVED; no other item is approved merely because it appears in the proposal packet.
 
 ### First-batch decision-draft readiness
 
