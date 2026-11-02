@@ -13,26 +13,17 @@ The first two domains are:
 
 The product principle is **one Kernel, two independent domains**. Coding and Video share execution authority and lifecycle mechanics; they do not share a forced cognitive model.
 
-## Video Editing first-phase scope
+## Video Editing capability boundary
 
-The first Video Editing capability is natural-language-driven automatic editing, not a full video editor.
+The first Video Editing capability is natural-language-driven automatic editing, not a full video editor. The current proposal separates three capability classes:
 
-In scope for domain research:
+- **Core automatic-editing foundation:** ingest/probe, task-conditioned media analysis, moment selection, simple narrative ordering, trim/reorder/cut/concatenate, simple fade/crossfade, limited source-audio controls, immutable timeline, bounded FFmpeg render, verification, and natural-language revision. Exact operation registry remains PROPOSED.
+- **Enhanced editorial capabilities:** richer cross-scene narrative planning, semantic continuity, music-aware pacing, generated captions/titles, advanced audio mixing, speed ramps, overlays, reframing, color matching, and deeper perceptual critique. These are roadmap capabilities, not implied first-phase support.
+- **Post-production/platform adaptation:** codec/container/resolution/aspect/frame-rate/color/audio profiles, subtitle mux/sidecar, metadata, thumbnails, platform safe areas, packaging, and optional platform delivery. This is a separate output-adaptation stage, not story intelligence.
 
-- media ingest and technical probing;
-- source shot/scene/audio/transcript analysis;
-- natural-language editing intent interpretation;
-- persistent, versioned timeline generation and revision;
-- FFmpeg rendering through Trusted ToolHost;
-- technical and content/perceptual output checks;
-- delivery of video, timeline, render manifest, and verification evidence.
+Deferred: full visual nonlinear editor/manual multitrack workstation, professional VFX/compositing/color-grading suite, plugin marketplace, Multi-Agent / D9, and Runtime implementation during the current research stage.
 
-Out of scope for the first phase:
-
-- full visual nonlinear editor or manual multitrack editing workstation;
-- advanced VFX/compositing/color-grading workstation;
-- Multi-Agent / D9;
-- Runtime implementation during the current research stage.
+See [Video Editing Intelligence](docs/research/multimedia-domain-architecture/intelligence.md) and [Second-round architecture revision](docs/decisions/second-round-architecture-revision.md).
 
 ## Architecture baseline
 
@@ -48,6 +39,8 @@ See [Unified domain architecture](docs/architecture/domain-architecture.md) and 
 
 - [Autonomous Coding Agent design](docs/research/autonomous-coding-agent/README.md) — retained first/second-round Coding Domain Intelligence design.
 - [Multimedia Domain Architecture](docs/research/multimedia-domain-architecture/README.md) — natural-language Video Editing design, timeline, render, and evaluation.
+- [Video Editing Intelligence](docs/research/multimedia-domain-architecture/intelligence.md) — media understanding, message-conditioned moment selection, narrative planning, pacing, continuity, audiovisual coordination, and revision.
+- [Second-round architecture revision](docs/decisions/second-round-architecture-revision.md) — complete revision plan, change mapping, consistency review, and unresolved questions.
 - [Shared Kernel reference review](docs/research/shared-kernel/reference-review.md) — Pi, Codex, DeepSeek Harness, and Claude Agent SDK execution-layer review.
 - [Shared Kernel evaluation](docs/research/shared-kernel/evaluation.md) — common cross-domain safety, authority, lifecycle, and recovery metrics.
 - [Unified domain direction](docs/decisions/unified-domain-direction.md) — owner-approved product scope and authorization boundary.
