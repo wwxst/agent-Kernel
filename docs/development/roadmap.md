@@ -58,6 +58,10 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 
 **Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
 
+### Draft PR #1 G0 architecture subtraction prerequisite (OPEN)
+
+Before any implementation planning, review [Architecture subtraction and contract feasibility](../decisions/architecture-subtraction-review.md) with [Core protocol](../contracts/core-protocol.md): one main loop with Strategic/Tactical/Assurance purposes; unique TaskControl/ModelStep/Invocation/Budget/Host authorities; selective protected read-set admission; L2 structural-only plan changes; bounded action-intent rather than ActionProposal settlement; optional EvidenceGraph; lazy context; milestone checkpoint; sequential-first scheduling. Keep admission, Host fencing, K/O/H recovery, budget, UNKNOWN and evidence-driven Completion. No new owner decisions are implied; ADP-03–11 remain OPEN.
+
 ## Stage 4 — Implementation planning (not implementation authorization)
 
 - Translate approved contracts into a proposed implementation plan.
@@ -69,7 +73,7 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 
 ## Stage 5 — Contract verification and task-set preparation
 
-- If separately authorized, use controlled fake providers/hosts/renderers and deterministic traces to test state, budgets, delivery, cancellation, recovery, plan revision, checkpoint, render lifecycle, and completion contracts.
+- If separately authorized, test **TaskControl versus aggregate-local CAS and protected read-set races**, K/O/H outbox replay, Host fence/actual Coding execution view, budget hold versus completion, UNKNOWN, L2 cutover, bounded scheduling and both Domain Completion contracts with deterministic providers/hosts/renderers.
 - Prepare reproducible Coding repositories/tasks and Video source assets/tasks with pinned digests, acceptance criteria, hidden checks, and reviewer rubrics.
 - Report PASS / FAIL / NOT RUN / SKIP / PARTIAL / UNVERIFIED without overclaiming.
 
