@@ -111,7 +111,7 @@ The [Decision Log](decision-log.md) records ADP-01 and ADP-02 as REVISED/APPROVE
 - Shared GoalContract/PlanRevision lifecycle with typed domain payloads: **PASS — proposed contract alignment**.
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
-- First-batch decision status: **ADP-02 REVISED/APPROVED; ADP-03/05/09 remain OPEN**. The approved coverage closure and the remaining Host launch/revocation ordering, piecewise temporal mapping, and scoped artifact resolution are specified at the contract level; none is empirically verified.
+- First-batch decision status: **ADP-02 REVISED/APPROVED; ADP-03/05/09 remain OPEN**. ADP-03 now specifies a shared AuthorityFenceEpoch, complete authority-version revalidation, durable one-use ticket consumption, execution-snapshot checks, and Host-gate fencing. ADP-05 temporal mapping and ADP-09 scoped artifact resolution remain refined proposals; none is empirically verified.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
 - Second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority/recovery, source provenance, and capability-scope matrix: **PASS — proposed documentation contracts; implementation not verified**.
 - Shared Kernel evaluation metric definitions: **PASS — common protocol drafted; no runs performed**.
