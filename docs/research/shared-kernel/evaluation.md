@@ -78,7 +78,7 @@ At minimum, prepare deterministic scenarios for:
 24. **H executed, K Receipt missing:** H replays original authenticated receipt via Host Result Outbox; Kernel HostResultInbox and Journal import commit once. Missing physical outcome remains UNKNOWN.
 25. **Hard budget certificate rejection:** missing enforceable provider retry ceiling, unknown cache fee, unpinned price, or uncapped billable modality rejects Hard Budget admission; explicit Soft Budget is independently authorized.
 26. **Approval granularity:** one-time approval inside unchanged plan does not trigger L2, but revocation fences affected ticket. Plan-wide capability/policy/risk change triggers L2.
-21. **Multi-Host non-claim:** a second independent Host is not covered by the first Host's launch/fence proof; record unsupported until a separately approved membership/fencing protocol exists.
+27. **Multi-Host non-claim:** a second independent Host is not covered by the first Host's launch/fence proof; record unsupported until a separately approved membership/fencing protocol exists.
 
 
 Use analogous domain fixtures where meaningful: a repository build/test process for Coding and an FFmpeg RenderJob for Video. The exact host process, resource dimensions, and artifacts differ, while the admission, receipt, cancellation, UNKNOWN, and recovery invariants remain the same.
