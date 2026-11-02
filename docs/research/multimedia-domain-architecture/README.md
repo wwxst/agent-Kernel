@@ -14,9 +14,10 @@ The architecture uses one shared Kernel and separate domain intelligence:
 ## 2. Documents
 
 - [Video Editing domain design](design.md) — scope, MediaProjectModel, workflow, timeline, render, verification, and natural-language revision.
-- [Video Editing evaluation protocol](evaluation.md) — task families, quality/safety metrics, and staged baseline method.
+- [Video Editing evaluation protocol](evaluation.md) — video task families, media-quality metrics, and staged baseline method.
 - [Unified domain architecture](../../architecture/domain-architecture.md) — the shared Kernel and three-layer platform model.
 - [Shared Kernel reference review](../shared-kernel/reference-review.md) — source-grounded comparison of common execution mechanisms.
+- [Shared Kernel evaluation](../shared-kernel/evaluation.md) — common safety, authority, lifecycle, budget, and recovery metrics.
 - [Cross-domain architecture review](../../decisions/cross-domain-architecture-review.md) — consistency matrix and remaining design questions.
 - [Domain Workflow binding contract](../../contracts/domain-workflow.md) — immutable Workflow Profile and typed domain payload bindings.
 - [Media Timeline artifact contract](../../contracts/media-timeline.md) — persistent timeline revisions and rational time representation.
