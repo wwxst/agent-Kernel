@@ -193,42 +193,19 @@ Thus WorkStatus=Completed with VerificationStatus=Failed is valid. A failed tool
 
 A new revision creates new PlanStep identities. It may explicitly carry forward old artifacts and evidence through lineage references, but it cannot reactivate or mutate a superseded step. Verification defaults to Pending in the new revision unless the evidence contract proves cross-revision reuse is valid.
 
-### 4.5 ActionProposal and ExecutionTrace
+### 4.5 Bounded action intent and ExecutionTrace — no duplicate lifecycle
 
-An ActionProposal is a durable, typed decision record produced by Orchestration from a complete ModelStep response. It is not an execution ticket, approval, capability, or permission.
+A complete selected ModelStep response may contain one or more **bounded, immutable action-intent items** (Inspect, Experiment, Edit, Verify, Ask, RequestApproval, Wait, Replan or Stop). The `ActionProposal` name is retained as a compatibility **envelope/record**; it is neither authorization nor a separate execution state machine.
 
-**Minimum ActionProposal binding**
+Minimum fields: stable `decisionId`, selected ModelStep/Attempt and response digest, Task/accepted GoalContract/PlanRevision, optional PlanStep, relevant authority/fence and workspace/project snapshot bindings, tool-definition digest, policy-limited item IDs, canonical argument digests, effect/conflict metadata, expected outputs, and declared dependencies. A **global Task aggregate version is not a required precondition** for ordinary action items; Kernel Admission verifies the relevant protected read-set and owning Invocation version. A durable tool-origin reference is recorded before or together with K-local child Invocation admission.
 
-- proposal ID and schema version;
-- Task ID, Task aggregate version, Turn ID, ModelStep ID, and selected ModelAttempt ID;
-- accepted GoalContract version, active PlanRevision ID, and current PlanStep ID when applicable;
-- workspace ID/generation and relevant precondition/evidence snapshot references;
-- immutable tool-definition snapshot ID;
-- proposed action kind, bounded proposal items, canonical argument digests, effect/risk class, target/scope, dependencies between items, expected outputs, and evidence obligations;
-- creation sequence, expiry, and invalidation conditions.
+**No `Recorded → Selected → Executing → PartiallyExecuting → Settled` ActionProposal authority lifecycle.** Selected response identity is committed by Kernel ModelStep; individual ToolInvocations own their admission/dispatch/outcome/UNKNOWN state. Batch status such as partially executed or settled is derived from those children. Failed/denied dependent children do not authorize another item; a sibling proceeds only after its own Admission. No batch atomicity, no inherited grants, no automatic replay of UNKNOWN. A model-produced plan is not a tool token.
 
-Action kinds include Inspect, Experiment, Edit, Verify, Ask, RequestApproval, Wait, Replan, and Stop. Non-tool actions are handled through the corresponding Orchestration/Kernel command contract; they do not manufacture a ToolInvocation.
-
-**Lifecycle and partial execution**
-
-An ActionProposal is recorded before its child ToolInvocations are admitted. Its record lifecycle is Recorded → Selected → Executing | PartiallyExecuting → Settled, with terminal alternatives Rejected, Expired, Superseded, and Cancelled. Selected means the Orchestration decision coordinator chose this proposal as the next action; it does not mean any tool is authorized. Kernel checks proposal identity, schema, and version bindings but does not judge the action's semantic quality. Settled means every proposal item has a terminal outcome, not that every item succeeded; PartiallyExecuting means at least one item is terminal while another remains pending or active.
-
-- A proposal contains a policy-bounded maximum number of invocation items; it cannot create an unbounded tool batch.
-- Each tool item becomes a separate ToolInvocation with its own identity, payload digest, Kernel admission under the applicable discovery or active-plan profile, approval where required, budget reservation, durable intent where required, Host execution, receipt, and outcome. Pre-plan read-only reconnaissance uses only the bounded discovery profile; source writes and other side effects require an Active PlanRevision and current PlanStep.
-- Batches are never atomic. Independent siblings may proceed if policy allows. A dependent item cannot start until its declared prerequisites have succeeded.
-- A denial or failure blocks dependent descendants; independent siblings may continue only if their own bindings and admission checks remain current.
-- Partial execution is represented explicitly; the proposal cannot be marked wholly Completed while required child items remain unresolved.
-- No invocation inherits another invocation's approval or admission.
-
-**Staleness**
-
-A proposal expires or is superseded if its Task version, GoalContract, active PlanRevision, PlanStep readiness, workspace generation, tool snapshot, relevant precondition, policy, approval, budget, or fencing binding changes. Kernel rechecks every invocation at admission. If an earlier item changes the workspace generation, remaining items bound to the old generation must be regenerated or explicitly revalidated under a contract that proves their preconditions remain valid.
-
-The ExecutionTrace links proposal and item IDs to ModelStep/Attempt, ToolInvocations, Kernel admission decisions, Host run IDs, receipts, artifacts, diffs, verification runs, and EvidenceGraph references. It is an auditable explanation chain, not a source of authority.
+Non-tool Ask/Wait/Stop becomes a durable Orchestration/Kernel command only when it creates an external obligation or changes persisted TaskControl. Internal hypothesis notes need not become Kernel aggregate records. ExecutionTrace is a **queryable projection** joining decision ID, Invocation IDs, actual Host receipts, artifacts and evidence, not another authoritative ledger. Each tool remains bound to the actual current plan and exact grant at its Host launch boundary.
 
 ## 5. Control architecture
 
-The system uses three cooperating control loops. They are logical responsibilities of Orchestration, not necessarily separate processes or agents.
+The system has **one primary autonomous Agent Loop**. Strategic, Tactical, and Assurance are three **decision purposes/modes** selected by that loop, not three cooperating independently scheduled loops, separate controller processes, or separate state machines. This preserves the full autonomous Coding skill set while removing arbitration overhead.
 
 ### 5.1 Strategic loop — goal and plan control
 
@@ -275,26 +252,15 @@ The VerificationReport maps each required criterion to its required evidence cla
 
 The assurance loop may send the task back to execution or planning. It cannot declare TaskCompleted itself.
 
-### 5.4 Single-task decision arbitration
+### 5.4 One-controller decision priority and evidence feedback
 
-The three loops are not independent task controllers. Each may produce a typed ControlProposal, but only one Orchestration decision coordinator owns the next task-level decision. The coordinator serializes decisions against the latest Kernel snapshot; Kernel aggregate-version compare-and-swap remains the authoritative commit gate.
+The one Task Orchestrator reads current task/plan and the **small relevant context**, selects a decision purpose, records the selected ModelStep/decision intent where necessary, admits each tool independently, observes trusted outcomes, updates the RepositoryModel/evidence references, and loops. No separate `ControlProposal` record/lifecycle, three-loop arbitration queue or task-level mutex is required.
 
-Every ControlProposal binds the Task aggregate version, decision sequence, GoalContract, active PlanRevision, workspace generation, relevant evidence references, proposed transition, and expiry. A stale proposal is discarded and recomputed. Loops may perform bounded analysis concurrently, but none may directly mutate Task state, accept a plan, authorize a tool, or dispatch work.
+The next-decision priority is: (1) safety/cancellation/revocation; (2) conflicting UNKNOWN, started-operation reconciliation and Host process convergence; (3) new user intent, required approval or external wait; (4) failed/stale required assurance evidence and bounded repair; (5) material goal/plan invalidation requiring L2; (6) tactical next ready work or L0/L1 adjustment; (7) progress/delivery. A high-priority event stops **new** conflicting decisions and admissions, not already started physical effects. All such effects continue to drain/reconcile under the Host contract.
 
-The coordinator applies this precedence:
+The controller may revisit strategic reasoning at milestones and plan-invalidating evidence, not after every tool call; it chooses assurance when evidence obligations are ready or missing, not as a separate agent. Decisions that change TaskControl/Plan/terminal state still use Kernel TaskControl CAS. Ordinary model, tool and evidence events use their respective owning-aggregate versions and selective read-set. The model cannot grant itself approval or bypass a current Host fence.
 
-1. **Hard safety and cancellation:** security stop, task cancellation, policy denial, revocation, or emergency containment.
-2. **Started-operation reconciliation:** UNKNOWN outcomes, process convergence, receipt import, and plan-switch drain.
-3. **New user intent:** record the user message immediately; resolve material clarification or GoalContract version changes before further conflicting work.
-4. **Required approval and external waits:** obtain explicit authorization or wait for a dependency/lease.
-5. **Assurance regression:** failed or stale required verification, criterion coverage gaps, or evidence conflicts.
-6. **Plan invalidation and replan:** failed assumptions, dependency changes, scope changes, or no-progress triggers.
-7. **Normal tactical execution:** perform the next ready action under the active plan.
-8. **Progress and delivery:** summarize durable milestones or deliver a final response when allowed.
-
-A higher-priority event preempts pending lower-priority proposals, not the physical history of already-started operations. Those operations still drain or reconcile. User input is retained even when execution is blocked by UNKNOWN. Safety and authorization barriers cannot be bypassed for throughput. Lower-priority work should not starve once higher-priority conditions are resolved.
-
-This is a logical serialization contract inside Orchestration, not a new agent, microservice, or distributed coordinator.
+These three modes should be compared experimentally with a simpler baseline under equal permission, budget, test and recovery policy. Their internal cognitive richness is **Domain** policy, not an authorization/transaction protocol.
 
 ## 6. End-to-end execution lifecycle
 
@@ -431,17 +397,11 @@ A tool definition should declare enough metadata for safe orchestration and Kern
 
 Model-visible schemas describe interfaces. They do not grant permission.
 
-### 7.3 Concurrency policy
+### 7.3 Minimal effect-aware scheduling
 
-Concurrency follows effect and conflict semantics, not the number of calls emitted by the model.
+**Default to sequential execution in the first vertical slice.** Optional bounded concurrent read-only operations may proceed if they are independent, admitted separately, and bind an appropriate stable snapshot. Parallel writes require **proven enforced isolation/disjoint effect sets**; absent proof, serialize. Git index operations, package managers, workspace-wide builds, generated-code modifications, migration and common output publication serialize by default.
 
-- Independent read-only inspections may run concurrently.
-- Writes may run concurrently only when their write scopes are known to be disjoint and the Host can enforce the boundary.
-- Same-file edits, overlapping directories, package-manager operations, generated-code updates, Git index operations, migrations, and workspace-wide commands are serialized unless a stronger isolation contract proves otherwise.
-- Unknown conflict scope defaults to serialization.
-- A build or test that reads a changing workspace must bind to a stable generation or be rerun after relevant writes.
-- Results may arrive in completion order, but their durable association and model-visible projection must be deterministic.
-- Cancellation drains or reconciles already-started work; it does not pretend to roll back external effects.
+Do not implement a global DAG scheduler for every emitted model command. PlanStep dependencies describe engineering outcomes; the controller chooses the next ready operation. A bounded batch is just a set of individually admitted Invocations; the scheduler does not have its own authoritative lifecycle. Results are correlated by stable Invocation IDs and trusted Host receipts, and an UNKNOWN write blocks only demonstrably conflicting actions. Prove performance benefits and conflict soundness at G1/G3 before introducing speculative scheduling.
 
 ### 7.4 Retry policy
 
@@ -466,7 +426,7 @@ A checkpoint candidate should preserve:
 - approvals, wait reasons, budget reservations, and remaining verification reserve;
 - next decision and the conditions that would change it.
 
-Context Engine proposes the checkpoint. Kernel commits the checkpoint record, journal event, and Task pointer in one Kernel-local transaction. It is not authoritative merely because it was generated.
+A checkpoint is an **optional performance/recovery projection**, proposed at meaningful milestones, context-size pressure or an explicit recovery boundary—not after every tool/ModelStep. Kernel durably records its source Journal cursor and immutable digest; committing a checkpoint pointer must not advance TaskControlVersion or cause unrelated admissions to conflict. Replay from Kernel Journal and Host Ledger remains the authority; a checkpoint cannot restore stale grants.
 
 ### 8.2 Compaction
 
