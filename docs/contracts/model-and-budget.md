@@ -84,13 +84,13 @@ Reserve sufficient budget for required verification and bounded repair based on 
 
 If an authoritative late bill exceeds its Reservation:
 
-- For a non-terminal Task, atomically record the overrun/debt and enforcement hold, freeze the affected budget scope, and block new admissions through a Task-version compare-and-swap.
+- For a non-terminal Task, atomically append the overrun/debt and enforcement hold to the **affected BudgetScope aggregate** using budgetScopeVersion CAS, stopping new funded admissions for that scope. The Task's Blocked display phase is **derived** from this funding hold; a financial adjustment does not increment global TaskControlVersion.
 - For an already terminal Task, append PostTerminalBudgetOverrun and BudgetEnforcementHold; preserve the original Completed / Failed / Cancelled status and ModelStep completion.
 - Freeze only the shared budget scopes that actually fund the affected reservation; do not freeze unrelated scopes.
 - Keep in-flight UNKNOWN Attempts / Invocations tied to their original IDs and reservations. Do not release or replay them without reconciliation.
 - Unfreeze only after an authorized BudgetTopUp / BudgetOverrunWaiver and required in-flight UNKNOWN reconciliation.
 
-Task completion and a late budget overrun are linearized by Kernel Journal / Task-version CAS: whichever commits first determines whether the Task is blocked before completion or remains terminal with an independent post-terminal budget record.
+Task completion and a late budget overrun are ordered by **K-local serializable transactions**: Completion Guard atomically checks relevant BudgetScope enforcement-hold versions/read-set **together with** its TaskControl terminal CAS; a simultaneous BudgetScope overrun write conflicts or is ordered by that protected read-set. If hold commits first, completion is denied; if terminal completion commits first, late debt becomes a PostTerminalBudgetOverrun record. The overrun writer does not need to CAS the unrelated TaskControl aggregate. G1 must prove this interleaving and reject a storage implementation incapable of a coherent K-local read-set.
 
 
 
