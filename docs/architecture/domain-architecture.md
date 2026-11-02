@@ -60,17 +60,17 @@ This is a responsibility diagram, not a process topology. It does not prescribe 
 
 ## 3. Shared Agent Kernel
 
-The following responsibilities remain domain-neutral:
+**Minimal authoritative Kernel:** identity and legal Task/Plan/ModelStep/ToolInvocation transitions; deterministic GoalContract/DomainBinding/version validation; admission/policy/approvals; hard budget reservation, scope and enforcement holds; Kernel Journal/Inbox/Outbox/idempotency/recovery decisions; Completion Guard and delivery commit. These are the protected commit points, not one giant orchestration class.
 
-- Task, Turn, runtime Step, ModelStep, ModelAttempt, ActionProposal, ToolInvocation, and delivery lifecycles.
-- Immutable user intent, versioned GoalContract and PlanRevision envelopes, legal transitions, and the plan-switch barrier.
-- Model Gateway request/response normalization, usage evidence, hard model budgets, and cancellation.
-- Context assembly with source provenance, version binding, freshness, and checkpoint/recovery contracts.
-- Tool definition snapshots, effect/conflict-aware scheduling, independent invocation admission, permission and approval checks.
-- Hard resource budgets and reservations. The resource vocabulary must be extensible beyond tokens to host CPU, memory, disk, GPU, wall time, and output-size dimensions.
-- Kernel Journal, durable intent, idempotency, UNKNOWN handling, Host Ledger/receipt reconciliation, and fencing.
-- Artifact identity, content digest, provenance, immutable version references, and delivery records.
-- A common VerificationReport envelope and Completion Guard that checks evidence obligations and bindings without interpreting domain semantics.
+**Shared composed components (not necessarily services):**
+
+- Model Gateway performs provider protocol calls, response normalization, streaming/cancellation and usage *observation*. Kernel alone commits Attempt/selection and budget responsibility.
+- Context Engine assembles version-bound projections and checkpoints; it does not grant authority or store the entire Domain's meaning in Kernel.
+- Tool Runtime schedules admitted work. Trusted ToolHost owns physical launch/fence, process/descendant evidence and its own Host Ledger. Kernel imports authenticated Host receipts and decides how they affect Task state; it does not impersonate the Host's physical truth.
+- Artifact/Evidence infrastructure owns immutable content identity, provenance and retrieval indexes. Kernel checks digest, evidence class, scope and freshness bindings for admission/completion, not the semantics of a repository change or edited scene.
+- Domain Intelligence and Orchestration own strategic/tactical/assurance modes, plan quality, hypothesis choice and domain-specific verification method.
+
+These are **logical responsibility boundaries**, with no requirement to deploy separate processes. New shared mechanisms must demonstrate cross-Domain necessity; no Video or Coding semantic branching is allowed in authoritative Kernel transitions. For fast-path/strong-path distinctions see [Core protocol](../contracts/core-protocol.md).
 
 Kernel must not import or reason over RepositoryModel or MediaProjectModel semantics. It validates domain payload schema/version, references, authority envelope, and legal state transitions; it does not decide whether a code fix is good or whether a video edit is aesthetically coherent.
 
@@ -175,7 +175,7 @@ The timeline is a canonical engineering artifact that the agent creates and revi
 
 ## 9. Architecture invariants
 
-1. One shared Kernel owns all authoritative task and execution state for both domains.
+1. One shared Kernel owns authoritative Task/Plan/model/tool admission, budgeting and completion transitions for both domains; physical process facts remain the Trusted ToolHost's authority.
 2. Domain Intelligence owns semantic interpretation and domain plan quality.
 3. Kernel remains domain-neutral and validates typed envelopes, references, authority, and legal transitions deterministically.
 4. Each Task has one immutable domain/profile binding at a time.
