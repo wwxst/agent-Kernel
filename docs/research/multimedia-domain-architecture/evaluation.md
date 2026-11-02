@@ -128,7 +128,7 @@ After a stable baseline exists, vary one capability at a time:
 - visual-only planning versus audio/transcript-aware planning;
 - no evidence carry-forward versus explicit freshness-checked carry-forward;
 - one-pass editing versus bounded inspect/critique/revise loop;
-- simplified one-controller edit/render/inspect loop versus separated strategic/tactical/assurance modes at equal Host, tool and model budgets;
+- **one primary controller** with simplified edit/render/inspect decisions versus that **same controller** with richer Strategic/Tactical/Assurance decision modes, at equal Host, tool, model and evidence budgets;
 - stable protected input/project snapshot with isolated render outputs versus broad output-inclusive mutable project hashing;
 - editor self-assessment versus fresh independent verifier/human review;
 - timeline compiler versus direct command construction (direct command construction is a controlled research comparison only, never production authority);
