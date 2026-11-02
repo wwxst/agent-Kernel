@@ -67,15 +67,17 @@ The system provides:
 
 **At-least-once delivery + Durable Inbox / Command Intent + Idempotent Kernel Command Commit.**
 
-It does not claim distributed exactly-once delivery. Outbox, Inbox receipt, local projection, command plan sealing, Kernel command commit, and final ACK are distinct durability barriers.
+It does not claim distributed exactly-once delivery. **Physical transaction ownership** is: Kernel Journal + Kernel admission/Intent + Kernel Dispatch Outbox + Kernel CommandInbox outcome share K-local atomic persistence; Orchestration ResponseDeliveryInbox + sealed projection/CommandPlan/CommandOutbox share O-local atomic persistence; Host DispatchInbox + one-use nonce + LaunchAttempt share H-local atomic persistence. K, O and H are separate transaction domains; OS spawn and external side effects are non-transactional. Outbox send, remote Inbox receive, Host execution/receipt and final ACK remain distinct cross-owner durability barriers. See [Core protocol](core-protocol.md).
 
 ## 7. Recovery cases
 
 - Crash before Kernel Completed transaction: no final selection or outbox is assumed.
-- Crash after Completed/outbox commit but before send: resend the existing envelope.
+- Crash after Completed/outbox commit but before send: scan K Outbox and resend the original envelope; no new response selection or budget reservation.
 - Crash after Inbox receive but before command plan sealing: impossible if the first-receipt transaction is implemented correctly; otherwise treat as a contract violation.
 - Crash after one of several commands commits: resend remaining and committed commands with their original IDs; Kernel returns original results for committed commands.
 - Kernel commits but Orchestration loses the response: resend the same command and recover its original result.
+- K ToolInvocation Intent+Outbox commits but dispatch is not sent: restart K Dispatcher, scan pending Outbox and resend original ToolInvocation/nonce; Host dedup ensures one launch attempt.
+- H has an executed/settled run receipt but K has not imported it: H Result Outbox resends same authenticated receipt; K atomically deduplicates its HostResultInbox and Journal outcome. A missing H result after OS spawn is OutcomeUnknown, not a known non-execution.
 - ACK is lost: resend the same ACK; do not redo commands.
 - Same ID with different digest: quarantine and alert; never overwrite.
 
