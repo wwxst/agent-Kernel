@@ -51,6 +51,23 @@ A profile declares:
 
 A profile can narrow available tools and capabilities. It cannot expand the user's authorization or override Kernel policy. Kernel combines the profile's declared limits with the current principal, capability, approval, policy, budget, workspace/project, and fencing state at each admission.
 
+### 3.1 Profile lifecycle, current-effective authority, and revocation
+
+A Workflow Profile version is immutable and content-digested. The registry lifecycle is logically Draft → Validated → Active → Superseded; an active or superseded version may also be marked Revoked as an immediate admission stop. Superseded/revoked versions remain addressable for historical provenance but cannot authorize new work.
+
+Activation, supersession, and revocation advance a monotonic profile-authority epoch. The active DomainBinding records the exact profile ID/version/digest and current epoch. A ToolInvocation records the exact binding/profile and epoch under which it was admitted. Completed operations, artifacts, and evidence retain that historical version; they are never rewritten to the latest profile.
+
+The accepted PlanRevision's profile pin is a provenance and compatibility binding, not perpetual permission to launch tools. Both Kernel admission and the physical Host dispatch boundary must establish that:
+- the invocation references the current effective Active profile version/digest and current authority epoch;
+- the accepted PlanRevision and DomainBinding still match that profile;
+- current principal, capability, approval, policy, budget, project/workspace, and fencing checks pass.
+
+A queued or admitted-but-not-launched invocation must be rejected at dispatch if the profile was revoked/superseded or its authority epoch changed after admission. A stale dispatch authorization cannot be replayed. If current authority cannot be established, Host launch fails closed. An old accepted plan cannot bypass revocation by presenting its historical approval.
+
+Revocation immediately blocks new admission. For operations whose process has already started, the predeclared revocation policy determines graceful drain versus cancellation request. A cancellation request is not process convergence; the Host must reconcile descendants and writable handles. An invocation in UNKNOWN blocks migration, replay, and conflicting new side effects until reconciled; changing the profile cannot clear that hold.
+
+A same-domain migration uses freeze → stop admission → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new DomainBinding and accepted PlanRevision activation. No old PlanRevision is silently rebound. New operations begin only after the new binding is current. A Coding ↔ Video change always requires a new Task and explicit artifact handoff.
+
 ## 4. Common GoalContract envelope
 
 The shared GoalContract retains the existing immutable UserIntent, append-only clarification, versioning, protected-field confirmation, provenance, and acceptance lifecycle.
@@ -128,7 +145,7 @@ Every tool call:
 7. returns Host receipt, output digest, and artifact references;
 8. is reconciled into Kernel state and domain evidence projections.
 
-A profile's tool allowlist is not a substitute for per-invocation admission. A model response or domain planner cannot authorize itself.
+A profile's tool allowlist is not a substitute for per-invocation admission. A model response or domain planner cannot authorize itself. The dispatch gate rechecks the current effective profile version/digest and profile-authority epoch immediately before Host launch; admission-time approval alone is insufficient. If the revocation/current-version state cannot be verified, the Host must not launch. Every invocation and Host receipt retain the exact historical profile binding and epoch used for that operation.
 
 A long-running Video render is represented by a domain RenderJob correlated to the exact RenderPlan and render ToolInvocation/Host run. RenderJob status is a projection across Kernel invocation state, Host physical execution facts, domain verification, and artifact publication; it is not a second state authority. See [RenderJob contract](render-job.md) and [RenderPlan security contract](render-plan-security.md).
 
@@ -161,3 +178,22 @@ A domain verifier produces criterion-level evidence and a VerificationReport usi
 - No implicit cross-domain delegation or Multi-Agent.
 - No automatic profile migration while operations are active.
 - Cross-domain composite workflows remain OPEN / DEFERRED.
+
+## 11. Explicit cross-domain ArtifactRef handoff
+
+A cross-domain handoff links two independently authorized Tasks; it does not create a composite Task or shared execution authority.
+
+A handoff record binds at least:
+- handoff ID and immutable source Task/domain/DomainBinding references;
+- exact Artifact ID, kind, schema/version, digest, and producer provenance;
+- intended consumer domain/Task, purpose, permitted access mode, and retention scope;
+- user/principal authorization reference, exact scope, and expiry/revocation state where applicable;
+- consumer validation result and resulting derived-artifact lineage.
+
+ArtifactRef identifies an immutable typed artifact; it is not a bearer capability. The consumer receives a separate narrowly scoped capability for the exact artifact digest, consumer Task, purpose, and access mode. The default is read-only. Producer authorization to create an artifact does not authorize cross-domain disclosure or consumption.
+
+The consumer Task has its own principal, DomainBinding, Workflow Profile, GoalContract, PlanRevision, tools, approvals, budgets, and verification obligations. It may read only the explicitly handed-off payload through the scoped capability. It does not inherit the producer's approvals, permissions, profile, budgets, secrets, workspace/project access, private context projection, prompts, or model/session state. It cannot traverse the producer Task or unrelated artifacts through the reference.
+
+Only an artifact in the consumption-eligible state defined by ADP-04 may be handed off; staging, partial, quarantined, Missing, DigestMismatch, or UNKNOWN payloads are not consumable. The exact artifact state machine remains an ADP-04 dependency and is not decided here. Changes to digest, destination, purpose, access mode, or material scope require renewed authorization and consumer validation. Handoff lineage is audit metadata, not a Task aggregate or authority transfer.
+
+The initial platform scope rejects a Task with more than one active domain binding. Composite cross-domain autonomous workflows and shared mixed-domain context remain deferred pending a separate decision.
