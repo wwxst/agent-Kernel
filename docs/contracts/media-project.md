@@ -79,6 +79,19 @@ Minimum logical fields:
 
 An analysis run states what it did not inspect. Sparse frame samples cannot support claims about every frame; transcript-only passes cannot prove visual content; shot detectors cannot establish semantic scenes; scene summaries cannot establish exact cut boundaries.
 
+### 3.1 Progressive analysis and source-wide coverage accounting
+
+The proposed default ladder is:
+
+1. **Technical baseline:** every supplied asset receives fingerprinting and technical probing, or an explicit failed/unavailable result.
+2. **Coverage accounting:** every source asset receives a coverage manifest. For content-based selection, the selected source set receives a coarse temporal navigation index (such as representative frames and shot-boundary candidates) whose sampling density and gaps are explicit. This accounts for coverage; it does not claim exhaustive semantic understanding of every frame.
+3. **Task-conditioned depth:** GoalContract criteria determine whether visual event/scene analysis, OCR, ASR/speaker alignment, audio-event analysis, loudness, or other modalities are required.
+4. **Adaptive expansion:** the planner requests denser sampling, neighboring context, another modality, or a rerun only when a criterion has an evidence gap, conflict, low confidence, stale mapping, or boundary/context dependency. The request records its trigger, expected evidence, and budget reservation.
+
+The coverage manifest distinguishes observed, sampled, unsampled, unavailable, and decode-failed intervals; records sampling method/density and the exact source/stream/timebase; and states whether the analysis is complete, partial, failed-known, or outcome-unknown. An unobserved interval is not a negative finding. A whole-source absence claim requires coverage and a method appropriate to that claim. No expensive modality is run by default merely because the source is video.
+
+Analysis expansion is bounded by the Task's current Workflow Profile, permissions, privacy/data-minimization rules, and resource budget. Raw frames, audio, transcripts, and embeddings are retained only under the applicable access/retention policy. A final rendered-output inspection is independent and cannot be replaced by source-analysis claims.
+
 Raw evidence should be retained as immutable, access-controlled artifacts when required for later verification. Privacy, retention, and data-minimization policy governs whether full derived audio/transcript/frame artifacts are stored or only scoped evidence excerpts and digests.
 
 ## 4. Analysis claims and freshness
