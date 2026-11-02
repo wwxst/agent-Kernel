@@ -80,7 +80,7 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 
 The current proposal is internally aligned at the contract level, but these items still require owner review or empirical evidence:
 
-- the exact minimum Video Editing operation set and whether captions/titles/audio treatment are first-phase or follow-up;
+- the exact typed timeline schemas, deterministic compiler mappings, and per-operation evidence obligations for the ADP-01-approved core editing operations;
 - Workflow Profile acceptance, revocation, and migration semantics during long-running tasks;
 - the common artifact/storage/streaming envelope for large media and derived proxies;
 - source PTS, variable-frame-rate handling, audio sample alignment, and rounding across supported formats;
@@ -96,11 +96,11 @@ These remain OPEN; no target thresholds are invented before a frozen task set an
 
 The second-round targeted changes and owner questions are recorded in [Second-round architecture revision](second-round-architecture-revision.md). They deepen the Video domain and Host/render contracts without changing the approved product direction or rewriting the Coding research/reference evidence.
 
-The recommendation packet [Architecture Decision Proposals](architecture-decision-proposals.md) now gives candidate dispositions, alternatives, risks, and acceptance criteria for the first-phase operation set, analysis policy, profile lifecycle, artifact envelope, temporal model, output profiles, verification/human review, Host resources, cross-domain handoff, and preview surface. The packet does not change any item's OPEN/PROPOSED status; owner disposition is still required.
+The [Decision Log](decision-log.md) records ADP-01 as REVISED/APPROVED in its revised form on 2026-11-02. ADP-02 through ADP-11 remain OPEN. The [Architecture Decision Proposals](architecture-decision-proposals.md) packet continues to provide alternatives, risks, and acceptance criteria for those remaining decisions; its recommendations do not become approved without explicit owner disposition.
 
 ## 6. Validation record
 
-- Product direction and Video first-phase scope: **PASS — explicit owner decision recorded**.
+- Product direction and ADP-01 Video first-phase autonomous-editing capability boundary: **PASS — REVISED owner decision recorded in the Decision Log (2026-11-02)**.
 - Three-layer responsibility model: **PASS — coherent proposal**.
 - Shared GoalContract/PlanRevision lifecycle with typed domain payloads: **PASS — proposed contract alignment**.
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
@@ -118,6 +118,6 @@ The recommendation packet [Architecture Decision Proposals](architecture-decisio
 
 ## 7. Decision requested
 
-The current documentation is ready for owner review as a coherent cross-domain architecture proposal. Approval should confirm the responsibility boundaries, shared contracts, and first-phase Video scope.
+The current documentation is ready for continued owner review as a coherent cross-domain architecture proposal. ADP-01's revised Video capability boundary is already approved; the remaining ADP decisions and shared/domain contracts still require disposition.
 
 It should not be interpreted as authorization for Runtime code, production dependencies, external media processing, real-model benchmark runs, final technology selection, or legacy migration. Those require separate explicit approval.
