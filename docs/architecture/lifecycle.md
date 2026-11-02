@@ -61,71 +61,31 @@ The two dimensions are independent. WorkStatus=Completed and VerificationStatus=
 
 A PlanStep being Completed or Passed does not complete the Task. Task completion is based on the full GoalContract and Completion Guard.
 
-## 4. Task lifecycle
+## 4. Task control and derived operating phases (architecture subtraction PROPOSED)
 
-Task states:
+**TaskControl is the only Task-level transition authority.** K persists accepted intent/GoalContract, current active PlanRevision, structural switch barrier, cancellation intent and terminal completion under `taskControlVersion`. Task presentation labels (`Planning`, `Ready`, `Running`, `Verifying`, `Waiting`, `Blocked`, `Reconciling`, `CompletionHold`) are **derived from these facts, open approvals/UNKNOWN, plan/evidence conditions and active Invocations**; they are not independently CAS-locked state machines. Existing historical Task state labels remain readable as projections/events and are not retroactively rewritten.
 
-Created, Admitted, Planning, Ready, Running, Waiting, Blocked, Verifying, Cancelling, Reconciling, CompletionHold, Completed, Failed, Cancelled.
+Task creation/admission, accepted Goal/structural Plan cutover, cancellation and Completed/Failed/Cancelled terminal facts require TaskControl authorization/CAS. A plan switch fences new old-plan admissions, drains/reconciles conflicting work, then atomically changes the active Plan pointer. A recovery hold does not erase the last legal TaskControl state. Terminal states never reopen; late evidence creates a separate hold or remediation task.
 
-Waiting and Blocked carry structured reasons. Typical transitions:
+**Minimal version scope:** `taskControlVersion` changes on structural goal/plan/cancel/terminal transitions only. A normal ModelAttempt result, ToolInvocation/Host Receipt, per-Invocation approval, budget adjustment, checkpoint or evidence update **must not** advance TaskControl solely because it occurred. Such operations use their own owning-aggregate version and relevant Goal/Plan/Authority/Workspace/Budget binding checks at admission. The Journal append sequence remains the global audit order, not a lock on all task progress.
 
-- Created → Admitted after identity, idempotency, task-envelope, and initial-budget validation.
-- Admitted → Planning while GoalContract and bounded reconnaissance are established.
-- Planning → Ready after the first PlanRevision becomes Active.
-- Ready → Running when at least one accepted PlanStep is ready and its preconditions hold.
-- Running / Verifying / Ready / Waiting / Blocked → Planning on a valid replan request; Kernel linearizes a plan-switch barrier and freezes new admissions against the old revision.
-- Planning → Reconciling when a started old-revision invocation has an unresolved outcome that may conflict with cutover.
-- Reconciling → Planning after the relevant outcome is reconciled.
-- Planning → Ready after the new PlanRevision is atomically activated.
-- Planning → Running only when a switch is explicitly aborted and the old revision is safely restored as Active.
-- Running → Verifying when required work/evidence is ready for assurance.
-- Verifying → Running for authorized bounded repair under the same valid plan.
-- Verifying → Planning when the plan or criterion coverage must change.
-- Running → Waiting / Blocked when an external condition prevents safe progress.
-- Any active non-terminal Task state (Admitted, Planning, Ready, Running, Waiting, Blocked, Verifying, or Reconciling) → Cancelling after durable cancellation intent; new ModelSteps and admissions are blocked.
-- Cancelling → Cancelled only when all admitted operations are known to have converged and no UNKNOWN remains.
-- Cancelling → Reconciling when started work has not converged.
-- Reconciling → Blocked when outcome remains unknown; otherwise resume only through a current legal transition.
-- Non-terminal states may enter CompletionHold when conflicting evidence blocks safe completion.
+## 5. Main loop, ModelStep and action intent
 
-Completed, Failed, and Cancelled are immutable terminal states. A late conflict does not rewrite a terminal fact; use a post-terminal evidence hold and separately authorized RemediationTask where required.
+A single **primary Task Orchestrator** cycles through Strategic, Tactical or Assurance *decision purposes*. They are not parallel controllers with separate lifecycles. Each iteration selects relevant context, a bounded decision, ToolInvocations admitted one by one where required, ingests receipts, updates domain evidence and loops until an authorized completion, safe wait or escalation.
 
-## 5. Runtime Step, ModelStep, and ActionProposal
+`ModelStep` is one logical provider decision and `ModelAttempt` is a concrete request. The Kernel owns winning response selection; the model output is **not** tool authority. `ActionProposal` is a **bounded immutable decision/action-intent envelope**, with selected ModelStep/Attempt ID, canonical item digests and only relevant Goal/Plan/Workspace/Authority/Tool bindings. It has **no authoritative Recorded→Selected→Executing→PartiallyExecuting→Settled lifecycle**. Historical proposal events remain auditable; live item progress derives from child ToolInvocation outcomes. An internal exploratory thought or user-facing explanation does not require a new ActionProposal object. Each persisted effectful child still has a durable identified proposal/decision origin and separate Admission.
 
-A PlanStep is an outcome. A runtime Step is an execution unit used to carry out or verify it. A runtime Step may contain one or more ModelSteps, ToolInvocations, evidence collection, a verification run, or checkpoint work.
+## 6. ToolInvocation and single Host physical authority
 
-A ModelStep is one logical model decision point; ModelAttempt is one actual provider request. Every cognitive purpose uses the same Kernel-managed ModelStep lifecycle. A model response is only an ActionProposal candidate.
+A ToolInvocation has one **Kernel logical lifecycle**: proposed/awaiting required approval → admitted and durably intended → dispatch pending → running/known terminal or OutcomeUnknown → reconciled when evidence suffices. The richer legacy status labels are allowed as **projections** over stable state and events; do not introduce a second authoritative scheduler/ActionProposal/Host-run lifecycle for the same operation.
 
-An ActionProposal binds Task aggregate version, UserIntent/GoalContract, active PlanRevision/PlanStep, workspace generation, tool snapshot, preconditions, bounded proposal items, effect/risk, dependencies, expected outputs, evidence obligations, and expiry. It is recorded before child invocation admission. It may be partially executed; it is never atomic. Every ToolInvocation has independent admission, approval, budget, durable intent, Host receipt, and outcome. A changed Task/plan/workspace/tool/policy binding expires or supersedes the proposal. Full semantics are in design.md and the plan/action contracts.
+Approval is an independent *permission fact* (not an Invocation execution state) bound to exact principal, Invocation, selected tool/arguments, Plan, target scope and expiry. A single approval within current plan scope is not structural L2. Trusted ToolHost owns physical nonce, launch/fence, process/descendants/handles, Host Ledger and authenticated receipts. Kernel cannot declare Started or ReconciledSucceeded from model assertions or an absent Host receipt.
 
-## 6. ToolInvocation lifecycle
+## 7. Admission, bounded scheduling, and execution barriers
 
-Execution state and Approval state are separate dimensions.
+**Default one-at-a-time execution.** Optional parallel read-only or demonstrably isolated/disjoint operations require a declared bounded conflict policy; overlapping writes, Git/package manager, broad builds, render publication and unknown effect scopes serialize. No global speculative task DAG scheduler is required for the first implementation. The plan's dependency DAG describes **engineering outcomes**, not automatically a scheduler for every command.
 
-Execution states:
-
-Proposed, Validating, AwaitingApproval, Admitted, IntentPersisted, Dispatching, Running, CancelRequested, Reconciling, Succeeded, FailedKnown, Denied, CancelledBeforeStart, OutcomeUnknown, ReconciledNotExecuted, ReconciledSucceeded, ReconciledFailed.
-
-Approval states:
-
-NotRequired, Pending, Approved, Rejected, Expired, Revoked.
-
-Approval is bound to exact principal, Task, PlanRevision/PlanStep, ActionProposal item, invocation, tool/version, canonical argument hash, policy version, workspace, target, requested capabilities, approver, expiry, and revocation version. Changing a bound value invalidates approval.
-
-## 7. Admission and execution barriers
-
-Before dispatch, the trusted path validates:
-
-1. Task / Turn / Step / ModelStep / PlanRevision / PlanStep / ActionProposal / Invocation identity and ownership.
-2. Complete parameters and schema.
-3. Frozen tool definition and implementation identity.
-4. Principal, capability, policy, and approval versions.
-5. Workspace identity/generation and fencing epoch.
-6. Budget reservation and verification reserve.
-7. Required sandbox and Host profile.
-8. Durable intent and a short-lived AdmissionTicket bound to exact invocation and payload digest.
-
-The model-visible tool schema is not an authorization token. The Host validates the ticket and current fencing/authorization conditions again before side effects.
+Kernel Admission checks complete tool arguments/schema, immutable tool snapshot, active Plan/Step and selective read-set, current authority/grants/approval, workspace generation, budget reservation, conflict policy and durable intent. In **one K-local transaction**, validate the relevant read-set and commit Invocation admission + budget hold + Journal + Dispatch Outbox. No unrelated TaskControl CAS. Host rechecks current *Host-installed* effective fence/authorization at physical spawn under a serialized gate. Tool schemas, Context and ActionProposal do not grant permission.
 
 ## 8. Cancellation, cutover, and UNKNOWN
 
