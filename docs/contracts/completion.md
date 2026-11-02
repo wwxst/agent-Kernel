@@ -75,6 +75,7 @@ A report should bind at least:
 - each required command or render invocation's actual argv/argument digest, filtergraph digest where applicable, working directory, Host run ID, start/finish times, exit code or signal;
 - stdout/stderr digests and controlled log references;
 - artifact paths/URIs, content hashes, domain artifact schema/version, and source execution IDs;
+- for cross-domain consumption, exact handoff ID, producer Task/domain/DomainBinding, ArtifactRef ID/kind/schema/digest, consumer Task/domain/DomainBinding, scoped authorization reference and current validity, permitted access mode, and derived-output lineage;
 - for Video, TimelineRevision, RenderPlan, RenderJob, Host receipt, and final rendered-output digest references;
 - per-criterion verdicts and evidence references;
 - skipped/unavailable checks and reasons;
@@ -150,6 +151,7 @@ Before TaskCompleted, Kernel verifies:
 - Execution environment, dependency/toolchain, renderer, and FFmpeg build digests match the task contract where applicable.
 - Every required test, probe, decode check, or render invocation has a real Host Run, trusted receipt, terminal outcome, and output digest.
 - Artifacts are attributable and content-addressed.
+- Any cross-domain ArtifactRef used by the Task is within a current explicit handoff authorization bound to this consumer Task, exact artifact digest, purpose, and access mode; the report contains no inherited producer authority or private context.
 - No required approval, dependency, or external condition is pending.
 - No unresolved UNKNOWN invocation or cancellation remains.
 - Budget and usage settlement conditions are satisfied.
