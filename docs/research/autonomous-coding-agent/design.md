@@ -152,7 +152,7 @@ A PlanRevision binds the accepted GoalContract version, relevant RepositoryModel
 
 A PlanStep is a meaningful engineering outcome, not a model call or shell command. Its definition includes objective, dependencies, preconditions, expected artifacts, criterion links, effect/risk, capability needs, evidence obligations, verification, and recovery.
 
-**PlanStep has two independent state dimensions:**
+**PlanStep has two **event-derived progress views**, not two independently committed authority state machines:**
 
 - WorkStatus: NotStarted, Ready, Running, Blocked, Completed, Superseded.
 - VerificationStatus: NotRequired, Pending, Running, Passed, Failed, Stale, Inconclusive.
