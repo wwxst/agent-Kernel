@@ -60,15 +60,15 @@ This is a responsibility diagram, not a process topology. It does not prescribe 
 
 ## 3. Shared Agent Kernel
 
-**Minimal authoritative Kernel:** identity and legal Task/Plan/ModelStep/ToolInvocation transitions; deterministic GoalContract/DomainBinding/version validation; admission/policy/approvals; hard budget reservation, scope and enforcement holds; Kernel Journal/Inbox/Outbox/idempotency/recovery decisions; Completion Guard and delivery commit. These are the protected commit points, not one giant orchestration class.
+**Minimal authoritative Kernel:** TaskControl (accepted GoalContract/active Plan, structural switch, cancellation, terminal), ModelStep selection, independent ToolInvocation admission, hard budget/reservation scopes, Journal/Inbox/Outbox/idempotency, scoped UNKNOWN/recovery and Completion Guard. **One TaskControlVersion does not gate every Attempt/Invocation/receipt**; individual aggregates and selective authority/Plan/Workspace/Budget binding vectors prevent unnecessary global contention. Physical Host facts are separately authoritative. These are protected commit points, not a monolithic orchestration class.
 
 **Shared composed components (not necessarily services):**
 
 - Model Gateway performs provider protocol calls, response normalization, streaming/cancellation and usage *observation*. Kernel alone commits Attempt/selection and budget responsibility.
-- Context Engine assembles version-bound projections and checkpoints; it does not grant authority or store the entire Domain's meaning in Kernel.
+- Context Engine lazily assembles Planning/Execution/Verification views and optional milestone checkpoints; it does not grant authority or maintain separate context lifecycles.
 - Tool Runtime schedules admitted work. Trusted ToolHost owns physical launch/fence, process/descendant evidence and its own Host Ledger. Kernel imports authenticated Host receipts and decides how they affect Task state; it does not impersonate the Host's physical truth.
-- Artifact/Evidence infrastructure owns immutable content identity, provenance and retrieval indexes. Kernel checks digest, evidence class, scope and freshness bindings for admission/completion, not the semantics of a repository change or edited scene.
-- Domain Intelligence and Orchestration own strategic/tactical/assurance modes, plan quality, hypothesis choice and domain-specific verification method.
+- Artifact/Evidence infrastructure owns immutable content identity/provenance and optional indexing. A minimal EvidenceRef + criterion-evidence binding is required; an independent EvidenceGraph database/lifecycle is not. Kernel checks digest, evidence class, scope and freshness bindings, not repository/video semantics.
+- One **primary Task Orchestrator loop** chooses Strategic/Tactical/Assurance decision purposes. Domain Intelligence owns plan quality, hypotheses, independent verification and the full autonomous Coding/Video reasoning strategies; no three parallel loop controllers.
 
 These are **logical responsibility boundaries**, with no requirement to deploy separate processes. New shared mechanisms must demonstrate cross-Domain necessity; no Video or Coding semantic branching is allowed in authoritative Kernel transitions. For fast-path/strong-path distinctions see [Core protocol](../contracts/core-protocol.md).
 
@@ -90,9 +90,9 @@ Each domain owns its own cognitive model and workflow.
 | Verification | Tests, builds, static analysis, API/compatibility/security checks | Timeline invariants, decode/probe, audio/video integrity, temporal/content match, perceptual review |
 | Deliverable | Patch, commit or repository artifacts, verification report | Rendered video, canonical timeline revision, render manifest, verification report |
 
-These are not two names for one generic cognition model. The shared EvidenceGraph and VerificationReport are provenance/evidence envelopes; the domain-specific claim vocabulary, models, planners, and verifiers remain separate projections and policies.
+These are not two names for one generic cognition model. The minimum shared EvidenceRef/criterion bindings and VerificationReport are provenance/evidence envelopes; EvidenceGraph itself is an optional derived index. Domain claim vocabularies, models, planners and verifiers remain separate.
 
-A domain may reuse generic orchestration primitives such as hypothesis records, dependency DAGs, evidence relations, and bounded replan policies. Reuse does not imply sharing its semantic model.
+A domain may reuse lightweight hypothesis records, plan-outcome dependencies, evidence refs and bounded replan policies; these are **optional projections/policies, not additional Kernel authorities**. Reuse does not imply sharing a semantic model. Coding and Video must still retain their complete autonomous execution and verification loops.
 
 Planning granularity is also domain-specific. Coding may prefer fine-grained inspect/edit/test/debug steps; Video may use coarser analysis/story/timeline/render/verify steps, with several separately admitted ToolInvocations under one PlanStep. Kernel shares the PlanRevision envelope, dependency/authority checks, invocation admission, resource accounting, and evidence binding—not a universal PlanStep size, operation vocabulary, cognitive loop, or verifier algorithm. A RenderJob is a Video-domain correlation record over shared ToolInvocation/Host state, not a new Kernel lifecycle.
 
