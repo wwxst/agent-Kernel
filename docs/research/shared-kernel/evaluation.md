@@ -72,6 +72,12 @@ At minimum, prepare deterministic scenarios for:
 18. **Protected Coding inputs versus test outputs:** verified caches/coverage in isolated output paths do not stale source evidence; changed protected test/config/dependency inputs force re-verification.
 19. **Protocol replay:** duplicate and reorder Outbox dispatch, signed Host Inbox receipts and ModelStep completion events; preserve one selection, one admission disposition, one consumed nonce and one completion.
 20. **Scope-limited UNKNOWN:** prove an isolated non-conflicting read-only UNKNOWN does not unnecessarily block unrelated task work, while an effectful conflicting UNKNOWN blocks new writes and completion.
+21. **Writable overlay shadowing:** underlying immutable SourceSnapshot hashes all match, but the test actually reads a different script/config from a writable overlay. Host ExecutionViewManifest proves different effective path/digest or fails to establish it; Completion Guard rejects (not Passed).
+22. **Protected path symlink or bind mount switch:** test resolves an alternate config via symlink or mount during execution; trusted Host view evidence must fail or invalidate verification, even if the final lower-layer digest matches.
+23. **K Outbox pending after commit:** K transaction committed Intent + Journal + reservation + DispatchOutbox, crash before network dispatch. Kernel recovery scans Outbox; Host consumes the exact nonce only once.
+24. **H executed, K Receipt missing:** H replays original authenticated receipt via Host Result Outbox; Kernel HostResultInbox and Journal import commit once. Missing physical outcome remains UNKNOWN.
+25. **Hard budget certificate rejection:** missing enforceable provider retry ceiling, unknown cache fee, unpinned price, or uncapped billable modality rejects Hard Budget admission; explicit Soft Budget is independently authorized.
+26. **Approval granularity:** one-time approval inside unchanged plan does not trigger L2, but revocation fences affected ticket. Plan-wide capability/policy/risk change triggers L2.
 21. **Multi-Host non-claim:** a second independent Host is not covered by the first Host's launch/fence proof; record unsupported until a separately approved membership/fencing protocol exists.
 
 
