@@ -19,7 +19,7 @@ Every decision entry records the final selection, rationale, alternatives not se
 | ID | Decision | Status | Owner disposition date |
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | **REVISED** | 2026-11-02 |
-| ADP-02 | Task-conditioned progressive media analysis | OPEN | — |
+| ADP-02 | Task-conditioned progressive media analysis | **REVISED** | 2026-11-02 |
 | ADP-03 | Workflow Profile lifecycle | OPEN | — |
 | ADP-04 | Artifact and media storage contract | OPEN | — |
 | ADP-05 | Media time, PTS, VFR, and audio sample alignment | OPEN | — |
@@ -70,10 +70,40 @@ Every decision entry records the final selection, rationale, alternatives not se
 - **Related decisions/contracts:** ADP-02 (analysis); ADP-03 (profile authority); ADP-04 (artifacts); ADP-05 (time); ADP-06 (output profiles); ADP-07 (verification); ADP-08 (resources/Host); ADP-09 (handoff); ADP-10 (preview/progress/approval); ADP-11 (implementation sequence); MediaProject, Media Timeline, RenderPlan security, RenderJob, Trusted ToolHost, Completion, Video Intelligence, and Video evaluation.
 - **Authorization boundary:** This decision approves the product capability boundary only. It does not authorize Runtime code, production dependencies, real-model/media experiments, external asset acquisition, external publication, a final technology stack, or deployment. Those require separate explicit decisions/authorizations.
 
-## 4. First-batch draft readiness
+## 4. ADP-02 — Task-conditioned progressive media analysis
 
-Detailed first-batch decision and linked contract/evaluation drafts for ADP-02, ADP-03, ADP-05, and ADP-09 have been refined on the architecture branch. The drafts now define modality-scoped coverage-manifest closure, linearizable Host launch/revocation ordering, piecewise stream-to-asset time mapping, and resolver-mediated ScopedReadGrant boundaries. Their Decision Register statuses remain **OPEN** until explicit owner disposition. Draft preparation is not ACCEPTED/REVISED approval and does not authorize Runtime implementation, experiments, technology selection, or deployment.
+- **Status:** REVISED — approved in revised form.
+- **Owner disposition date:** 2026-11-02.
+- **Owner response:** “批准”.
+- **Supplementary comment:** None.
+- **Final selection:** Adopt a four-stage progressive analysis policy:
+  1. **Intake and technical baseline — always.** Fingerprint and technically probe every supplied source asset; establish asset/stream identity, duration, start timestamps, rational time bases, frame/sample characteristics, and decode warnings. This stage records technical facts, not semantic understanding.
+  2. **Source-wide coverage accounting — always.** Every supplied asset receives a CoverageManifest bound to the exact ProjectSnapshot/input manifest and source digest. For content-based moment selection, create a coarse temporal navigation index over the selected source set, with explicit sampling density and gaps. This is a coverage/navigation obligation, not exhaustive semantic comprehension.
+  3. **Task-conditioned deep analysis — as required.** Accepted GoalContract criteria determine which modalities and intervals are needed. Full transcription, dense visual analysis, OCR, audio-event analysis, or other expensive analysis is not run merely because a source contains that modality.
+  4. **Adaptive evidence expansion — when needed.** Expand sampling, neighboring context, modalities, or analysis when evidence is incomplete, contradictory, low-confidence, stale, boundary-sensitive, or insufficient for a required criterion. Record the triggering gap, expected evidence, cost reservation, and result. If unresolved, preserve Partial/Inconclusive/UNKNOWN and seek user input when material.
+- **Coverage semantics:** Coverage is scoped per asset, stream, modality, and declared source interval. Coverage segments are disjoint, gap-accounted, and use end-exclusive interval semantics. The six mutually exclusive statuses are **Observed**, **Sampled**, **NotSampled**, **NotRequested**, **Unavailable**, and **DecodeFailed**. A status change requires a segment boundary. One modality cannot satisfy another modality's coverage obligation.
+- **Evidence and claim boundary:** NotSampled, NotRequested, Unavailable, and DecodeFailed never support a negative content claim. Sparse sampling, shot summaries, and transcript-only evidence cannot establish whole-source absence. Negative claims require a method and observed coverage adequate for the specific claim. Every claim retains source/stream/timebase, method/configuration, evidence scope, uncertainty, and freshness.
+- **Rationale:** The approved policy preserves source-wide visibility and auditable gaps while avoiding the cost, latency, privacy exposure, and noisy claims of unconditional full multimodal analysis. It also prevents sparse or modality-mismatched evidence from being mistaken for proof of absence.
+- **Alternatives considered and not selected:**
+  - **Always run complete visual/audio/transcription analysis:** not selected because its cost and exposure are unnecessary for tasks whose criteria do not require every modality.
+  - **Technical metadata only:** not selected because it is insufficient for autonomous moment selection and narrative editing.
+  - **Sparse sampling without explicit coverage accounting:** not selected because it hides unobserved intervals and encourages unsupported negative claims.
+- **Risks and limitations:** Progressive analysis can miss unanticipated cues; coarse indexing is not exhaustive semantic comprehension; analysis models may disagree or hallucinate; dense expansion consumes budget; raw evidence may contain sensitive material. These risks require explicit coverage, uncertainty, budget, privacy, and escalation records. No universal confidence threshold is approved.
+- **Acceptance conditions:**
+  1. Every supplied asset has a technical probe result or an explicit failed/unavailable record.
+  2. Every declared stream/modality analysis scope is represented by a complete, disjoint, gap-accounted CoverageManifest.
+  3. Content-based moment-selection tasks have a coarse temporal index over the selected source set, with density and gaps declared.
+  4. GoalContract criteria map to required analysis kinds and minimum evidence scopes; unnecessary modalities are not implicitly mandatory.
+  5. Evidence expansion is bounded, reasoned, budget-reserved, and recorded.
+  6. Incomplete/conflicting/weak evidence remains Partial/Inconclusive/UNKNOWN; unsupported absence claims are rejected.
+  7. Evaluation measures manifest completeness, relevant-moment recall/miss rate where ground truth exists, false detections, source-range accuracy, escalation quality, and analysis cost separately.
+- **Related decisions/contracts:** [Architecture Decision Proposals — ADP-02](architecture-decision-proposals.md#adp-02-task-conditioned-progressive-media-analysis), [MediaProject and MediaAnalysis](../contracts/media-project.md), [Media Timeline](../contracts/media-timeline.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), [Completion](../contracts/completion.md), and ADP-08 resource policy.
+- **Authorization boundary:** This decision approves the logical progressive-analysis policy and coverage/evidence semantics only. It does not select a provider, model, storage technology, media-processing stack, confidence threshold, production pipeline, or numeric performance target. It does not authorize Runtime implementation, real-model/media experiments, production dependencies, or deployment.
+
+## 5. First-batch decision status
+
+ADP-02 is now **REVISED/APPROVED** and recorded above. The remaining first-batch drafts — ADP-03, ADP-05, and ADP-09 — have been refined on the architecture branch and remain **OPEN** pending explicit owner disposition. Their contracts specify Host launch/revocation ordering, piecewise stream-to-asset time mapping, and resolver-mediated ScopedReadGrant boundaries; none is empirically verified. Documentation approval does not authorize Runtime implementation, experiments, technology selection, or deployment.
 
 ## 5. Remaining decisions
 
-ADP-02 through ADP-11 remain OPEN. ADP-01 is recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
+ADP-03 through ADP-11 remain OPEN. ADP-01 and ADP-02 are recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
