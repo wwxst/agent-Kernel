@@ -1,6 +1,6 @@
 # Agent Kernel
 
-> **Project status: Unified two-domain product direction APPROVED; cross-domain architecture PROPOSED and under owner review.** The project is one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing. The domain models, workflow profiles, and execution capabilities remain separate. No Runtime implementation or final technology stack is authorized.
+> **Project status: Unified two-domain product direction APPROVED; ADP-01 Video capability scope REVISED/APPROVED; remaining architecture PROPOSED and under owner review.** The project is one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing. The domain models, workflow profiles, and execution capabilities remain separate. No Runtime implementation or final technology stack is authorized.
 
 ## Purpose
 
@@ -17,7 +17,7 @@ The product principle is **one Kernel, two independent domains**. Coding and Vid
 
 The first Video Editing capability is natural-language-driven automatic editing, not a full video editor. The current proposal separates three capability classes:
 
-- **Core automatic-editing foundation:** ingest/probe, task-conditioned media analysis, moment selection, simple narrative ordering, trim/reorder/cut/concatenate, simple fade/crossfade, limited source-audio controls, immutable timeline, bounded FFmpeg render, verification, and natural-language revision. Exact operation registry remains PROPOSED.
+- **Core automatic-editing foundation — ADP-01 REVISED/APPROVED:** ingest/probe; task-conditioned basic video/shot analysis; task-relevant highlight/moment selection; basic NarrativePlan and simple sequencing/pacing; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio controls; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification, and delivery. Exact analysis policy and typed operation contracts remain OPEN.
 - **Enhanced editorial capabilities:** richer cross-scene narrative planning, semantic continuity, music-aware pacing, generated captions/titles, advanced audio mixing, speed ramps, overlays, reframing, color matching, and deeper perceptual critique. These are roadmap capabilities, not implied first-phase support.
 - **Post-production/platform adaptation:** codec/container/resolution/aspect/frame-rate/color/audio profiles, subtitle mux/sidecar, metadata, thumbnails, platform safe areas, packaging, and optional platform delivery. This is a separate output-adaptation stage, not story intelligence.
 
@@ -45,13 +45,14 @@ See [Unified domain architecture](docs/architecture/domain-architecture.md) and 
 - [Shared Kernel evaluation](docs/research/shared-kernel/evaluation.md) — common cross-domain safety, authority, lifecycle, and recovery metrics.
 - [Unified domain direction](docs/decisions/unified-domain-direction.md) — owner-approved product scope and authorization boundary.
 - [Cross-domain architecture review](docs/decisions/cross-domain-architecture-review.md) — consistency review and remaining questions.
-- [Architecture Decision Proposals](docs/decisions/architecture-decision-proposals.md) — recommended choices, alternatives, risks, and acceptance criteria for owner review.
+- [Architecture Decision Proposals](docs/decisions/architecture-decision-proposals.md) — recommendations, alternatives, risks, and acceptance criteria for ADP-02 through ADP-11 owner review.
+- [Decision Log](docs/decisions/decision-log.md) — authoritative owner dispositions; ADP-01 is REVISED/APPROVED.
 
 ## Current state
 
 - Unified one-Kernel/two-domain product direction: **APPROVED**.
 - Coding Domain Intelligence: first- and second-round research retained; proposed.
-- Video Editing Domain Intelligence: proposed first-phase design.
+- Video Editing first-phase capability boundary: **REVISED/APPROVED under ADP-01**; detailed Domain Intelligence and contracts remain proposed/open.
 - DomainBinding and Workflow Profile contract: proposed.
 - MediaProjectModel, TimelineRevision, and RenderJob contracts: proposed.
 - Runtime implementation and production dependencies: not started / not authorized.
