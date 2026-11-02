@@ -37,6 +37,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Coding evaluation and experiment protocol](research/autonomous-coding-agent/evaluation.md)
 - [Unified domain direction](decisions/unified-domain-direction.md)
 - [Cross-domain architecture review](decisions/cross-domain-architecture-review.md)
+- [Architecture Decision Proposals](decisions/architecture-decision-proposals.md) — recommended dispositions, alternatives, risks, and acceptance criteria for remaining cross-domain OPEN questions.
 - [Second-round Coding contract review](decisions/second-round-contract-review.md)
 - [Open decisions](decisions/open-decisions.md)
 - [Roadmap and gates](development/roadmap.md)
