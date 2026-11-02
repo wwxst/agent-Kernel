@@ -30,7 +30,8 @@ The approved direction is recorded in [Unified domain direction](unified-domain-
 | How is long rendering handled? | Typed RenderJob over shared Host process lifecycle; progress is telemetry; cancellation requires process convergence; UNKNOWN blocks blind retry/publication | [RenderJob](../contracts/render-job.md) | CONTRACT PROPOSED; RUNTIME UNVERIFIED |
 | How is final video verified? | Technical probe/decode, timeline invariants, audio/video integrity, content match, perceptual review, and human review when required | [RenderJob](../contracts/render-job.md), [Video design](../research/multimedia-domain-architecture/design.md) | CONTRACT PROPOSED; QUALITY UNVERIFIED |
 | How can users revise an edit? | Append-only EditIntent creates a new TimelineRevision/RenderPlan/RenderJob; prior renders remain immutable | [Media Timeline](../contracts/media-timeline.md) | CONTRACT PROPOSED |
-| How are quality results compared? | Separate Coding and Video task sets/metrics/baselines; shared Kernel safety metrics across both | [Coding evaluation](../research/autonomous-coding-agent/evaluation.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md) | METHOD PROPOSED |
+| How are quality results compared? | Separate Coding and Video task sets/metrics/baselines; shared Kernel safety metrics across both | [Coding evaluation](../research/autonomous-coding-agent/evaluation.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), [Shared Kernel evaluation](../research/shared-kernel/evaluation.md) | METHOD PROPOSED |
+| How are shared Kernel invariants tested? | Common authority, UNKNOWN, cancellation, budget, freshness, recovery, provenance, and user-control metrics with paired domain fixtures | [Shared Kernel evaluation](../research/shared-kernel/evaluation.md) | METHOD PROPOSED; RUNS NOT AUTHORIZED |
 | Is a full editor required? | No. Timeline is a canonical artifact; first phase is automatic editing only | [Unified domain direction](unified-domain-direction.md), [Video design](../research/multimedia-domain-architecture/design.md) | SCOPE APPROVED |
 | Is Multi-Agent required? | No. D9 remains deferred and unauthorized | [Open decisions](open-decisions.md), [Roadmap](../development/roadmap.md) | DEFERRED |
 
@@ -59,9 +60,10 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 3. MediaProject is defined as the persistent Video artifact container, and MediaProjectModel is introduced as its sibling Context projection; RepositoryModel remains intact.
 4. DomainBinding and Workflow Profile are added to lifecycle and PlanRevision envelopes.
 5. Domain Workflow, Media Timeline, and RenderJob contracts are added.
-6. CompletionReport bindings include DomainBinding and final domain artifact references.
+6. VerificationReport bindings include DomainBinding and final domain artifact references.
 7. Roadmap now plans Coding and Video domain research in parallel, followed by shared Kernel integration and cross-domain review.
 8. Video scope is explicitly constrained to natural-language automatic editing; no full editor or Multi-Agent implementation is implied.
+9. Shared Kernel safety metrics and fault scenarios are centralized in a cross-domain evaluation protocol rather than being defined by the Video evaluation document.
 
 ## 5. Remaining design questions
 
@@ -76,6 +78,7 @@ The current proposal is internally aligned at the contract level, but these item
 - objective versus subjective video-quality evidence and human-review thresholds;
 - how linked Coding/Video tasks share artifacts without introducing a composite cross-domain Task;
 - separate benchmark assets/task sets, hidden checks, and reviewer rubrics;
+- cross-domain Kernel fault-injection fixtures and environment-specific process/resource controls;
 - whether a minimal preview/approval surface is sufficient without creating a full editor.
 
 These remain OPEN; no target thresholds are invented before a frozen task set and measured baseline exist.
@@ -88,8 +91,9 @@ These remain OPEN; no target thresholds are invented before a frozen task set an
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
+- Shared Kernel evaluation metric definitions: **PASS — common protocol drafted; no runs performed**.
 - Technical/perceptual verification boundary: **PASS — evidence obligations proposed**.
-- Local Markdown link audit: **PASS** — all 32 Markdown files and all relative links resolve against the reviewed branch tree.
+- Local Markdown link audit: **PASS** — all relative Markdown targets resolve against the reviewed branch tree (rechecked during this continuation; no missing relative targets found).
 - Runtime tests and fault injection: **NOT RUN**.
 - Media processing and benchmark: **NOT RUN**.
 - Host process convergence, render recovery, and media quality: **UNVERIFIED**.
