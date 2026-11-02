@@ -1,88 +1,103 @@
 # Lifecycle and state model
 
-> **Status: Initial contract reconciled with a PROPOSED intelligent-execution model.** Existing Task/Turn/Step/ToolInvocation authority principles remain the baseline. PlanRevision, PlanStep, and evidence bindings are proposed additions pending owner review. Storage schemas and runtime transitions remain unimplemented and unverified.
+> **Status: PROPOSED second-round lifecycle contract.** This document aligns Task, GoalContract, PlanRevision, PlanStep, runtime Step, ModelStep, Attempt, and ToolInvocation semantics. Runtime transitions, transaction behavior, and crash recovery remain unimplemented and unverified. See [PlanRevision and PlanStep lifecycle contract](../contracts/plan-revision.md) for the normative cutover protocol.
 
 ## 1. Core entities
 
-- **Session** — durable conversation and execution history boundary. Concurrent writers require explicit coordination.
-- **Task** — durable unit of user intent, GoalContract, accepted plan, budget, execution, verification, and completion.
-- **GoalContract** — versioned description of desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, and workspace binding. Orchestration proposes it; Kernel records the accepted task contract/version.
-- **Turn** — one interaction cycle within a task/session; terminal outcomes are immutable.
-- **PlanRevision** — immutable accepted version of the dependency-aware outcome plan. A PlanCandidate is not authoritative until Kernel accepts it.
-- **PlanStep** — goal-level unit of work in an accepted PlanRevision, with dependencies, preconditions, expected artifacts, risk, and verification obligations.
-- **Step** — one runtime execution unit, such as reconnaissance, planning, model invocation, tool batch, verification, or checkpoint work. It may belong to a PlanStep.
-- **ModelStep** — one logical model decision point, potentially containing one or more Attempts. Planner, Explorer, Implementer, Debugger, and Verifier calls are all Kernel-managed ModelSteps.
-- **ModelAttempt** — one actual provider request/attempt associated with a ModelStep.
-- **ToolInvocation** — one uniquely identified proposed and admitted side-effect operation.
-- **EvidenceReference** — a provenance-bound reference to repository observations, model/provider evidence, Host receipts, command outputs, tests, diffs, or artifacts. The EvidenceGraph is a projection, not an authority source.
-- **VerificationReport** — evidence bound to a PlanRevision, acceptance criteria, workspace, environment, and actual verification runs.
+- **Session** — durable conversation and execution-history boundary.
+- **UserIntent** — immutable original user request plus append-only clarification references. It is never replaced by a model-generated GoalContract.
+- **Task** — durable unit of user intent, accepted GoalContract, active plan, budget, execution, verification, and completion.
+- **GoalContract** — immutable accepted version of desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, risk, and workspace binding. Orchestration proposes; Kernel records acceptance after deterministic checks and required confirmation evidence.
+- **Turn** — one interaction cycle within a Task/Session.
+- **PlanRevision** — immutable accepted version of the dependency-aware outcome plan. It moves through Proposed, AcceptedPendingCutover, Active, Superseding, Superseded, or Rejected.
+- **PlanStep** — outcome-oriented work unit in one PlanRevision. WorkStatus and VerificationStatus are separate dimensions.
+- **Step** — runtime execution unit such as reconnaissance, planning, model invocation, tool batch, verification, or checkpoint work.
+- **ModelStep** — one logical model decision point, potentially containing one or more Attempts. Planner, Explorer, Implementer, Debugger, Verifier, and summary calls all use this lifecycle.
+- **ModelAttempt** — one actual provider request associated with a ModelStep.
+- **ActionProposal** — durable typed decision record from Orchestration; not an authorization or execution ticket.
+- **ToolInvocation** — uniquely identified proposed/admitted side-effect operation, independently authorized and reconciled.
+- **EvidenceReference** — provenance-bound reference to repository observations, provider evidence, Host receipts, command outputs, tests, diffs, or artifacts.
+- **EvidenceGraph** — Context/Orchestration projection over claims, evidence, and explicit relations; not an authority ledger.
+- **VerificationReport** — criterion-to-evidence report bound to GoalContract, PlanRevision, workspace, environment, and actual verification runs.
 - **Receipt** — authenticated Host evidence for a specific execution or workspace operation.
+- **Checkpoint** — immutable task-progress snapshot; readable as historical progress independently of whether the authorizations recorded at checkpoint time are still current.
 
-## 2. Plan and step semantics
+## 2. GoalContract lifecycle
 
-A PlanCandidate contains a proposed PlanRevision and PlanStep dependency graph. Kernel validates identity, Task version, budget, scope, legal transitions, and required preconditions before accepting it.
+The original UserIntent and clarifications are immutable references. Orchestration proposes a GoalContract candidate; Kernel checks schema, provenance, version lineage, protected-field changes, and required user-confirmation references. Kernel does not decide semantic fidelity.
 
-An accepted PlanRevision is immutable. A change to objectives, dependencies, scope, criterion coverage, or execution strategy that changes the accepted plan requires a new revision with explicit rationale. Superseded steps retain their history and evidence.
+Proposed lifecycle:
 
-Proposed PlanStep lifecycle:
+Candidate → NeedsClarification | ReadyForAcceptance → Accepted → Superseded
 
-Proposed → Accepted → Ready → Running → EvidenceReady → Verified
+Rejected candidates remain auditable as Rejected. Accepted versions are immutable. Material changes to desired behavior, scope, exclusions, required criteria, constraints, public compatibility, risk, or external/destructive effects require explicit user confirmation unless already clearly authorized by the original request. Low-risk, reversible, disclosed assumptions may be accepted autonomously only when task policy permits and they do not expand scope or alter criteria.
 
-Alternative transitions include:
+An accepted GoalContract change that affects scope, criteria, or authority triggers the PlanRevision switch protocol. Old evidence remains historical; a VerificationReport bound to the old GoalContract cannot complete the new version.
 
-- Ready / Running → Blocked with a structured reason.
-- Running → FailedKnown when trusted evidence proves the step failed.
-- Blocked → Ready when the dependency or approval condition is resolved.
-- Any non-terminal step → Superseded only through an accepted PlanRevision transition.
-- EvidenceReady → Running when required verification fails and repair is authorized.
+## 3. PlanRevision and PlanStep
 
-A PlanStep being Verified does not complete the Task. Task completion remains governed by the GoalContract's full acceptance criteria and Completion Guard.
+A PlanCandidate is semantically authored by Orchestration. Kernel validates it as a deterministic contract: schema, Task/GoalContract/version bindings, unique IDs, acyclic DAG, valid references, criterion-ID mapping, scope and capability envelope, budget/verification reserve, workspace snapshot, declared preconditions/effects/evidence, and legal transition. Kernel does not judge technical quality or semantic sufficiency.
 
-## 3. Task lifecycle
+PlanRevision states:
 
-The initial Task state vocabulary remains:
+Proposed, AcceptedPendingCutover, Active, Superseding, Superseded, Rejected.
+
+At most one revision is Active per Task. A revision in AcceptedPendingCutover is not executable. Replanning uses a freeze → drain → reconcile → refresh → validate → atomic activate protocol. The old revision stops accepting new work when the switch barrier linearizes. Undispatched invocations are cancelled/revoked; dispatched invocations drain and return receipts. Conflicting UNKNOWN outcomes block activation. A candidate based on a stale workspace generation must be refreshed or regenerated. Full transition and concurrency semantics are in the linked PlanRevision contract.
+
+### 3.1 PlanStep work state
+
+NotStarted, Ready, Running, Blocked, Completed, Superseded.
+
+### 3.2 PlanStep verification state
+
+NotRequired, Pending, Running, Passed, Failed, Stale, Inconclusive.
+
+The two dimensions are independent. WorkStatus=Completed and VerificationStatus=Failed is valid. ToolInvocation or ModelAttempt FailedKnown is not a PlanStep failure. Repair uses an explicit rework event and preserves prior artifacts/reports. Evidence invalidation moves a previously Passed verification to Stale. Superseded steps are immutable and cannot be reactivated in place; a new revision may create a new step with explicit lineage/carry-forward references.
+
+A PlanStep being Completed or Passed does not complete the Task. Task completion is based on the full GoalContract and Completion Guard.
+
+## 4. Task lifecycle
+
+Task states:
 
 Created, Admitted, Planning, Ready, Running, Waiting, Blocked, Verifying, Cancelling, Reconciling, CompletionHold, Completed, Failed, Cancelled.
 
-Waiting and Blocked carry structured reasons rather than multiplying top-level states. Candidate reasons include approval pending/rejected/expired/revoked, budget exhausted or unbounded settlement, unknown outcome, dependency not ready, user input required, lease unavailable, workspace conflict, verification failure, evidence conflict, budget overrun, and external dependency unavailable.
+Waiting and Blocked carry structured reasons. Typical transitions:
 
-Typical transitions:
-
-- Created → Admitted after identity, idempotency, task-envelope, and initial budget validation.
-- Admitted → Planning while GoalContract and bounded reconnaissance context are established.
-- Planning → Ready only after a PlanRevision is accepted. Bounded read-only reconnaissance may run before plan acceptance under a discovery admission profile.
-- Ready → Running when at least one accepted PlanStep is ready and its execution preconditions hold.
+- Created → Admitted after identity, idempotency, task-envelope, and initial-budget validation.
+- Admitted → Planning while GoalContract and bounded reconnaissance are established.
+- Planning → Ready after the first PlanRevision becomes Active.
+- Ready → Running when at least one accepted PlanStep is ready and its preconditions hold.
+- Running → Planning on a replan request; Kernel linearizes a plan-switch barrier and freezes new admissions against the old revision.
+- Planning → Reconciling when a started old-revision invocation has an unresolved outcome that may conflict with cutover.
+- Reconciling → Planning after the relevant outcome is reconciled.
+- Planning → Ready after the new PlanRevision is atomically activated.
+- Planning → Running only when a switch is explicitly aborted and the old revision is safely restored as Active.
+- Running → Verifying when required work/evidence is ready for assurance.
+- Verifying → Running for authorized bounded repair under the same valid plan.
+- Verifying → Planning when the plan or criterion coverage must change.
 - Running → Waiting / Blocked when an external condition prevents safe progress.
-- Running → Verifying when required PlanSteps and acceptance evidence are ready for assurance.
-- Verifying → Completed only when Completion Guard succeeds.
-- Verifying → Running for an authorized bounded repair; → Planning for a new PlanRevision.
-- Running → Cancelling after a durable cancellation intent; new model steps and admissions are blocked.
-- Cancelling → Cancelled only when every admitted operation is known to have converged and no UNKNOWN remains.
-- Cancelling → Reconciling when a started operation has not converged.
-- Reconciling → Blocked when the outcome remains unknown; otherwise the system acts on the evidence, not an assumption.
+- Running → Cancelling after durable cancellation intent; new ModelSteps and admissions are blocked.
+- Cancelling → Cancelled only when all admitted operations are known to have converged and no UNKNOWN remains.
+- Cancelling → Reconciling when started work has not converged.
+- Reconciling → Blocked when outcome remains unknown; otherwise resume only through a current legal transition.
+- Non-terminal states may enter CompletionHold when conflicting evidence blocks safe completion.
 
-Completed, Failed, and Cancelled are immutable terminal states. A late conflict does not rewrite the original terminal fact.
+Completed, Failed, and Cancelled are immutable terminal states. A late conflict does not rewrite a terminal fact; use a post-terminal evidence hold and separately authorized RemediationTask where required.
 
-## 4. Runtime Step and ModelStep
+## 5. Runtime Step, ModelStep, and ActionProposal
 
-A PlanStep is an outcome-oriented work item. A runtime Step is an execution unit used to carry out or verify that work item. A runtime Step may contain:
+A PlanStep is an outcome. A runtime Step is an execution unit used to carry out or verify it. A runtime Step may contain one or more ModelSteps, ToolInvocations, evidence collection, a verification run, or checkpoint work.
 
-- one or more ModelSteps;
-- one or more ToolInvocations;
-- a tool batch or bounded experiment;
-- evidence collection and projection;
-- a verification run;
-- a checkpoint candidate or compaction operation.
+A ModelStep is one logical model decision point; ModelAttempt is one actual provider request. Every cognitive purpose uses the same Kernel-managed ModelStep lifecycle. A model response is only an ActionProposal candidate.
 
-A ModelStep is one logical model decision point. A ModelAttempt is one actual provider request. Every cognitive purpose—reconnaissance, planning, implementation, debugging, verification, or summary—must use the same Kernel-managed ModelStep lifecycle.
+An ActionProposal binds Task aggregate version, UserIntent/GoalContract, active PlanRevision/PlanStep, workspace generation, tool snapshot, preconditions, bounded proposal items, effect/risk, dependencies, expected outputs, evidence obligations, and expiry. It is recorded before child invocation admission. It may be partially executed; it is never atomic. Every ToolInvocation has independent admission, approval, budget, durable intent, Host receipt, and outcome. A changed Task/plan/workspace/tool/policy binding expires or supersedes the proposal. Full semantics are in design.md and the plan/action contracts.
 
-A model response is only an ActionProposal candidate. It cannot advance PlanStep or Task state without the corresponding Kernel command and required evidence.
-
-## 5. ToolInvocation lifecycle
+## 6. ToolInvocation lifecycle
 
 Execution state and Approval state are separate dimensions.
 
-Initial execution states:
+Execution states:
 
 Proposed, Validating, AwaitingApproval, Admitted, IntentPersisted, Dispatching, Running, CancelRequested, Reconciling, Succeeded, FailedKnown, Denied, CancelledBeforeStart, OutcomeUnknown, ReconciledNotExecuted, ReconciledSucceeded, ReconciledFailed.
 
@@ -90,47 +105,47 @@ Approval states:
 
 NotRequired, Pending, Approved, Rejected, Expired, Revoked.
 
-Approval is bound to the exact principal, task, PlanRevision/PlanStep, invocation, tool/version, canonical argument hash, policy version, workspace, target, requested capabilities, approver, expiry, and revocation version. Changing a bound value invalidates the approval.
+Approval is bound to exact principal, Task, PlanRevision/PlanStep, ActionProposal item, invocation, tool/version, canonical argument hash, policy version, workspace, target, requested capabilities, approver, expiry, and revocation version. Changing a bound value invalidates approval.
 
-## 6. Admission and execution barriers
+## 7. Admission and execution barriers
 
 Before dispatch, the trusted path validates:
 
-1. Task / Turn / Step / PlanRevision / PlanStep / Invocation identity and ownership.
+1. Task / Turn / Step / ModelStep / PlanRevision / PlanStep / ActionProposal / Invocation identity and ownership.
 2. Complete parameters and schema.
-3. Frozen tool definition and implementation identity for the current Step.
+3. Frozen tool definition and implementation identity.
 4. Principal, capability, policy, and approval versions.
 5. Workspace identity/generation and fencing epoch.
-6. Budget reservation.
+6. Budget reservation and verification reserve.
 7. Required sandbox and Host profile.
-8. Durable Intent and a short-lived AdmissionTicket bound to the exact invocation and payload digest.
+8. Durable intent and a short-lived AdmissionTicket bound to exact invocation and payload digest.
 
 The model-visible tool schema is not an authorization token. The Host validates the ticket and current fencing/authorization conditions again before side effects.
 
-## 7. Cancellation and UNKNOWN
+## 8. Cancellation, cutover, and UNKNOWN
 
-Cancellation is a convergence protocol:
+Cancellation and plan switching are convergence protocols, not flags.
 
-- Persist Cancel Intent.
-- Stop new ModelSteps and new Tool Admissions.
+- Persist cancellation or PlanSwitch Intent in the Kernel Journal.
+- Stop new ModelSteps/admissions for the affected task/revision.
 - Invalidate pending approvals and undispatched admissions.
-- Send cancellation to already dispatched work.
-- Wait for started executions to converge.
-- Collect receipts or classify the result as UNKNOWN.
-- Only mark Cancelled when all started work has a trusted terminal result and no unresolved side effect remains.
+- Request cancellation/drain for already dispatched work.
+- Collect authenticated receipts and wait for process/descendant convergence.
+- Classify unresolved outcomes as UNKNOWN; do not assume failure.
+- Reconcile UNKNOWN against Host Ledger, receipts, target state, and idempotency evidence.
+- Do not activate a conflicting new plan or replay a non-idempotent invocation while a potentially conflicting UNKNOWN remains.
 
-A process kill, timeout, disconnected socket, or AbortSignal is not proof that an external side effect was undone.
+A timeout, process kill, disconnected socket, or AbortSignal does not prove rollback. The model cannot waive reconciliation.
 
-UNKNOWN is not a synonym for failure. It requires reconciliation against Host Ledger, receipts, target-system state, and idempotency evidence. Keep ownership and relevant budget reservations while unresolved. Never blindly replay a non-idempotent invocation. The model cannot decide that an UNKNOWN tool call must have failed and retry it.
+## 9. Recovery and immutable facts
 
-## 8. Recovery and immutable facts
-
-- Stable invocation IDs, Host request IDs, idempotency keys, and payload digests survive retries and restart.
-- Same ID + same digest returns the original result; same ID + different digest is a conflict and must be quarantined.
+- Stable invocation IDs, Host request IDs, idempotency keys, and payload digests survive retry and restart.
+- Same ID + same digest returns the original result; same ID + different digest is quarantined as a conflict.
 - Host receipt facts and Kernel state facts remain separate and are reconciled.
-- A receipt persisted by Host but not yet projected into Kernel may be imported idempotently; the side effect is not re-executed.
-- If evidence cannot prove whether a side effect occurred, retain OutcomeUnknown and block unsafe progress.
-- Accepted PlanRevision, PlanStep progress, and checkpoint pointers are reconstructed from Kernel Journal, not model summaries.
-- Context and EvidenceGraph projections are rebuilt from authoritative state and provenance-bound source references after restart.
+- A Host-persisted receipt may be imported idempotently; the side effect is not re-executed.
+- Accepted GoalContract/PlanRevision, PlanStep state, and checkpoint pointers are reconstructed from Kernel Journal, not model summaries.
+- Checkpoint integrity and historical readability do not depend on old approvals or leases remaining valid.
+- On recovery, current identity, policy, capabilities, approvals, budget, lease/fencing, tool snapshot, and workspace state are reloaded and checked before any new execution.
+- Context and EvidenceGraph projections are rebuilt from authoritative state and provenance-bound sources.
 
-Runtime state transitions, transaction behavior, and crash-recovery correctness remain **UNVERIFIED** until implemented and fault-injection tested.
+Runtime state transitions, transaction atomicity, and crash-recovery correctness remain UNVERIFIED until implemented and fault-injection tested.
