@@ -51,7 +51,7 @@ Illustrative values such as a 1/90000 source timebase or 25/1 timeline rate are 
 
 ### 3.1 Canonical coordinates and conversion records
 
-A source timestamp is interpreted only together with the identity of its stream and that stream's time base. PTS is preserved as a signed integer; a rational time base has a positive denominator and is reduced to canonical numerator/denominator form where representable. The exact wire encoding and integer-width choice remain open.
+A source timestamp is interpreted only together with the identity of its stream and that stream's time base. PTS is preserved as a signed integer; a time base is a positive rational value with positive denominator and is reduced to canonical numerator/denominator form where representable. The exact wire encoding and integer-width choice remain open.
 
 For VFR video, preserve each available frame's presentation PTS and duration (or explicitly record duration as unknown). Do not derive per-frame PTS from average/nominal FPS. Decode timestamps such as DTS, when retained for decoder diagnostics, are not substituted for presentation coordinates.
 
