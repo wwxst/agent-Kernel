@@ -239,6 +239,8 @@ Ask the user when the instruction has multiple materially different interpretati
 - How to define objective or blinded human scoring for subjective edit quality.
 - Which resource limits and segmented-render strategies are practical across target hosts.
 
+Candidate resolutions for the operation set, analysis policy, time model, output-profile strategy, verification, resources, and preview boundary are recorded in [Architecture Decision Proposals](../../decisions/architecture-decision-proposals.md). These remain proposals and do not select a media-analysis provider or production stack.
+
 No threshold or technology choice is inferred merely from this design draft.
 
 
