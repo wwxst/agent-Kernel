@@ -69,7 +69,7 @@ Rounding is explicit per operation. For an interval whose semantics require pres
 
 Floating-point seconds and timecode strings are presentation values only. They may be generated for UI display but cannot be the sole basis for source-range identity, cut boundaries, or provenance. The conversion policy/version and resulting mappings are included in the TimelineRevision/RenderPlan digests.
 
-## 4. Canonical structures### 3.2 Piecewise stream-to-asset presentation mapping
+### 3.2 Piecewise stream-to-asset presentation mapping
 
 All streams in one MediaAsset are related through an immutable asset-relative presentation clock represented as an exact rational value. Each stream maps to that clock through one or more explicit StreamTimeMapping segments. This is a logical mapping contract; it does not select a container parser, decoder, database encoding, or media library.
 
@@ -89,7 +89,7 @@ A/V alignment is computed by mapping the relevant video and audio coordinates on
 
 All intermediate arithmetic remains exact rational/integer arithmetic. Overflow or an unrepresentable value must produce an explicit failure or use a declared wider exact representation; floating-point seconds are never a silent fallback or canonical substitute.
 
-
+## 4. Canonical structures
 
 ### 4.1 Media references and provenance
 
