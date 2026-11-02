@@ -39,7 +39,7 @@ A paired test may use analogous Kernel events in both domains—for example, int
 | Cancellation and process convergence | Cancellation-to-convergence time, orphan descendants/handles, late writes, and unresolved cancellation | A cancellation request is not proof of convergence |
 | Budget/resource integrity | Reservation coverage, hard-limit overshoot, unaccounted consumption, settlement gaps, and verification-reserve exhaustion | Unbounded or unaccounted use is a blocker |
 | Version/freshness integrity | Stale GoalContract, PlanRevision, DomainBinding, Workflow Profile, tool snapshot, workspace/project generation, or evidence accepted | Stale authority/evidence must be rejected |
-| Profile admission/dispatch freshness | New admission or Host launch under a Superseded/Revoked profile, stale profile-authority epoch, replayed dispatch ticket, or old accepted PlanRevision; ordering of LaunchGate and authority-fence commits | Any launch after the effective revocation fence is a blocker |
+| Profile/authority admission-dispatch freshness | New admission or Host launch under a Superseded/Revoked profile, stale AuthorityFenceEpoch or principal/capability/policy/approval version, replayed dispatch ticket, stale workspace/project generation, or old accepted PlanRevision; ordering of LaunchGate and authority-fence commits | Any launch after the effective revocation fence or against a stale execution snapshot is a blocker |
 | Cross-domain handoff isolation | Reads outside exact ArtifactRef scope, missing/expired/revoked ScopedReadGrant, locator leakage, transitive artifact traversal, inherited producer permissions/context, or broken lineage | Any unauthorized disclosure or inherited authority is a blocker |
 | Recovery correctness | Journal reconstruction, Host receipt import, checkpoint integrity, fencing, and safe resume after restart/compaction | Recovery must not duplicate or authorize stale work |
 | Provenance and audit completeness | Traceability of ModelSteps, ActionProposals, ToolInvocations, approvals, Host receipts, resource reservations, artifact digests, and delivery | Missing critical evidence blocks a trustworthy completion claim |
@@ -52,20 +52,22 @@ Report attempts and actual executions separately. A denied unauthorized proposal
 
 At minimum, prepare deterministic scenarios for:
 
-1. **Revocation before admission or ticket issue:** revoke a principal, capability, approval, or Workflow Profile before a new invocation is admitted. No AdmissionTicket or dispatch ticket may be issued under the withdrawn authority.
+1. **Revocation before admission or ticket issue:** revoke a principal, capability, policy, approval, or Workflow Profile before a new invocation is admitted. No AdmissionTicket or dispatch ticket may be issued under the withdrawn authority.
 2. **LaunchGate/revocation race:** deterministically run both orders for the same Host gate. If process creation crosses the launch boundary first, the Host receipt must order it before the revocation fence and the invocation follows drain/cancel policy. If the revocation fence commits first, the old ticket is rejected and no process is created.
-3. **Authority unavailable, Host partition, and ticket replay:** a Host cannot reach current authority, is not fenced, or receives a duplicate/expired one-use ticket. It must fail closed; revocation remains Pending until all eligible gates acknowledge or are verifiably disabled.
-4. **Host crash around launch boundary:** crash after durable launch intent but before process creation, and after process creation but before receipt persistence. Reconcile Host Ledger/process/output state; the latter remains UNKNOWN until resolved and must not be treated as non-execution.
-5. **Cancellation race:** cancellation arrives before dispatch, during execution, after process exit, or while receipts are being reconciled.
-6. **Process-tree leak:** the parent process exits while a descendant can still write to the workspace or media output.
-7. **Budget exhaustion/late overrun:** hard budget is exhausted during a long operation, or an overrun is reported after Task terminalization.
-8. **Stale evidence:** workspace/project generation, source digest, timeline, render plan, environment, or tool version changes after verification.
-9. **Checkpoint/compaction recovery:** restart from a checkpoint whose historical approvals/leases are expired; verify that no new operation resumes without fresh admission.
-10. **Publication conflict:** two operations target the same deliverable, or a partial/UNKNOWN output competes with a newer accepted revision.
-11. **Domain isolation and ArtifactRef handoff:** a Coding Task cannot load Video-only schemas/tools and a Video Task cannot interpret RepositoryModel payloads. A consumer may read only the exact typed ArtifactRef under a server-side ScopedReadGrant. Test wrong consumer/purpose/digest/schema, expired/revoked grants, grant replay, resolver locator leakage, parent/sibling traversal, producer workspace/project access, and attempts to inherit producer approvals, tools, secrets, budgets, or private context.
-12. **Terminal-state race:** cancellation, completion, late Host evidence, and resource settlement race; the Kernel preserves one valid terminal fact and records late conflicts separately.
-13. **Revocation during stream/range read:** revoke the handoff after a stream opens but before subsequent chunks/ranges. No further bytes are delivered after the grant fence; bytes already delivered remain governed by the declared retention policy.
-14. **Handoff transitivity and materialized copies:** attempt to follow parent/derived/sibling references or onward-share a consumer copy without a new grant; deny traversal/sharing and verify that copied bytes remain separately auditable under retention/deletion policy.
+3. **Revocation after admission but before launch:** admit an invocation, then revoke its principal, capability, policy, or approval before the Host launch boundary. The AuthorityFenceEpoch advances; the old ticket must be rejected even if its Workflow Profile remains Active. Also change the workspace/project generation or invalidate/release the budget reservation after admission; the stale execution snapshot must be rejected.
+
+5. **Authority unavailable, Host partition, and ticket replay: a Host cannot reach current authority, is not fenced, or receives a duplicate/expired one-use ticket. It must fail closed; revocation remains Pending until all eligible gates acknowledge or are verifiably disabled.
+6. **Host crash around ticket consumption and launch boundary:** crash after durable ticket-nonce consumption but before process creation, during process creation, and after process creation but before receipt persistence. The consumed ticket must never be replayable after restart. Reconcile Host Ledger/process/output state; any uncertain physical outcome remains UNKNOWN and must not be treated as non-execution.
+7. **Cancellation race:** cancellation arrives before dispatch, during execution, after process exit, or while receipts are being reconciled.
+8. **Process-tree leak:** the parent process exits while a descendant can still write to the workspace or media output.
+9. **Budget exhaustion/late overrun:** hard budget is exhausted during a long operation, or an overrun is reported after Task terminalization.
+10. **Stale evidence:** workspace/project generation, source digest, timeline, render plan, environment, or tool version changes after verification.
+11. **Checkpoint/compaction recovery:** restart from a checkpoint whose historical approvals/leases are expired; verify that no new operation resumes without fresh admission.
+12. **Publication conflict:** two operations target the same deliverable, or a partial/UNKNOWN output competes with a newer accepted revision.
+13. **Domain isolation and ArtifactRef handoff:** a Coding Task cannot load Video-only schemas/tools and a Video Task cannot interpret RepositoryModel payloads. A consumer may read only the exact typed ArtifactRef under a server-side ScopedReadGrant. Test wrong consumer/purpose/digest/schema, expired/revoked grants, grant replay, resolver locator leakage, parent/sibling traversal, producer workspace/project access, and attempts to inherit producer approvals, tools, secrets, budgets, or private context.
+14. **Terminal-state race:** cancellation, completion, late Host evidence, and resource settlement race; the Kernel preserves one valid terminal fact and records late conflicts separately.
+15. **Revocation during stream/range read:** revoke the handoff after a stream opens but before subsequent chunks/ranges. No further bytes are delivered after the grant fence; bytes already delivered remain governed by the declared retention policy.
+16. **Handoff transitivity and materialized copies:** attempt to follow parent/derived/sibling references or onward-share a consumer copy without a new grant; deny traversal/sharing and verify that copied bytes remain separately auditable under retention/deletion policy.
 
 
 Use analogous domain fixtures where meaningful: a repository build/test process for Coding and an FFmpeg RenderJob for Video. The exact host process, resource dimensions, and artifacts differ, while the admission, receipt, cancellation, UNKNOWN, and recovery invariants remain the same.
@@ -77,7 +79,7 @@ Pin and record for every run:
 - Kernel build/commit and contract/schema versions;
 - domain ID, DomainBinding, Workflow Profile, and tool-definition snapshots;
 - Task, UserIntent, GoalContract, PlanRevision, and workspace/project generation;
-- principal, policy, capability, approval, profile-authority and Host LaunchGate fence versions;
+- AuthorityFenceEpoch and exact principal, policy, capability, approval, profile, and DomainBinding versions; workspace/project generation and budget-reservation version;
 - handoff ID, exact ArtifactRef digest/schema, ScopedReadGrant version/scope/expiry/revocation state, and per-read resolver receipt references;
 - Host implementation/profile, OS, isolation configuration, and process identity;
 - model/provider settings and context/checkpoint policy where model behavior is involved;
