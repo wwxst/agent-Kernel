@@ -48,10 +48,10 @@ The first Video design described ingest/probe → analysis → timeline → FFmp
 | S2-04 | Secure FFmpeg RenderPlan | Typed compiler/AST, protocol/format/filter allowlists, read-only inputs, staging-only writes, no egress, Host isolation/resource controls | PROPOSED; enforcement UNVERIFIED |
 | S2-05 | Clarify RenderJob authority | Kernel owns invocation/admission/cancel/fencing; Host Ledger owns physical process/output facts; RenderJob is a projection across separate state dimensions | PROPOSED; runtime UNVERIFIED |
 | S2-06 | Strengthen final acceptance | Technical/content/perceptual/provenance/human disposition separated; output-interval-to-source-interval lineage | PROPOSED; verifier quality UNVERIFIED |
-| S2-07 | Separate capability phases | Core automatic-editing foundation vs enhanced editorial capabilities vs post-production/platform adaptation | PROPOSED |
+| S2-07 | Separate capability phases | ADP-01 approves the revised bounded core automatic-editing capability; enhanced editorial capabilities and post-production/platform adaptation remain separate | ADP-01 scope REVISED/APPROVED; detailed operation contracts PROPOSED |
 | S2-08 | Preserve cross-domain boundary | Shared generic lifecycle/authority/resource/artifact/evidence envelopes; domain-specific plan granularity, cognition, tool semantics, and verifier algorithms | PROPOSED |
 
-No S2 item becomes APPROVED by being recorded here. Owner acceptance/rejection/revision is required.
+ADP-01's product capability boundary was separately REVISED/APPROVED by the owner on 2026-11-02 and is recorded in the [Decision Log](decision-log.md). This does not approve the detailed S2 contracts: S2-01 through S2-06 and S2-08 remain proposals, and the exact typed operation registry remains OPEN. Owner disposition is required for each remaining decision.
 
 ## 3. Revised Video intelligence architecture
 
@@ -150,7 +150,7 @@ A transition may map one output interval to multiple source intervals. A generat
 
 | Capability class | Examples | First-phase status |
 | --- | --- | --- |
-| Core automatic-editing foundation | Ingest/probe; task-conditioned basic analysis; moment selection; simple narrative ordering; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio preserve/mute/gain/fades; immutable timeline; bounded render; verification; natural-language revision | Proposed first implementation slice; exact operation registry OPEN |
+| Core automatic-editing foundation | Ingest/probe; task-conditioned basic video/shot analysis; task-relevant highlight/moment selection; basic NarrativePlan and simple sequence/duration planning; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio preserve/mute/gain/fades; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision and re-delivery | Capability scope REVISED/APPROVED under ADP-01 (2026-11-02); analysis policy and typed operation contracts remain OPEN under ADP-02 and related decisions |
 | Enhanced editorial capabilities | Rich cross-scene narrative planning; advanced semantic continuity; music-aware pacing/beat alignment; generated captions/titles; multi-track mixing/ducking; speed ramps; overlays; reframing; color matching; deeper perceptual critique | Roadmap capability, not implied core support |
 | Post-production/platform adaptation | Codec/container/bitrate/resolution/aspect/frame-rate/color/audio profile; subtitle mux/sidecar; metadata; thumbnail/cover; platform safe areas/packaging; optional upload/delivery | Separate output-adaptation stage and Output Profile; not story intelligence |
 | Professional editor platform | Manual multitrack editor, arbitrary effects graph, collaborative NLE, plugin marketplace, advanced VFX/compositing/color-grading workstation | Deferred / outside first-phase scope |
