@@ -24,13 +24,13 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 
 ### Track B — Autonomous Video Editing
 
-- Define first-phase scope as natural-language-driven automatic editing, not a full video editor.
-- Define MediaProjectModel, media ingest/probe/analysis evidence, and source provenance.
-- Define TimelineRevision as a persistent, non-destructive, versioned artifact.
-- Define RenderPlan and long-running RenderJob over the shared ToolInvocation/Host/budget/cancel/recovery path.
-- Define technical, temporal, content, perceptual, and human verification obligations.
-- Define natural-language EditIntent and timeline revision behavior.
-- Define video task families and the evaluation method.
+- Deepen media-content understanding, message-conditioned moment/highlight selection, NarrativePlan, pacing, semantic/visual continuity, audiovisual coordination, and bounded iterative editing.
+- Define MediaProject/ProjectSnapshot, MediaAnalysis, MediaProjectModel, and TimelineRevision version/lineage/evidence-inheritance contracts.
+- Separate core automatic-editing operations, enhanced editorial capabilities, and post-production/platform adaptation.
+- Define a security-bounded FFmpeg RenderPlan: input protocols/formats, filesystem, filtergraph, network, process isolation, and enforceable resources.
+- Define RenderJob/ToolInvocation/Host Ledger state authority, cancellation, UNKNOWN reconciliation, crash recovery, staging, and publication.
+- Define technical, content, source-to-output provenance, independent, and human acceptance obligations.
+- Expand Video task families and evaluation metrics without selecting a provider or running experiments.
 
 **Exit:** two independently coherent domain proposals, each with its own model, workflow, artifacts, tools, acceptance criteria, and evaluation method.
 
@@ -50,8 +50,9 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 - Review shared-versus-domain-specific responsibility boundaries.
 - Review Task/Profile binding and profile migration rules.
 - Review timeline persistence, rational time representation, render cancellation/recovery, and final video verification.
+- Review second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority, source provenance, and independent acceptance in [Second-round architecture revision](../decisions/second-round-architecture-revision.md).
 - Review separate Coding and Video evaluation protocols and shared Kernel safety metrics.
-- Disposition the recommendation packet in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md), recording accepted, rejected, or revised clauses in the decision log.
+- Disposition the recommendation packet in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md) and the second-round revision decisions, recording accepted, rejected, or revised clauses in the decision log.
 - Check every local link, status label, and implementation authorization boundary.
 
 **Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
