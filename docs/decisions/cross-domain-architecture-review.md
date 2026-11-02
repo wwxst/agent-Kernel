@@ -24,7 +24,7 @@ The approved direction is recorded in [Unified domain direction](unified-domain-
 | What stays independent? | RepositoryModel vs MediaProjectModel; coding vs editing planning semantics; tools; evidence vocabularies; domain verifiers; evaluation | [Domain architecture](../architecture/domain-architecture.md), [Context Engine](../context/context-engine.md) | CONSISTENT PROPOSAL |
 | How do both use GoalContract? | Common immutable intent/version/provenance envelope plus typed domain payload and schema version | [Domain Workflow](../contracts/domain-workflow.md), [PlanRevision](../contracts/plan-revision.md) | CONSISTENT PROPOSAL |
 | How do both use PlanRevision? | Common immutable DAG and cutover lifecycle; typed PlanStep payloads/artifacts; Kernel validates structure/authority, Domain Intelligence judges semantic adequacy | [PlanRevision](../contracts/plan-revision.md) | CONSISTENT PROPOSAL |
-| How are tools controlled? | Every domain operation uses ToolInvocation, current profile, Kernel admission, budget/approval, durable intent, Trusted ToolHost, receipt, and UNKNOWN reconciliation | [Domain Workflow](../contracts/domain-workflow.md), [RenderJob](../contracts/render-job.md) | CONSISTENT PROPOSAL |
+| How are tools controlled? | Every domain operation uses ToolInvocation, current profile, Kernel admission, budget/approval, durable intent, a linearizable Host LaunchGate ordered against authority fencing, receipt, and UNKNOWN reconciliation | [Domain Workflow](../contracts/domain-workflow.md), [Trusted ToolHost](../security/trusted-host.md), [RenderJob](../contracts/render-job.md) | CONSISTENT PROPOSAL |
 | How is media state modeled? | MediaProject is the persistent artifact container; MediaProjectModel is its separate Context projection with asset/stream/time/analysis provenance | [Context Engine](../context/context-engine.md), [Media Timeline](../contracts/media-timeline.md), [Video design](../research/multimedia-domain-architecture/design.md) | CONSISTENT PROPOSAL |
 | How is the edit persisted? | Immutable TimelineRevision, source PTS/timebase, rational timeline ticks, parent revision, EditIntent, source digests, and render lineage | [Media Timeline](../contracts/media-timeline.md) | CONTRACT PROPOSED |
 | How is long rendering handled? | Typed RenderJob over shared Host process lifecycle; progress is telemetry; cancellation requires process convergence; UNKNOWN blocks blind retry/publication | [RenderJob](../contracts/render-job.md) | CONTRACT PROPOSED; RUNTIME UNVERIFIED |
@@ -75,19 +75,21 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 12. FFmpeg RenderPlan is constrained by typed compilation and explicit input/protocol, filesystem, filtergraph, network, process, and resource boundaries.
 13. RenderJob is a domain projection over Kernel ToolInvocation, Host Ledger, verification, and artifact-publication facts; it does not create a competing state authority.
 14. Coding and Video retain independent plan-step granularity, context projections, semantic vocabularies, repair loops, and verification algorithms.
+15. First-batch drafts now distinguish modality-specific coverage states, define a linearizable Host launch/revocation boundary, map each stream piecewise to an asset-relative presentation clock, and keep ArtifactRef identity separate from resolver-mediated read authority.
+
 
 ## 5. Remaining design questions
 
 The current proposal is internally aligned at the contract level, but these items still require owner review or empirical evidence:
 
 - the exact typed timeline schemas, deterministic compiler mappings, and per-operation evidence obligations for the ADP-01-approved core editing operations;
-- Workflow Profile acceptance, revocation, and migration semantics during long-running tasks (ADP-03 draft now specifies current-effective admission/dispatch checks and UNKNOWN holds);
+- Workflow Profile acceptance, revocation, and migration semantics during long-running tasks (ADP-03 draft now specifies linearizable Host launch/revocation ordering, fence acknowledgement, and UNKNOWN holds);
 - the common artifact/storage/streaming envelope for large media and derived proxies;
-- source PTS, variable-frame-rate handling, audio sample alignment, and rounding across supported formats (ADP-05 draft now specifies exact per-stream coordinates and conversion records);
+- source PTS, variable-frame-rate handling, piecewise stream-to-asset clock mappings, audio sample alignment, codec priming/padding, and rounding across supported formats (ADP-05 draft now specifies exact mappings and conversion records);
 - FFmpeg packaging/build policy and media-analysis provider/model choices;
 - cross-platform process-tree containment and hard CPU/GPU/memory/disk/time budgets;
 - objective versus subjective video-quality evidence and human-review thresholds;
-- how linked Coding/Video tasks share artifacts without introducing a composite cross-domain Task (ADP-09 draft now specifies separate Tasks, exact ArtifactRefs, scoped authorization, and no capability/context inheritance);
+- how linked Coding/Video tasks share artifacts without introducing a composite cross-domain Task (ADP-09 draft now specifies separate Tasks, exact ArtifactRefs, server-side ScopedReadGrant resolution, per-read revocation, and no capability/context inheritance);
 - separate benchmark assets/task sets, hidden checks, and reviewer rubrics;
 - progressive media-analysis coverage accounting, task-conditioned modality selection, and adaptive evidence expansion (ADP-02 draft);
 - cross-domain Kernel fault-injection fixtures and environment-specific process/resource controls;
@@ -106,7 +108,7 @@ The [Decision Log](decision-log.md) records ADP-01 as REVISED/APPROVED in its re
 - Shared GoalContract/PlanRevision lifecycle with typed domain payloads: **PASS — proposed contract alignment**.
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
-- First-batch ADP-02/03/05/09 decision and contract drafts: **DOCUMENTATION DRAFTED — owner disposition pending; all four remain OPEN**.
+- First-batch ADP-02/03/05/09 decision and contract drafts: **REFINED DOCUMENTATION DRAFTED — owner disposition pending; all four remain OPEN**. Coverage closure, Host launch/revocation ordering, piecewise temporal mapping, and scoped artifact resolution are specified at the contract level; none is empirically verified.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
 - Second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority/recovery, source provenance, and capability-scope matrix: **PASS — proposed documentation contracts; implementation not verified**.
 - Shared Kernel evaluation metric definitions: **PASS — common protocol drafted; no runs performed**.
