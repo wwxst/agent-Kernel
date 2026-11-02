@@ -27,13 +27,13 @@ Before any side-effecting invocation, Kernel must validate:
 1. Task / Turn / Step / Invocation identity and ownership.
 2. Complete canonical arguments and schema.
 3. Immutable tool definition and implementation identity for the current Step.
-4. Principal, capability, policy and approval versions/revocation state.
-5. Workspace identity/hash and current fencing epoch.
+4. Principal, capability, policy and approval versions/revocation state, plus the current AuthorityFenceEpoch.
+5. Workspace/project identity, generation/hash, and current fencing epoch.
 6. Budget reservation and limits.
 7. Host target and required isolation profile.
 8. Durable Intent and stable idempotency identity.
 
-Kernel issues a short-lived AdmissionTicket bound to the exact invocation, tool version, argument hash, policy/approval/capability versions, workspace, fencing epoch, budget reservation, expiry and nonce. Tool Runtime cannot manufacture or widen it. Host validates it again at execution time.
+Kernel issues a short-lived AdmissionTicket bound to the exact invocation, profile/DomainBinding digest, tool version, argument hash, principal/capability/policy/approval version vector, AuthorityFenceEpoch, workspace/project identity and generation/hash, Host target, fencing epoch, budget-reservation ID/version, expiry and nonce. Tool Runtime cannot manufacture or widen it. Host validates it again at execution time.
 
 A model statement that a tool is approved is not approval evidence.
 
