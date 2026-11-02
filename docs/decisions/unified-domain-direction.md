@@ -29,7 +29,7 @@ The domains share the Agent Kernel and execution controls. They do not share one
 ADP-01 was **REVISED and approved on 2026-11-02**. The first Video Editing capability is a **complete natural-language autonomous-editing loop within a bounded core operation set**, not a collection of individually invoked tools:
 
 - ingest, fingerprint, and technically probe user-supplied source media;
-- perform task-conditioned basic video/content/shot analysis (the exact progressive-analysis policy remains ADP-02);
+- perform task-conditioned basic video/content/shot analysis under the four-stage progressive-analysis and modality-scoped coverage policy approved by ADP-02;
 - identify and select task-relevant moments/highlights;
 - interpret editing instructions and create a basic, genre-flexible NarrativePlan;
 - trim, reorder, hard-cut, concatenate, apply simple fade/crossfade, and perform limited source-audio preserve/mute/gain/fade operations;
@@ -48,7 +48,7 @@ This is not a full video editor. Explicitly excluded are:
 - Multi-Agent / D9;
 - Runtime implementation during the current research stage.
 
-The decision is recorded in [Decision Log — ADP-01](decision-log.md#adp-01-video-first-phase-autonomous-editing-capability-and-operation-boundary). ADP-02 through ADP-11 remain OPEN; detailed analysis, data, time, output, verification, resource, handoff, interaction, and implementation contracts are not approved by ADP-01.
+The ADP-01 and ADP-02 decisions are recorded in the [Decision Log](decision-log.md). ADP-03 through ADP-11 remain OPEN. ADP-01 approves the Video capability boundary; ADP-02 approves the progressive-analysis and coverage policy. Neither approves remaining artifact-storage, temporal, output, verification, resource, handoff, interaction, or implementation decisions.
 
 ## 4. Retained work
 
