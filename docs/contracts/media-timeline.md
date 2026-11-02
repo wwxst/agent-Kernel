@@ -1,139 +1,160 @@
 # Media Timeline artifact contract
 
-> **Status: PROPOSED Video Editing domain contract.** The timeline is a persistent, versioned engineering artifact for natural-language-driven automatic editing. It is not a visual editor document format or a commitment to a particular UI.
+> **Status: PROPOSED Video-domain contract.** TimelineRevision is an immutable, non-destructive editing artifact. This contract binds it to exact project, analysis, narrative, and task versions. It does not define a GUI editor or authorize Runtime implementation.
 
 ## 1. Purpose and ownership
 
-A MediaProject is the persistent Video-domain container that groups immutable source MediaAssets, derived analysis/proxy artifacts, TimelineRevisions, RenderPlans, RenderJobs, and verification/delivery records. It has a stable project ID, a monotonically versioned project generation, and a manifest digest. It is not an editor session, a GUI requirement, or an execution authority; Kernel Task/Journal state remains authoritative for work.
+A MediaProject is the persistent Video-domain container. A TimelineRevision is the canonical, non-destructive description of the intended edit within one exact ProjectSnapshot.
 
-A TimelineRevision is the canonical, non-destructive description of the intended edit within a MediaProject. It is produced by Video Editing Intelligence, stored as an immutable artifact, and executed by the Video Domain Execution tools.
-
-- Domain Intelligence decides story, pacing, shot selection, ordering, and semantic edit quality.
+- Video Domain Intelligence owns story, pacing, moment selection, ordering, semantic continuity, and edit rationale.
+- MediaProjectModel supplies provenance-aware context; MediaAnalysis supplies bounded raw/derived evidence.
+- NarrativePlan records message, story beats, candidate/selected moments, ordering constraints, and rationale before frame-level editing.
+- TimelineRevision records exact source ranges and typed edit operations.
 - Kernel records artifact identity, lineage, DomainBinding, GoalContract/PlanRevision binding, and authorized state transitions.
 - Tool Runtime/Trusted ToolHost compile and render only an admitted revision.
-- The timeline artifact is not itself permission to render or overwrite a file.
+- TimelineRevision is not permission to render, overwrite, or publish a file.
 
-The canonical timeline must remain separate from the FFmpeg command line/filtergraph generated from it. FFmpeg is an execution backend, not the source of truth for the edit.
+The canonical timeline remains separate from FFmpeg command/filtergraph syntax. FFmpeg is an execution backend, not the source of truth for the edit.
 
 ## 2. TimelineRevision identity and binding
 
 A revision binds at minimum:
 
-- MediaProject ID, project generation, project manifest digest, timeline ID, revision ID, parent revision ID, and immutable content digest;
-- Task ID, accepted GoalContract version, active PlanRevision, and DomainBinding/profile version;
-- source MediaAsset IDs, source content digests, selected stream IDs, and analysis-evidence references;
-- timeline timebase and output profile;
-- ordered tracks and clips, transition and overlay definitions;
-- criterion-to-timeline mapping and edit rationale references;
-- creation sequence, authoring ModelStep/Attempt, and user EditIntent references;
-- validation results and invalidation conditions.
+- MediaProject ID, exact ProjectSnapshot ID/generation/manifest digest;
+- timeline ID, revision ID, parent revision ID, immutable content digest, schema version;
+- Task ID, accepted GoalContract version, active PlanRevision/PlanStep, DomainBinding/profile version;
+- MediaProjectModel projection ID/version/digest;
+- selected MediaAnalysis IDs, analysis manifest digest, claim/evidence references;
+- NarrativePlan ID/version/digest and selected beat/moment references;
+- source MediaAsset IDs/content digests, stream identities, source timebase/PTS mappings;
+- timeline timebase and output-profile ID/version;
+- ordered tracks, clips, transitions, overlays, audio decisions, and typed operation versions;
+- criterion-to-beat/clip/timeline mapping and edit rationale references;
+- creation sequence, authoring ModelStep/Attempt, user EditIntent and parent/change-set references;
+- EvidenceCarryForward records and validation/invalidation conditions.
 
-A new natural-language edit instruction creates a new immutable EditIntent and a new TimelineRevision candidate. It never mutates an accepted prior revision or an already delivered render.
+A new natural-language instruction creates a new immutable EditIntent and TimelineRevision candidate. It never mutates an accepted prior revision or delivered render.
 
 ## 3. Time representation
 
 Floating-point seconds are not the canonical frame-accurate representation.
 
-- Source ranges bind to the selected source stream's integer presentation timestamps (PTS) and exact rational time base.
+- Source ranges bind to the selected source stream's integer presentation timestamps (PTS) and exact rational timebase.
 - A source range is [start_pts, end_pts); the end is exclusive.
-- Timeline placement uses integer ticks against an explicit rational timeline time base.
+- Timeline placement uses integer ticks against an explicit rational timeline timebase.
 - Rational values are stored as integer numerator/denominator pairs, reduced to canonical form where practical.
-- Frame rate is recorded as a rational value; variable-frame-rate sources retain their source PTS/timebase and must not be silently treated as constant-frame-rate.
-- Audio ranges use the relevant audio stream time base/sample position. Any resampling or rate conversion is explicit in the render plan.
+- Frame rate is a rational value; variable-frame-rate sources retain their source PTS/timebase and are not silently treated as constant-frame-rate.
+- Audio ranges use the relevant audio stream timebase/sample positions. Resampling or rate conversion is explicit in RenderPlan.
+- Every conversion among source PTS, timeline ticks, frames, and audio samples records source basis, target basis, and deterministic rounding rule.
 
-For example, a source stream time base may be represented as {num: 1, den: 90000} and a timeline rate as {num: 25, den: 1}. These are illustrative values, not defaults.
-
-The renderer may convert between source PTS, timeline ticks, frames, and audio samples, but the conversion and rounding policy must be explicit and recorded.
+Illustrative values such as a 1/90000 source timebase or 25/1 timeline rate are examples, not defaults.
 
 ## 4. Canonical structures
 
-A TimelineRevision contains:
+### 4.1 Media references and provenance
 
-### Media references
+Each clip references an immutable MediaAsset ID/digest and selected stream identity, not an unbound mutable path. It records source PTS/timebase, verified duration bounds, and proxy/derived-media references when analysis used a proxy. The proxy-to-source mapping and transformation digest are required.
 
-- MediaAsset ID and content digest, not an unbound mutable file path;
-- selected video/audio/subtitle stream IDs;
-- source PTS/time base and asset duration bounds;
-- proxy/derived-media references where analysis used a proxy.
+### 4.2 Narrative and editorial decisions
 
-### Tracks and clips
+The timeline retains:
 
-- stable track and clip IDs;
-- track kind (video, audio, subtitle, title/overlay);
-- explicit track order and compositing/audio-mix semantics;
-- source asset/stream reference;
-- source in/out range;
-- timeline start/duration;
-- playback-rate rational where supported;
+- NarrativePlan beat ID(s) and message/criterion mapping;
+- selected moment/candidate IDs and source evidence references;
+- clip/track IDs, track kind, order, and compositing/audio-mix semantics;
+- source asset/stream reference and end-exclusive source range;
+- timeline start/duration and playback-rate rational where supported;
 - crop/scale/position/rotation/volume/fade settings as typed parameters;
 - explicit transition/overlap references;
-- criterion and analysis-evidence references.
+- continuity/audio rationale where a cut is intentionally discontinuous or bridges sound;
+- change-set and affected beat/clip/criterion mapping.
 
-### Output profile
+The timeline is an execution-ready editorial artifact, but it does not contain arbitrary FFmpeg arguments or raw filtergraph strings.
 
-- target duration range;
-- aspect ratio and frame-rate policy;
-- output container/codec/profile constraints;
-- audio layout/loudness constraints;
-- subtitle/caption policy;
-- output dimensions and color policy where specified.
+### 4.3 Output profile and adaptation
 
-A profile field not specified by the user is an explicit default/assumption in the GoalContract or Workflow Profile; it must not be silently presented as a user requirement.
+The timeline references an immutable Output Profile version and may declare editorial framing intent. Container/codec, resolution, aspect-ratio conversion, frame-rate conversion, color policy, audio layout, metadata, and platform packaging are applied by a separate output-adaptation stage. Profile-specific transformations must be explicit RenderPlan operations and must not silently alter the story.
 
-## 5. Structural invariants
+A profile field not specified by the user is an explicit default/assumption in GoalContract or Workflow Profile; it must not be presented as a user requirement.
+
+## 5. Structural and semantic invariants
 
 Before a TimelineRevision can be accepted:
 
-1. Every clip references an existing immutable MediaAsset and a valid stream.
-2. Every source range is within the verified source duration and decodable boundaries.
+1. Every clip references an existing immutable MediaAsset and valid stream identity.
+2. Every source range is within verified source duration and decodable boundaries.
 3. Source and timeline ranges have valid positive durations and exact timebase bindings.
-4. Track ordering, clip overlaps, transitions, overlays, and audio mixing are structurally valid.
-5. The output duration and profile are compatible with the accepted GoalContract.
+4. Track ordering, overlaps, transitions, overlays, and audio mixing are structurally valid.
+5. Output duration/profile are compatible with accepted GoalContract.
 6. No source asset is modified in place.
-7. Every derived proxy/analysis result points back to the original source digest and transformation record.
-8. Every required acceptance criterion has a timeline/verification mapping or an explicit human-review obligation.
-9. A stale source asset, stream map, proxy, or analysis version invalidates affected timeline claims and requires revalidation.
-10. A timeline revision cannot be accepted merely because it serializes successfully; semantic coherence remains a Domain Intelligence responsibility.
+7. Every proxy/analysis artifact points back to original source digest and transformation/time mapping.
+8. Every required criterion maps to a NarrativePlan beat, selected moment, timeline region, and verification obligation, or to an explicit human-review obligation.
+9. A stale source, stream map, proxy, analysis claim, NarrativePlan, or profile invalidates affected timeline claims and requires revalidation.
+10. Serialization/schema validity does not establish story, pacing, continuity, or factual coherence; those remain Video Domain Intelligence responsibilities.
+11. The RenderPlan compiler accepts only typed operations in the active supported operation registry.
+12. A candidate timeline is not renderable until the applicable GoalContract/PlanRevision/DomainBinding and policy gates are accepted.
 
 Kernel validates schema, references, binding, size limits, and legal lifecycle. It does not judge the story or pacing.
 
-## 6. User-directed revision
+## 6. Evidence inheritance and change impact
+
+Evidence is not inherited merely because a new revision names an old parent.
+
+A new NarrativePlan/TimelineRevision may carry forward unaffected evidence only through an explicit EvidenceCarryForward entry that binds:
+
+- prior claim/evidence ID and digest;
+- target beat, clip, criterion, and source interval;
+- exact source asset digest, stream identity, PTS/sample range, and timebase;
+- analysis/proxy/mapping/configuration version;
+- freshness/compatibility result and validation sequence;
+- reason the evidence remains relevant to the new revision.
+
+Carry-forward is allowed only if source digest, stream identity, time mapping, analysis scope/configuration, and criterion meaning remain compatible. A change-impact record declares affected beats, clips, source intervals, analysis claims, audio relationships, output profile fields, and verification obligations.
+
+| Change | Required response |
+| --- | --- |
+| New revision changes only one unrelated beat | Revalidate changed beat and explicit dependencies; carry forward other evidence only after freshness checks |
+| Selected source interval changes | Revalidate source-range, content, continuity, audio, and final-output evidence for affected regions |
+| Clip order changes | Re-evaluate narrative/chronology, transition, continuity, and criterion mapping across affected neighbors |
+| Transition/overlap changes | Revalidate duration, temporal mapping, audio/video sync, and final-output region |
+| Audio bridge/mix changes | Revalidate dialogue integrity, source alignment, loudness/clipping, and sync |
+| Project adds an unrelated asset | Existing source-bound evidence may remain current; recheck project-level completeness/exclusions |
+| Source digest/stream/timebase changes | Affected claims and timeline references become stale |
+| Analysis/proxy mapping changes | Revalidate claims that depend on the changed analysis or mapping |
+| Output profile/renderer/build changes | Recompile RenderPlan and repeat affected technical/output adaptation checks |
+| Final output bytes change | Prior final-output verification and publication evidence become stale |
+
+A newer analysis may supersede an older claim for future planning without deleting the old claim as historical evidence. Conflicting claims remain visible and unresolved until assessed.
+
+## 7. User-directed revision
 
 Each follow-up instruction is an append-only EditIntent bound to the current accepted GoalContract and TimelineRevision.
 
-The revision process:
+1. Resolve the instruction to affected criteria, beats, clips, tracks, source ranges, audio, and output constraints.
+2. Ask the user when multiple materially different interpretations exist or a protected output/scope/risk field changes.
+3. Produce a new NarrativePlan/TimelineRevision candidate with explicit parent and change set.
+4. Reuse unaffected analysis only when source digest, timebase, proxy mapping, profile, criterion meaning, and freshness remain valid.
+5. Re-run affected structural/semantic checks and create a new RenderPlan.
+6. Preserve previous timelines, renders, and reports for comparison; do not overwrite history.
 
-1. Resolve the instruction to affected criteria, clips, tracks, source ranges, and output constraints.
-2. Ask the user when multiple materially different interpretations exist or when a protected output/scope/risk field changes.
-3. Produce a new TimelineRevision candidate with explicit parent and change set.
-4. Reuse unaffected analysis/artifacts only when source digest, timebase, profile, and freshness remain valid.
-5. Re-run affected structural checks and create a new RenderPlan.
-6. Preserve all previous timeline and render artifacts for comparison or rollback-by-selection; do not overwrite history.
+Routine reversible edits may be proposed within accepted scope. Adding external media, changing source assets, materially changing the requested story/output, or introducing external effects requires applicable confirmation.
 
-Routine reversible edits such as shortening an intro or changing the order of selected clips may be proposed within the accepted scope. Adding external media, deleting or replacing source assets, materially changing the requested story/output, or introducing new external effects requires the applicable confirmation.
+## 8. Rendering boundary
 
-## 7. Rendering boundary
+The canonical timeline is compiled into a versioned RenderPlan binding:
 
-The canonical timeline is compiled into a versioned RenderPlan that binds:
+- TimelineRevision digest, source asset/stream digests, and source-to-output mapping;
+- exact typed transform/encode operations and compiler version;
+- renderer/FFmpeg build identity and canonical argv/filtergraph digest;
+- output profile, resource budget, Host isolation profile, and expected artifact;
+- verification plan, idempotency identity, and fencing epoch.
 
-- TimelineRevision digest;
-- source asset/stream digests;
-- exact filter/transform/encode operations;
-- renderer and FFmpeg build/version identity;
-- argv/argument digest and environment;
-- output profile, resource budget, and expected artifact;
-- verification plan.
+The model does not author or execute arbitrary shell commands. A deterministic compiler maps validated timeline operations to bounded argv/filtergraph structures. Kernel admits the RenderJob and Trusted ToolHost executes it. See [RenderPlan security contract](render-plan-security.md) and [RenderJob contract](render-job.md).
 
-The model does not directly author or execute an arbitrary shell command. A deterministic compiler maps validated timeline operations to a bounded argv/filtergraph representation. Kernel admits the RenderJob and Trusted ToolHost executes it.
+## 9. Artifact delivery and traceability
 
-## 8. Artifact delivery
+A successful Video Editing Task may deliver the rendered video, accepted TimelineRevision, NarrativePlan, render manifest, criterion-linked VerificationReport, source-to-output provenance map, and optional preview/contact-sheet artifacts.
 
-A successful Video Editing Task may deliver:
+For every output interval, the provenance map identifies the contributing source asset digest, stream, source PTS/sample interval, timeline clip/transition, transformation operations, and RenderPlan node(s). A transition may map one output interval to multiple source intervals. Generated or externally supplied elements are marked as such and bind their authorized origin/derivation record.
 
-- the rendered video artifact;
-- the accepted TimelineRevision artifact;
-- a render manifest with source, timeline, renderer, environment, and output digests;
-- a criterion-linked verification report;
-- optional preview/contact-sheet artifacts when requested or useful.
-
-The timeline is an inspectable, persistent project artifact. Delivering it does not imply that a manual timeline editor or full editing UI exists.
+The timeline is an inspectable project artifact. Delivering it does not imply a manual timeline editor or full editing UI.
