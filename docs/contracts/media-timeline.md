@@ -71,7 +71,7 @@ Floating-point seconds and timecode strings are presentation values only. They m
 
 ### 3.2 Piecewise stream-to-asset presentation mapping
 
-All streams in one MediaAsset are related through an immutable asset-relative presentation clock represented as an exact rational value. Each stream maps to that clock through one or more explicit StreamTimeMapping segments. This is a logical mapping contract; it does not select a container parser, decoder, database encoding, or media library.
+All streams in one MediaAsset are related through an immutable asset-relative presentation clock represented as an exact rational value. The clock has one asset-level origin and a recorded origin basis (container presentation origin or an explicit, versioned normalization); it is not independently zeroed per stream. Each stream maps to that clock through one or more explicit StreamTimeMapping segments. This is a logical mapping contract; it does not select a container parser, decoder, database encoding, or media library.
 
 For a continuous video segment, the mapping is:
 
