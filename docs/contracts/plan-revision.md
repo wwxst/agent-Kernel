@@ -28,6 +28,7 @@ Every version binds:
 - Task ID and GoalContract version;
 - original user-request reference and digest;
 - all user clarification references and digests used to derive it;
+- immutable intake-time authorization references with explicit scope/effect/target boundaries when the original request is relied upon instead of a new confirmation;
 - desired outcome, scope, exclusions, constraints, and acceptance criteria;
 - assumptions, ambiguity, risk profile, and user-control policy;
 - workspace/repository identity and base commit;
@@ -81,10 +82,10 @@ For the first plan:
 
 A replan is a coordinated cutover, not a pointer overwrite.
 
-1. **Trigger and freeze.** Orchestration submits a PlanSwitchRequested command with a reason and evidence references. Kernel compare-and-swaps the current Task version, transitions Running → Planning, marks the current revision Superseding, and installs a plan-switch barrier. No new ModelStep intended to advance the old plan and no new ToolInvocation admission may begin against it.
+1. **Trigger and freeze.** Orchestration submits a PlanSwitchRequested command with a reason and evidence references. For a Task with an active revision in Running, Verifying, Ready, Waiting, or Blocked, Kernel compare-and-swaps the current Task version, transitions it to Planning (retaining the prior state in the event), marks the current revision Superseding, and installs a plan-switch barrier. No new ModelStep intended to advance the old plan and no new ToolInvocation admission may begin against it. Planning/reconciliation ModelSteps may continue under the plan-switch phase; they cannot execute old-plan work.
 2. **Stop undispatched work.** Pending approvals and admissions tied to the old revision are invalidated. An invocation with durable intent but not dispatched is cancelled before start where the Host can prove it did not start.
 3. **Converge started work.** Already-dispatched operations receive cancellation/drain requests where supported. They may finish and return receipts. Their results remain attributed to the old revision and original invocation IDs.
-4. **Reconcile uncertainty.** Any unresolved OutcomeUnknown that may mutate the workspace or an external target blocks activation of a potentially conflicting new revision. The Task enters Reconciling; only bounded read-only reconciliation is allowed. The model cannot waive this barrier. A non-blocking exception is permitted only when Kernel policy and the trusted Host profile prove the operation was read-only, isolated, and unable to affect any new-plan precondition.
+4. **Reconcile uncertainty.** Any unresolved OutcomeUnknown that may mutate the workspace or an external target blocks activation of a potentially conflicting new revision. The Task enters Reconciling; only bounded read-only reconciliation is allowed. Kernel may admit such work through a separate PlanSwitchReadOnly profile, which cannot write the workspace or affect external targets. The model cannot waive this barrier. A non-blocking exception is permitted only when Kernel policy and the trusted Host profile prove the operation was read-only, isolated, and unable to affect any new-plan precondition.
 5. **Refresh the repository snapshot.** Once old writes are quiescent and receipts are reconciled, Context Engine refreshes workspace generation, repository facts, and affected evidence. A candidate based on an earlier generation must be revalidated or regenerated.
 6. **Validate candidate.** Orchestration submits a complete PlanCandidate. Kernel validates it deterministically and records AcceptedPendingCutover; acceptance at this stage does not make it executable.
 7. **Atomic activation.** When all old-revision operations are terminal or explicitly policy-classified non-blocking, no conflicting UNKNOWN remains, the workspace is quiescent, and all version bindings match, Kernel commits one transition that marks the old revision Superseded, marks the new revision Active, updates the active-plan pointer, records the cutover event, and moves the Task to Ready (or Blocked if a declared prerequisite is still unresolved).

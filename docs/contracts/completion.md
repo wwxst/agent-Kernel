@@ -18,7 +18,7 @@ Each GoalContract acceptance criterion must have:
 - an observable expected outcome;
 - a declared verification method or an explicit human-review requirement;
 - links to the PlanSteps that implement or verify it;
-- required evidence kinds and acceptable environment/workspace bindings;
+- required evidence kinds, evidence-independence class, and acceptable environment/workspace bindings;
 - a verdict of Pass, Fail, NotRun, Skip, Partial, or Unverified.
 
 Every required criterion must have sufficient current evidence. A criterion cannot be marked Pass solely because the implementer or model claims it is satisfied.

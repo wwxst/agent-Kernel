@@ -99,7 +99,7 @@ Rejected candidates remain auditable as Rejected. A candidate is not task author
 | --- | --- |
 | Desired outcome | Observable behavior or deliverable the user expects |
 | Scope and exclusions | In-scope repositories/packages/files/systems and what must not change |
-| Acceptance criteria | Stable criterion IDs, observable outcomes, and proposed evidence obligations |
+| Acceptance criteria | Stable criterion IDs, observable outcomes, required evidence obligations, and required evidence-independence level |
 | Constraints | Compatibility, performance, security, style, API, migration, and operational requirements |
 | Assumptions | Reversible interpretations, source, impact if wrong, and disclosure status |
 | Ambiguities | Questions that could materially change behavior, scope, or authorization |
@@ -368,7 +368,7 @@ Verification proceeds at multiple levels:
 - **Integration verification:** run relevant cross-package, contract, or integration tests.
 - **System verification:** run the repository's required full suite, build, or end-to-end checks when required by the criteria and feasible within budget.
 - **Acceptance verification:** evaluate every GoalContract criterion against its bound evidence.
-- **Independent review:** use a fresh verifier decision step over the accepted plan, criteria, diff, and raw verification evidence. It may use the same model/provider, but it must not treat the implementer's completion claim as evidence.
+- **Independent review:** use a fresh Verifier ModelStep over the original UserIntent, accepted GoalContract and PlanRevision, criteria, diff, and raw verification evidence. Do not provide the Implementer's summary/self-assessment as evidence. The same model/provider may be used for ordinary-risk review; higher-risk criteria may require a different provider or external reviewer. The Verifier reports findings and evidence gaps, not criterion proof.
 
 The verification plan should identify required checks, optional risk-based checks, unavailable checks, and the consequences of each missing result. A skipped or unrun test is not a pass.
 
