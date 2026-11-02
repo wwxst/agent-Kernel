@@ -51,6 +51,7 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 - Review Task/Profile binding and profile migration rules.
 - Review timeline persistence, rational time representation, render cancellation/recovery, and final video verification.
 - Review separate Coding and Video evaluation protocols and shared Kernel safety metrics.
+- Disposition the recommendation packet in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md), recording accepted, rejected, or revised clauses in the decision log.
 - Check every local link, status label, and implementation authorization boundary.
 
 **Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
