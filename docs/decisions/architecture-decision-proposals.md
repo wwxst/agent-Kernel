@@ -20,7 +20,7 @@ It is a repository-level design synthesis. It does not report a runtime spike, b
 
 ### Decision summary
 
-| ID | Decision area | Recommended direction | Owner decision |
+| ID | Decision area | Recommended direction | Owner decision / draft status |
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | Complete autonomous editing loop within a bounded core operation set; defer editor-grade features | REVISED — APPROVED 2026-11-02 |
 | ADP-02 | Media analysis | Whole-source technical/coverage accounting, task-conditioned depth, adaptive evidence expansion; no default full multimodal pass | Draft prepared — OPEN |
