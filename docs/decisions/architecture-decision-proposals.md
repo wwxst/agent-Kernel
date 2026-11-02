@@ -57,7 +57,7 @@ Keep the first useful Video Editing slice focused on a deterministic automatic-e
 - complex transitions, compositing, motion graphics, keyframes, stabilization, advanced color grading, and VFX;
 - manual timeline editing or a full NLE-style interface.
 
-This is a boundary recommendation, not a claim that deferred operations are permanently excluded from the product.
+This is a boundary recommendation, not a claim that deferred operations are permanently excluded from the product. The second-round capability matrix in [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md) distinguishes the core automatic-editing foundation, enhanced editorial capabilities, and post-production/platform adaptation. Output-profile adaptation is not counted as a story-editing operation.
 
 **Alternatives**
 
@@ -274,6 +274,9 @@ Rules:
 - The editing model's self-summary or aesthetic score cannot satisfy an independent evidence obligation.
 - A model verifier's conclusion is a review finding, not a technical test result or a human acceptance event.
 - Every criterion declares its evidence class and whether a human disposition is mandatory before rendering/acceptance/delivery.
+- Video evidence includes an output-interval-to-source-interval map bound to immutable asset/stream digests, source PTS/sample ranges, timeline clips/transitions, and render operations.
+- Technical validity, editorial/content fulfillment, perceptual quality, source provenance, and human acceptance remain separate result dimensions.
+- Provenance records lineage and transformations; it does not prove depicted content is true or that source usage is legally licensed.
 - Inconclusive evidence remains Inconclusive/UNKNOWN; it is not silently converted to Pass.
 - Numeric quality thresholds are set only after a frozen task set and measured baseline exist.
 
@@ -320,6 +323,8 @@ Rules:
 - GPU is optional in the first phase; CPU execution remains the compatibility baseline until measured evidence justifies a GPU requirement.
 - Admission uses source metadata and conservative workload estimates; the Host records actual consumption and settles it against reservations.
 - Numeric caps are selected only after target Host environments, task sizes, and controlled measurements are known.
+
+For FFmpeg workloads, see the separate [RenderPlan security contract](../contracts/render-plan-security.md). It specifies per-input protocol/format policy, filesystem and staging boundaries, typed filtergraph allowlists, network isolation, process containment, and output publication. Protocol allowlisting alone is not a sandbox; Host enforcement remains environment-specific and UNVERIFIED.
 
 **Alternatives**
 
