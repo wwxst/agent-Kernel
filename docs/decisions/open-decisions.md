@@ -6,7 +6,7 @@ The current product direction and ADP-01 disposition are recorded in [Unified Ag
 
 ### First-batch decision-draft readiness
 
-Detailed drafts and linked contract/evaluation updates are prepared for **ADP-02, ADP-03, ADP-05, and ADP-09**. They remain **OPEN** until the owner explicitly accepts, revises, defers, or rejects each item. Draft readiness is not approval and does not authorize implementation.
+Refined decision drafts and linked contract/evaluation updates are prepared for **ADP-02, ADP-03, ADP-05, and ADP-09**. They now specify coverage-manifest interval closure, Host launch/revocation linearization, piecewise asset-clock mappings, and resolver-mediated scoped handoff grants. They remain **OPEN** until the owner explicitly accepts, revises, defers, or rejects each item. Draft readiness is not approval and does not authorize implementation.
 
 ## 1. Approved product direction
 
