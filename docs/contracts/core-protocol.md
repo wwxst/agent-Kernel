@@ -126,7 +126,15 @@ Video continues with source/project/timeline/render/output lineage and its own r
 10. Inbox/Outbox replay cannot create a second authoritative selection, plan activation, completion or consumed launch token.
 11. Coding/Video semantic judgments stay outside Kernel; Domain does not grant physical execution authority.
 
-Forbidden pairs include: `Revoked + unacknowledged eligible Host`, `Completed + unresolved conflicting effectful UNKNOWN`, `Superseded Plan + new admitted old-plan write`, `HardBudgetAttempt + unbounded charge`, `Selected + incomplete candidate`, and `HostStarted + no matching durable LaunchAttempt` (except that missing facts after a crash are explicitly represented as OutcomeUnknown, not silently fabricated).
+Additional G0 invariants:
+
+12. `K.RevocationRequested` without `H.HostFenceInstalled` cannot be used as evidence that an existing ticket was unable to launch; `K.Revoked` requires trusted Host ACK/disablement. `H.HostFenceInstalled` must forbid later old-epoch spawn.
+13. `AdmitToolInvocation` is one K-local atomic write-set (Journal + durable Intent + budget hold + DispatchOutbox); separate K/O/H owners have no distributed atomic guarantee.
+14. A passed Coding verification report requires actual `ExecutionViewManifest` identity and trustworthy no-shadow protected-path evidence; equality of lower-layer source digests alone is insufficient.
+15. One-use `InvocationApproval` inside an existing immutable PlanRevision is not L2; expanding the plan's protected authorization envelope is L2.
+16. Hard-budget Attempt admission requires a validated, bound `MaximumChargeCertificate` covering all potentially billable dimensions; unbounded provider charges cannot enter Hard Budget.
+
+Forbidden pairs include: `RevocationRequested + falsely reported Revoked without HostFenceInstalled ACK`, `CompletionPassed + unproven actual protected input view`, `KernelDispatchOutbox committed without same-transaction Intent`, `HardBudgetAttempt + missing max-charge certificate`, `Revoked + unacknowledged eligible Host`, `Completed + unresolved conflicting effectful UNKNOWN`, `Superseded Plan + new admitted old-plan write`, `HardBudgetAttempt + unbounded charge`, `Selected + incomplete candidate`, and `HostStarted + no matching durable LaunchAttempt` (except that missing facts after a crash are explicitly represented as OutcomeUnknown, not silently fabricated).
 
 ## 10. Reproducible traces and architecture gates
 
