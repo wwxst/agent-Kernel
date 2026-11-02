@@ -47,7 +47,7 @@ Kernel deduplicates each command by `commandId`.
 
 - Same command ID + same payload digest: return the original durable result.
 - Same command ID + different digest: return an idempotency conflict, audit and quarantine; do not execute the target transition.
-- New command: validate identity, permission, aggregate version and preconditions; commit the target state transition / Journal event and the KernelCommandInbox result in the same Kernel-local transaction.
+- New command: validate identity, permission, the **owning aggregate's version** and the relevant protected read-set (TaskControl CAS only for accepted Goal/structural plan/cancel/terminal); commit the target transition / Journal event and KernelCommandInbox result in one K-local transaction. An unrelated Task event or Journal sequence advance is not by itself a conflict.
 
 Persisted command results include Applied, Rejected or NoOp. A business rejection is still a durable result; receipt of a request is not.
 
