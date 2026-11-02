@@ -1,6 +1,6 @@
 # Architecture Decision Proposals — Cross-Domain Convergence
 
-> **Status: PROPOSED — owner decision required.** This packet turns the current cross-domain OPEN questions into explicit recommendations, alternatives, risks, and acceptance criteria. It is a decision aid, not an approval record. No proposal below changes an approved principle, authorizes Runtime implementation, selects a production technology stack, or claims empirical validation.
+> **Status: MIXED.** ADP-01 is **REVISED (owner-approved 2026-11-02)** and recorded in the [Decision Log](decision-log.md). ADP-02 through ADP-11 remain **OPEN**; their recommendations remain **PROPOSED**. This packet is a decision aid and proposal register, not blanket approval. No decision authorizes Runtime implementation, selects a production technology stack, or claims empirical validation.
 
 ## 1. Purpose and decision boundary
 
@@ -16,13 +16,13 @@ This packet is based on the current repository documents:
 - [Shared Kernel evaluation protocol](../research/shared-kernel/evaluation.md)
 - [Open decisions](open-decisions.md)
 
-It is a repository-level design synthesis. It does not report new source-code research, a runtime spike, a benchmark, media processing, or a fault-injection result. Recommendations are therefore **PROPOSED**, not facts demonstrated by experiments.
+It is a repository-level design synthesis. It does not report a runtime spike, benchmark, media processing, or fault-injection result. ADP-01 records an explicit owner decision; all other recommendations remain proposals rather than facts demonstrated by experiments.
 
 ### Decision summary
 
 | ID | Decision area | Recommended direction | Owner decision |
 | --- | --- | --- | --- |
-| ADP-01 | Video first-phase operations | Bounded automatic-editing operation set; defer editor-grade features | Confirm scope |
+| ADP-01 | Video first-phase autonomous editing capability and operation boundary | Complete autonomous editing loop within a bounded core operation set; defer editor-grade features | REVISED — APPROVED 2026-11-02 |
 | ADP-02 | Media analysis | Task-conditioned, progressive analysis with provenance | Confirm default analysis policy |
 | ADP-03 | Workflow Profile lifecycle | Immutable per accepted plan; revoke future admission immediately; migrate only through explicit safe cutover | Confirm revocation/migration semantics |
 | ADP-04 | Artifact and media storage | Generic immutable artifact manifest plus opaque blob/object payload; journal stores references, not large media bytes | Confirm logical contract |
@@ -34,50 +34,89 @@ It is a repository-level design synthesis. It does not report new source-code re
 | ADP-10 | Preview and approval surface | Contact sheet/low-resolution preview plus approve/revise/reject; no manual timeline editor | Confirm minimum user surface |
 | ADP-11 | Implementation order | Freeze logical contracts first, then isolated contract spikes, then separately authorized runtime work | Confirm stage gates |
 
-## 2. ADP-01 — Video first-phase operation boundary
+## 2. ADP-01 — Video first-phase autonomous editing capability and operation boundary
 
-**Recommendation — PROPOSED**
+**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative decision record is [Decision Log — ADP-01](decision-log.md#adp-01-video-first-phase-autonomous-editing-capability-and-operation-boundary).
 
-Keep the first useful Video Editing slice focused on a deterministic automatic-editing loop:
+### Final selection
 
-**Include:**
+The first phase must deliver a **genuinely autonomous natural-language video-editing Agent** that can complete an end-to-end editing task, rather than a collection of video tools that only execute individually specified operations.
 
-1. Ingest, fingerprint, and probe user-supplied source assets.
-2. Build a provenance-bound MediaProjectModel from source metadata and task-relevant analysis.
-3. Select source ranges; trim; reorder; concatenate; and create hard cuts.
-4. Support a deliberately small transition set, initially cut and simple fade/crossfade.
-5. Support limited source-audio handling: preserve, mute, per-clip gain, and simple fade-in/fade-out.
-6. Generate an immutable TimelineRevision, compile a bounded RenderPlan, render with the approved FFmpeg backend, and verify the actual output.
-7. Support follow-up natural-language revisions by creating new EditIntent and TimelineRevision artifacts.
+The required task-level loop is:
 
-**Defer from the first implementation slice:**
+**Understand request → analyze source media → identify/select useful moments → organize a basic narrative → create TimelineRevision → render → inspect the actual output → revise from user feedback → re-render/re-verify → deliver.**
 
-- generated captions/subtitles and title graphics (existing subtitle pass-through may be retained only when the selected output profile supports it);
-- music generation, external music acquisition, multi-track audio mixing, voice synthesis, and advanced loudness mastering;
-- complex transitions, compositing, motion graphics, keyframes, stabilization, advanced color grading, and VFX;
-- manual timeline editing or a full NLE-style interface.
+Within the accepted task GoalContract, authorized source set, bounded operation registry, permissions, and resource envelope, the Agent should make ordinary editing decisions autonomously. The user must not be required to specify every clip, cut, or tool call. The Agent must ask for clarification or stop safely when ambiguity, evidence gaps, scope/permission boundaries, material factual risk, or budget limits make autonomous continuation unsafe.
 
-This is a boundary recommendation, not a claim that deferred operations are permanently excluded from the product. The second-round capability matrix in [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md) distinguishes the core automatic-editing foundation, enhanced editorial capabilities, and post-production/platform adaptation. Output-profile adaptation is not counted as a story-editing operation.
+### Included first-phase capability scope
 
-**Alternatives**
+1. **Material intake:** ingest user-supplied assets, fingerprint them, and perform technical probing sufficient to identify files, streams, duration, time bases, and known warnings.
+2. **Basic media understanding:** analyze video content and shots/scenes sufficiently to navigate the source material and support the current editing task. Exact modalities, coverage, trigger policy, and provider/model remain ADP-02 decisions.
+3. **Moment/highlight selection:** identify and select task-relevant candidate moments from source evidence; preserve selection rationale and uncertainty. Advanced multi-objective ranking is not implied.
+4. **Natural-language intent understanding:** turn the user's message into explicit editing criteria, required/excluded content, desired duration/style, and relevant constraints.
+5. **Basic narrative planning:** create a genre-flexible NarrativePlan with the intended message, a small set of useful beats/moments, sequence/order, necessary context, and simple duration/pacing allocation. A universal story template and advanced cross-scene narrative reasoning are not required.
+6. **Bounded editing operations:** source-range trim, reorder, hard cut, concatenate, simple fade/crossfade, and limited source-audio preserve/mute/per-clip gain/simple fades.
+7. **Timeline and render:** generate an immutable TimelineRevision and compile it into a bounded RenderPlan for FFmpeg rendering. The exact typed operation schemas and Host enforcement contracts remain subject to their respective architecture decisions.
+8. **Actual-output inspection:** check the rendered artifact against technical and task/content criteria; do not treat a successful FFmpeg exit as proof of editing success. The detailed evidence classes and mandatory human-review triggers remain ADP-07 decisions.
+9. **Natural-language iteration:** accept follow-up instructions, create new EditIntent/TimelineRevision versions, re-render and re-verify, and preserve prior revisions and evidence.
+10. **Delivery:** deliver the rendered video with the relevant timeline, render, verification, and source-provenance artifacts. External upload/publication is not included without separate authorization.
 
-- A richer first phase adds captions/titles and multi-track audio treatment.
-- An ultra-minimal first phase supports only trim, reorder, and concatenate, with no transitions or audio controls.
+### Explicitly not included in the first phase
 
-**Risks and trade-offs**
+- Generated captions/subtitles and title graphics. Existing subtitle-stream pass-through, if supported, is an output-profile concern rather than caption generation.
+- Music generation or acquisition, external music sourcing, voice synthesis, multi-track audio mixing/ducking, and advanced loudness mastering.
+- Advanced multi-objective highlight ranking, rich cross-scene story construction, advanced semantic continuity, music/beat-aware pacing, and deep perceptual critique.
+- Complex transitions, compositing, motion graphics, keyframes, stabilization, advanced color grading, VFX, and arbitrary effects graphs.
+- Manual timeline editing, full NLE-style interface, professional editor collaboration, or plugin marketplace.
+- Unrequested external asset acquisition or external platform upload/publication.
 
-- Deferring captions/titles limits common social-video use cases.
-- Even simple crossfades require explicit overlap, timebase, audio, and render validation.
-- Too small an operation set may produce technically correct but visually crude edits.
-- Too broad an operation set expands the compiler, verifier, and failure surface before a baseline exists.
+Codec/container/resolution/aspect/frame-rate/color/audio output adaptation remains a separate Output Profile concern under ADP-06; it is not an editorial operation.
 
-**Acceptance criteria before implementation planning exits**
+### Rationale
 
-- Every supported operation has a typed timeline representation, schema validation, deterministic compiler mapping, and declared evidence obligations.
-- Unsupported operations are rejected or explicitly deferred; they are never silently approximated by arbitrary model-generated FFmpeg arguments.
-- Golden fixtures cover cuts, trims, reorder, concatenation, supported transitions, and limited source-audio controls.
-- Each operation has at least one test for source-range boundaries, output timing, and failure behavior.
-- Caption/title and richer audio decisions are recorded as explicit follow-up scope, not implied capabilities.
+The product outcome is an independently completed, verified edit—not the number of FFmpeg filters or isolated editing tools exposed. A bounded but coherent operation set is sufficient to test whether the Agent can understand a request, make content decisions, construct an edit, render it, detect problems, revise it, and deliver the result. This avoids both a tool-only workflow and premature expansion into a professional editor.
+
+### Alternatives considered and not selected
+
+- **Richer first phase:** add generated captions/titles, music, multi-track audio, and advanced effects. Not selected because it expands content-generation, rights, compiler, and verification obligations before a reliable core loop is established.
+- **Ultra-minimal tool set:** trim/reorder/concatenate only, without basic transitions or audio controls. Not selected because it can make the first useful output unnecessarily crude and under-exercises the editing loop.
+- **Full visual editor:** not selected; it is outside the natural-language autonomous-editing product boundary.
+
+These alternatives are not permanent product rejections; future scope requires a separate decision.
+
+### Risks and limitations
+
+- Basic moment selection and narrative organization may be insufficient for complex genres or long-form stories.
+- Insufficient or conflicting analysis evidence may require clarification or human review.
+- Even simple crossfades require correct timebase, overlap, audio, and render validation.
+- A bounded operation registry may not satisfy every social-video or professional workflow.
+- The Agent can produce a technically valid but semantically misleading edit; factual/context criteria and independent review remain necessary.
+- Exact analysis strategy, temporal contracts, output profiles, verification policy, resource enforcement, and preview interaction are governed by ADP-02 through ADP-10 and remain open.
+
+### Acceptance conditions
+
+The first-phase architecture and any later authorized implementation must demonstrate that:
+
+1. A task can start from a natural-language request and authorized source set without the user specifying every editing operation.
+2. The Agent can produce task-conditioned source understanding and evidence-backed moment selection.
+3. The Agent can form a basic NarrativePlan and derive a valid immutable TimelineRevision from it.
+4. The accepted core operations have typed representations, validation, deterministic render compilation, and declared evidence obligations.
+5. Rendering occurs through the bounded RenderPlan/Trusted ToolHost path; unsupported operations fail closed rather than being approximated by arbitrary model-authored commands.
+6. Verification inspects the actual rendered artifact against technical and task/content criteria.
+7. A follow-up natural-language instruction produces a new traceable revision, with re-rendering and re-verification of affected obligations.
+8. The deliverable retains source-to-output provenance and the evidence required by its acceptance criteria.
+9. The Agent can pause for material ambiguity, insufficient evidence, unauthorized scope, or exhausted budget, and does not claim completion while required checks remain unresolved.
+10. End-to-end evaluation measures task completion and editing quality, not merely individual tool success.
+
+Typed schemas, fixtures, tests, thresholds, and Host-specific enforcement are later contract/evaluation gates. Listing these acceptance conditions does not authorize Runtime implementation, real-model use, or media experiments.
+
+### Related decisions and documents
+
+- ADP-02: analysis modalities, coverage, and progressive-analysis policy.
+- ADP-03 through ADP-09: profile authority, artifacts, temporal model, output profiles, verification, Host resources, and cross-domain handoff.
+- ADP-10: preview/progress/approval interaction surface.
+- ADP-11: staged implementation and separate authorization.
+- [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md), [Video domain design](../research/multimedia-domain-architecture/design.md), [MediaProject](../contracts/media-project.md), [Media Timeline](../contracts/media-timeline.md), [RenderPlan security](../contracts/render-plan-security.md), [RenderJob](../contracts/render-job.md), and [Completion](../contracts/completion.md).
 
 ## 3. ADP-02 — Task-conditioned media analysis
 
@@ -455,7 +494,7 @@ The following choices require explicit owner disposition. "Accept" means accept 
 
 | ID | Recommended disposition | Owner response |
 | --- | --- | --- |
-| ADP-01 | Accept bounded first-phase operation set; defer captions/titles and rich audio | OPEN |
+| ADP-01 | Approve complete autonomous editing loop in the revised bounded core scope; defer advanced/editor-grade features | REVISED — APPROVED 2026-11-02 |
 | ADP-02 | Accept progressive, task-conditioned analysis | OPEN |
 | ADP-03 | Accept immutable profile versions and explicit safe cutover/revocation | OPEN |
 | ADP-04 | Accept generic manifest + opaque immutable payload contract | OPEN |
@@ -467,4 +506,4 @@ The following choices require explicit owner disposition. "Accept" means accept 
 | ADP-10 | Accept lightweight preview/approval surface; no full editor | OPEN |
 | ADP-11 | Accept staged implementation sequence and separate authorization gates | OPEN |
 
-No item becomes APPROVED until the owner records an explicit decision in the decision log. A partial acceptance must identify the accepted clause and any required revision.
+ADP-01 is the only item with an explicit owner disposition so far: REVISED, approved in revised form and recorded in the Decision Log. ADP-02 through ADP-11 remain OPEN. Any later partial acceptance must identify the accepted clause and required revision. Approval of ADP-01 does not authorize Runtime implementation, production dependencies, real-model/media experiments, or technology selection.
