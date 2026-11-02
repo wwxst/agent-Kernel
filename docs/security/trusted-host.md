@@ -37,6 +37,22 @@ Kernel issues a short-lived AdmissionTicket bound to the exact invocation, tool 
 
 A model statement that a tool is approved is not approval evidence.
 
+### 2.1 Serialized Host LaunchGate
+
+An AdmissionTicket is evidence of admission, not a self-sufficient launch permission. The dispatch authorization is short-lived, one-use, and bound to the exact invocation, tool/argument digest, profile ID/version/digest, profile-authority epoch, principal/capability/approval versions, budget reservation, Host target, fencing epoch, expiry, and nonce.
+
+The Trusted ToolHost must expose a serialized LaunchGate whose process-creation operation and profile-authority fence advancement share one linearizable ordering boundary. The gate revalidates current authority and consumes the ticket at the physical launch boundary; it must not validate a cached ticket and spawn outside the gate.
+
+The launch boundary has a total order with revocation:
+- If process creation crosses the gate before the new authority fence commits, the invocation is recorded as launched under the old epoch and follows the predeclared drain/cancel policy.
+- If the authority fence commits first, the old ticket is rejected and no process is created.
+- If the gate cannot prove the ordering or current authority, it fails closed. No offline or cached ticket may launch while authority is unavailable.
+
+The Host records a durable LaunchBoundaryCommitted fact with the Host run/process identity, invocation, ticket, profile digest, authority/fencing epochs, gate sequence, and timestamp before reporting the operation as started. A crash after process creation but before that receipt is durable leaves OutcomeUnknown until Host Ledger and target/output reconciliation resolve it; it is not evidence of non-execution.
+
+A revocation request stops new Kernel admissions and ticket issuance. The authority is RevocationPending until every Host gate that could accept a ticket acknowledges the new fence or is verifiably disabled. Revoked means no stale ticket can cross an eligible gate; it does not mean existing processes have terminated. A Host that cannot contact current authority fails closed and cannot accept offline dispatch.
+
+
 ## 3. Host isolation requirements
 
 The Host is responsible for the physical execution boundary for both short commands and long-running jobs, including as applicable:
@@ -77,8 +93,8 @@ A long-running operation such as FFmpeg rendering remains a Kernel ToolInvocatio
 The Host must:
 
 - bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, profile-authority epoch, tool snapshot, budget reservation, and fencing epoch;
-- immediately before physical process creation, consume a one-use dispatch authorization bound to the current effective Active profile version/digest and epoch; a previously accepted plan or cached allowlist is not sufficient;
-- establish a deterministic ordering between profile revocation/cutover and process launch. If the Host cannot prove that the dispatch authorization is current at the launch boundary, it must fail closed and not create the process;
+- enter the serialized LaunchGate and consume a one-use dispatch authorization bound to the current effective Active profile version/digest and epoch at the physical process-creation boundary; a previously accepted plan, cached allowlist, or offline ticket is not sufficient;
+- serialize process creation and authority-fence advancement so revocation and launch have a provable total order; if current authority or ordering cannot be established, fail closed and do not create the process;
 - record process/job creation before reporting the operation as started;
 - contain the process tree and retain stdout/stderr/progress channels under the declared resource limits;
 - report progress as non-authoritative telemetry associated with the Host run ID;
@@ -86,7 +102,7 @@ The Host must:
 - record exit/signal, resource consumption, partial-output state, output digest, and an authenticated receipt;
 - preserve OutcomeUnknown when it cannot prove whether a process or output side effect completed.
 
-A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication. A profile revoked or superseded after plan approval invalidates any not-yet-consumed dispatch authorization. If the revocation/authority epoch cannot be checked because Kernel state is unavailable, no new process is launched. Already-running processes retain their original profile binding and follow the predeclared drain/cancel policy; UNKNOWN remains held and cannot be cleared by profile migration.
+A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication. A profile revoked or superseded after plan approval invalidates any not-yet-consumed dispatch authorization. Revocation remains Pending until every eligible Host gate acknowledges the new fence or is verifiably disabled; a Host that cannot check current authority launches nothing. A launch boundary that linearized before the fence is an already-running invocation and follows the predeclared drain/cancel policy. UNKNOWN remains held and cannot be cleared by profile migration.
 
 For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md) and [FFmpeg RenderPlan security contract](../contracts/render-plan-security.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.
 
