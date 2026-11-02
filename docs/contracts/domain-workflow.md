@@ -70,7 +70,7 @@ A same-domain migration uses freeze → stop admission → drain/reconcile → r
 
 ### 3.2 Dispatch and revocation linearization
 
-AdmissionTicket proves that Kernel admitted a specific invocation at a point in time; it is not perpetual permission to launch. A dispatch ticket is short-lived, one-use, and bound to the exact invocation, profile ID/version/digest, authority epoch, accepted PlanRevision, tool snapshot, argument digest, principal/capability/approval versions, budget reservation, Host target, fencing epoch, expiry, and nonce.
+AdmissionTicket proves that Kernel admitted a specific invocation at a point in time; it is not perpetual permission to launch. A dispatch ticket is short-lived, one-use, and bound to the exact invocation, profile ID/version/digest, authority epoch, accepted PlanRevision, tool snapshot, argument digest, principal/capability/policy/approval versions, workspace/project identity, budget reservation, Host target, fencing epoch, expiry, and nonce.
 
 The Trusted ToolHost implements an abstract serialized LaunchGate. The Host launch operation and authority-fence advancement must share one linearizable ordering boundary. The Host must not validate a ticket from a cache and then spawn later outside that boundary.
 
