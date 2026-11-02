@@ -34,7 +34,7 @@ Every version binds:
 - a field-level change set from the preceding accepted version, if any;
 - explicit user-confirmation references for protected changes.
 
-The following changes require explicit user confirmation unless the original request already clearly authorized them: changing desired behavior, expanding scope, changing exclusions, changing a required acceptance criterion, relaxing a constraint, changing a public/compatibility contract, increasing risk or blast radius, or introducing a new external/destructive side effect. Kernel checks that the required confirmation evidence exists and is bound to the candidate; it does not infer the user's intent from model text.
+The following changes require explicit user confirmation unless an immutable intake-time authorization record explicitly covers the exact change: changing desired behavior, expanding scope, changing exclusions, changing a required acceptance criterion, relaxing a constraint, changing a public/compatibility contract, increasing risk or blast radius, or introducing a new external/destructive side effect. Kernel checks that the required confirmation or intake authorization reference exists and is bound to the candidate; it does not infer the user's intent from model text or decide semantic fidelity.
 
 Orchestration may propose low-risk operational assumptions without asking only when they are reversible, disclosed, remain within the accepted scope and constraints, do not change required acceptance criteria, and the task's user-control policy permits autonomous inference. An assumption is never silently promoted into user intent.
 
@@ -98,7 +98,7 @@ The Task state describes the overall task-control phase; PlanRevision state desc
 
 Required transitions include:
 
-- Running → Planning on a replan request. This transition freezes new admissions against the old revision.
+- Running, Verifying, Ready, Waiting, or Blocked → Planning on a valid plan-switch request when an active revision exists. Kernel compare-and-swaps the current Task version, freezes new admissions against the old revision, and records the prior Task state for controlled recovery.
 - Planning → Reconciling when a started old-revision operation has an unresolved outcome.
 - Reconciling → Planning after the relevant outcomes are reconciled.
 - Planning → Ready after a new revision is activated.

@@ -112,7 +112,7 @@ Rejected candidates remain auditable as Rejected. A candidate is not task author
 
 Kernel performs deterministic checks: schema, stable IDs, provenance references, version lineage, field-level changes, and presence of required user-confirmation evidence. Kernel does not decide whether the interpretation is semantically faithful.
 
-The following are protected fields: desired behavior, scope, exclusions, required acceptance criteria, constraints, public/compatibility commitments, risk boundary, and external/destructive side effects. A change to a protected field requires explicit user confirmation unless the original user request already clearly authorized that exact change. Model-generated labels cannot downgrade a protected change to a harmless assumption.
+The following are protected fields: desired behavior, scope, exclusions, required acceptance criteria, constraints, public/compatibility commitments, risk boundary, and external/destructive side effects. A change to a protected field requires explicit user confirmation unless an immutable intake-time authorization record explicitly covers that exact change. Model-generated labels cannot downgrade a protected change to a harmless assumption.
 
 Orchestration may proceed without asking only on a low-risk, reversible, disclosed operational assumption that remains within the accepted scope and constraints, does not alter required criteria, and is permitted by the user's control policy. If ambiguity materially changes behavior, scope, compatibility, or risk, ask the user.
 
@@ -209,10 +209,10 @@ Action kinds include Inspect, Experiment, Edit, Verify, Ask, RequestApproval, Wa
 
 **Lifecycle and partial execution**
 
-An ActionProposal is recorded before its child ToolInvocations are admitted. Its record lifecycle is Recorded → Evaluated → PartiallyExecuted | Completed, with terminal alternatives Rejected, Expired, Superseded, and Cancelled. Evaluated means the proposal passed the relevant decision-record checks; it does not mean any tool is authorized.
+An ActionProposal is recorded before its child ToolInvocations are admitted. Its record lifecycle is Recorded → Evaluated → Executing | PartiallyExecuting → Settled, with terminal alternatives Rejected, Expired, Superseded, and Cancelled. Evaluated means the proposal passed the relevant decision-record checks; it does not mean any tool is authorized. Settled means every proposal item has a terminal outcome, not that every item succeeded; PartiallyExecuting means at least one item is terminal while another remains pending or active.
 
 - A proposal contains a policy-bounded maximum number of invocation items; it cannot create an unbounded tool batch.
-- Each side-effecting item becomes a separate ToolInvocation with its own identity, payload digest, Kernel admission, approval, budget reservation, durable intent, Host execution, receipt, and outcome.
+- Each tool item becomes a separate ToolInvocation with its own identity, payload digest, Kernel admission under the applicable discovery or active-plan profile, approval where required, budget reservation, durable intent where required, Host execution, receipt, and outcome. Pre-plan read-only reconnaissance uses only the bounded discovery profile; source writes and other side effects require an Active PlanRevision and current PlanStep.
 - Batches are never atomic. Independent siblings may proceed if policy allows. A dependent item cannot start until its declared prerequisites have succeeded.
 - A denial or failure blocks dependent descendants; independent siblings may continue only if their own bindings and admission checks remain current.
 - Partial execution is represented explicitly; the proposal cannot be marked wholly Completed while required child items remain unresolved.

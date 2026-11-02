@@ -130,8 +130,8 @@ No component may silently promote its local cache, model output, or external res
 ## 7. Core invariants
 
 1. Kernel is the sole authority for state, hard budgets, accepted plan versions, and Tool Admission.
-2. A PlanCandidate is not executable authority; side effects require an accepted PlanRevision and current PlanStep.
-3. A ToolCall is not executable until its complete response, parameters, tool version, plan binding, and request snapshot have passed validation.
+2. A PlanCandidate and an AcceptedPendingCutover revision are not executable authority; side effects require an Active PlanRevision and current PlanStep.
+3. A ToolCall is not executable until its complete response, parameters, tool version, plan binding, and request snapshot have passed validation. Side effects require an Active PlanRevision; bounded read-only discovery before initial plan activation uses a separate admission profile.
 4. Authorization is rechecked at the execution boundary; model text and retrieved content cannot grant permission.
 5. Durable intent precedes a possible side effect.
 6. Kernel Journal and Host Ledger remain separate fact domains.

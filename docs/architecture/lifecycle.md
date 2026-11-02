@@ -30,7 +30,7 @@ Proposed lifecycle:
 
 Candidate → NeedsClarification | ReadyForAcceptance → Accepted → Superseded
 
-Rejected candidates remain auditable as Rejected. Accepted versions are immutable. Material changes to desired behavior, scope, exclusions, required criteria, constraints, public compatibility, risk, or external/destructive effects require explicit user confirmation unless already clearly authorized by the original request. Low-risk, reversible, disclosed assumptions may be accepted autonomously only when task policy permits and they do not expand scope or alter criteria.
+Rejected candidates remain auditable as Rejected. Accepted versions are immutable. Material changes to desired behavior, scope, exclusions, required criteria, constraints, public compatibility, risk, or external/destructive effects require explicit user confirmation unless an immutable intake-time authorization record explicitly covers the exact change. Low-risk, reversible, disclosed assumptions may be accepted autonomously only when task policy permits and they do not expand scope or alter criteria.
 
 An accepted GoalContract change that affects scope, criteria, or authority triggers the PlanRevision switch protocol. Old evidence remains historical; a VerificationReport bound to the old GoalContract cannot complete the new version.
 
@@ -68,7 +68,7 @@ Waiting and Blocked carry structured reasons. Typical transitions:
 - Admitted → Planning while GoalContract and bounded reconnaissance are established.
 - Planning → Ready after the first PlanRevision becomes Active.
 - Ready → Running when at least one accepted PlanStep is ready and its preconditions hold.
-- Running → Planning on a replan request; Kernel linearizes a plan-switch barrier and freezes new admissions against the old revision.
+- Running / Verifying / Ready / Waiting / Blocked → Planning on a valid replan request; Kernel linearizes a plan-switch barrier and freezes new admissions against the old revision.
 - Planning → Reconciling when a started old-revision invocation has an unresolved outcome that may conflict with cutover.
 - Reconciling → Planning after the relevant outcome is reconciled.
 - Planning → Ready after the new PlanRevision is atomically activated.
