@@ -53,7 +53,7 @@ The Coding and Video design tracks proceed in parallel. Neither domain is requir
 - Review timeline persistence, rational time representation, render cancellation/recovery, and final video verification.
 - Review second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority, source provenance, and independent acceptance in [Second-round architecture revision](../decisions/second-round-architecture-revision.md).
 - Review separate Coding and Video evaluation protocols and shared Kernel safety metrics.
-- Continue disposition of ADP-02 through ADP-11 in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md) and the second-round revision decisions, recording accepted, rejected, deferred, or revised clauses in the [Decision Log](../decisions/decision-log.md). ADP-01 is already REVISED/APPROVED.
+- Continue disposition of ADP-03 through ADP-11 in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md) and the second-round revision decisions, recording accepted, rejected, deferred, or revised clauses in the [Decision Log](../decisions/decision-log.md). ADP-01 and ADP-02 are already REVISED/APPROVED.
 - Check every local link, status label, and implementation authorization boundary.
 
 **Exit:** owner-approved cross-domain architecture and explicit implementation scope. This is not yet implementation authorization.
