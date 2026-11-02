@@ -55,8 +55,19 @@ See [Coding design](../research/autonomous-coding-agent/design.md), [Coding refe
 - How much preview/contact-sheet interaction is useful without building a full editor?
 - Which subjective edit-quality criteria require human acceptance?
 - Which render resource limits and segmented-render strategies are practical across hosts?
+- What NarrativePlan beat schema and factual/chronology guardrails support different editing genres without imposing one story template?
+- Which moment-ranking dimensions and conflict-resolution policy should be used; how should salience, message relevance, context value, continuity, and duration trade off?
+- What analysis coverage, confidence calibration, and raw frame/audio/transcript retention/privacy policy are acceptable?
+- Which MediaAnalysis/MediaProjectModel versions may be carried forward when source assets are unchanged but analysis methods or proxies change?
+- Which exact EvidenceCarryForward checks are required when a TimelineRevision changes only a subset of beats/clips?
+- What FFmpeg demuxer/decoder/filter/protocol allowlists and input media matrix are acceptable for the first profile?
+- Which Host profiles can enforce filesystem/network isolation, process-tree convergence, CPU/memory/disk/output limits, and receipt authenticity?
+- How should cancellation-vs-success races and Host crash windows be reconciled when process identity or output state is unavailable?
+- Which output-interval-to-source-interval provenance map is required for transitions, generated overlays, audio beds, and external ingredients?
+- Which criteria require blind human review, external assurance, or a user approval before publication?
+- Which public datasets (MEDit-Bench, QVHighlights, TVSum, or others) are suitable components of a rights-cleared project task set?
 
-See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md). Candidate resolutions are in [ADP-01, ADP-02, and ADP-05 through ADP-10](architecture-decision-proposals.md).
+See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md), [MediaProject contract](../contracts/media-project.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderPlan security contract](../contracts/render-plan-security.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md). The second-round recommendation and change map are in [Second-round architecture revision](second-round-architecture-revision.md). Candidate first-round dispositions remain in [Architecture Decision Proposals](architecture-decision-proposals.md).
 
 ## 5. Reference implementation applicability
 
