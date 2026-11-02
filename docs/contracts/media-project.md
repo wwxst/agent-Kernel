@@ -67,8 +67,9 @@ Minimum logical fields:
 | media_project_id / project_snapshot_id | Exact project snapshot analyzed |
 | input_manifest_digest | Digest of the exact analysis input set |
 | asset_stream_bindings | Asset digest, stream identity, and temporal coverage |
-| analysis_kind | Probe, shot boundary, visual observation, OCR, transcript, audio event, alignment, quality, or other typed analysis |
+| analysis_kind | Probe, coverage index, shot boundary, visual observation, OCR, transcript, audio event, alignment, quality, or other typed analysis |
 | tool_model_build | Exact tool/model/build identity, or explicit non-model method identity |
+| goal_criteria_refs / analysis_scope | GoalContract criterion IDs and exact modalities/source intervals that justified and bounded this run |
 | configuration_digest | Versioned parameters, sampling policy, and relevant prompt/config digest |
 | coverage_manifest | Time intervals, frame/sample selection, gaps, and incomplete regions |
 | raw_evidence_refs | Immutable frame/audio/packet/transcript/probe evidence artifacts |
