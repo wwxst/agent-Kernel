@@ -25,7 +25,7 @@ The approved direction is recorded in [Unified domain direction](unified-domain-
 | How do both use GoalContract? | Common immutable intent/version/provenance envelope plus typed domain payload and schema version | [Domain Workflow](../contracts/domain-workflow.md), [PlanRevision](../contracts/plan-revision.md) | CONSISTENT PROPOSAL |
 | How do both use PlanRevision? | Common immutable DAG and cutover lifecycle; typed PlanStep payloads/artifacts; Kernel validates structure/authority, Domain Intelligence judges semantic adequacy | [PlanRevision](../contracts/plan-revision.md) | CONSISTENT PROPOSAL |
 | How are tools controlled? | Every domain operation uses ToolInvocation, current profile, Kernel admission, budget/approval, durable intent, Trusted ToolHost, receipt, and UNKNOWN reconciliation | [Domain Workflow](../contracts/domain-workflow.md), [RenderJob](../contracts/render-job.md) | CONSISTENT PROPOSAL |
-| How is media state modeled? | MediaProjectModel as a separate Context projection with asset/stream/time/analysis provenance | [Context Engine](../context/context-engine.md), [Video design](../research/multimedia-domain-architecture/design.md) | CONSISTENT PROPOSAL |
+| How is media state modeled? | MediaProject is the persistent artifact container; MediaProjectModel is its separate Context projection with asset/stream/time/analysis provenance | [Context Engine](../context/context-engine.md), [Media Timeline](../contracts/media-timeline.md), [Video design](../research/multimedia-domain-architecture/design.md) | CONSISTENT PROPOSAL |
 | How is the edit persisted? | Immutable TimelineRevision, source PTS/timebase, rational timeline ticks, parent revision, EditIntent, source digests, and render lineage | [Media Timeline](../contracts/media-timeline.md) | CONTRACT PROPOSED |
 | How is long rendering handled? | Typed RenderJob over shared Host process lifecycle; progress is telemetry; cancellation requires process convergence; UNKNOWN blocks blind retry/publication | [RenderJob](../contracts/render-job.md) | CONTRACT PROPOSED; RUNTIME UNVERIFIED |
 | How is final video verified? | Technical probe/decode, timeline invariants, audio/video integrity, content match, perceptual review, and human review when required | [RenderJob](../contracts/render-job.md), [Video design](../research/multimedia-domain-architecture/design.md) | CONTRACT PROPOSED; QUALITY UNVERIFIED |
@@ -56,7 +56,7 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 
 1. The repository purpose and Architecture overview now describe a unified two-domain platform rather than a Coding-only product.
 2. The existing Coding design is explicitly retained as Coding Domain Intelligence, not the whole platform.
-3. MediaProjectModel is introduced as a sibling Context projection; RepositoryModel remains intact.
+3. MediaProject is defined as the persistent Video artifact container, and MediaProjectModel is introduced as its sibling Context projection; RepositoryModel remains intact.
 4. DomainBinding and Workflow Profile are added to lifecycle and PlanRevision envelopes.
 5. Domain Workflow, Media Timeline, and RenderJob contracts are added.
 6. CompletionReport bindings include DomainBinding and final domain artifact references.
