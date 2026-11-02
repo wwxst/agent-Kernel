@@ -52,7 +52,7 @@ Before process creation, the Host durably consumes the one-use ticket nonce and 
 
 The Host records a durable LaunchBoundaryCommitted fact with the Host run/process identity, invocation, ticket ID/nonce, LaunchAttempt ID, profile/DomainBinding digest, AuthorityFenceEpoch, exact authority-version vector, workspace/project generation, fencing epoch, gate sequence, and timestamp before reporting the operation as started. A crash after process creation but before that receipt is durable leaves OutcomeUnknown until Host Ledger and target/output reconciliation resolve it; it is not evidence of non-execution.
 
-A revocation request advances the affected AuthorityFenceEpoch and stops new Kernel admissions and ticket issuance. The profile authority is RevocationPending until every Host gate that could accept an old ticket acknowledges the new fence or is verifiably disabled. Revoked means no stale ticket can cross an eligible gate; it does not mean existing processes have terminated. A Host that cannot contact current authority fails closed and cannot accept offline dispatch.
+A revocation request advances the affected AuthorityFenceEpoch and stops new Kernel admissions and ticket issuance. The affected authority remains RevocationPending until every Host gate that could accept an old ticket acknowledges the new fence or is verifiably disabled. Revoked means no stale ticket can cross an eligible gate; it does not mean existing processes have terminated. A Host that cannot contact current authority fails closed and cannot accept offline dispatch.
 
 ### 2.2 Scoped ArtifactResolver
 
