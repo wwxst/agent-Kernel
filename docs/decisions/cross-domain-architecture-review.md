@@ -81,14 +81,15 @@ See [Shared Agent Kernel reference review](../research/shared-kernel/reference-r
 The current proposal is internally aligned at the contract level, but these items still require owner review or empirical evidence:
 
 - the exact typed timeline schemas, deterministic compiler mappings, and per-operation evidence obligations for the ADP-01-approved core editing operations;
-- Workflow Profile acceptance, revocation, and migration semantics during long-running tasks;
+- Workflow Profile acceptance, revocation, and migration semantics during long-running tasks (ADP-03 draft now specifies current-effective admission/dispatch checks and UNKNOWN holds);
 - the common artifact/storage/streaming envelope for large media and derived proxies;
-- source PTS, variable-frame-rate handling, audio sample alignment, and rounding across supported formats;
+- source PTS, variable-frame-rate handling, audio sample alignment, and rounding across supported formats (ADP-05 draft now specifies exact per-stream coordinates and conversion records);
 - FFmpeg packaging/build policy and media-analysis provider/model choices;
 - cross-platform process-tree containment and hard CPU/GPU/memory/disk/time budgets;
 - objective versus subjective video-quality evidence and human-review thresholds;
-- how linked Coding/Video tasks share artifacts without introducing a composite cross-domain Task;
+- how linked Coding/Video tasks share artifacts without introducing a composite cross-domain Task (ADP-09 draft now specifies separate Tasks, exact ArtifactRefs, scoped authorization, and no capability/context inheritance);
 - separate benchmark assets/task sets, hidden checks, and reviewer rubrics;
+- progressive media-analysis coverage accounting, task-conditioned modality selection, and adaptive evidence expansion (ADP-02 draft);
 - cross-domain Kernel fault-injection fixtures and environment-specific process/resource controls;
 - whether a minimal preview/approval surface is sufficient without creating a full editor.
 
@@ -105,6 +106,7 @@ The [Decision Log](decision-log.md) records ADP-01 as REVISED/APPROVED in its re
 - Shared GoalContract/PlanRevision lifecycle with typed domain payloads: **PASS — proposed contract alignment**.
 - Separate RepositoryModel and MediaProjectModel: **PASS — context boundary specified**.
 - Shared ToolInvocation/Host/permission/budget/recovery path: **PASS — proposed contract alignment**.
+- First-batch ADP-02/03/05/09 decision and contract drafts: **DOCUMENTATION DRAFTED — owner disposition pending; all four remain OPEN**.
 - Timeline revision and RenderJob contracts: **PASS — documented proposal**.
 - Second-round Video intelligence, MediaProject/MediaAnalysis lineage, FFmpeg RenderPlan security, RenderJob state authority/recovery, source provenance, and capability-scope matrix: **PASS — proposed documentation contracts; implementation not verified**.
 - Shared Kernel evaluation metric definitions: **PASS — common protocol drafted; no runs performed**.
