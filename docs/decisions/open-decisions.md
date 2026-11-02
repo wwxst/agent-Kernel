@@ -6,7 +6,7 @@ The current product direction and ADP-01/ADP-02 dispositions are recorded in [Un
 
 ### First-batch decision status
 
-ADP-02 is **REVISED/APPROVED**. The remaining first-batch drafts — **ADP-03, ADP-05, and ADP-09** — specify Host launch/revocation linearization, piecewise asset-clock mappings, and resolver-mediated scoped handoff grants; they remain **OPEN** until explicit owner disposition. These are documentation contracts, not empirically verified implementations, and approval does not authorize implementation.
+ADP-02 is **REVISED/APPROVED**. The remaining first-batch drafts — **ADP-03, ADP-05, and ADP-09** — now propose an initially scoped **single-Host-local** launch/revocation ordering with separately acknowledged fences (multi-Host global ordering deferred), piecewise asset-clock mappings, and resolver-mediated scoped handoff grants; they remain **OPEN** until explicit owner disposition. These are documentation contracts, not empirically verified implementations, and approval does not authorize implementation.
 
 ## 1. Approved product direction
 
