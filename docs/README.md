@@ -16,7 +16,9 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Workspace freeze and receipt](contracts/workspace-freeze.md)
 - [PlanRevision and PlanStep lifecycle](contracts/plan-revision.md)
 - [Domain Workflow binding](contracts/domain-workflow.md)
+- [MediaProject, MediaAnalysis, and MediaProjectModel](contracts/media-project.md)
 - [Media Timeline artifact](contracts/media-timeline.md)
+- [FFmpeg RenderPlan security](contracts/render-plan-security.md)
 - [Long-running RenderJob](contracts/render-job.md)
 - [Verification and completion](contracts/completion.md)
 
@@ -29,6 +31,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 
 - [Autonomous Coding Agent intelligence](research/autonomous-coding-agent/README.md) — retained Coding Domain Intelligence design, reference review, failure model, and evaluation.
 - [Multimedia Domain Architecture](research/multimedia-domain-architecture/README.md) — natural-language Video Editing domain design and evaluation.
+- [Video Editing Intelligence](research/multimedia-domain-architecture/intelligence.md) — media understanding, highlight selection, narrative planning, pacing, continuity, A/V coordination, and revision.
 - [Shared Kernel reference review](research/shared-kernel/reference-review.md) — source-grounded review of Pi, Codex, DeepSeek Harness, and Claude Agent SDK.
 - [Shared Kernel evaluation](research/shared-kernel/evaluation.md) — cross-domain safety, authority, lifecycle, budget, provenance, and recovery metrics.
 - [Intelligent execution architecture](research/autonomous-coding-agent/design.md)
@@ -37,7 +40,8 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Coding evaluation and experiment protocol](research/autonomous-coding-agent/evaluation.md)
 - [Unified domain direction](decisions/unified-domain-direction.md)
 - [Cross-domain architecture review](decisions/cross-domain-architecture-review.md)
-- [Architecture Decision Proposals](decisions/architecture-decision-proposals.md) — recommended dispositions, alternatives, risks, and acceptance criteria for remaining cross-domain OPEN questions.
+- [Architecture Decision Proposals](decisions/architecture-decision-proposals.md)
+- [Second-round architecture revision](decisions/second-round-architecture-revision.md) — targeted Video intelligence, data lineage, FFmpeg security, RenderJob authority/recovery, provenance, and cross-domain boundary review. — recommended dispositions, alternatives, risks, and acceptance criteria for remaining cross-domain OPEN questions.
 - [Second-round Coding contract review](decisions/second-round-contract-review.md)
 - [Open decisions](decisions/open-decisions.md)
 - [Roadmap and gates](development/roadmap.md)
