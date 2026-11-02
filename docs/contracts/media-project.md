@@ -95,6 +95,32 @@ Analysis expansion is bounded by the Task's current Workflow Profile, permission
 
 Raw evidence should be retained as immutable, access-controlled artifacts when required for later verification. Privacy, retention, and data-minimization policy governs whether full derived audio/transcript/frame artifacts are stored or only scoped evidence excerpts and digests.
 
+### 3.2 Coverage manifest interval contract
+
+Every supplied source asset has one immutable CoverageManifest bound to the exact ProjectSnapshot/input manifest and source digest. The manifest enumerates all probed streams and the modalities requested or considered for the task. Coverage is scoped independently by asset, stream, modality, and declared source interval; it is never a single project-wide boolean.
+
+Each coverage segment records:
+- asset digest, stream identity, modality/analysis kind, and exact source interval;
+- source coordinate basis: video PTS plus rational time base, or audio sample position plus sample rate and stream mapping;
+- method/build/configuration digest, sampling policy, declared resolution/density, and actual sample coordinates;
+- status, raw evidence references, decode/access warnings, and the reason for any gap.
+
+Segments use end-exclusive intervals and form a disjoint, gap-accounted partition of the declared analysis scope. Any unobserved interval is explicitly represented. The status vocabulary is mutually exclusive per segment and modality:
+
+| Status | Contract meaning |
+| --- | --- |
+| Observed | The interval was processed throughout at the declared resolution; this is not a claim of exhaustive semantic understanding beyond that resolution. |
+| Sampled | Only the declared subset of samples was inspected; unsampled portions remain unknown for denser claims. |
+| NotSampled | The modality was in scope but no sample was successfully inspected. |
+| NotRequested | The task/policy did not request this modality; this is not a failed analysis and is not evidence of absence. |
+| Unavailable | The required source/stream/access/decoder/environment was unavailable. |
+| DecodeFailed | Decoding was attempted and failed for the declared interval. |
+
+A status change within an interval requires a segment boundary. A video observation cannot satisfy an audio coverage obligation, nor can a transcript satisfy a visual one. A negative content claim must cite the exact modality-specific intervals, sampling method, resolution, and evidence scope that justify it. NotSampled, NotRequested, Unavailable, and DecodeFailed never count as evidence that an event is absent.
+
+The coarse temporal navigation index spans the selected source set for content-based moment-selection tasks. It records the sampled points and gaps and remains a navigation aid rather than exhaustive semantic evidence. GoalContract criteria choose deep-analysis modalities; no expensive modality is mandatory merely because an asset contains that stream.
+
+
 ## 4. Analysis claims and freshness
 
 A claim is a typed assertion such as speech segment, shot-boundary candidate, object/action observation, scene-context hypothesis, silence interval, or candidate highlight. It binds:
