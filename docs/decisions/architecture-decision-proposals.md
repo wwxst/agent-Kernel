@@ -212,7 +212,7 @@ Treat each Workflow Profile as an immutable, content-digested policy snapshot. A
 
 ### Dispatch/revocation ordering contract
 
-Admission and launch are separate authorization boundaries. An AdmissionTicket or previously accepted PlanRevision is not a launch grant. A dispatch ticket is short-lived, one-use, and bound to the exact invocation, profile digest, authority epoch, tool/argument snapshot, principal and approval versions, budget reservation, Host target, fencing epoch, expiry, and nonce.
+Admission and launch are separate authorization boundaries. An AdmissionTicket or previously accepted PlanRevision is not a launch grant. A dispatch ticket is short-lived, one-use, and bound to the exact invocation, profile digest, authority epoch, tool/argument snapshot, principal/capability/policy/approval versions, workspace/project identity, budget reservation, Host target, fencing epoch, expiry, and nonce.
 
 The Trusted ToolHost must expose a serialized launch gate. Its launch operation and profile-authority fence advancement must share one linearizable ordering boundary for the Host authority scope. The gate validates current authority and consumes the one-use ticket at the physical process-creation boundary; a cached allowlist or offline ticket validation is insufficient.
 
