@@ -138,49 +138,17 @@ The model is not assumed complete. It should answer: what has been inspected, wh
 
 Repository instruction files such as AGENTS.md or CLAUDE.md may describe project conventions and workflow constraints. They are project data with bounded relevance, not Kernel policy or permission grants. They cannot override user intent, system policy, security rules, or Kernel admission.
 
-### 4.3 EvidenceGraph
+### 4.3 Evidence and hypothesis indexing (optional EvidenceGraph)
 
-The EvidenceGraph is a minimal evidence-relationship model and a Context/Orchestration projection. It is not necessarily a graph database and never replaces Kernel Journal, Host Ledger, workspace sources, or raw artifacts.
+Autonomous Coding still needs strong repository understanding, evidence-driven hypotheses, failed-experiment history and criterion coverage. **That does not require an authoritative graph database or a mandatory Claim/Relation/Freshness state machine.** The minimum durable/typed shared data are immutable `EvidenceRef` (source ref, digest, trust class, relevant snapshot/environment) and criterion-to-evidence bindings (criterion ID, verification obligation, provenance, freshness basis). Actual Host receipts, tests and source artifacts remain primary facts.
 
-**Claim kinds**
-
-- FACT — directly observed or verified within a declared scope;
-- HYPOTHESIS — an explanation to be tested;
-- ASSUMPTION — temporarily accepted for bounded progress;
-- DECISION — a selected course and its recorded rationale;
-- UNKNOWN — information not established;
-- CONTRADICTION — a claim/evidence conflict that remains unresolved.
-
-**Minimum records**
-
-| Record | Required fields |
-| --- | --- |
-| Claim | claim ID, claim version, kind, proposition, project/task scope, validity scope, origin, currentness, and invalidation conditions |
-| Evidence | evidence ID, kind, source reference, payload/content digest, captured time, source version, repository commit/workspace generation/environment where applicable, trust class, sensitivity, and transformation chain |
-| Relation | relation ID, source node, target node, relation kind, basis/evidence reference, and creation time |
-| Freshness | state (Current, Stale, Invalidated, Unknown), bound versions, and invalidation reason/event |
-| Provenance | original source, actor/tool, transformation sequence, and links to raw evidence |
-
-Supported relation kinds include supports, refutes, derived_from, contradicts, qualifies, duplicates, and invalidates. Relations are explicit records; they are not implied by proximity in a graph.
-
-**Evidence and claim rules**
-
-- A FACT requires at least one direct source/evidence reference and a declared scope. A model assertion alone cannot create a FACT.
-- A HYPOTHESIS may be model-generated but remains a hypothesis until tested.
-- An ASSUMPTION records who/what introduced it, why it is safe to proceed, impact if false, and when it expires.
-- A DECISION records the decision-maker, rationale summary, alternatives considered, and supporting/contradicting evidence references. It does not store private chain-of-thought.
-- A CONTRADICTION points to the conflicting claims/evidence; it does not overwrite either source.
-- Numeric model self-confidence is not evidence and is not a substitute for provenance, source quality, or verification.
-
-Trust and authority are separate. Trust class describes the provenance and reliability of evidence within scope; it does not grant permission. An authenticated Host receipt may be authoritative for a recorded process outcome but not for whether the code meets a product requirement. A test result is authoritative for that exact run, command, environment, and workspace—not for all behavior.
-
-RepositoryModel claims reference EvidenceGraph records and retain file/symbol hashes and freshness. The graph may be materialized as structured records and indexes; selecting a graph database is an open implementation decision.
+RepositoryModel may annotate observed facts, hypotheses, assumptions, contradictions, debug decisions and optional supports/refutes links to evidence. These records are Domain reasoning projections that can be rebuilt; only observations bound to verifiable source refs can satisfy completion. Freshness is derived from source/plan/criterion/version changes, not a separately authoritative freshness database. The richer EvidenceGraph is optional retrieval/index policy and can be introduced only if task-quality/latency evidence justifies its operational cost. This **does not relax** mandatory independent verification, provenance, or UNKNOWN handling.
 
 ### 4.4 PlanRevision and PlanStep
 
 A PlanCandidate becomes authoritative only after Kernel's deterministic contract checks and safe activation. The full lifecycle, plan-switch barrier, status transitions, carry-forward rules, and UNKNOWN handling are specified in [PlanRevision and PlanStep lifecycle contract](../../contracts/plan-revision.md).
 
-A PlanRevision binds the accepted GoalContract version, RepositoryModel/EvidenceGraph snapshot, workspace generation, dependency-aware PlanStep graph, acceptance-criterion mapping, assumptions, risks, expected artifacts, capability/approval boundaries, verification obligations, recovery strategy, resource estimate, and verification/repair reserve.
+A PlanRevision binds the accepted GoalContract version, relevant RepositoryModel/evidence source snapshot, workspace generation, outcome-level PlanStep dependencies, acceptance-criterion mapping, assumptions, risks, expected artifacts, capability/approval boundaries, verification obligations, recovery strategy, resource estimate, and verification/repair reserve.
 
 A PlanStep is a meaningful engineering outcome, not a model call or shell command. Its definition includes objective, dependencies, preconditions, expected artifacts, criterion links, effect/risk, capability needs, evidence obligations, verification, and recovery.
 
@@ -504,7 +472,7 @@ All Planner, Explorer, Implementer, Debugger, and Verifier model calls pass thro
 
 The proposal is ready for implementation planning only when it has:
 
-- a coherent GoalContract, RepositoryModel, EvidenceGraph, PlanRevision, PlanStep, and ActionProposal model;
+- coherent GoalContract, RepositoryModel, minimal EvidenceRefs/criterion links, structural PlanRevision/PlanStep, and bounded action-intent envelope; richer EvidenceGraph indexing remains optional;
 - explicit strategic, tactical, debugging, assurance, arbitration, and stopping policies;
 - precise Orchestration/Kernel/Context/Tool Runtime/Host boundaries;
 - defined plan-switch, long-task checkpoint, and recovery semantics;
@@ -518,7 +486,7 @@ The proposal is not empirically validated. The evaluation protocol is specified 
 
 ## 13. Open design questions
 
-The second-round draft now specifies GoalContract versioning, deterministic plan-contract validation, PlanRevision cutover, orthogonal PlanStep status, ActionProposal binding/partial execution, EvidenceGraph minimum records, decision arbitration, verification independence levels, and checkpoint/authorization separation.
+The second-round candidate now retains GoalContract versioning and safe L2 plan cutover, while simplifying PlanStep status to derived views, ActionProposal to bounded action intent, EvidenceGraph to optional evidence indexing, decision arbitration, verification independence levels, and checkpoint/authorization separation.
 
 The following remain OPEN for owner review and empirical evaluation:
 
