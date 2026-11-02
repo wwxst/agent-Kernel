@@ -37,6 +37,8 @@ On an accepted PrepareFreeze:
 8. For Coding compute the final acceptance **protected-input** digest from that snapshot and the trusted, predeclared versioned ProtectedInputScope; verification output/log/cache artifacts have separate provenance manifests. For Video retain the relevant immutable project/media/artifact digest bindings.
 9. Issue a receipt that binds the snapshot, hash, scope, epoch, challenge and host evidence.
 
+For Coding verification, the SourceSnapshot digest alone does **not** prove effective test inputs. The Host-issued `ExecutionViewManifest` must bind actual test process/descendants, cwd, root/mount namespace, mount and overlay order, protected path resolution, symlinks/bind mounts, approved writable roots, toolchain/environment and effective file digests. Host enforces read-only protected source paths and denies writable overlays, symlink redirection or mount changes that could shadow protected inputs. If such enforcement is unavailable, equivalent trustworthy open/path + mutation evidence is required; absent proof invalidates verification. The final authenticated freeze receipt binds the executed view identity and its relation to the immutable accepted SourceSnapshot. See [Completion](completion.md).
+
 A process kill or timeout is not proof of convergence. The Host must provide evidence for the declared process/handle boundary.
 
 ## 4. Receipt integrity and authentication
@@ -46,7 +48,7 @@ A receipt payload must be canonical, versioned and authenticated. It binds at le
 - receipt version, canonicalization profile and digest algorithm;
 - receipt ID and PrepareFreeze request binding;
 - kernelChallenge, freezeId, workspaceId and fencingEpoch;
-- snapshot ID and final acceptance protected-input/project snapshot digest (according to domain);
+- snapshot ID and final acceptance protected-input/project snapshot digest (according to domain), plus Coding ExecutionViewManifest identity and effective protected-path digest when applicable;
 - hash algorithm, hash-scope version and hash-scope descriptor digest;
 - process/handle convergence counts and evidence digests;
 - host identity, host key ID, Host Ledger sequence and capture time.
