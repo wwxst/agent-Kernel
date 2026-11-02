@@ -1,6 +1,6 @@
 # Documentation map
 
-This documentation is the evolving project baseline. It is re-authored for `agent-Kernel`; it is not a mirror of the previous repository.
+This documentation is the self-contained, evolving project baseline for `agent-Kernel`. The former source repository has been deleted; no document here depends on it being available. Historical provenance identifiers are retained only to explain the origin of selected architecture principles.
 
 ## Architecture
 

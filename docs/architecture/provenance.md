@@ -1,17 +1,20 @@
 # Architecture provenance and adoption boundary
 
-> **Status: Initial baseline provenance.** This file records where the first architecture principles came from and what this new repository deliberately does not inherit.
+> **Status: Historical provenance recorded; current baseline is self-contained.** The former source repository has been deleted. This document preserves the available source identifiers and explains exactly what this project adopted.
 
-## Source
+## Historical source record
 
-The initial architecture baseline is re-authored from the previous project's V2.1.2 architecture principles and contract review:
+The initial architecture baseline was re-authored from an architecture review recorded as V2.1.2 in the former repository:
 
-- Source repository: [wwxst/agent-](https://github.com/wwxst/agent-)
-- Source commit: [`d824e873ef47a7479f98ef7223a084fbf889db40`](https://github.com/wwxst/agent-/commit/d824e873ef47a7479f98ef7223a084fbf889db40)
-- Source document: `docs/architecture/10-架构评审候选方案-V2.1.2-2026-11-01.md`
-- Review conclusion: **APPROVED — architecture principles and contract baseline**, dated 2026-11-02.
+- Historical repository identity: `wwxst/agent-`
+- Repository status: **deleted by its owner; no longer accessible**
+- Historical source commit: `d824e873ef47a7479f98ef7223a084fbf889db40`
+- Historical source document: `docs/architecture/10-架构评审候选方案-V2.1.2-2026-11-01.md`
+- Recorded review conclusion: **APPROVED — architecture principles and contract baseline**
 
-The source approval does not claim that a runtime implementation exists or that the newly specified runtime contracts have passed implementation, security, or production verification.
+The commit SHA and document path are archival identifiers only. Because the repository has been deleted, this project does not claim that the source commit, document, branches, or other historical assets remain retrievable.
+
+The documents in this repository are a selective re-authoring of the architecture principles and contracts needed as an initial baseline. They are not a byte-for-byte copy of the historical source, do not preserve its full history, and do not imply that every proposal in that source was adopted.
 
 ## Adopted principles
 
@@ -30,22 +33,27 @@ This repository adopts, as the starting point for discussion and refinement:
 11. Workspace Freeze requests and receipts require authenticated, challenge-bound, replay-resistant evidence.
 12. Task terminal states are immutable; late budget or evidence conflicts are recorded independently.
 
+## New repository authority
+
+The former source repository's project-ownership statements are historical and do not apply to this project.
+
+- `wwxst/agent-Kernel` is the sole formal repository and source of truth for the new Agent Kernel.
+- The former `wwxst/agent-` repository has been deleted and is not an active source, dependency, or required reference.
+- The new repository has its own Git history, documentation authority, decision process, and future implementation baseline.
+- No old repository links are required to understand, build, test, or maintain this project.
+
 ## Deliberately not inherited
 
-The source document described `wwxst/agent-` as the future final code repository. That repository-ownership statement belongs to the old project and is **superseded for this new project** by the owner's explicit decision:
-
-- `wwxst/agent-Kernel` is the new and only formal development repository.
-- `wwxst/agent-` is a source of reference material and candidate assets only.
-- The new repository starts with its own Git history and documentation authority.
-
-This repository does not import:
+This project does not import:
 
 - old Git commits, branches, PRs, or development history;
 - old project directory structure or obsolete architecture versions;
 - old Kernel source code or tests as if they were already compliant;
 - old ADR numbering or historical decision status;
-- the old repository's implementation or technology choices as binding;
+- the former repository's implementation or technology choices as binding;
 - Multi-Agent / D9 implementation authorization.
+
+The former repository's deletion also means that no unreviewed historical code asset is assumed to be available for migration. If a specific asset is needed later, it must be supplied independently and reviewed for provenance, license, behavior, security, dependencies, and compatibility with the new contracts.
 
 ## Interpretation rule
 

@@ -13,7 +13,8 @@ The Kernel must make execution safe and auditable without becoming the place whe
 ## Repository rules
 
 - This repository is the sole formal development home for the new Kernel.
-- The previous repository `wwxst/agent-` is an asset and evidence source only. It is not a parent project, dependency, or implicit specification.
+- The former repository `wwxst/agent-` has been deleted by its owner. It is not an available source, dependency, or ongoing project.
+- Only knowledge and architecture principles already re-authored in this repository are available; do not assume deleted files, branches, or commits can be recovered.
 - No old Git history, old Kernel implementation, obsolete architecture draft, or development-process archive is imported.
 - Knowledge may be re-authored when useful; code is not migrated unless it is reviewed independently against this repository's contracts.
 - Architecture principles and contracts are versioned here. Unresolved design and technology choices remain explicitly open.
@@ -21,7 +22,7 @@ The Kernel must make execution safe and auditable without becoming the place whe
 
 ## Architecture baseline
 
-The initial design adopts the approved architecture principles and contract baseline from the previous project's V2.1.2 review, re-authored for this new repository. The source is recorded in [Architecture provenance](docs/architecture/provenance.md).
+The initial design is a self-contained re-authoring of the approved architecture principles and contract baseline historically recorded as V2.1.2. The source repository has since been deleted; this repository retains its historical commit identifier and document path for provenance only. No live source link or dependency remains. See [Architecture provenance](docs/architecture/provenance.md).
 
 The baseline separates:
 

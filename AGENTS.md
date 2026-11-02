@@ -5,7 +5,8 @@ These rules apply to all work in this repository.
 ## 1. Project identity
 
 - `wwxst/agent-Kernel` is the sole formal home of the new Agent Kernel project.
-- The previous repository `wwxst/agent-` is a read-only source of potentially useful knowledge, evidence, and candidate assets. It is not this project's parent, dependency, or implicit authority.
+- The former repository `wwxst/agent-` has been deleted by its owner and is no longer accessible. It is not a source, dependency, or implicit authority for this project.
+- Treat only the knowledge and architecture principles already re-authored in this repository as available. Do not assume deleted files, branches, commits, or code can be recovered.
 - Do not import old Git history, old project structure, obsolete decisions, or the old Kernel wholesale.
 - Re-author knowledge that remains useful. Review every code asset independently before proposing reuse.
 
@@ -35,7 +36,7 @@ Never turn a proposal, historical experiment, model output, or code that happens
 - The current authorization covers the initial documentation baseline and its iterative review.
 - Do not start runtime implementation, add production dependencies, select a final technology stack, or migrate legacy code without a separate explicit approval of scope.
 - Do not create a pull request, release, or deployment unless requested.
-- Do not modify the old repository as part of work in this repository.
+- Do not rely on the deleted repository or attempt to use it as an ongoing source. Any future review of an old code asset requires the owner to provide the asset independently, with provenance and license information.
 - Do not enable Multi-Agent / D9. It remains deferred and unauthorized.
 
 ## 5. Architecture invariants
