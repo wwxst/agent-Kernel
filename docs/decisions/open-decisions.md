@@ -1,12 +1,12 @@
 # Open decisions
 
-> **Status: Mixed register.** The one-Kernel/two-domain product direction and the revised ADP-01 Video first-phase autonomous-editing capability boundary are approved. ADP-02 through ADP-11 and detailed cross-domain/domain contracts, technology choices, and implementation decisions remain OPEN/PROPOSED.
+> **Status: Mixed register.** The one-Kernel/two-domain product direction, revised ADP-01 Video first-phase capability boundary, and revised ADP-02 progressive media-analysis policy are approved. ADP-03 through ADP-11 and the remaining detailed cross-domain/domain contracts, technology choices, and implementation decisions remain OPEN/PROPOSED.
 
-The current product direction and ADP-01 disposition are recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md) and the [Decision Log](decision-log.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). ADP-01 is REVISED/APPROVED; no other item is approved merely because it appears in the proposal packet.
+The current product direction and ADP-01 disposition are recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md) and the [Decision Log](decision-log.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). ADP-01 and ADP-02 are REVISED/APPROVED; no other item is approved merely because it appears in the proposal packet.
 
 ### First-batch decision-draft readiness
 
-Refined decision drafts and linked contract/evaluation updates are prepared for **ADP-02, ADP-03, ADP-05, and ADP-09**. They now specify coverage-manifest interval closure, Host launch/revocation linearization, piecewise asset-clock mappings, and resolver-mediated scoped handoff grants. They remain **OPEN** until the owner explicitly accepts, revises, defers, or rejects each item. Draft readiness is not approval and does not authorize implementation.
+ADP-02 is **REVISED/APPROVED**. The remaining first-batch drafts — **ADP-03, ADP-05, and ADP-09** — specify Host launch/revocation linearization, piecewise asset-clock mappings, and resolver-mediated scoped handoff grants; they remain **OPEN** until explicit owner disposition. These are documentation contracts, not empirically verified implementations, and approval does not authorize implementation.
 
 ## 1. Approved product direction
 
@@ -51,7 +51,7 @@ See [Coding design](../research/autonomous-coding-agent/design.md), [Coding refe
 **PROPOSED — first-phase design and contracts drafted.**
 
 - What typed timeline schemas, deterministic compiler mappings, and per-operation evidence obligations are required to implement the ADP-01-approved core operation set?
-- Which visual/audio/transcription analysis capabilities are required for initial task families, and how should whole-source coverage accounting, adaptive expansion, and UNKNOWN be represented?
+- Which exact analysis kinds and minimum evidence scopes should each initial task family declare under the approved ADP-02 progressive-analysis policy, and which provider/model capabilities can satisfy them?
 - How should source PTS, VFR conversion, audio sample alignment, exact conversion records, and operation-specific rounding be represented across supported media?
 - Which output profiles/containers/codecs should be offered initially?
 - Which media checks are deterministic and which require independent model/human review?
@@ -60,7 +60,7 @@ See [Coding design](../research/autonomous-coding-agent/design.md), [Coding refe
 - Which render resource limits and segmented-render strategies are practical across hosts?
 - What NarrativePlan beat schema and factual/chronology guardrails support different editing genres without imposing one story template?
 - Which moment-ranking dimensions and conflict-resolution policy should be used; how should salience, message relevance, context value, continuity, and duration trade off?
-- What analysis coverage, confidence calibration, and raw frame/audio/transcript retention/privacy policy are acceptable?
+- What task-family-specific evidence sufficiency and confidence calibration are appropriate, and what raw frame/audio/transcript retention/privacy settings satisfy data minimization?
 - Which MediaAnalysis/MediaProjectModel versions may be carried forward when source assets are unchanged but analysis methods or proxies change?
 - Which exact EvidenceCarryForward checks are required when a TimelineRevision changes only a subset of beats/clips?
 - What FFmpeg demuxer/decoder/filter/protocol allowlists and input media matrix are acceptable for the first profile?
@@ -70,7 +70,7 @@ See [Coding design](../research/autonomous-coding-agent/design.md), [Coding refe
 - Which criteria require blind human review, external assurance, or a user approval before publication?
 - Which public datasets (MEDit-Bench, QVHighlights, TVSum, or others) are suitable components of a rights-cleared project task set?
 
-See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md), [MediaProject contract](../contracts/media-project.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderPlan security contract](../contracts/render-plan-security.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md). The second-round recommendation and change map are in [Second-round architecture revision](second-round-architecture-revision.md). ADP-01's approved scope is recorded in the [Decision Log](decision-log.md); ADP-02 through ADP-11 remain open in [Architecture Decision Proposals](architecture-decision-proposals.md).
+See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md), [MediaProject contract](../contracts/media-project.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderPlan security contract](../contracts/render-plan-security.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md). The second-round recommendation and change map are in [Second-round architecture revision](second-round-architecture-revision.md). ADP-01 and ADP-02 approvals are recorded in the [Decision Log](decision-log.md); ADP-03 through ADP-11 remain open in [Architecture Decision Proposals](architecture-decision-proposals.md).
 
 ## 5. Reference implementation applicability
 
