@@ -193,5 +193,9 @@ The current cross-document consistency findings are recorded in [Cross-domain ar
 - Which generic artifact storage and streaming contracts are needed without choosing a storage technology?
 - Which host resource dimensions can be enforced consistently across platforms?
 - How should cross-domain linked tasks exchange artifacts without sharing domain authority?
-- What minimal Video Editing operation set gives useful results without expanding into a full editor?
-- Which subjective video-quality criteria require explicit human review?
+- Which Video capabilities belong to the core automatic-editing foundation, enhanced editorial roadmap, and post-production/platform adaptation?
+- How should Video's message-conditioned moment selection, NarrativePlan, pacing, continuity, A/V coordination, and revision loop be specified without forcing semantics into Kernel?
+- How should MediaProject/ProjectSnapshot, MediaAnalysis, MediaProjectModel, and TimelineRevision version/evidence lineage be enforced?
+- Which FFmpeg input/filter/network/filesystem/process controls can each supported Host enforce?
+- How should RenderJob projection reconcile Kernel ToolInvocation state, Host Ledger physical facts, verification, and artifact publication?
+- Which source-to-output provenance and independent acceptance obligations are required for each Video criterion?
