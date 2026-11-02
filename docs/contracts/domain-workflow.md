@@ -79,6 +79,7 @@ The LaunchGate has two mutually exclusive outcomes:
 2. If the authority fence commits first, the old dispatch ticket is rejected and no process is created.
 
 The Host receipt binds the invocation, Host run/process identity, ticket ID/nonce, durable LaunchAttempt ID, profile/DomainBinding digest, AuthorityFenceEpoch, exact authority-version vector, workspace/project generation, budget-reservation version, fencing epoch, launch-boundary sequence, and timestamp.
+
 Before process creation, the Host durably consumes the one-use ticket nonce and records a unique LaunchAttempt in its Host Ledger. Ticket consumption, the launch attempt, process creation, and authority-fence advancement are serialized by the LaunchGate. A duplicate or replayed ticket is rejected even after Host restart. If the Host crashes after durable consumption but before process creation, the ticket remains consumed and the invocation must be reconciled before any replacement ticket is issued; if process creation may have occurred without a durable receipt, preserve UNKNOWN.
 If the Host cannot prove the ordering, it must not launch new work; an uncertain process/output outcome remains UNKNOWN until reconciliation. A crash after process creation but before receipt persistence must never be treated as proof that no process started.
 
