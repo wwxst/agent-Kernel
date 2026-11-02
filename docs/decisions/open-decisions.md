@@ -2,7 +2,7 @@
 
 > **Status: Mixed register.** The one-Kernel/two-domain product direction and Video Editing first-phase scope are approved. Detailed cross-domain architecture, domain contracts, technology choices, and implementation decisions remain proposed/open.
 
-The current product direction is recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and the consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). No item is approved merely because it appears in this register.
+The current product direction is recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and the consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). That packet is a decision aid only; no item is approved merely because it appears in either document.
 
 ## 1. Approved product direction
 
@@ -27,7 +27,7 @@ See [unified domain direction](unified-domain-direction.md).
 - How should long-running jobs and progress events be represented in the common ToolInvocation/Host lifecycle?
 - How should cross-domain linked tasks exchange artifacts without sharing domain authority?
 
-See [Domain Workflow contract](../contracts/domain-workflow.md).
+See [Domain Workflow contract](../contracts/domain-workflow.md) and the proposed dispositions in [ADP-03, ADP-04, ADP-08, and ADP-09](architecture-decision-proposals.md).
 
 ## 3. Autonomous Coding domain
 
@@ -56,7 +56,7 @@ See [Coding design](../research/autonomous-coding-agent/design.md), [Coding refe
 - Which subjective edit-quality criteria require human acceptance?
 - Which render resource limits and segmented-render strategies are practical across hosts?
 
-See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md).
+See [Video Editing design](../research/multimedia-domain-architecture/design.md), [Media Timeline contract](../contracts/media-timeline.md), [RenderJob contract](../contracts/render-job.md), and [Video evaluation](../research/multimedia-domain-architecture/evaluation.md). Candidate resolutions are in [ADP-01, ADP-02, and ADP-05 through ADP-10](architecture-decision-proposals.md).
 
 ## 5. Reference implementation applicability
 
