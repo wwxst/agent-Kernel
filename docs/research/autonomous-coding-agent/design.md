@@ -377,7 +377,7 @@ The verification plan should identify required checks, optional risk-based check
 ### Phase G — Freeze and completion
 
 - Ensure no required operation, child process, or writable handle remains active.
-- Freeze a trusted, versioned ProtectedInputScope and immutable source snapshot before tests; capture sourceDigestBefore/sourceDigestAfter/sourceDigestAtGuard under the same scope and bind isolated test-generated outputs separately. Changes to protected inputs invalidate affected tests, while declared cache/coverage artifacts do not create false Stale verdicts.
+- Freeze a trusted, versioned ProtectedInputScope and immutable source snapshot before tests; additionally require a Host-authenticated **ExecutionViewManifest** proving the test process actually resolved source/config/tests from that snapshot (cwd, mount/overlay/symlink resolution, writable roots and effective protected-path digests). Matching immutable snapshot hashes alone cannot prove a valid run. Writable overlay shadowing or unproven input-view changes invalidate verification even if underlying hashes match; isolated cache/coverage outputs remain separate evidence.
 - If tests or final preparation changed in-scope files, invalidate affected evidence and re-run verification.
 - Request the trusted immutable final snapshot and authenticated receipt.
 - Submit the VerificationReport, criterion evidence, snapshot binding, and receipts to Kernel.
