@@ -10,13 +10,13 @@ This protocol describes **logical authorities** and requires no microservice spl
 
 ## 2. Authority scope, event identity, and **transaction ownership**
 
-Every Kernel mutation binds Task ID, expected aggregate version and stable command/idempotency key. Admission also binds accepted GoalContract, current PlanRevision, DomainBinding/profile, tool/argument digest, authority epoch, workspace/project generation and budget reservation. A repeated command ID with the same digest returns its original durable disposition; the same ID with different bytes is quarantined. A Host run binds Invocation ID, LaunchAttempt ID, Host identity/incarnation, one-use nonce, authority fence, exact target/input snapshot and tool digest.
+Each Kernel command binds a stable command/idempotency key and the **version of its owning aggregate**, not an automatically required global Task version. Structural Goal/Plan/cancel/terminal commands use `taskControlVersion`; ModelStep selection uses `modelStepVersion`; Invocation/receipt updates use `invocationVersion`; budget changes use `budgetScopeVersion`. Admission binds a **selective protected read-set**: accepted GoalContract and active PlanRevision epoch, DomainBinding/profile, exact tool/argument digest, current authority/fence, relevant workspace/project generation, budget reservation version, and any affected PlanStep/precondition identity. K validates that read-set atomically with its local admission/write-set. A global Journal sequence is audit order, **not** a mandatory CAS token for every operation. A repeated command ID with the same digest returns its original durable disposition; the same ID with different bytes is quarantined. A Host run binds Invocation ID, LaunchAttempt ID, Host identity/incarnation, one-use nonce, authority fence, exact target/input snapshot and tool digest.
 
 **Distinct logical records do not mean distinct physical transaction domains.** The first protocol has exactly these independent durable owners:
 
 | Owner / transaction | Records committed atomically within that owner | Recovery scanner and replay |
 | --- | --- | --- |
-| **K: Kernel Persistence** | Task/Plan/Attempt/Invocation aggregate event and version, Kernel Journal, admission decision, budget reservation, Kernel Command Inbox dedup result, ToolInvocation durable Intent and Kernel Dispatch Outbox **in the same local commit when admitting a tool**. ModelStep selected response, Completed and ResponseDeliveryOutbox also commit in one local transaction. Imported trusted Host receipt and Kernel HostResultInbox/dedup fact commit together. | Kernel Dispatcher scans pending K-Outbox after restart and redelivers **the same** message ID, Invocation ID, exact payload and dispatch nonce. Kernel Receipt Importer retries/reconciles trusted results under original IDs. |
+| **K: Kernel Persistence** | Separate TaskControl, ModelStep, ToolInvocation and BudgetScope versioned aggregates; Kernel Journal, Command Inbox, ToolInvocation durable Intent, budget reservation and Dispatch Outbox **atomically co-commit at ToolInvocation admission**. ModelStep final selection, Completed and ResponseDeliveryOutbox commit together. Authenticated Host receipt import, HostResultInbox dedup and Invocation projection commit together. Ordinary Invocation/receipt/budget operations do **not** CAS on an unrelated TaskControl version. | Kernel Dispatcher scans pending K-Outbox after restart and redelivers **the same** message ID, Invocation ID, exact payload and dispatch nonce. Kernel Receipt Importer retries/reconciles trusted results under original IDs. |
 | **O: Orchestration Persistence** | ResponseDeliveryInbox, local projection, immutable sealed Kernel CommandPlan, CommandIntents and Orchestration Command Outbox in one O-local transaction. | Orchestration scans unacknowledged deliveries/commands, resends the exact command IDs and payloads; does not generate new commands upon replay. |
 | **H: Trusted ToolHost Persistence** | Host DispatchInbox dedup disposition, unique consumed nonce and LaunchAttempt/IntentDurable in one H-local transaction **before spawn**. Persist Host process/result receipts and pending Host Result Outbox using H-local transactions. | Host scans its own Inbox, Ledger and Result Outbox after restart, reconciles process/output facts and resends original authenticated receipts. |
 | **Physical process / external target** | OS spawn, descendants, filesystem/remote side effects. **Not** transactionally combined with K, O or H storage. | Host reconcilers inspect trusted process identity, output/target state and idempotency evidence; ambiguity stays OutcomeUnknown. |
@@ -37,11 +37,11 @@ These tables define a **minimal projection** of the existing richer contracts; t
 
 | Aggregate | Minimal states and allowed progress | Owner |
 | --- | --- | --- |
-| Task / Plan | Proposed → AcceptedPendingCutover → Active → Superseding → Superseded; at most one Active PlanRevision; task may enter Reconciling | Kernel |
+| TaskControl / Plan | Accepted GoalContract, one active PlanRevision, structural switch/cancellation/terminal facts use TaskControl CAS; Planning/Ready/Running/Verifying/Waiting are **derived display modes**. PlanRevision structural cutover remains atomic. | Kernel |
 | ModelStep selection | Open → CandidateRecorded → Selected/Completed; selection is irreversible; no candidate if response incomplete/stale | Kernel |
 | ModelAttempt execution | Requested → InFlight → Complete/FailedKnown/Cancelled/OutcomeUnknown; charging is a separate dimension | Model Gateway facts, Kernel committed |
 | Budget reservation | Reserved → ProvisionallyAccounted → Settled/Adjusted or HeldUnknown; no release on timeout | Kernel |
-| ToolInvocation | Proposed → Admitted → DispatchPending → Started/Rejected/OutcomeUnknown → terminal trusted outcome (if knowable) | Kernel admission and Host receipts |
+| ToolInvocation | Proposed → Admitted → DispatchPending → Running/Rejected/OutcomeUnknown → reconciled terminal outcome; lifecycle applies only to Invocation, **not to an ActionProposal batch** | Kernel logical admission; Host owns physical truth |
 | Host LaunchAttempt | IntentDurable → GateRejected or LaunchBoundaryRecorded or OutcomeUnknown; nonce never re-usable | Trusted ToolHost |
 | Verification / Completion | Bound evidence → criterion review → CompletionGuardAccepted/Blocked; Completed commits once | Kernel Guard |
 
@@ -56,7 +56,7 @@ All K-transaction events below require expected aggregate version + stable comma
 | AdmitModelAttempt | valid policy; price-envelope certificate and full maximum reservation in hard mode | K: Attempt admission + reservation + Journal event + outbound request intent | K-outbox replay; no new Attempt or reservation |
 | RecordCandidate | complete schema/arguments; current snapshot; before effective cancellation | K: candidate digest + Attempt/Step version + Journal order | reject replay conflicts; no executable partial candidate |
 | SelectCandidate | first eligible durable candidate, all charge exposure reserved | K: selectedAttemptId + Step Completed + ResponseDeliveryOutbox + Journal | same selected Attempt on replay; O Inbox dedup |
-| AdmitToolInvocation | active valid PlanStep, exact authority/scope, reservation, needed **per-invocation approval** | **K: Invocation=Admitted + DurableIntent + Journal + budget hold + DispatchOutbox together** | K-1; no ghost dispatch without committed Intent |
+| AdmitToolInvocation | active PlanStep, relevant **selective version read-set** (Plan/Goal, authority, workspace, tool, reservation), per-invocation approval; no unrelated TaskControl CAS | **K: validate read-set + Invocation=Admitted + DurableIntent + Journal + budget hold + DispatchOutbox together** | K-1; no ghost dispatch; unrelated receipts may progress |
 | ReceiveHostDispatch | valid original ticket/nonce, valid Host identity | **H: DispatchInbox + nonce consumption + LaunchAttempt/IntentDurable together** | duplicate returns original disposition; no respawn |
 | EnterLaunchGate | Host-local fence/version/snapshot/lease state proved current under the *local* gate | H gate serializes local spawn against local fence; later receipts use H transaction | unknown spawn outcome is OutcomeUnknown, never replay nonce |
 | InstallHostFence | ordered inside the **same Host-local gate** as physical process creation | H: HostFenceInstalled(seq, epoch, Host incarnation), durable acknowledgement | local fence blocks old launches; Kernel request itself does not |
@@ -66,7 +66,7 @@ All K-transaction events below require expected aggregate version + stable comma
 
 The Host Ledger + OS spawn are never atomic. A stable Host launch attempt is only proof that the exact physical step occurred where independently evidenced, not proof of external business success. Missing physical evidence is recorded as OutcomeUnknown.
 
-**Forbidden transition:** K-Outbox delivery is not permitted until K Intent/Admission/Outbox commit is durable. A consumer cannot reconstruct a new nonce for an unresolved original dispatch. A stale or denied per-Invocation approval never authorizes launch.
+**Forbidden transition:** K-Outbox delivery is not permitted until K Intent/Admission/Outbox commit is durable. A consumer cannot reconstruct a new nonce for an unresolved original dispatch. A stale or denied per-Invocation approval never authorizes launch. **No global TaskControl CAS on every Attempt/Invocation/receipt:** it would generate artificial conflicts and is not part of this minimized protocol. Domain/Kernel state reads must still revalidate the *relevant* protected epochs and read-set under K-local transaction isolation. If the chosen persistence cannot prove this, G1 cannot pass.
 
 ## 5. Single-Host launch and revocation ordering (initial scope)
 
@@ -94,7 +94,9 @@ The adapter computes the upper bound conservatively and supplies enforceability 
 
 A complete valid winning response can commit while losing Attempts/invoices remain unresolved **only if all outstanding charge exposure remains reserved**. Timeouts and cancellation do not release reservations. See [Model and Budget](model-and-budget.md).
 
-## 7. Plan-change fast path
+## 7. One main Agent Loop and plan-change fast path
+
+A **single primary Task Orchestrator** chooses Strategic, Tactical or Assurance as **decision purposes**, not independently running control loops or separate ControlProposal state machines. It observes current authoritative facts, selects one next decision, admits each proposed side effect independently, updates the domain projection, and returns to the same loop. A higher-priority cancellation, conflicting UNKNOWN, user instruction or assurance failure preempts the next decision, not the already started Host facts. See [Architecture subtraction review](../decisions/architecture-subtraction-review.md).
 
 - **L0 TacticalAdjustment:** search, debugging hypothesis, tool choice, and an existing planned operation's *one-use InvocationApproval* grant/denial within the current GoalContract, PlanStep, declared capability/effect/scope and risk ceiling. A per-invocation approval is checked at admission/launch, recorded with the exact Invocation, argument digest, authority versions, expiration and nonce. It does **not** alter immutable PlanRevision, so does not trigger cutover.
 - **L1 PlanStepRework:** explicit rerun of the same objective and authority envelope, retaining current PlanRevision and invalidating affected verification evidence. An ordinary InvocationApproval may independently be required for a rework tool.
@@ -125,6 +127,9 @@ Video continues with source/project/timeline/render/output lineage and its own r
 9. No TaskCompleted without current required criterion evidence, final snapshot and relevant process convergence.
 10. Inbox/Outbox replay cannot create a second authoritative selection, plan activation, completion or consumed launch token.
 11. Coding/Video semantic judgments stay outside Kernel; Domain does not grant physical execution authority.
+17. Ordinary ModelStep/Invocation/receipt/evidence operations use owning-aggregate CAS and protected read-set checks; they do **not** require global TaskControlVersion equality. TaskControl CAS still protects Goal/Plan/cancel/terminal transitions.
+18. ActionProposal is a bounded immutable intent envelope with no authoritative executing/settled state; per-Invocation events determine its derived progress. EvidenceGraph is a non-authoritative optional index, not a second ledger.
+19. Strategic/Tactical/Assurance are modes of one controller; Task and PlanStep work/verification display views are derived from canonical facts and may not act as independent approval authorities.
 
 Additional G0 invariants:
 
