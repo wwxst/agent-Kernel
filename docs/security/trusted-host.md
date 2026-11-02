@@ -86,7 +86,19 @@ The Host must:
 
 A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication.
 
-For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.
+For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md) and [FFmpeg RenderPlan security contract](../contracts/render-plan-security.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.
+
+### 7.1 Media render-specific Host obligations
+
+For an FFmpeg RenderJob, the Host must establish a per-invocation filesystem view with immutable read-only source/sidecar bindings, a unique writable staging directory, and no access to final artifact namespaces, home directories, secrets, Kernel/Host persistence, unrelated projects, device nodes, or host sockets. Artifact IDs are resolved by trusted code; model-provided path strings are never accepted as filesystem authority.
+
+The render worker has no network egress in the initial profile. FFmpeg protocol allowlisting and demuxer/filter restrictions are defense in depth; they do not replace OS-level network and filesystem confinement. FFmpeg receives a canonical argv vector and compiler-generated, allowlisted filtergraph representation, not a shell string or raw model graph.
+
+The Host pins source identity/digests for the duration of the render, applies enforceable CPU/memory/process/wall-time/disk/output-size limits, contains descendants, and proves writable-handle convergence before sealing staged output. If a required Host capability is unavailable, admission fails closed. Linux namespaces/cgroup v2/seccomp and Windows Job Objects are research candidates, not selected platform requirements; platform-specific guarantees remain unverified.
+
+The Host Ledger records the durable launch intent, Host run identity, process/job identity, exit/signal, resource facts, descendant convergence, staging file identity/digest, and authenticated receipt. Kernel Journal remains authoritative for admission, cancellation intent, budget settlement, fencing, and legal invocation state. A Host crash, missing receipt, or uncertain writable process leaves the invocation UNKNOWN; no retry or publication is permitted until reconciliation proves a safe outcome.
+
+FFmpeg may write only to a unique staging target. Host seals the output after process convergence and supplies its digest/receipt to independent technical and content verification. Final ArtifactRef publication is a separate recoverable step; the renderer never writes directly to a final deliverable or overwrites an earlier version.
 
 
 ## 8. Verification status
