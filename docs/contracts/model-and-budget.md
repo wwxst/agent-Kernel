@@ -51,6 +51,29 @@ The total exposure includes every concurrent Attempt (including losing, cancelle
 
 The system may offer a separately opted-in **soft-budget mode** with clear non-guarantee and best-effort controls. It must not call this a hard ceiling. A provider incapable of a charge bound either uses that explicitly authorized mode or is rejected.
 
+### 4.1 ProviderAdapter maximum-charge certificate — hard-budget admission
+
+A trustworthy **maximum charge** must be more than a price estimate. For every charge-bearing Attempt, a ProviderAdapter supplies a canonical, versioned, immutable `MaximumChargeCertificate` with an authenticated adapter identity and request binding, validated by Kernel **before** creating the hard-budget reservation and issuing the provider request.
+
+Minimum certificate fields and required evidence:
+
+| Field | Proof requirement |
+| --- | --- |
+| Provider / account / SKU / model / region, pricing version and validity interval | Authenticated price schedule or contractual rate ceiling, recorded currency and effective date/time; changes invalidate stale certificates |
+| Canonical submitted request digest and maximum billable input | Include system/developer context, tool schema/definitions, retrieved/cached content, hidden/prompt transformations if charged, and enforceable size bounds |
+| Maximum output, reasoning and additional billable tokens/units | A provider-enforced cap for **every** charged output dimension, including tool-side or internal steps if billable |
+| Cache read, write, storage and discount behavior | Conservative worst-case charge assuming no unproven discount; exclude refunds/credits from the bound unless guaranteed |
+| Fixed per-request fees and extra services | Include modality charges (image/audio/video), retrieval, hosted tools, batch/minimum charges, data transfer, storage and other provider-controlled fees |
+| Retry, continuation, redirect, provider-side internal repetition | Enumerate every retryable charge with a **provider-enforced maximum count** and total envelope; uncontrolled hidden retries disqualify hard-budget mode |
+| Rounding, taxes and currency conversion | Conservative rate/rounding policy and pinned exchange/tax bound when included in the Task's hard monetary ceiling |
+| Maximum total amount and proof issuer | Deterministic conservative calculation, signed/attested adapter version and evidence references, expiration, enforceable request limits and verification status |
+
+**Admission decision:** The adapter validates that its upper-bound claims are tied to the actual provider request, not just application hints. Kernel checks trusted issuer, schema, active pricing/version, proof coverage for all billable dimensions, request digest, bound expiration and no unsupported extras. Kernel then reserves the **full upper bound of every concurrent Attempt** in each relevant funding scope in a K-local transaction. An adapter's self-reported confidence, historical average price or estimated token count alone is not proof of a hard ceiling.
+
+If any term is unbounded, hidden, mutable without a contractual cap or unenforceable by the provider, the certificate is invalid for Hard Budget. **Fail closed at admission** or require an explicitly authorized, separately labeled Soft Budget with an admitted cost risk; never silently downgrade hard to soft. An unexpected late charge above a valid certificate records a pricing/integrity violation, append-only debt and appropriate enforcement hold, without rewriting the previously selected model response or terminal Task.
+
+The provider-specific certificate schema, trustworthy evidence and exact price-bound algorithms remain **PROPOSED / UNVERIFIED** until G1 adapter verification; this document defines admission obligations without asserting any current Provider qualifies.
+
 The Model Gateway records complete results and provider usage evidence; the Kernel maintains append-only budget responsibility. Billing may settle after ModelStep selection, response delivery, or even Task termination. Adjustments cannot rewrite a previously committed selection or terminal Task. Losing Attempts' unused reservation is released **only** when a trusted terminal usage bound/result establishes safe releasability, never because a timeout or cancellation request occurred.
 
 `BlockedUnbounded` is a recoverable hold for an attempted/legacy charge-bearing request whose exposure cannot be bounded; it applies to affected funding/admission scopes. It is not a provider execution result or an automatic global Task block. Reconcile usage or obtain an authorized budget action before unblocking unsafe funded work. Related Task completion rules still consider outstanding relevant execution risks independently of billing latency.
