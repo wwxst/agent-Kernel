@@ -28,6 +28,7 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 - [Reference implementation review](research/autonomous-coding-agent/reference-review.md)
 - [Failure model and recovery policy](research/autonomous-coding-agent/failure-model.md)
 - [Evaluation and experiment protocol](research/autonomous-coding-agent/evaluation.md)
+- [Second-round contract review](decisions/second-round-contract-review.md)
 - [Open decisions](decisions/open-decisions.md)
 - [Roadmap and gates](development/roadmap.md)
 - [Legacy asset policy](migration/asset-policy.md)

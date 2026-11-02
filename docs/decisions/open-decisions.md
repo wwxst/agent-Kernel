@@ -23,7 +23,7 @@ The first-round design skeleton is retained. The second-round draft now closes t
 | P1-5 Loop arbitration | One task-level Orchestration decision coordinator with explicit priority and Kernel CAS | PROPOSED |
 | P1-6 Evaluation gates | Design method → task set → baseline → target confirmation → formal evaluation | PROPOSED |
 
-The detailed contracts are in [PlanRevision lifecycle](../contracts/plan-revision.md), [intelligent execution design](../research/autonomous-coding-agent/design.md), [Context Engine](../context/context-engine.md), [completion contract](../contracts/completion.md), and [evaluation protocol](../research/autonomous-coding-agent/evaluation.md).
+The detailed contracts are in [PlanRevision lifecycle](../contracts/plan-revision.md), [intelligent execution design](../research/autonomous-coding-agent/design.md), [Context Engine](../context/context-engine.md), [completion contract](../contracts/completion.md), and [evaluation protocol](../research/autonomous-coding-agent/evaluation.md). The cross-document consistency findings are recorded in [Second-round contract review](second-round-contract-review.md).
 
 Remaining open questions:
 

@@ -40,7 +40,7 @@ See [Architecture overview](docs/architecture/overview.md).
 
 The second-round intelligent-execution design refines the first-round proposal with GoalContract versioning, PlanRevision cutover, orthogonal PlanStep status, ActionProposal lifecycle, EvidenceGraph minimum records, decision arbitration, layered verification independence, checkpoint recovery, and staged evaluation gates.
 
-Start with [the design](docs/research/autonomous-coding-agent/design.md), then review the [reference comparison](docs/research/autonomous-coding-agent/reference-review.md), [failure model](docs/research/autonomous-coding-agent/failure-model.md), and [evaluation protocol](docs/research/autonomous-coding-agent/evaluation.md).
+Start with [the design](docs/research/autonomous-coding-agent/design.md) and the [PlanRevision lifecycle contract](docs/contracts/plan-revision.md), then review the [reference comparison](docs/research/autonomous-coding-agent/reference-review.md), [failure model](docs/research/autonomous-coding-agent/failure-model.md), [evaluation protocol](docs/research/autonomous-coding-agent/evaluation.md), and [second-round consistency review](docs/decisions/second-round-contract-review.md).
 
 ## Current state
 
