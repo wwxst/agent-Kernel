@@ -140,9 +140,13 @@ Evidence and artifacts share generic envelopes:
 - trust/sensitivity class;
 - invalidation conditions and lineage.
 
-The payload is domain-specific. A repository test result and a media probe result are not forced into one semantic record. Both can be referenced by the shared EvidenceGraph and VerificationReport.
+The payload is domain-specific. A repository test result and a media probe result are not forced into one semantic record. Both are bound by the minimum shared EvidenceRef/criterion evidence envelope and VerificationReport; a richer EvidenceGraph is optional.
 
 Kernel Journal and Host Ledger remain separate fact boundaries. Domain projections do not replace either ledger.
+
+## 6.1 Minimal shared orchestration (PROPOSED subtraction)
+
+One primary Task Orchestrator loop chooses Strategic/Tactical/Assurance as decision modes. Coding and Video keep independent full domain intelligence and criterion verification. Shared PlanRevision is an **L2 structural outcome contract**, not every tactic; PlanStep WorkStatus/VerificationStatus are event-derived views. ActionProposal is a bounded immutable decision intent and not a separate execution lifecycle. A minimal EvidenceRef and criterion evidence binding suffice; EvidenceGraph can be an optional projection. Context Planning/Execution/Verification are purpose views, not separate stores. Sequential execution is default, with bounded read/disjoint parallelism only where Host conflict containment is proven. Kernel ToolInvocation Admission and trusted Host execution remain mandatory for each effectful action; no abstraction simplification grants authority.
 
 ## 7. Shared ModelStep, ToolInvocation, and Host path
 
