@@ -107,3 +107,9 @@ ADP-02 is now **REVISED/APPROVED** and recorded above. The remaining first-batch
 ## 6. Remaining decisions
 
 ADP-03 through ADP-11 remain OPEN. ADP-01 and ADP-02 are recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
+
+## 7. Subsequent architecture-subtraction proposal — **NO OWNER DECISION**
+
+The Draft PR #1 [architecture subtraction review](architecture-subtraction-review.md) proposes a single primary autonomous loop with Strategic/Tactical/Assurance **modes**, unique state authorities with selective version read-sets rather than global Task CAS on every operation, L2-only structural plan revisions, minimum EvidenceRef/criterion bindings instead of mandatory EvidenceGraph lifecycle, bounded immutable ActionProposal intent, lazy Context views, sequential-first scheduling and milestone checkpoints. It **retains** single-Host fence/revocation distinctions, K/O/H transactional owners, Coding effective execution-view attestation, Hard Budget, UNKNOWN recovery and evidence-gated Completion.
+
+**Status: REVIEW PROPOSAL ONLY.** G0 not approved; G1–G5 not run. This **non-decision record** does not alter ADP-01/02 REVISED/APPROVED dispositions, approve ADP-03–11, authorize Runtime development or freeze architecture. Any future acceptance requires an explicit owner decision entry with exact revision and scope.
