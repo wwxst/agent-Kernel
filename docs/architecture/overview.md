@@ -42,7 +42,7 @@ The product is not two agents joined by a common UI. It is one Kernel that hosts
 
 The Kernel remains the sole authority for:
 
-- Task, Turn, runtime Step, ModelStep, ModelAttempt, ActionProposal, and ToolInvocation state;
+- authoritative TaskControl (accepted goal/plan, cancel/terminal), ModelStep/Attempt selection, ToolInvocation admission and budget transitions; Turn/runtime Step/ActionProposal activity can be derived from committed facts instead of separate authoritative lifecycles;
 - accepted GoalContract/PlanRevision versions, PlanStep work/verification state, and legal transitions;
 - deterministic contract validation, protected-field confirmation references, and plan-switch barriers;
 - model request admission, candidate selection and hard budget reservations/settlement; Model Gateway observes provider facts rather than committing Kernel authority;
@@ -65,7 +65,7 @@ The two domains have distinct models:
 | Coding | RepositoryModel | Repository reconnaissance, dependency-aware code plan, implementation, hypothesis-driven debugging | Tests/build/static analysis/API/security and code review evidence |
 | Video Editing | MediaProjectModel | Media analysis, story/pacing interpretation, source-range selection, timeline generation/revision | Timeline, probe/decode, audio/video integrity, content and perceptual review |
 
-Context Engine supplies shared provenance, retrieval, freshness, checkpoint, compaction, and version-binding infrastructure. It hosts separate projections; it does not create a universal semantic model.
+Context Engine is one **lazy projection assembler** for Planning/Execution/Verification views over provenance-bound source references. EvidenceGraph may be a disposable optional index; only typed EvidenceRefs and criterion-level current evidence bindings are mandatory. Milestone checkpoints aid recovery but never replace the Journal/Host facts.
 
 ## 6. Workflow Profiles and DomainBinding
 
@@ -95,7 +95,7 @@ See [Domain Workflow binding contract](../contracts/domain-workflow.md).
 5. Domain Intelligence proposes a PlanRevision using the shared PlanRevision envelope and typed domain PlanSteps.
 6. Kernel validates and safely activates the revision; a subsequent revision uses freeze → drain → reconcile → refresh → validate → atomic activate.
 7. Context Engine assembles a version-bound Execution Context.
-8. Model Gateway runs a Kernel-managed ModelStep; Orchestration proposes an ActionProposal.
+8. The single Task Orchestrator selects a Strategic/Tactical/Assurance purpose, receives a complete Kernel-managed ModelStep response and records a bounded immutable action-intent envelope; it does not start another ActionProposal state machine.
 9. Kernel independently admits each ToolInvocation under current policy, approval, capability, budget, domain profile, and fencing.
 10. Tool Runtime dispatches admitted work through Trusted ToolHost.
 11. Host records physical process/job facts and returns receipt, artifacts, and output evidence; UNKNOWN is reconciled rather than blindly retried.
@@ -143,6 +143,8 @@ The first phase is automatic editing, not a manual visual editor. See [Video Edi
 12. Current work is documentation/research only; Runtime development is not authorized.
 
 ## 11. Deployment principle
+
+**First-slice execution path is one Task Orchestrator loop**, choosing Strategic/Tactical/Assurance as decision purposes. No three-loop runtime, ControlProposal arbitrator, mandatory graph database or global speculative scheduler. ActionProposal is an immutable bounded decision/intent record, EvidenceGraph an optional provenance index, and context purpose views are lazily assembled. The default scheduler serializes work, allowing separately admitted bounded parallel operations only when conflict safety is proven. TaskControl CAS applies to accepted goal/structural plan/cancel/terminal changes, not every tool receipt; ordinary actions bind selective authority, workspace and budget versions. See [Architecture subtraction review](../decisions/architecture-subtraction-review.md).
 
 The initial design does not assume microservices. Application, Orchestration, Kernel, Gateway, Context Engine, and Tool Runtime may begin as separately testable responsibilities in one application process. Trusted ToolHost must retain a real process/OS trust boundary from untrusted tool code.
 
