@@ -70,7 +70,7 @@ A report should bind at least:
 - DomainBinding ID/digest and Workflow Profile version;
 - criterion-to-PlanStep and criterion-to-evidence mapping;
 - workspace/project ID, base commit or source-asset digest set, workspace/project generation, and hash-scope version;
-- for Coding, the approved ProtectedInputScope version, immutable SourceSnapshot ID, sourceDigestBefore/sourceDigestAfter/sourceDigestAtGuard, and isolated verification-output manifest; for Video, the applicable source/project/timeline/render/output digests;
+- for Coding, the approved ProtectedInputScope version, immutable SourceSnapshot ID, sourceDigestBefore/sourceDigestAfter/sourceDigestAtGuard, **ExecutionViewManifest digest and Host receipt, effective protected input digests, namespace/mount/overlay/path-resolution identity, enforced in-run no-shadow/no-mutation proof**, and isolated verification-output manifest; for Video, the applicable source/project/timeline/render/output digests;
 - environment digest, runtime/compiler/toolchain/renderer versions, FFmpeg build identity where applicable, and dependency-lock hash;
 - each required command or render invocation's actual argv/argument digest, filtergraph digest where applicable, working directory, Host run ID, start/finish times, exit code or signal;
 - stdout/stderr digests and controlled log references;
@@ -88,26 +88,37 @@ A model-generated hash or test summary is not trusted evidence.
 
 ## 5. Workspace and domain artifact snapshot
 
-### 5.1 Coding protected-input snapshot and isolated verification (PROPOSED refinement)
+### 5.1 Coding SourceSnapshot **and effective execution view** (second-round PROPOSED refinement)
 
-A build/test run often generates caches, coverage and temporary artifacts. These outputs must not cause spurious Stale verdicts, but a test must not alter required source or configuration without invalidating evidence.
+A trusted immutable `SourceSnapshot` and versioned `ProtectedInputScope` remain mandatory, covering source/config, dependency/lock files, test scripts, tool selection/configuration, necessary untracked inputs and all other acceptance-relevant input files. Output/cache/coverage locations may be excluded **only** when the trusted profile proves they cannot shadow protected inputs. The model/implementer cannot change the exclusion scope after the run.
 
-Before verification, the trusted Workspace Host materializes or pins an **immutable SourceSnapshot**. The Workflow Profile defines and versions a pre-approved **ProtectedInputScope**, covering relevant source, configuration, dependency manifests and lockfiles, verification/test scripts, necessary untracked inputs and any other input affecting the specified acceptance obligations. An agent cannot extend exclusions retroactively. Excluded generated directories must be demonstrably output-only; source, important config and verification inputs cannot be excluded merely to preserve a pass.
+**P0-CV1: a source digest alone does not prove the test consumed that source.** A writable overlay could shadow a configuration or test script while the underlying immutable snapshot remains intact. Therefore each trusted verification Host Run must bind an authenticated `ExecutionViewManifest` (and its digest) to the exact SourceSnapshot, command/argv, Host run/process identity and all resulting evidence.
 
-Record separately:
+The ExecutionViewManifest must record and verify at least:
 
-1. `sourceDigestBefore`: exact protected-input snapshot digest before the verification run.
-2. `verificationOutputManifest`: independently referenced generated outputs, logs and coverage digests, with Host receipt and environment binding.
-3. `sourceDigestAfter`: protected-input digest after all verification processes/descendants have converged.
-4. `sourceDigestAtGuard`: Completion Guard's independent reread of the same immutable accepted source snapshot and scope.
+1. **Execution identity:** Host identity/incarnation, command/run ID, process-tree/namespace identity, working directory, effective root filesystem, runtime/toolchain/environment version and inherited configuration/file descriptors that influence input selection.
+2. **Mount resolution:** complete relevant root/mount-tree manifest, read-only source mount, overlay lower/upper order, bind mounts, whiteouts, path lookup/search directories, symlink/hardlink resolution constraints and mount changes permitted during the run.
+3. **Protected input lookup:** for each protected path, its *resolved effective process-view identity* and digest (not just its lower immutable source digest), source snapshot path/identity and any permitted external read-only dependency roots with pinned digests.
+4. **Writable isolation:** explicit output/scratch/cache roots, proof those paths cannot mask or redirect protected source/config/tests, and enforcement or trustworthy continuous observation of writable-layer changes, mount/path switches, symlink retargeting and protected file opens.
+5. **Before/after evidence:** trusted effective protected-input digest at execution start and after process/descendants converge, final mount/namespace equivalence, output manifest and authenticated Host receipt. Unprovable intermediate protected-input mutation or hidden path resolution marks verification Invalid/Stale even if final content is restored.
 
-Default invariant, with identical scope/version, environment binding and source identity:
+**Preferred enforcement:** run verification using a sealed read-only source view with writable output/scratch namespaces **disjoint from protected inputs**. Reject writable overlays that cover protected paths, unapproved bind mounts, symlink redirection, alternative search-path test scripts/config and runtime mount changes. Revalidate the process-root/cwd and effective path resolutions under the trusted Host boundary, not by trusting model-provided paths.
+
+A platform that cannot enforce a sealed view may use **an equivalent trusted observation method** that records every relevant protected file open, path resolution, mutation and mount change and proves the effective contents consumed remained the accepted version. A simple pre/post hash of the unchanged immutable lower layer, without effective-view evidence, is **never sufficient**. If equivalence cannot be proved, the verification criterion remains Unverified/Invalid.
+
+Two independent integrity conditions hold with the same versioned scope:
 
 `sourceDigestBefore == sourceDigestAfter == sourceDigestAtGuard`
 
-Verification runs should use isolated output directories or a controlled writable layer, and may create ordinary declared cache/coverage files without affecting the protected-input digest. If isolation is not supported, the trusted Host must explicitly inspect the in-scope inputs after execution; unprovable input integrity cannot be treated as Passed.
+**and**
 
-A changed in-scope source/config/dependency/test input invalidates affected verification evidence and requires rerunning the relevant checks on the final immutable snapshot. Completion Guard verifies current criterion evidence, final snapshot and process/handle convergence. It does not require output artifacts to have the same digest as source inputs. The report must bind `ProtectedInputScope` version, source snapshot identity, before/after/guard digests, environment and output manifest. See [Core protocol](core-protocol.md).
+`effectiveProtectedInputDigestBefore == effectiveProtectedInputDigestAfter == sourceDigestAtGuard` **plus** trusted in-run enforcement/observation and matching effective namespace/mount view.
+
+These equalities are necessary, not individually sufficient. A shadowed file or unverifiable in-run input modification invalidates the report even when every digest equality happens to hold. Normal isolated output artifacts have separate provenance and do not create spurious Stale verdicts.
+
+Completion Guard validates both immutable source identity and Host-authenticated execution-view evidence, command/environment, protected input scope, process-tree convergence, final workspace snapshot and freshness. It must reject any run that could have consumed a different script/config/source through overlay, symlink, mount or writable path, including a run where the underlying SourceSnapshot hashes still match. Video keeps its domain-specific provenance requirements.
+
+See [Core protocol](core-protocol.md) and [Workspace Freeze](workspace-freeze.md).
 
 ### 5.2 Video media artifact snapshot
 
@@ -153,7 +164,7 @@ Before TaskCompleted, Kernel verifies:
 - Verifier disposition is not treated as criterion proof; the required machine/external/human evidence classes are independently present.
 - Per-criterion evidence-independence class meets the risk-based requirement in the accepted GoalContract/policy.
 - Workspace or media-project identity, DomainBinding, generation, and final artifact snapshot match the report.
-- Coding protected-input digest (including the guard's independent reread) or Video source/timeline/render/output digests equal trusted digests of the same immutable artifacts; generated Coding test outputs remain separately bound as evidence.
+- Coding protected-input digest **and trusted effective execution view (including process-view protected-path digests, no-shadow enforcement and Guard reread)**, or Video source/timeline/render/output digests, match the accepted immutable inputs. Generated Coding test outputs remain separately bound as evidence.
 - Execution environment, dependency/toolchain, renderer, and FFmpeg build digests match the task contract where applicable.
 - Every required test, probe, decode check, or render invocation has a real Host Run, trusted receipt, terminal outcome, and output digest.
 - Artifacts are attributable and content-addressed.
