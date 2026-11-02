@@ -81,6 +81,18 @@ For the first plan:
 4. If the initial workspace and task bindings remain current and there are no prior operations to drain, Kernel atomically activates the revision and updates the Task's active-plan pointer.
 5. The Task can move from Planning to Ready; execution begins only when a PlanStep becomes Ready.
 
+### 3.15 Change classification and tactical fast path (PROPOSED refinement)
+
+A plan switch applies only when an accepted structural authority/goal constraint must change. Domain Orchestration proposes one of three reasoned change classes; Kernel validates **protected-field diffs** rather than trusting the model's label:
+
+| Class | Permitted changes | Protocol |
+| --- | --- | --- |
+| L0 TacticalAdjustment | Investigation/search method, debugging hypothesis, tool selection, localized execution tactics within existing PlanStep objective, dependencies, authority and accepted criteria | No new PlanRevision; record appropriate ActionProposal/ExecutionTrace, re-admit every effectful ToolInvocation |
+| L1 PlanStepRework | Re-attempt the *same* PlanStep outcome after failed verification or implementation, without a protected-field change | Explicit `PlanStepReworkStarted`; preserve prior attempts, artifacts and failed evidence, mark affected verification Stale; current PlanRevision remains Active |
+| L2 StructuralReplan | GoalContract/scope, protected acceptance obligation, capability/approval, dependency graph, relevant resource envelope, material precondition or execution authority change | Full `PlanSwitchRequested` freeze/drain/reconcile/refresh/validate/cutover in section 3.2 |
+
+L0/L1 cannot expand authorization, escape budget/admission/fence checks, overwrite source/evidence lineage or weaken required verification. When an L0/L1 classification cannot be proved from the current authoritative snapshot, classify as L2 or block for clarification; no model-generated justification bypasses the guard. The first implementation has **no partial/hot L2 plan cutover**. Routine failed tests or searches do not create a new PlanRevision when the PlanStep contract is unchanged. See [Core protocol](core-protocol.md).
+
 ### 3.2 Replanning and version switch
 
 A replan is a coordinated cutover, not a pointer overwrite.
@@ -221,6 +233,8 @@ After cutover, a late receipt for an old revision is appended as historical evid
 8. Old plan/step/evidence history is append-only and never rewritten by replan.
 9. A new GoalContract version or PlanRevision invalidates any VerificationReport whose bindings no longer match.
 10. Kernel validates structure and authority; Orchestration evaluates semantic adequacy.
+11. A tactical or in-step rework change that retains all protected fields does not require a full PlanRevision cutover, but every effectful operation remains individually admitted.
+12. Structural changes cannot be disguised as tactical changes; classification uses authoritative protected-field diffs.
 
 All runtime transition atomicity, concurrent admission behavior, and recovery properties remain UNVERIFIED until implemented and fault-injection tested.
 
