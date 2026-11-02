@@ -1,125 +1,138 @@
 # Long-running RenderJob and media execution contract
 
-> **Status: PROPOSED Video Editing execution contract.** This contract maps long-running media rendering onto the shared ToolInvocation, budget, Trusted ToolHost, cancellation, recovery, and evidence model. No renderer implementation or process-control property is currently verified.
+> **Status: PROPOSED Video Editing execution contract.** RenderJob maps long-running media rendering onto shared ToolInvocation, budget, Trusted ToolHost, cancellation, recovery, and evidence controls. No renderer implementation or process-control property is verified.
 
-## 1. Purpose
+## 1. Purpose and authority
 
-Rendering is a long-running, resource-intensive Host operation. It must not be treated as a synchronous function call whose success is inferred from a returned string or an FFmpeg exit code alone.
+A RenderJob is a typed Video-domain correlation record for a render attempt. It does not create a second execution authority or bypass Kernel/Host.
 
-A RenderJob is a typed domain execution record linked to one or more Kernel ToolInvocations. It does not create a second execution authority or bypass the shared Kernel/Host boundary.
+| Fact or decision | Authority | RenderJob role |
+| --- | --- | --- |
+| Task/Plan/GoalContract state, admission, permissions, approvals, budget reservation/settlement, cancellation intent, fencing, legal transitions | Kernel Journal / Kernel state machine | References exact authoritative versions and invocation IDs |
+| Process creation/start/exit, descendants, signals, resource observations, writable-handle convergence, staging output facts, Host receipt | Host Ledger / Trusted ToolHost | Correlates Host run/job and receipt |
+| Narrative/timeline semantics and criterion interpretation | Video Domain Intelligence and its versioned domain artifacts | References NarrativePlan/TimelineRevision |
+| Technical/content verification findings | Independent domain verifier and trusted machine runs; human disposition where required | References evidence/report versions |
+| Artifact identity/finalization and task completion | Artifact/Kernel contracts and Completion Guard | References immutable output and publication evidence |
+
+Kernel Journal and Host Ledger are separate fact boundaries. No database transaction makes a physical process or file write atomic with a Kernel state transition.
 
 ## 2. RenderJob binding
 
 A RenderJob binds at minimum:
 
-- RenderJob ID and schema version;
-- Task ID, Task aggregate version, Turn ID, ModelStep/Attempt, ActionProposal item, and ToolInvocation IDs;
+- RenderJob ID/schema version;
+- Task/Turn/Step/ModelStep/Attempt/ActionProposal/ToolInvocation IDs;
 - DomainBinding and Workflow Profile version;
-- accepted GoalContract version and active PlanRevision/PlanStep;
+- accepted GoalContract and active PlanRevision/PlanStep;
+- MediaProject ID, ProjectSnapshot generation/digest;
 - TimelineRevision ID/digest and RenderPlan ID/digest;
-- source MediaAsset IDs, source content digests, stream IDs, and project generation;
-- renderer/FFmpeg version/build identity and environment digest;
-- canonical argv digest, filtergraph digest, working directory, input/output path bindings;
+- source MediaAsset digests, stream IDs, analysis/provenance manifest;
+- renderer/FFmpeg build and environment digest;
+- canonical argv/filtergraph/compiler digest;
+- input/output path bindings and protocol/filesystem/network policy IDs;
 - output profile and expected output artifact kind;
 - resource reservation IDs and hard limits;
-- temporary output identity, final publication target, and idempotency key;
-- cancellation/fencing epoch and expected Host receipt/evidence obligations.
+- unique staging identity, final ArtifactRef target, and idempotency key;
+- Host run/job ID, cancellation/fencing epoch, and receipt obligations.
 
-A changed timeline, source digest, profile, renderer version, output target, resource policy, or workspace/project generation makes an unstarted proposal stale. Kernel must revalidate each invocation at admission.
+A changed source, project generation, timeline, RenderPlan, compiler/build, output target, resource policy, authorization, or fencing epoch makes an unstarted proposal stale. Kernel revalidates every invocation at admission.
 
-## 3. Lifecycle and outcome dimensions
+## 3. State authority: separate state dimensions
 
-Proposed lifecycle:
+RenderJob must not duplicate Kernel or Host state as a competing source of truth. Its displayed status is a projection of four distinct state dimensions:
 
-**Proposed → Admitted → Running → Cancelling | Reconciling → Succeeded | FailedKnown | Cancelled | OutcomeUnknown**
+1. **Kernel Invocation state:** proposed, admitted, cancellation requested, reconciliation required, and a reconciled terminal outcome such as Succeeded, FailedKnown, Cancelled, or OutcomeUnknown. Kernel owns the authoritative transition.
+2. **Host execution state:** launch intent durable, process observed, running, termination requested, process quiescent, output sealed, receipt issued, or Host evidence unavailable. Host Ledger owns physical facts.
+3. **Verification state:** not started, technical pass/fail, content pass/fail/inconclusive, and human disposition pending/accepted/rejected. The domain verifier and authorized human review own their respective findings.
+4. **Artifact publication state:** unstaged, quarantined, verified-ready, finalized, published, or rejected. Publication is committed only after artifact integrity, current fencing, and required evidence are reconciled.
 
-The exact transition graph is enforced by Kernel/Host contracts. OutcomeUnknown is not equivalent to FailedKnown and blocks unsafe replay or conflicting publication until reconciled.
+Progress percentage is a telemetry field, not a state authority. A RenderJob summary must expose all unresolved dimensions rather than flattening them into one misleading "done" flag.
 
-Progress is a separate telemetry stream. It may include frame count, output timestamp, speed, elapsed time, estimated remaining time, and structured FFmpeg progress key/value records. Progress is advisory and does not prove successful finalization or video quality.
+## 4. Admission and Host launch protocol
 
-A successful process exit, a complete progress stream, and a zero exit code are execution facts only. They are not completion evidence for user-facing media criteria.
+1. Domain Intelligence creates a RenderPlan bound to an accepted TimelineRevision and exact source/project snapshot.
+2. Kernel validates GoalContract/PlanRevision/DomainBinding, current authorization, tool snapshot, source digests, output target scope, budget reservation, Host capability profile, fencing epoch, and absence of conflicting UNKNOWN work.
+3. Kernel durably records ToolInvocation intent and idempotency identity before side effects; it issues a short-lived admission ticket bound to exact arguments/digests/policy/approval/budget/fencing.
+4. Host validates the ticket, writes a durable Host Ledger launch intent with Host run/job identity, and only then attempts process creation.
+5. Host records process identity and start evidence before reporting Running. Process identity includes more than a reusable PID: Host run ID, process birth/start identity, job/process-group identity, and fencing binding.
+6. FFmpeg runs in the isolation boundary defined by [RenderPlan security contract](render-plan-security.md).
+7. Host records progress as non-authoritative telemetry and records exit/signal, resource use, descendant convergence, staging output identity/digest, and receipt evidence.
+8. Kernel reconciles the receipt into ToolInvocation state. Domain verification and artifact publication remain separate subsequent stages.
 
-## 4. Resource and admission policy
+A Host crash between durable launch intent and observed process creation is not automatically a failed render. Recovery must inspect Host Ledger and process identity before classifying the outcome.
 
-The Workflow Profile declares hard limits and accounting rules for:
+## 5. Resource and admission policy
 
-- wall-clock render time;
-- CPU time/threads and peak memory;
-- GPU use where applicable;
-- temporary and final disk usage;
-- source media size/duration/resolution and total decoded workload;
-- output file size/duration;
-- model analysis/transcription usage and cost;
-- verification and bounded repair reserve.
+Workflow Profile declares hard limits and accounting rules for wall-clock time; CPU time/threads; peak memory; GPU where enforceable; temporary/final disk; source size/duration/resolution/stream count and decoded workload; output size/duration; analysis/transcription usage; and verification/repair reserve.
 
-Kernel owns reservations, consumption, settlement, overrun records, and enforcement holds. Orchestration may estimate resource use and propose allocation but cannot raise a hard limit or silently consume the verification reserve.
+Kernel owns reservations, consumption, settlement, overrun records, and enforcement holds. Orchestration may estimate and propose allocation but cannot raise a hard limit or silently consume verification reserve.
 
-Admission checks include source/project identity, current TimelineRevision/RenderPlan bindings, output target scope, current policy/approval, tool snapshot, resource reservation, fencing epoch, and whether a conflicting render or UNKNOWN operation already exists.
+Admission checks source/project identity, current TimelineRevision/RenderPlan, output target scope, policy/approval, tool snapshot, resource reservation, fencing epoch, Host capability, and conflicting render/UNKNOWN state.
 
-## 5. Host execution and progress
+A Host reports enforceable versus advisory dimensions. If a required hard limit cannot be enforced, admission fails closed. Numeric caps remain OPEN pending supported Host profiles and measurements.
 
-- The renderer receives a canonical argv array and validated filtergraph, not a model-composed shell string.
-- The Host records durable intent and creates a uniquely identified process/job before reporting it as started.
-- The process is contained within the declared Host execution boundary and associated process group/tree.
-- Progress events are associated with the RenderJob/Host run ID and are persisted or recoverably sampled under the Host contract.
-- FFmpeg progress output is parsed as telemetry; stderr/stdout digests and final process status are retained as evidence.
-- The Host records exit code/signal, start/finish times, resource use, process convergence, temporary output state, output digest, and receipt.
+## 6. Progress and physical execution evidence
 
-A progress percentage is not authoritative. FFmpeg may emit progress=end; this indicates encoding progress termination, not that the output satisfies the GoalContract.
+- Renderer receives canonical argv and validated filtergraph, never a model-composed shell string.
+- Host records durable intent and process/job creation before reporting start.
+- Process is contained in the declared Host boundary and associated process group/job.
+- Progress is associated with RenderJob and Host run ID and is persisted or recoverably sampled under Host contract.
+- FFmpeg progress records and stdout/stderr digests are telemetry/evidence of execution, not content-quality evidence.
+- Host records exit code/signal, start/finish times, resource observations, process convergence, temporary output state, output digest, and authenticated receipt.
 
-## 6. Cancellation and process convergence
+A progress=end record, zero exit code, or complete progress stream does not prove finalization or fulfillment of user-facing criteria.
 
-Cancellation follows the shared cancellation protocol:
+## 7. Cancellation and process convergence
 
-1. Kernel durably records cancellation intent and rejects new dependent admissions.
-2. Host receives the exact run/job identity and fencing binding.
-3. Host requests graceful termination, then enforces the declared process-tree termination policy if necessary.
-4. Host drains pipes and waits for all declared descendants to exit.
-5. Host confirms process/handle convergence and records whether the temporary output is complete, partial, or unknown.
-6. Kernel reconciles the receipt and commits Cancelled only when the declared cancellation conditions are met.
+1. Kernel durably records cancellation intent and fences new dependent admissions/publication.
+2. Host receives the exact Host run/job ID, ToolInvocation ID, admission binding, and fencing epoch.
+3. Host requests graceful termination, then enforces the declared process-tree termination policy if required.
+4. Host drains pipes and waits for declared descendants and writable handles to become quiescent.
+5. Host records whether the staging output is complete, partial, absent, or unknown and seals/quarantines it where safe.
+6. Host issues a receipt with process convergence and output facts.
+7. Kernel reconciles the receipt and commits Cancelled only when the declared cancellation conditions are met.
 
-A kill signal, timeout, disconnected client, or missing progress event is not proof that the render stopped. A process that may still write to an output must remain UNKNOWN/Reconciling and must block conflicting publication.
+A kill signal, timeout, disconnected client, missing progress event, or parent-process exit is not proof that the render stopped. If a descendant may still write, the invocation remains OutcomeUnknown/Reconciling and conflicting publication is blocked.
 
-## 7. Crash recovery and retry safety
+Cancellation races are resolved from Host facts plus Kernel fencing: if the process physically completed before termination took effect, record that execution fact; do not publish it if the accepted plan/revision has since been superseded or cancellation revoked its publication authority.
 
-- A Host crash or lost acknowledgement after durable intent may leave the render OutcomeUnknown.
-- Recovery queries the Host Ledger, process/job registry, output target, temporary artifact, and receipts before any retry.
-- Never blindly replay the same non-idempotent render invocation.
-- Each retry is a new ToolInvocation/Host run with a new attempt identity and a unique temporary output target.
-- Partial output is quarantined and never presented as a successful deliverable.
-- The initial implementation must **not assume that an arbitrary FFmpeg encode can resume from a checkpoint**. Unless a separately verified segmented-render contract exists, a safely reconciled failed render restarts as a new invocation from the beginning.
-- Segment rendering, if introduced later, must define independently verifiable segment artifacts, timeline boundaries, stream/codec compatibility, merge rules, and manifest integrity.
+## 8. UNKNOWN and crash recovery
 
-A readable Checkpoint may preserve the timeline, render manifest, and prior progress while current execution authorization is expired. Resuming new work still requires fresh policy, approval, budget, lease/fencing, and project/workspace checks.
+A Host crash or lost acknowledgement after durable intent may leave OutcomeUnknown. UNKNOWN is neither FailedKnown nor permission to retry.
 
-## 8. Output finalization and verification
+Recovery must:
 
-Render output is written to a unique temporary target. It is not published to the final deliverable path until all required checks succeed.
+1. Load Kernel Journal intent, exact invocation/idempotency key, cancellation/fencing epoch, accepted plan, and reservation.
+2. Query Host Ledger and receipt registry by Host run ID and invocation identity.
+3. Reconcile process/job identity, descendant set, resource settlement, staging path/file identity, writable handles, and output digest.
+4. Determine whether the process is still running, quiescent with complete output, quiescent with partial output, never started, or not provable.
+5. Verify any complete candidate output from a sealed immutable staging artifact; never trust a model-generated path/hash.
+6. Commit a reconciled outcome only when required evidence is sufficient; otherwise preserve UNKNOWN and hold conflicting work/publication.
 
-Minimum technical verification may include:
+If safely reconciled as failed/cancelled/partial, a retry is a **new ToolInvocation and Host run**, with a new attempt identity and unique staging output. Never replay the same non-idempotent render invocation or reuse a possibly writable output path.
 
-- output file exists, is non-empty, and its digest is recorded;
-- ffprobe can parse container and stream metadata;
-- expected video/audio/subtitle streams exist and match the output profile;
-- duration, dimensions, frame-rate/timebase, codec, sample rate, channel layout, and output size are within declared tolerances;
-- full or policy-selected decode checks detect truncation/corrupt packets/frame decode failures;
-- audio/video synchronization, silence/clipping/loudness, black/frozen frames, and subtitle timing are checked where required;
-- timeline references, clip order, source ranges, transitions, and duration map to the accepted TimelineRevision.
+A readable checkpoint may preserve timeline, RenderPlan, manifest, and prior progress. It does not authorize resuming physical work. Fresh policy, approval, budget, lease/fencing, and project/timeline checks are required. Arbitrary FFmpeg encodes are not assumed checkpoint-resumable; segmented rendering requires a separately verified contract.
 
-Semantic/perceptual verification is separate. A fresh Video Verifier reviews sampled frames, audio/transcript evidence, the accepted GoalContract, TimelineRevision, and raw render/probe evidence. It checks requested content/order, excluded content, pacing, caption correctness/readability, and obvious visual/audio artifacts. A model review is a finding, not proof; subjective or high-risk criteria may require human review or independently specified checks.
+## 9. Output finalization and publication
 
-Only after the required evidence obligations are met may the Host publish/finalize the output artifact and Completion Guard consider Task completion.
+FFmpeg writes only to a unique temporary target. It cannot write directly to the final deliverable path or overwrite a previous artifact.
 
-## 9. Delivery and non-claims
+After Host proves process/handle convergence:
 
-Delivery binds the final video digest, TimelineRevision, RenderPlan, RenderJob, Host receipt, verification report, and exact output path/URI.
+1. Host seals the staged bytes, records size/digest/file identity, and issues a receipt bound to RenderJob, ToolInvocation, RenderPlan, and fencing epoch.
+2. A technical verifier independently reads the staged artifact and performs required probe/decode/profile checks.
+3. An independent content verifier checks the actual rendered output against UserIntent, GoalContract, NarrativePlan, TimelineRevision, source provenance, and criterion obligations.
+4. Required human disposition is collected for subjective/high-impact criteria.
+5. Kernel rechecks current GoalContract/PlanRevision/DomainBinding, authorization, cancellation state, fencing epoch, budget settlement, and absence of conflicting UNKNOWN.
+6. The artifact is finalized under a new immutable Artifact ID/digest; only then is a final delivery reference committed.
+7. Completion Guard evaluates the exact final artifact and VerificationReport bindings.
 
-This contract does not claim:
+A cancelled, superseded, partial, UNKNOWN, stale, or unverified output remains quarantined evidence and cannot replace the current deliverable. If an object is finalized but Kernel commit is interrupted, recovery reconciles the immutable artifact and idempotent publication intent; it must not create a conflicting second publication.
 
-- arbitrary FFmpeg jobs are checkpoint-resumable;
-- a process exit code proves content quality;
-- a model's aesthetic opinion proves user satisfaction;
-- render output can be safely overwritten in place;
-- Kernel and Host can atomically commit a physical file and a Task transition in one distributed transaction.
+## 10. Delivery and non-claims
 
-All runtime process-control, progress recovery, resource accounting, output publication, and media verification properties remain **UNVERIFIED** until implemented and fault-injection tested.
+Delivery binds final video digest, source ProjectSnapshot, TimelineRevision, NarrativePlan, RenderPlan, RenderJob, ToolInvocation, Host receipt, source-to-output provenance map, VerificationReport, and final ArtifactRef.
+
+This contract does not claim arbitrary FFmpeg jobs are checkpoint-resumable; a process exit code proves content quality; a model aesthetic opinion proves user satisfaction; render output can be safely overwritten in place; or Kernel and Host can atomically commit a physical file and Task transition in one distributed transaction.
+
+All runtime process control, progress recovery, resource accounting, output publication, and media verification remain **UNVERIFIED** until implemented and fault-injection tested on named Host environments.
