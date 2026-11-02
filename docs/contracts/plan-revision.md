@@ -56,7 +56,7 @@ A PlanRevision binds at minimum:
 - preconditions, expected artifacts, effect/risk classes, capability requirements, and approval boundaries;
 - evidence obligations, verification strategy, recovery strategy, and resource estimate;
 - verification/repair reserve and revision rationale;
-- the exact Task aggregate version and current plan pointer against which it was proposed.
+- the **taskControlVersion and active PlanRevision pointer** for *structural L2 activation*; ordinary L0/L1 actions instead bind current plan epoch plus only relevant workspace/authority/dependency versions.
 
 Proposed revision states:
 
@@ -75,7 +75,7 @@ At most one revision may be Active for a Task. At most one revision switch may b
 
 For the first plan:
 
-1. Orchestration proposes a PlanCandidate bound to the accepted GoalContract, current Task aggregate version, repository snapshot, and workspace generation.
+1. Orchestration proposes a PlanCandidate bound to the accepted GoalContract, `taskControlVersion`, expected active-plan pointer, domain snapshot and relevant workspace generation.
 2. Kernel performs the deterministic checks in section 4.
 3. Kernel records AcceptedPendingCutover.
 4. If the initial workspace and task bindings remain current and there are no prior operations to drain, Kernel atomically activates the revision and updates the Task's active-plan pointer.
@@ -101,7 +101,7 @@ L0/L1 cannot change authorized effects, lower required independent evidence, or 
 
 A replan is a coordinated cutover, not a pointer overwrite.
 
-1. **Trigger and freeze.** Orchestration submits a PlanSwitchRequested command with a reason and evidence references. For a Task with an active revision in Running, Verifying, Ready, Waiting, or Blocked, Kernel compare-and-swaps the current Task version, transitions it to Planning (retaining the prior state in the event), marks the current revision Superseding, and installs a plan-switch barrier. No new ModelStep intended to advance the old plan and no new ToolInvocation admission may begin against it. Planning/reconciliation ModelSteps may continue under the plan-switch phase; they cannot execute old-plan work.
+1. **Trigger and freeze.** Orchestration submits a PlanSwitchRequested command with a reason and evidence references. For a Task with a current active revision, Kernel compare-and-swaps **TaskControlVersion** and installs the structural plan-switch barrier, preserving the prior display phase as an event and marking the old revision Superseding. Planning/Ready/Running/Verifying/Waiting/Blocked labels are derived task views, not separately authoritative transitions. No new ModelStep intended to advance the old plan and no new ToolInvocation admission may begin against it. Planning/reconciliation ModelSteps may continue under the plan-switch phase; they cannot execute old-plan work.
 2. **Stop undispatched work.** Pending approvals and admissions tied to the old revision are invalidated. An invocation with durable intent but not dispatched is cancelled before start where the Host can prove it did not start.
 3. **Converge started work.** Already-dispatched operations receive cancellation/drain requests where supported. They may finish and return receipts. Their results remain attributed to the old revision and original invocation IDs.
 4. **Reconcile uncertainty.** Any unresolved OutcomeUnknown that may mutate the workspace or an external target blocks activation of a potentially conflicting new revision. The Task enters Reconciling; only bounded read-only reconciliation is allowed. Kernel may admit such work through a separate PlanSwitchReadOnly profile, which cannot write the workspace or affect external targets. The model cannot waive this barrier. A non-blocking exception is permitted only when Kernel policy and the trusted Host profile prove the operation was read-only, isolated, and unable to affect any new-plan precondition.
@@ -114,11 +114,11 @@ If candidate creation or validation is abandoned, the old revision may return fr
 
 ### 3.3 Task lifecycle relationship
 
-The Task state describes the overall task-control phase; PlanRevision state describes which plan version may govern work.
+The Task's **presentation phase** is derived from the current TaskControl, PlanRevision and pending work/approval/evidence. PlanRevision's active pointer is the structural execution authority; the presentation phase never grants execution by itself.
 
-Required transitions include:
+Illustrative **derived phase transitions** (not independent state-commit obligations) include:
 
-- Running, Verifying, Ready, Waiting, or Blocked → Planning on a valid plan-switch request when an active revision exists. Kernel compare-and-swaps the current Task version, freezes new admissions against the old revision, and records the prior Task state for controlled recovery.
+- A valid L2 plan-switch request uses **TaskControl CAS** to freeze new old-revision admissions, marking the active revision Superseding. The prior Task presentation phase is recorded for recovery but Planning/Waiting/Blocked labels are derived views, not a second commit gate.
 - Planning → Reconciling when a started old-revision operation has an unresolved outcome.
 - Reconciling → Planning after the relevant outcomes are reconciled.
 - Planning → Ready after a new revision is activated.
@@ -138,7 +138,7 @@ Kernel validates the plan as a contract, not as a technical design review.
 Deterministic checks include:
 
 - schema version, required fields, size limits, and canonical serialization;
-- Task identity, aggregate version, accepted GoalContract version, parent revision, monotonic revision number, and current active-plan pointer;
+- Task identity, **taskControlVersion (structural acceptance/cutover only)**, accepted GoalContract version, parent revision, monotonic revision number, and current active-plan pointer;
 - unique PlanRevision and PlanStep IDs and valid lineage references;
 - DAG acyclicity, valid dependency references, and no impossible self-dependencies;
 - every required criterion ID exists and has at least one structured PlanStep mapping or an explicit human-review obligation;
@@ -162,6 +162,10 @@ Semantic responsibilities retained by Orchestration:
 - whether a plan should be revised and what evidence justifies it.
 
 Kernel must not call a model, inspect source code to judge architecture quality, or become a second Planner as part of PlanRevision acceptance.
+
+### 4.1 Minimal plan and selective contention (PROPOSED)
+
+An accepted PlanRevision is one immutable **structural outcome contract**, not a record of every tool decision. L0 tactics and L1 bounded rework do not generate new revisions. A PlanStep retains objective, dependencies, preconditions, authority/effect envelope, artifact obligation and criterion links. WorkStatus and VerificationStatus in section 5 are **event-derived views** over PlanStep/Invocation facts and criterion evidence, not independent mutable authorities requiring a TaskControl transaction. A normal Host receipt does not stale an unrelated proposal simply by advancing a global Journal sequence. A structural PlanCandidate still requires TaskControlVersion/current-plan pointer equality; an Invocation validates only its relevant Plan/Authority/Workspace/Budget read-set.
 
 ## 5. PlanStep: orthogonal work and verification state
 
@@ -213,7 +217,7 @@ Completed work that is no longer needed remains in the old revision's history an
 
 Every ToolInvocation binds the exact Task, PlanRevision, PlanStep, ActionProposal item, tool definition/version, canonical argument digest, workspace generation, policy/approval evidence, budget reservation, and fencing epoch.
 
-The plan-switch barrier is linearized in the Kernel Journal / Task aggregate version:
+The L2 plan-switch barrier is linearized in Kernel TaskControl CAS and Journal; only L2 structural cutover, cancellation, changed intent and terminal Task control require this CAS. Routine Invocation/ModelStep/Host receipt/budget events use their own aggregate versions and selective snapshot/authority binding checks:
 
 - An admission committed before the barrier is an already-admitted operation and must be drained or reconciled.
 - An admission attempted after the barrier is rejected as stale/superseding.
