@@ -39,6 +39,8 @@ A paired test may use analogous Kernel events in both domains—for example, int
 | Cancellation and process convergence | Cancellation-to-convergence time, orphan descendants/handles, late writes, and unresolved cancellation | A cancellation request is not proof of convergence |
 | Budget/resource integrity | Reservation coverage, hard-limit overshoot, unaccounted consumption, settlement gaps, and verification-reserve exhaustion | Unbounded or unaccounted use is a blocker |
 | Version/freshness integrity | Stale GoalContract, PlanRevision, DomainBinding, Workflow Profile, tool snapshot, workspace/project generation, or evidence accepted | Stale authority/evidence must be rejected |
+| Profile admission/dispatch freshness | New admission or Host launch under a Superseded/Revoked profile, stale profile-authority epoch, or old accepted PlanRevision | Any launch after revocation/cutover is a blocker |
+| Cross-domain handoff isolation | Reads outside exact ArtifactRef scope, missing transfer authorization, inherited producer permissions/context, or broken lineage | Any unauthorized disclosure or inherited authority is a blocker |
 | Recovery correctness | Journal reconstruction, Host receipt import, checkpoint integrity, fencing, and safe resume after restart/compaction | Recovery must not duplicate or authorize stale work |
 | Provenance and audit completeness | Traceability of ModelSteps, ActionProposals, ToolInvocations, approvals, Host receipts, resource reservations, artifact digests, and delivery | Missing critical evidence blocks a trustworthy completion claim |
 | User-control correctness | Clarification, approval, rejection, revocation, steering, follow-up, wait, and cancellation are applied to the correct task/version | User control must not be bypassed or applied to stale work |
@@ -50,8 +52,8 @@ Report attempts and actual executions separately. A denied unauthorized proposal
 
 At minimum, prepare deterministic scenarios for:
 
-1. **Approval/policy revocation:** an invocation is queued or awaiting dispatch when its approval, capability, policy, or principal authority is revoked.
-2. **Stale plan/profile:** GoalContract, PlanRevision, DomainBinding, Workflow Profile, or tool snapshot changes after proposal creation but before admission.
+1. **Approval/policy/profile revocation:** an invocation is queued or awaiting dispatch when its approval, capability, principal authority, or Workflow Profile is revoked. Include the critical race where a PlanRevision was accepted under profile V1, V1 is revoked/superseded, and the old plan attempts to launch a new tool.
+2. **Stale plan/profile/dispatch ticket:** GoalContract, PlanRevision, DomainBinding, Workflow Profile, tool snapshot, or profile-authority epoch changes after proposal/admission but before physical Host launch. The Host must reject a stale ticket; inability to establish current authority fails closed.
 3. **Plan-switch race:** a write-capable old-plan operation is running or UNKNOWN while a new PlanRevision is proposed.
 4. **Host crash after durable intent:** the Host accepts or starts work but the Kernel loses the acknowledgement or receipt.
 5. **Cancellation race:** cancellation arrives before dispatch, during execution, after process exit, or while receipts are being reconciled.
@@ -60,7 +62,7 @@ At minimum, prepare deterministic scenarios for:
 8. **Stale evidence:** workspace/project generation, source digest, timeline, render plan, environment, or tool version changes after verification.
 9. **Checkpoint/compaction recovery:** restart from a checkpoint whose historical approvals/leases are expired; verify that no new operation resumes without fresh admission.
 10. **Publication conflict:** two operations target the same deliverable, or a partial/UNKNOWN output competes with a newer accepted revision.
-11. **Domain isolation:** a Coding Task cannot load Video-only schemas/tools and a Video Task cannot interpret RepositoryModel payloads; linked artifacts remain opaque unless explicitly typed and authorized.
+11. **Domain isolation and ArtifactRef handoff:** a Coding Task cannot load Video-only schemas/tools and a Video Task cannot interpret RepositoryModel payloads. A consumer may read only the exact typed ArtifactRef under a separate scoped authorization; test digest/schema mismatch, revoked/expired handoff, attempts to traverse the producer workspace/project, and attempts to inherit producer approvals, tools, secrets, budgets, or private context.
 12. **Terminal-state race:** cancellation, completion, late Host evidence, and resource settlement race; the Kernel preserves one valid terminal fact and records late conflicts separately.
 
 Use analogous domain fixtures where meaningful: a repository build/test process for Coding and an FFmpeg RenderJob for Video. The exact host process, resource dimensions, and artifacts differ, while the admission, receipt, cancellation, UNKNOWN, and recovery invariants remain the same.
