@@ -187,13 +187,13 @@ A handoff record binds at least:
 - handoff ID and immutable source Task/domain/DomainBinding references;
 - exact Artifact ID, kind, schema/version, digest, and producer provenance;
 - intended consumer domain/Task, purpose, permitted access mode, and retention scope;
-- user/principal authorization reference, exact scope, and expiry/revocation state where applicable;
+- user/principal authorization reference bound to the exact Artifact ID/digest, source Task, consumer domain/Task, purpose, access mode, and expiry/revocation state where applicable;
 - consumer validation result and resulting derived-artifact lineage.
 
 ArtifactRef identifies an immutable typed artifact; it is not a bearer capability. The consumer receives a separate narrowly scoped capability for the exact artifact digest, consumer Task, purpose, and access mode. The default is read-only. Producer authorization to create an artifact does not authorize cross-domain disclosure or consumption.
 
 The consumer Task has its own principal, DomainBinding, Workflow Profile, GoalContract, PlanRevision, tools, approvals, budgets, and verification obligations. It may read only the explicitly handed-off payload through the scoped capability. It does not inherit the producer's approvals, permissions, profile, budgets, secrets, workspace/project access, private context projection, prompts, or model/session state. It cannot traverse the producer Task or unrelated artifacts through the reference.
 
-Only an artifact in the consumption-eligible state defined by ADP-04 may be handed off; staging, partial, quarantined, Missing, DigestMismatch, or UNKNOWN payloads are not consumable. The exact artifact state machine remains an ADP-04 dependency and is not decided here. Changes to digest, destination, purpose, access mode, or material scope require renewed authorization and consumer validation. Handoff lineage is audit metadata, not a Task aggregate or authority transfer.
+Only an artifact in the consumption-eligible state defined by ADP-04 may be handed off; staging, partial, quarantined, Missing, DigestMismatch, or UNKNOWN payloads are not consumable. The exact artifact state machine remains an ADP-04 dependency and is not decided here. Changes to digest, destination, purpose, access mode, or material scope require renewed authorization and consumer validation. Revocation blocks future reads/consumption but cannot recall bytes already copied into the consumer's authorized workspace; those copies follow the declared retention/deletion policy. Handoff lineage is audit metadata, not a Task aggregate or authority transfer.
 
 The initial platform scope rejects a Task with more than one active domain binding. Composite cross-domain autonomous workflows and shared mixed-domain context remain deferred pending a separate decision.
