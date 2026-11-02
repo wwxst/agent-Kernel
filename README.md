@@ -52,6 +52,7 @@ See [Unified domain architecture](docs/architecture/domain-architecture.md) and 
 - [Shared Kernel evaluation](docs/research/shared-kernel/evaluation.md) — common cross-domain safety, authority, lifecycle, and recovery metrics.
 - [Unified domain direction](docs/decisions/unified-domain-direction.md) — owner-approved product scope and authorization boundary.
 - [Cross-domain architecture review](docs/decisions/cross-domain-architecture-review.md) — consistency review and remaining questions.
+- [Architecture Decision Proposals](docs/decisions/architecture-decision-proposals.md) — recommended choices, alternatives, risks, and acceptance criteria for owner review.
 
 ## Current state
 
