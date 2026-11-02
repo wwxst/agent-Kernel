@@ -31,7 +31,7 @@ Minimum fields:
 | resource_policy_id/version | Hard resource dimensions, limits, and reservation policy |
 | provenance | Profile source, owner/approval reference, digest, and activation event |
 
-The DomainBinding is immutable for the life of an accepted Task version. A profile change creates a new binding candidate and triggers GoalContract/PlanRevision impact analysis. If it changes scope, capabilities, resource authority, or evidence obligations, it must pass the same user-confirmation and plan-switch rules as any other protected change.
+The domain_id is immutable for the lifetime of a Task. Changing from Coding to Video Editing (or vice versa) requires a new Task and an explicit artifact handoff; it is not a profile migration. The DomainBinding/profile version is immutable for an accepted Task/plan version. A same-domain profile change creates a new binding candidate and triggers GoalContract/PlanRevision impact analysis. If it changes scope, capabilities, resource authority, or evidence obligations, it must pass the same user-confirmation and plan-switch rules as any other protected change.
 
 ## 3. Workflow Profile
 
@@ -111,7 +111,7 @@ Kernel Journal and Host Ledger remain separate fact boundaries. Domain projectio
 
 ## 7. Shared ModelStep, ToolInvocation, and Host path
 
-All model calls are Kernel-managed ModelSteps regardless of domain. Model purpose labels may include domain-specific purposes, but do not create new authority.
+All model calls are Kernel-managed ModelSteps regardless of domain. Each ModelStep/Attempt binds the Task, DomainBinding/profile version, GoalContract/PlanRevision snapshot where applicable, and context/evidence manifest. Model purpose labels may include domain-specific purposes, but do not create new authority.
 
 Every tool call:
 

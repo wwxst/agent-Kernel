@@ -84,9 +84,11 @@ A report should bind at least:
 
 A model-generated hash or test summary is not trusted evidence.
 
-## 5. Workspace hash sequence
+## 5. Workspace and domain artifact snapshot
 
-The initial contract distinguishes three hashes:
+### 5.1 Coding workspace hash sequence
+
+The Coding domain distinguishes three hashes:
 
 1. **Pre-test hash** — captured by the trusted Workspace Host before the first verification command.
 2. **Post-test hash** — captured after all verification processes and descendants have stopped.
@@ -100,11 +102,26 @@ By default:
 
 If a test changes any in-scope source, configuration, dependency, or untracked input, the old report is stale and the relevant verification must be rerun. Exclusions must be declared in a versioned hash scope; an agent cannot add exclusions after the fact to preserve a passing report.
 
+### 5.2 Video media artifact snapshot
+
+The Video domain does not use a Git workspace hash as a substitute for media provenance. Its final report binds:
+
+- immutable source MediaAsset IDs and content digests;
+- selected stream IDs, source PTS/timebase and analysis/proxy digests;
+- accepted TimelineRevision ID/digest and parent/EditIntent lineage;
+- RenderPlan ID/digest, FFmpeg build/environment identity, and canonical argument/filtergraph digest;
+- RenderJob/ToolInvocation IDs, Host run ID, receipt, exit/signal, resource settlement, and process convergence;
+- final rendered artifact digest, probe/decode report, and publication/verification state.
+
+The source assets remain unchanged. A new edit instruction creates a new TimelineRevision and output artifact. If any bound source, timeline, render plan, profile, renderer, or output digest changes, the report is stale and the affected checks must be repeated.
+
+The exact project snapshot and artifact digest must be independently re-read from the trusted storage/Host boundary; a model-generated filename or hash is not evidence.
+
 ## 6. Completion Guard invariants
 
 Before TaskCompleted, Kernel verifies:
 
-- Task is in an allowed state and no model step remains active.
+- Task is in an allowed state and no ModelStep, ToolInvocation, or Host job remains active.
 - GoalContract, PlanRevision, and acceptance-criteria versions match the current accepted versions.
 - Every required PlanStep is verified or otherwise accounted for by the accepted plan.
 - All required acceptance criteria passed; no required criterion is NotRun, Skip, Partial, or Unverified.
@@ -112,17 +129,17 @@ Before TaskCompleted, Kernel verifies:
 - A fresh Verifier review record is present when required, and its input manifest excludes the Implementer's summary/self-assessment as evidence.
 - Verifier disposition is not treated as criterion proof; the required machine/external/human evidence classes are independently present.
 - Per-criterion evidence-independence class meets the risk-based requirement in the accepted GoalContract/policy.
-- Workspace ID, generation, snapshot, hash algorithm, and hash-scope version match.
-- Final acceptance hash equals the trusted hash of the same immutable snapshot.
-- Test environment and dependency/toolchain digests match the task contract.
-- Every required test has a real Host Run, trusted receipt, exit code, and output digest.
+- Workspace or media-project identity, DomainBinding, generation, and final artifact snapshot match the report.
+- Coding final acceptance hash or Video source/timeline/render/output digests equal the trusted digests of the same immutable artifacts.
+- Execution environment, dependency/toolchain, renderer, and FFmpeg build digests match the task contract where applicable.
+- Every required test, probe, decode check, or render invocation has a real Host Run, trusted receipt, terminal outcome, and output digest.
 - Artifacts are attributable and content-addressed.
 - No required approval, dependency, or external condition is pending.
 - No unresolved UNKNOWN invocation or cancellation remains.
 - Budget and usage settlement conditions are satisfied.
 - Report is current, not revoked or superseded.
 - Verification did not exceed the task's authorization.
-- Host has proven the workspace is frozen, write processes/handles are quiescent, and the final snapshot is sealed.
+- Host has proven the relevant workspace/project write or render processes/handles are quiescent and the final workspace snapshot or domain artifact is sealed.
 - CompletionCommitted and TaskCompleted are committed atomically in Kernel Persistence and bind the receipt digest, snapshot, final hash, and fencing epoch.
 
 Any failed or missing condition blocks completion with an explicit reason.

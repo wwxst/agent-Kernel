@@ -74,7 +74,7 @@ Task completion and a late budget overrun are linearized by Kernel Journal / Tas
 
 
 
-## 7. Domain and Host resource budget extension
+## 6. Domain and Host resource budget extension
 
 This document defines ModelStep/Attempt usage accounting. It is not the complete resource vocabulary for the unified Kernel.
 
@@ -99,7 +99,7 @@ For Video, the Workflow Profile and RenderJob define render-specific limits. See
 
 The exact cross-platform enforcement mechanisms and accounting precision remain OPEN / UNVERIFIED. This extension does not select cgroups, a GPU scheduler, a storage system, or a process runtime.
 
-## 8. Open implementation questions
+## 7. Open implementation questions
 
 The following are not decided by this contract:
 
