@@ -8,6 +8,12 @@ The current product direction and ADP-01/ADP-02 dispositions are recorded in [Un
 
 ADP-02 is **REVISED/APPROVED**. The remaining first-batch drafts — **ADP-03, ADP-05, and ADP-09** — now propose an initially scoped **single-Host-local** launch/revocation ordering with separately acknowledged fences (multi-Host global ordering deferred), piecewise asset-clock mappings, and resolver-mediated scoped handoff grants; they remain **OPEN** until explicit owner disposition. These are documentation contracts, not empirically verified implementations, and approval does not authorize implementation.
 
+### Draft PR #1 architecture-subtraction review (OPEN)
+
+[Architecture subtraction and feasibility review](architecture-subtraction-review.md) is a **candidate G0 refinement, not an owner decision**. Proposed: one primary Agent Loop with Strategic/Tactical/Assurance modes; selective aggregate version read-sets rather than global TaskControl CAS on each Invocation; L2-only structural PlanRevision; bounded ActionProposal intent; optional EvidenceGraph; lazy context; sequential-first scheduling and milestone checkpoints. Retain approved shared Kernel + Coding/Video autonomy, Host fencing, K/O/H transactions, actual Coding execution-view evidence, budget and Completion Guard.
+
+**G0 remains OPEN; G1–G5 NOT RUN. ADP-03–11 remain OPEN.** Specific implementation choices remain open for multi-aggregate transaction isolation, Host grant/OS proof, sandbox file view and Provider maximum-charge certificates.
+
 ## 1. Approved product direction
 
 - One shared Agent Kernel supports Autonomous Coding and Autonomous Video Editing.
