@@ -53,7 +53,7 @@ A profile can narrow available tools and capabilities. It cannot expand the user
 
 ### 3.1 Profile lifecycle, current-effective authority, and revocation
 
-A Workflow Profile version is immutable and content-digested. The registry lifecycle is logically Draft → Validated → Active → Superseded; an active or superseded version may also be marked Revoked as an immediate admission stop. Superseded/revoked versions remain addressable for historical provenance but cannot authorize new work.
+A Workflow Profile version is immutable and content-digested. The registry lifecycle is logically Draft → Validated → Active → Superseded, with RevocationPending and Revoked authority states for a withdrawal. Superseded/revoked versions remain addressable for historical provenance but cannot authorize new work. RevocationPending means new admission and ticket issuance have stopped while all Host launch gates are being fenced; it is not a state in which an old ticket may be trusted offline.
 
 Activation, supersession, and revocation advance a monotonic profile-authority epoch. The active DomainBinding records the exact profile ID/version/digest and current epoch. A ToolInvocation records the exact binding/profile and epoch under which it was admitted. Completed operations, artifacts, and evidence retain that historical version; they are never rewritten to the latest profile.
 
@@ -67,6 +67,23 @@ A queued or admitted-but-not-launched invocation must be rejected at dispatch if
 Revocation immediately blocks new admission. For operations whose process has already started, the predeclared revocation policy determines graceful drain versus cancellation request. A cancellation request is not process convergence; the Host must reconcile descendants and writable handles. An invocation in UNKNOWN blocks migration, replay, and conflicting new side effects until reconciled; changing the profile cannot clear that hold.
 
 A same-domain migration uses freeze → stop admission → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new DomainBinding and accepted PlanRevision activation. No old PlanRevision is silently rebound. New operations begin only after the new binding is current. A Coding ↔ Video change always requires a new Task and explicit artifact handoff.
+
+### 3.2 Dispatch and revocation linearization
+
+AdmissionTicket proves that Kernel admitted a specific invocation at a point in time; it is not perpetual permission to launch. A dispatch ticket is short-lived, one-use, and bound to the exact invocation, profile ID/version/digest, authority epoch, accepted PlanRevision, tool snapshot, argument digest, principal/capability/approval versions, budget reservation, Host target, fencing epoch, expiry, and nonce.
+
+The Trusted ToolHost implements an abstract serialized LaunchGate. The Host launch operation and authority-fence advancement must share one linearizable ordering boundary. The Host must not validate a ticket from a cache and then spawn later outside that boundary.
+
+The LaunchGate has two mutually exclusive outcomes:
+1. If physical process creation crosses the launch boundary before the new authority fence commits, the Host records LaunchBoundaryCommitted under the old epoch. That invocation is considered already in flight for revocation policy purposes, even if its completion receipt is delayed.
+2. If the authority fence commits first, the old dispatch ticket is rejected and no process is created.
+
+The Host receipt binds the invocation, Host run/process identity, ticket identity, profile digest, authority epoch, fencing epoch, launch-boundary sequence, and timestamp. If the Host cannot prove the ordering, it must not launch new work; an uncertain process/output outcome remains UNKNOWN until reconciliation. A crash after process creation but before receipt persistence must never be treated as proof that no process started.
+
+A revocation request stops new Kernel admission and dispatch-ticket issuance and advances the authority epoch. The profile/authority remains RevocationPending until every Host gate that could accept an old ticket has acknowledged the new fence or has been verifiably disabled from dispatch. A Host unable to contact current authority fails closed. Revoked means stale tickets can no longer cross any eligible launch gate; it does not mean already-running processes have stopped. If a Host cannot be fenced or proven disabled, the system retains RevocationPending and blocks new work rather than claiming global revocation completion.
+
+Profile migration orders operations as: freeze the Task; stop admission and ticket issuance; advance/fence the old epoch at every eligible Host gate; wait for fence acknowledgement; drain or cancel already-launched processes under the predeclared policy; reconcile all receipts and UNKNOWN outcomes; refresh profile/contract inputs; validate compatibility and protected-field impact; obtain required user confirmation; then atomically activate the new DomainBinding, accepted PlanRevision, and new authority epoch. No new launch may occur between the old fence and new activation.
+
 
 ## 4. Common GoalContract envelope
 
@@ -191,6 +208,11 @@ A handoff record binds at least:
 - consumer validation result and resulting derived-artifact lineage.
 
 ArtifactRef identifies an immutable typed artifact; it is not a bearer capability. The consumer receives a separate narrowly scoped capability for the exact artifact digest, consumer Task, purpose, and access mode. The default is read-only. Producer authorization to create an artifact does not authorize cross-domain disclosure or consumption.
+
+The ArtifactRef carries identity/type/digest metadata only; it is not a path, signed URL, or payload locator. A trusted resolver maps the reference to payload bytes only after validating a server-side ScopedReadGrant bound to the exact handoff, artifact digest, consumer Task/DomainBinding, purpose, access mode, expiry, and revocation state. Grant material is not placed in model context or ordinary tool output.
+
+The resolver checks authorization on payload open and before each range/stream read. It returns only the exact authorized payload and does not traverse parent, derived-from, sibling, project, workspace, or producer-Task references. Each additional artifact or onward recipient requires a separate handoff. Revocation prevents new reads and further stream/range delivery after the revocation fence; bytes already delivered or copied cannot be recalled and remain subject to the declared retention/deletion policy. Derived outputs are owned by the consumer Task and retain handoff/artifact provenance without inheriting producer authority or usage rights.
+
 
 The consumer Task has its own principal, DomainBinding, Workflow Profile, GoalContract, PlanRevision, tools, approvals, budgets, and verification obligations. It may read only the explicitly handed-off payload through the scoped capability. It does not inherit the producer's approvals, permissions, profile, budgets, secrets, workspace/project access, private context projection, prompts, or model/session state. It cannot traverse the producer Task or unrelated artifacts through the reference.
 
