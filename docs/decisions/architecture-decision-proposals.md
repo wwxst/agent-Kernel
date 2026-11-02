@@ -23,14 +23,14 @@ It is a repository-level design synthesis. It does not report a runtime spike, b
 | ID | Decision area | Recommended direction | Owner decision |
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | Complete autonomous editing loop within a bounded core operation set; defer editor-grade features | REVISED — APPROVED 2026-11-02 |
-| ADP-02 | Media analysis | Task-conditioned, progressive analysis with provenance | Confirm default analysis policy |
-| ADP-03 | Workflow Profile lifecycle | Immutable per accepted plan; revoke future admission immediately; migrate only through explicit safe cutover | Confirm revocation/migration semantics |
+| ADP-02 | Media analysis | Whole-source technical/coverage accounting, task-conditioned depth, adaptive evidence expansion; no default full multimodal pass | Draft prepared — OPEN |
+| ADP-03 | Workflow Profile lifecycle | Immutable versions; current-effective admission and dispatch gate; revocation blocks launch; UNKNOWN remains held | Draft prepared — OPEN |
 | ADP-04 | Artifact and media storage | Generic immutable artifact manifest plus opaque blob/object payload; journal stores references, not large media bytes | Confirm logical contract |
-| ADP-05 | Media time | Integer source PTS and rational time bases; exact conversion with explicit rounding; audio sample positions remain explicit | Confirm temporal contract |
+| ADP-05 | Media time | Per-stream integer PTS/sample coordinates, rational time bases, explicit versioned conversion/rounding and A/V mapping | Draft prepared — OPEN |
 | ADP-06 | Output profiles | Versioned profile registry; one compatibility profile candidate; no silent defaults | Confirm target profile values |
 | ADP-07 | Verification and human review | Criterion-level evidence classes; independent content review; human disposition for explicitly subjective/high-impact criteria | Confirm review policy |
 | ADP-08 | Host and resource policy | Hard-enforce only Host-supported dimensions; bounded source/output admission; GPU optional | Confirm supported Host envelope |
-| ADP-09 | Cross-domain handoff | Separate Tasks linked by immutable typed ArtifactRefs; no composite cross-domain Task in first phase | Confirm handoff boundary |
+| ADP-09 | Cross-domain handoff | Separate Tasks, exact immutable ArtifactRef, scoped handoff authorization, no inherited permissions/context | Draft prepared — OPEN |
 | ADP-10 | Preview and approval surface | Contact sheet/low-resolution preview plus approve/revise/reject; no manual timeline editor | Confirm minimum user surface |
 | ADP-11 | Implementation order | Freeze logical contracts first, then isolated contract spikes, then separately authorized runtime work | Confirm stage gates |
 
@@ -118,71 +118,98 @@ Typed schemas, fixtures, tests, thresholds, and Host-specific enforcement are la
 - ADP-11: staged implementation and separate authorization.
 - [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md), [Video domain design](../research/multimedia-domain-architecture/design.md), [MediaProject](../contracts/media-project.md), [Media Timeline](../contracts/media-timeline.md), [RenderPlan security](../contracts/render-plan-security.md), [RenderJob](../contracts/render-job.md), and [Completion](../contracts/completion.md).
 
-## 3. ADP-02 — Task-conditioned media analysis
+## 3. ADP-02 — Task-conditioned progressive media analysis
 
-**Recommendation — PROPOSED**
+**Recommendation — PROPOSED; decision draft prepared, owner disposition pending (OPEN).**
 
-Use progressive, task-conditioned analysis rather than running every expensive analysis on every source by default.
+Adopt a progressive analysis ladder that provides source-wide visibility and explicit coverage accounting without running every expensive modality over every asset by default. The analysis strategy is selected from the accepted GoalContract, source characteristics, evidence gaps, privacy policy, and remaining budget.
 
-- Always perform source fingerprinting and technical probing needed to establish asset/stream identity, duration, time bases, and decode warnings.
-- Generate a basic temporal index (for example, shot-boundary candidates and representative frames) when it helps source navigation and selection.
-- Run speech transcription only when dialogue, spoken-content requirements, or captions are relevant to the accepted criteria.
-- Run richer visual semantic analysis only for criteria that require locating or distinguishing visual events.
-- Run audio-event/loudness analysis only when the user intent or output policy requires it.
-- Preserve every derived claim's source digest, stream, time range, analysis version, raw evidence reference, and freshness status.
+### Proposed analysis ladder
 
-**Alternatives**
+1. **Intake and technical baseline — always.** Fingerprint every supplied source asset and probe the streams needed to establish immutable asset/stream identity, duration, start timestamps, rational time bases, frame/sample characteristics, and decode warnings. This stage establishes technical facts, not semantic understanding.
+2. **Source-wide coverage accounting — always.** Every source asset receives a coverage manifest that declares the temporal extent considered, observed/sampled intervals, sampling/index method and density, known gaps, unavailable regions, and status. For content-based moment selection, create a coarse temporal navigation index across the selected source set (for example, representative frames and shot-boundary candidates). This is a coverage/indexing obligation, not a claim that every frame or semantic event was exhaustively understood.
+3. **Task-conditioned deep analysis — as required.** GoalContract criteria select the modalities and intervals needed: visual event/scene analysis, OCR, ASR/speaker/utterance alignment, audio-event analysis, loudness, or audiovisual alignment. Do not run full transcription, dense visual analysis, or all audio analysis when the accepted criteria do not require them.
+4. **Adaptive evidence expansion — when needed.** Domain Intelligence may request denser sampling, neighboring context, additional modalities, or re-analysis when evidence is incomplete, contradictory, low-confidence, stale, boundary-sensitive, or insufficient for a required criterion. Each expansion records the triggering gap, expected evidence, cost reservation, and result. If the gap remains unresolved, preserve Partial/Inconclusive/UNKNOWN and ask the user when it materially affects the edit.
 
-- Always run a complete visual/audio/transcription pipeline.
-- Use only technical metadata and leave all semantic selection to the user.
+Final-output inspection is a separate verification activity under ADP-07. Source analysis evidence cannot substitute for evidence sampled from the rendered output.
 
-**Risks and trade-offs**
+### Evidence and coverage rules
 
-- Progressive analysis reduces unnecessary cost and latency but can miss a cue that was not anticipated during intake.
-- Full analysis improves broad recall but increases cost, data exposure, and the chance that noisy model output is mistaken for evidence.
-- A detector's shot boundary or transcript does not prove semantic scene content.
+- Every MediaAnalysis binds exact ProjectSnapshot/input manifest, source asset digest, selected stream identity, integer PTS/sample interval and rational time base, analysis method/build/configuration digest, coverage manifest, raw evidence references, and freshness/invalidation conditions.
+- A coverage manifest distinguishes **observed**, **sampled**, **not sampled**, **unavailable**, and **decode-failed** intervals. It records the method and resolution; it must not collapse unknown regions into negative findings.
+- A negative claim such as "the source contains no instance of X" requires evidence whose declared coverage and method are adequate for that claim. Sparse sampling, shot summaries, or transcript-only evidence cannot establish absence from the entire source.
+- Every derived claim carries uncertainty and a declared scope. A model summary or salience score is a navigation aid, not independent proof.
+- Analysis expansion is bounded by the Task's permissions and resource budget. Privacy/data-minimization policy controls retention of frames, audio, transcripts, and derived embeddings; analysis convenience alone is not a retention justification.
+- Evidence is never silently reused after source, stream, proxy mapping, analysis method/configuration, or criterion meaning changes; freshness follows the MediaProject and EvidenceCarryForward contract.
 
-**Acceptance criteria**
+### Alternatives not selected
 
-- GoalContract criteria determine which analysis capabilities are required.
-- The planner can request additional analysis when current evidence is insufficient and records why it is needed.
-- UNKNOWN is preserved when evidence is weak; the system does not infer missing events from a summary alone.
-- Evaluation reports analysis cost, coverage, false detections, and downstream source-range accuracy separately.
+- **Always run complete visual/audio/transcription analysis:** higher recall potential but unnecessary cost, latency, exposure, and noisy claims for tasks that do not need every modality.
+- **Technical metadata only:** insufficient for autonomous moment selection and narrative editing.
+- **Sparse sampling without coverage accounting:** cheaper but hides unobserved intervals and encourages unsupported negative claims.
 
-## 4. ADP-03 — Workflow Profile acceptance, revocation, and migration
+### Risks and limitations
 
-**Recommendation — PROPOSED**
+Progressive analysis can miss an unanticipated cue; coarse indexing is not exhaustive semantic comprehension; analysis models may disagree or hallucinate; dense expansion can consume substantial budget; raw evidence can contain sensitive material. These risks require explicit coverage, uncertainty, budget, privacy, and escalation records rather than a universal confidence threshold.
 
-Treat every Workflow Profile as an immutable, content-digested policy/configuration snapshot. Keep the active DomainBinding stable for each accepted plan version.
+### Acceptance and later evaluation conditions
 
-1. A new Task is created with one explicit DomainBinding and Workflow Profile version.
-2. An accepted GoalContract/PlanRevision pins that binding; no in-place mutation of the profile or its tool/schema/resource/evidence sets is allowed.
-3. A same-domain profile update creates a candidate DomainBinding and requires compatibility/impact analysis.
-4. Activation occurs only through the existing freeze → drain/reconcile → refresh → validate → plan-switch barrier. The new binding becomes active with a new accepted PlanRevision.
-5. If the change affects scope, tool capabilities, external effects, resource authority, output obligations, or criterion evidence, require explicit user confirmation unless an exact immutable prior authorization covers that change.
-6. Revocation immediately blocks **new** admissions under the revoked profile. Already admitted operations are reconciled under their exact invocation/fencing identity; policy determines whether they drain or receive a cancellation request. A cancellation request is not proof of process convergence.
-7. If an in-flight operation is UNKNOWN, do not migrate around it or blindly replay it. Preserve the hold until Host evidence proves a safe cutover.
-8. A domain change (Coding ↔ Video) is never a profile migration; it requires a new Task and an explicit artifact handoff.
+1. Every supplied source asset has a technical probe result or an explicit failed/unavailable record.
+2. Every source asset has a coverage manifest that accounts for observed/sampled and unobserved/unavailable intervals.
+3. For content-based selection tasks, the coarse temporal index spans the selected source set and declares its sampling gaps/density.
+4. GoalContract criteria map to required analysis kinds and minimum evidence scopes; unnecessary modalities are not implicitly mandatory.
+5. The planner can request bounded additional analysis and records the evidence gap, reason, budget reservation, and resulting coverage.
+6. Incomplete/conflicting/weak evidence remains Partial/Inconclusive/UNKNOWN; sparse evidence cannot silently support whole-source absence claims.
+7. Claims are traceable to immutable source/stream/timebase, analysis/configuration, raw evidence, and freshness status.
+8. Evaluation reports coverage-manifest completeness, relevant-moment recall/miss rate where ground truth exists, false detections, source-range accuracy, escalation quality, and analysis cost separately.
+9. Retention follows an explicit data-minimization policy; no provider, model, storage technology, confidence threshold, or production pipeline is selected by this decision.
 
-**Alternatives**
+**Related contracts/evaluation:** [MediaProject and MediaAnalysis](../contracts/media-project.md), [Media Timeline](../contracts/media-timeline.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), [Completion](../contracts/completion.md), and ADP-08 resource policy.
 
-- Pin the Workflow Profile for the entire Task lifetime, with all changes deferred to a new Task.
-- Automatically migrate active Tasks whenever a profile version is published.
+## 4. ADP-03 — Workflow Profile lifecycle, revocation, and safe migration
 
-**Risks and trade-offs**
+**Recommendation — PROPOSED; decision draft prepared, owner disposition pending (OPEN).**
 
-- Full Task-lifetime pinning is simple but can leave long-running Tasks on a revoked or unusable profile.
-- Automatic migration is operationally convenient but can silently change capabilities, budgets, or verification obligations.
-- Revocation during a running Host operation cannot erase physical side effects already admitted; receipt reconciliation remains mandatory.
+Treat each Workflow Profile as an immutable, content-digested policy snapshot. An accepted plan pins an exact DomainBinding/profile version for historical meaning and provenance, but that pin is not a perpetual authorization to launch future operations.
 
-**Acceptance criteria**
+### Proposed lifecycle and authority rules
 
-- Profile versions and manifests are immutable and content-digested.
-- Every ModelStep, PlanRevision, ToolInvocation, artifact, and VerificationReport binds the exact DomainBinding/profile version it used.
-- Tests cover revocation before dispatch, after admission, during execution, during cancellation, and while an invocation is UNKNOWN.
-- No new invocation is admitted under a revoked profile.
-- A migrated Task has a new binding and accepted plan; old evidence is reused only when its full freshness and compatibility conditions pass.
-- Cross-domain profile migration is rejected.
+1. A Task is created with exactly one DomainBinding and one Workflow Profile version. The accepted GoalContract/PlanRevision binds the exact profile ID, version, digest, and binding identity.
+2. A profile version is immutable. A change creates a new candidate version and digest; no in-place edits to tool/schema/resource/evidence/permission declarations are allowed.
+3. The profile registry distinguishes Draft, Validated, Active, Superseded, and Revoked. Only the current Active version is eligible for new operation admission. Superseded/Revoked versions remain addressable for historical provenance but are not eligible for new launches.
+4. Each activation, supersession, or revocation advances a monotonic profile-authority epoch. The active DomainBinding records the effective profile version/digest and epoch.
+5. Every ToolInvocation records the exact DomainBinding/profile ID/version/digest, accepted PlanRevision, tool snapshot, authorization/approval references, and profile-authority epoch used at admission. Completed operations and their evidence retain that historical binding permanently; later profile changes do not rewrite history.
+6. Both admission and physical dispatch must check current authority. A previously accepted PlanRevision or queued/admitted invocation is not sufficient by itself to launch a new process. Immediately before Host launch, the dispatch gate must establish that the profile version is still current and Active, the authority epoch is current, and all capability/approval/budget/fencing conditions remain valid. A stale/revoked dispatch ticket is rejected. If the current authority state cannot be established, dispatch fails closed.
+7. Revocation immediately blocks new ToolInvocation admission. It also blocks any queued or admitted-but-not-yet-launched invocation from starting under the revoked profile. No old approved plan may be used to bypass this rule.
+8. An operation whose Host process has already started is reconciled under its exact invocation, profile, epoch, and Host identity. A predeclared policy determines whether it may drain or receives a cancellation request. A cancellation request is not proof of process convergence; Host descendants and writable handles must be reconciled.
+9. If any in-flight invocation is UNKNOWN, do not migrate around it, rebind it, replay it, or use a new profile to bypass its unresolved side-effect status. Preserve the hold until Host evidence establishes a safe outcome.
+10. A same-domain profile migration uses the existing freeze → stop new admissions → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new binding + accepted PlanRevision atomic activation barrier. New invocations use only the newly current binding/version after activation. An old plan is not silently rebound.
+11. A domain change (Coding ↔ Video) is not a profile migration; it requires a new Task and an explicit ADP-09 artifact handoff.
+
+### Alternatives not selected
+
+- **Pin the profile for the entire Task lifetime and ignore revocation:** simple but unsafe when user authority or policy is withdrawn.
+- **Automatically migrate all active Tasks when a new profile is published:** convenient but can silently change tools, effects, budgets, schemas, or evidence obligations.
+- **Allow already approved plans to launch after revocation:** rejected because plan acceptance is not a substitute for current authorization at dispatch.
+
+### Risks and limitations
+
+Revocation cannot undo side effects from an already running process. A Host outage can leave physical execution UNKNOWN. Dispatch-time authority checks require a trustworthy, fail-closed boundary; a cached profile allowlist alone is insufficient. The exact registry, epoch storage, ticket transport, and Host implementation remain unselected.
+
+### Acceptance and later evaluation conditions
+
+1. Profile versions/manifests are immutable and content-digested.
+2. Every model/tool/artifact/report record binds the exact historical profile version it used.
+3. No admission occurs under a Superseded or Revoked profile.
+4. No queued/admitted-but-not-started invocation launches after the profile is revoked or superseded; stale dispatch authorization is rejected.
+5. An old accepted PlanRevision cannot authorize new work after revocation or profile cutover.
+6. In-flight drain/cancel behavior follows the declared policy and is not marked converged until Host process/descendant/handle evidence supports it.
+7. UNKNOWN blocks profile migration, replay, and new conflicting side effects until reconciled.
+8. A migrated Task uses a new DomainBinding and accepted PlanRevision; protected capability/resource/evidence changes receive required user confirmation.
+9. Cross-domain profile migration is rejected.
+10. Shared Kernel evaluation includes revoke-before-admission, revoke-after-admission-before-launch, revoke-during-execution, cancellation race, and revoke-while-UNKNOWN fixtures. Any actual unauthorized launch is a blocker.
+
+**Related contracts/evaluation:** [Domain Workflow binding contract](../contracts/domain-workflow.md), [Trusted ToolHost](../security/trusted-host.md), [Shared Kernel evaluation](../research/shared-kernel/evaluation.md), [Plan Revision](../contracts/plan-revision.md), and [Budget](../contracts/model-and-budget.md).
 
 ## 5. ADP-04 — Generic artifact and media storage contract
 
@@ -232,36 +259,45 @@ This does not select a database, object store, filesystem, or deployment topolog
 
 ## 6. ADP-05 — Media time and synchronization semantics
 
-**Recommendation — PROPOSED**
+**Recommendation — PROPOSED; decision draft prepared, owner disposition pending (OPEN).**
 
-Retain the current integer/rational time model and make conversion rules explicit at every boundary.
+Adopt exact per-stream integer/rational temporal coordinates. Floating-point seconds and nominal frame rate are presentation/derived values, never the sole canonical basis for frame-accurate editing.
 
-- Video source ranges use integer PTS plus the selected stream's exact rational time base; ranges remain end-exclusive.
-- Variable-frame-rate source PTS are preserved. Do not reinterpret VFR media as constant-frame-rate by assumption.
-- Audio ranges carry the selected audio stream identity and integer sample positions/sample rate (and stream time base where needed).
-- Each TimelineRevision declares an explicit rational timeline time base. Do not assume one global fixed timeline rate for every project.
-- Keep conversions in exact rational/integer arithmetic as long as possible. Every conversion to frame ticks, output timestamps, or audio samples records its source basis, target basis, and deterministic rounding rule.
-- Resampling, frame-rate conversion, timestamp normalization, and audio sample-rate conversion are explicit RenderPlan operations with provenance.
-- Preserve non-zero start PTS, stream offsets, and audio/video alignment evidence.
+### Proposed temporal contract
 
-**Alternatives**
+- Video source coordinates use the selected stream's signed integer presentation timestamp (PTS) and that stream's exact positive rational time base. Source ranges are end-exclusive: [start_pts, end_pts).
+- Preserve the original PTS origin, including negative or non-zero start PTS, stream start offsets, discontinuities, and available per-frame presentation durations. Do not assume a constant frame interval for VFR media.
+- Audio coordinates retain the selected stream identity, integer sample positions/sample rate, stream PTS/time base, and any explicit resampling or sample-rate conversion mapping. Audio ranges are also end-exclusive.
+- Every TimelineRevision declares an explicit rational timeline time base. There is no universal project frame rate or implicit conversion of source PTS to frame index.
+- Rational values use a canonical mathematical representation: denominator positive, numerator/denominator reduced by their greatest common divisor where representable. The exact wire/storage encoding remains open.
+- A timestamp conversion records source coordinate and time base, target coordinate and time base, exact rational value before rounding, named rounding-policy ID/version, resulting integer coordinate, and the resulting mapping/error bound.
+- Rounding is operation-specific and explicit. A coverage-preserving interval conversion may use floor for the start and ceil for the end; nearest-boundary conversion is allowed only when the operation semantics explicitly request it and a deterministic tie rule is declared. No implicit global rounding mode is assumed.
+- Preserve per-stream A/V offsets and alignment evidence. Do not reset each stream to zero or infer synchronization from nominal frame rate. Any timestamp normalization, CFR conversion, resampling, or sample-rate conversion is an explicit RenderPlan operation with a provenance mapping.
+- Missing or invalid PTS/sample timing remains Missing/Unknown. A derived estimate must record its method, uncertainty, and source evidence; it must never be silently substituted as original source timing.
+- Timecode strings and floating-point seconds may be displayed to users, but cannot replace canonical integer/rational coordinates.
 
-- Normalize all sources to one constant frame rate and sample rate during ingest.
-- Use floating-point seconds as the canonical timeline coordinate.
+### Alternatives not selected
 
-**Risks and trade-offs**
+- **Floating-point seconds as canonical:** can introduce rounding drift and ambiguous frame/sample boundaries.
+- **Normalize all media to one CFR/sample rate at ingest:** simplifies downstream processing but changes source timing, costs time/storage, and creates derived-media quality and provenance obligations.
+- **Use nominal FPS to reconstruct VFR timestamps:** loses actual presentation cadence and can create boundary/sync errors.
 
-- Preserving native time bases increases compiler and validation complexity.
-- Normalization simplifies later rendering but introduces a derived media artifact, processing cost, and possible quality loss.
-- Ambiguous rounding can create off-by-one-frame edits, audio drift, or incorrect clip boundaries.
+### Risks and trade-offs
 
-**Acceptance criteria**
+Native time bases and explicit mappings increase timeline/compiler complexity. Different renderers may quantize to different output time bases. Missing or discontinuous timestamps may require normalization or human review. A mathematically exact source mapping does not by itself prove perceptual A/V synchronization; output checks remain necessary.
 
-- The contract specifies canonical serialization and allowed rational-number normalization.
-- Conversion rules are deterministic, versioned, and included in the RenderPlan digest.
-- Fixtures cover CFR and VFR, non-zero start PTS, differing stream time bases, 44.1/48 kHz audio, offsets, resampling, and end-exclusive boundaries.
-- Tests assert frame/sample boundary behavior and audio/video sync within a declared profile tolerance.
-- No floating-point value is used as the sole canonical source of frame-accurate timing.
+### Acceptance and later evaluation conditions
+
+1. Canonical source and timeline coordinates use integer ticks/PTS/sample positions plus exact rational time bases.
+2. End-exclusive boundary semantics are consistent across ingest, analysis, timeline, render, provenance, and verification.
+3. Every conversion records its source/target basis and deterministic, versioned rounding rule.
+4. VFR frame timing is preserved or transformed only by an explicit operation with source-to-output mapping.
+5. Audio sample positions and stream offsets remain explicit through trims, transitions, resampling, and output conversion.
+6. Fixtures cover CFR/VFR, irregular frame intervals, negative/non-zero PTS, differing stream time bases, missing timestamps, 44.1/48 kHz audio, offsets, resampling, and clip/transition boundaries.
+7. Validation measures frame/sample inclusion, exact conversion/round-trip properties where applicable, A/V drift, and output sync against a declared profile tolerance. Numeric tolerances are not selected in this architecture decision.
+8. No floating-point value or nominal FPS is the sole canonical source of frame-accurate timing.
+
+**Related contracts/evaluation:** [Media Timeline](../contracts/media-timeline.md), [MediaProject/MediaAnalysis](../contracts/media-project.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), [RenderPlan security](../contracts/render-plan-security.md), and [Completion](../contracts/completion.md).
 
 ## 7. ADP-06 — Output profile registry and defaults
 
@@ -386,36 +422,50 @@ For FFmpeg workloads, see the separate [RenderPlan security contract](../contrac
 - Resource reports include estimates, reservations, actual consumption, settlement, and any overrun.
 - No numeric cross-platform hard-limit claim is made without environment-specific evidence.
 
-## 10. ADP-09 — Cross-domain artifact handoff
+## 10. ADP-09 — Cross-domain ArtifactRef handoff
 
-**Recommendation — PROPOSED**
+**Recommendation — PROPOSED; decision draft prepared, owner disposition pending (OPEN).**
 
-Keep one Task bound to one domain. Represent a Coding-to-Video or Video-to-Coding handoff as two separately authorized Tasks connected by immutable, typed ArtifactRefs.
+Keep one Task bound to exactly one domain and one active DomainBinding. Cross-domain work is represented as separately authorized Tasks connected only by explicit, immutable, typed ArtifactRefs and an auditable handoff record.
 
-- The producing Task publishes an immutable artifact with digest, schema/type, provenance, access classification, and retention metadata.
-- The consuming Task receives an explicit ArtifactRef and validates type, schema, integrity, access policy, and suitability within its own Workflow Profile.
-- The consumer may read the artifact through an authorized capability but does not load the producer's private domain projection or inherit its permissions.
-- The relationship between Tasks is metadata (for example, derived-from/consumes), not a shared Task aggregate or shared execution authority.
-- Cross-domain transfer is explicit and user-authorized where it changes scope, exposes data, or causes external effects.
+### Proposed handoff contract
 
-**Alternatives**
+1. The producing Task creates an immutable artifact with exact Artifact ID, kind, schema/version, digest, byte size/media type, provenance, access classification, retention metadata, and producer Task/DomainBinding references.
+2. A handoff record identifies the source Task/domain, exact ArtifactRef and digest, intended consumer domain/Task, purpose, permitted access mode, authorizing principal/approval, authorization scope, and expiry/revocation state where applicable.
+3. The producer artifact must be in the consumption-eligible state defined by ADP-04. Staging, partial, quarantined, Missing, DigestMismatch, or UNKNOWN artifacts are not consumable. ADP-09 does not pre-empt ADP-04's final artifact state machine.
+4. ArtifactRef is a typed reference, not an access capability. The consumer receives a separate narrowly scoped read capability bound to the exact artifact digest, consumer Task, purpose, and access mode. The default handoff is read-only; any write or external effect requires separate authorization.
+5. The consuming Task is created independently with its own principal, DomainBinding, Workflow Profile, GoalContract, PlanRevision, tool capabilities, approvals, resource budget, and verification obligations. It validates artifact type/schema, digest, access classification, provenance/usage metadata, and task suitability before use.
+6. The consumer does not inherit producer permissions, approvals, capability tokens, profile version, budget, secrets, workspace/repository access, MediaProject access, private context projection, prompts, or model/session state.
+7. The consumer may read only the explicitly handed-off artifact payload through the scoped capability. It cannot traverse the producer Task, workspace, repository, MediaProject, or unrelated artifacts through the ArtifactRef.
+8. Lineage records the producer Task → artifact → authorized handoff → consumer Task → derived output artifact relationship. The relationship is audit metadata, not a shared Task aggregate or execution authority.
+9. Cross-domain transfer is explicitly authorized by the user unless an immutable prior authorization names the exact artifact scope/type, destination domain, purpose, and allowed operation. Authorization to create a producer artifact does not authorize transfer or consumption.
+10. A change in artifact digest, destination domain, purpose, access mode, or material scope requires a new handoff authorization and consumer validation. Revocation blocks new reads/consumption; already materialized copies follow the applicable retention/deletion policy.
+11. A Coding ↔ Video transition never changes the domain of an existing Task. Composite cross-domain autonomous Tasks and shared mixed-domain context remain deferred.
 
-- Introduce a composite cross-domain Task with multiple active DomainBindings.
-- Share a common context projection containing both RepositoryModel and MediaProjectModel.
+### Alternatives not selected
 
-**Risks and trade-offs**
+- **Composite Task with multiple active DomainBindings:** risks ambiguous authority, mixed evidence semantics, and accidental capability inheritance.
+- **Shared RepositoryModel/MediaProjectModel context:** collapses domain-specific cognition and may expose unrelated private state.
+- **ArtifactRef as bearer permission:** confuses identity/reference with authorization and allows accidental privilege escalation.
+- **Implicit transfer because the producer was authorized:** fails to express the user's separate decision to expose data to another domain.
 
-- Separate Tasks add handoff and orchestration overhead.
-- A composite Task risks ambiguous authority, mixed evidence semantics, and profile/capability inheritance.
-- Artifact-only handoff may be insufficient for a future tightly coupled workflow, which should be designed separately rather than weakening the initial isolation boundary.
+### Risks and limitations
 
-**Acceptance criteria**
+Artifact handoff adds orchestration and authorization overhead. A consumer may still misinterpret a valid artifact; schema and digest validation do not establish semantic suitability. ADP-04 must define the consumption-eligible artifact state and generic manifest/payload integrity rules. Cross-domain composite workflows need a separate future decision.
 
-- A Task cannot activate two domain bindings.
-- A consumer validates an ArtifactRef against its own schema and access policy.
-- Producer capabilities, approvals, and context are not inherited by the consumer.
-- Handoff lineage and user authorization are auditable.
-- Composite cross-domain autonomous workflows remain deferred until separately designed and approved.
+### Acceptance and later evaluation conditions
+
+1. A Task cannot activate two domains or two active DomainBindings.
+2. Every handoff binds exact source Task, Artifact ID/digest/schema, destination Task/domain, purpose, access mode, and authorization evidence.
+3. A consumer cannot read an artifact without a separate current capability scoped to that exact handoff.
+4. Producer permissions, approvals, profile, budgets, secrets, private context, and workspace/project access are not inherited.
+5. Digest/schema/classification/authorization mismatch and ineligible artifact states are rejected.
+6. Handoff lineage is auditable from producer through consumer to derived output.
+7. Revoked/expired handoff authority blocks new reads; any materialized-copy retention behavior is explicit.
+8. Shared Kernel evaluation includes positive handoff, wrong-domain/wrong-schema, digest mismatch, stale/revoked grant, attempted producer-context access, and attempted permission inheritance cases.
+9. Composite cross-domain autonomous workflows remain deferred; no Runtime or implementation authorization is implied.
+
+**Related contracts/evaluation:** [Domain Workflow binding contract](../contracts/domain-workflow.md), [Completion](../contracts/completion.md), [Shared Kernel evaluation](../research/shared-kernel/evaluation.md), [Unified domain architecture](../architecture/domain-architecture.md), and ADP-04 artifact lifecycle.
 
 ## 11. ADP-10 — Minimal preview and approval surface
 
@@ -495,15 +545,15 @@ The following choices require explicit owner disposition. "Accept" means accept 
 | ID | Recommended disposition | Owner response |
 | --- | --- | --- |
 | ADP-01 | Approve complete autonomous editing loop in the revised bounded core scope; defer advanced/editor-grade features | REVISED — APPROVED 2026-11-02 |
-| ADP-02 | Accept progressive, task-conditioned analysis | OPEN |
-| ADP-03 | Accept immutable profile versions and explicit safe cutover/revocation | OPEN |
+| ADP-02 | Accept four-stage progressive analysis with source-wide coverage accounting and adaptive evidence expansion | OPEN — draft prepared |
+| ADP-03 | Accept immutable profile versions, current-effective admission/dispatch checks, immediate revocation, and UNKNOWN hold | OPEN — draft prepared |
 | ADP-04 | Accept generic manifest + opaque immutable payload contract | OPEN |
-| ADP-05 | Accept integer PTS/rational time and explicit conversion rules | OPEN |
+| ADP-05 | Accept per-stream integer/rational time, explicit conversion/rounding, and A/V mapping | OPEN — draft prepared |
 | ADP-06 | Accept profile registry; decide compatibility-profile values separately | OPEN |
 | ADP-07 | Accept criterion-level evidence classes and risk-based human review | OPEN |
 | ADP-08 | Accept Host-declared enforcement capability; GPU optional | OPEN |
-| ADP-09 | Accept separate Tasks and explicit ArtifactRef handoff | OPEN |
+| ADP-09 | Accept separate Tasks, typed ArtifactRef, scoped transfer authorization, and no capability inheritance | OPEN — draft prepared |
 | ADP-10 | Accept lightweight preview/approval surface; no full editor | OPEN |
 | ADP-11 | Accept staged implementation sequence and separate authorization gates | OPEN |
 
-ADP-01 is the only item with an explicit owner disposition so far: REVISED, approved in revised form and recorded in the Decision Log. ADP-02 through ADP-11 remain OPEN. Any later partial acceptance must identify the accepted clause and required revision. Approval of ADP-01 does not authorize Runtime implementation, production dependencies, real-model/media experiments, or technology selection.
+ADP-01 is the only item with an explicit owner disposition so far: REVISED, approved in revised form and recorded in the Decision Log. Detailed first-batch drafts for ADP-02, ADP-03, ADP-05, and ADP-09 are now prepared, but all four remain OPEN pending explicit owner disposition. ADP-04, ADP-06 through ADP-08, and ADP-10 through ADP-11 also remain OPEN. Any later partial acceptance must identify the accepted clause and required revision. Approval of ADP-01 or draft readiness does not authorize Runtime implementation, production dependencies, real-model/media experiments, or technology selection.
