@@ -17,48 +17,45 @@ A ModelStep is one logical model decision point. A ModelAttempt is one actual pr
 
 A ModelStep purpose should identify the decision being made, such as reconnaissance, goal analysis, planning, implementation, debugging, verification, or summary. The purpose label supports policy, observability, and evaluation; it does not itself grant extra permissions.
 
-A response is eligible to become a candidate only when:
+### 2.1 Three independent dimensions (PROPOSED refinement)
+
+Each Attempt has independent (a) provider execution outcome, (b) candidate eligibility/ModelStep selection, and (c) financial exposure/settlement. A provider execution success is not a billing settlement. A billing delay does not retroactively invalidate an otherwise valid response if **all possible charges were covered by a credible reservation bound at admission**.
+
+A response is eligible to be recorded as a candidate only when:
 
 - the provider response is complete, not truncated or interrupted;
-- the response has passed the applicable schema and structural validation;
-- tool-call identities and arguments are complete and unambiguous;
-- plan/workspace bindings remain current;
-- usage and budget settlement requirements permit the response to proceed.
+- schema and structural validation pass, including complete unambiguous tool arguments;
+- plan/workspace bindings remain current and the candidate was not completed after effective Cancel Intent;
+- the owning Attempt was admitted under an enforceable hard-budget reservation or an explicitly accepted soft-budget mode.
 
-Partial, truncated, cancelled-after-linearization, or settlement-blocked responses are not executable candidates.
+A complete candidate is not itself permission to perform a tool side effect. A partial/truncated response never becomes executable.
 
 ## 3. Deterministic candidate and final selection
 
-- Every complete response candidate is durably recorded in the Kernel Journal with its Attempt identity, digest, and sequence.
-- For concurrent Attempts, the Kernel Journal durable append order is the deterministic ordering source. Client receive time, provider-reported completion time, and wall clock are not arbitration authorities.
-- candidateAttemptId is a provisional pointer to the earliest valid candidate according to the journal ordering rule.
-- selectedAttemptId is the final, irreversible choice.
-- The final selection, ModelStep Completed transition, and ResponseDeliveryOutbox creation occur in one Kernel-local transaction.
-- Once committed, the selected Attempt cannot be replaced by a late response.
+- Every eligible complete response is durably recorded with Attempt ID, response digest and Kernel Journal sequence. The earliest eligible journal-append sequence wins; provider timestamps and client receive times do not arbitrate.
+- `candidateAttemptId` is provisional. `selectedAttemptId` is irreversible after the one Kernel transaction that commits final selection, ModelStep Completed and ResponseDeliveryOutbox.
+- Once a valid response is selected, later candidates cannot replace it. Nonselected responses may be kept as historical evidence and **must not** produce ActionProposals or ToolInvocations.
+- Losing or still-running Attempts receive Cancel Intent and remain accountable for their **entire outstanding maximum charge** until trustworthy settlement/convergence. Do not wait for their cancel acknowledgement, usage invoice or provider closure merely to commit and deliver the selected response.
+- If the winner's response was journaled before a competing cancellation, selection remains eligible subject to the ordinary snapshot and admission checks. A response first completed/recorded after effective cancellation remains late evidence, not a selectable candidate.
+- Invalid/stale response, missing credible charge bound under hard budget, or unrelated Task authority change can block selection. **Delayed final invoices alone cannot block selection when complete outstanding exposure remains reserved.**
 
-A complete response that arrives after Cancel Intent has already linearized is retained as late evidence, not admitted as a candidate. If the candidate was durably recorded first, it retains eligibility subject to all remaining Attempts and budget settlement reaching a safe terminal condition.
+## 4. Budget reservation, settlement and verification reserve
 
-## 4. Budget reservation and verification reserve
+Kernel is the only hard-budget ledger authority. It records budget scope/limit, per-Attempt reservation identity and maximum amount, pinned pricing/request contract and charge authority, execution outcome, usage evidence, provisional/settled accounting, adjustment/reversal, overrun/debt and enforcement hold.
 
-Kernel is the only hard-budget ledger authority. It records:
+For every applicable hard-budget funding scope, admission maintains:
 
-- budget scope and limits;
-- reservation identity and amount;
-- Attempt / provider request binding;
-- usage evidence and its authority class;
-- settlement status and adjustments;
-- overrun / debt records;
-- enforcement holds and authorized release/top-up.
+`confirmed_spend + maximum_unsettled_exposure + proposed_reservation <= hard_budget`
 
-Orchestration may propose an allocation across reconnaissance, planning, implementation, debugging, and verification. Kernel enforces the hard limit and reservations. The plan should reserve sufficient budget for required verification and bounded repair rather than allowing exploration or implementation to consume the entire budget.
+The total exposure includes every concurrent Attempt (including losing, cancelled-but-unconfirmed and provider-side retry attempts) that may still be charged. A provider must support a **trusted finite per-request maximum** under the pinned request/pricing contract; explicit output limits alone are not a guaranteed currency bound if hidden charges or uncontrolled retries remain possible. A request without a credible maximum is **not eligible for hard-budget execution**. Missing usage is never assumed to be zero.
 
-Budget allocation is adaptive, not a fixed percentage selected by this contract. It should account for task class, uncertainty, remaining criteria, and observed failure cost. The verifier and final evidence collection must not be silently skipped merely because earlier phases consumed the available budget.
+The system may offer a separately opted-in **soft-budget mode** with clear non-guarantee and best-effort controls. It must not call this a hard ceiling. A provider incapable of a charge bound either uses that explicitly authorized mode or is rejected.
 
-Usage evidence and execution outcome are separate dimensions. An Attempt may have completed its provider interaction while its billing settlement remains unresolved.
+The Model Gateway records complete results and provider usage evidence; the Kernel maintains append-only budget responsibility. Billing may settle after ModelStep selection, response delivery, or even Task termination. Adjustments cannot rewrite a previously committed selection or terminal Task. Losing Attempts' unused reservation is released **only** when a trusted terminal usage bound/result establishes safe releasability, never because a timeout or cancellation request occurred.
 
-BlockedUnbounded is a recoverable blocking condition, not a terminal Attempt result. The system must not assume zero cost when authoritative usage is unavailable. It may resume only when usage, invoice evidence, or a trusted maximum bound tied to the original Attempt / Reservation is durably reconciled.
+`BlockedUnbounded` is a recoverable hold for an attempted/legacy charge-bearing request whose exposure cannot be bounded; it applies to affected funding/admission scopes. It is not a provider execution result or an automatic global Task block. Reconcile usage or obtain an authorized budget action before unblocking unsafe funded work. Related Task completion rules still consider outstanding relevant execution risks independently of billing latency.
 
-Settlement is append-only. Later authoritative corrections create Adjustment / Reversal records; they do not overwrite prior evidence.
+Reserve sufficient budget for required verification and bounded repair based on task uncertainty rather than a fixed percentage. Orchestration may allocate adaptively but may not silently consume a protected verification reserve without authorized budget change. See [Core protocol](core-protocol.md).
 
 ## 5. Budget overrun and terminal-state protection
 
