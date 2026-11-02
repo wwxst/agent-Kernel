@@ -76,4 +76,4 @@ Detailed proposal and linked contract/evaluation drafts for ADP-02, ADP-03, ADP-
 
 ## 5. Remaining decisions
 
-ADP-02 through ADP-11 remain OPEN except ADP-01, which is recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
+ADP-02 through ADP-11 remain OPEN. ADP-01 is recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
