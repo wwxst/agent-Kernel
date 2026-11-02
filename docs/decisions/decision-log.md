@@ -70,6 +70,10 @@ Every decision entry records the final selection, rationale, alternatives not se
 - **Related decisions/contracts:** ADP-02 (analysis); ADP-03 (profile authority); ADP-04 (artifacts); ADP-05 (time); ADP-06 (output profiles); ADP-07 (verification); ADP-08 (resources/Host); ADP-09 (handoff); ADP-10 (preview/progress/approval); ADP-11 (implementation sequence); MediaProject, Media Timeline, RenderPlan security, RenderJob, Trusted ToolHost, Completion, Video Intelligence, and Video evaluation.
 - **Authorization boundary:** This decision approves the product capability boundary only. It does not authorize Runtime code, production dependencies, real-model/media experiments, external asset acquisition, external publication, a final technology stack, or deployment. Those require separate explicit decisions/authorizations.
 
-## 4. Remaining decisions
+## 4. First-batch draft readiness
 
-ADP-02 through ADP-11 remain OPEN. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
+Detailed proposal and linked contract/evaluation drafts for ADP-02, ADP-03, ADP-05, and ADP-09 have been prepared on the architecture branch. Their Decision Register statuses remain **OPEN** until explicit owner disposition. Draft preparation is not ACCEPTED/REVISED approval and does not authorize Runtime implementation, experiments, technology selection, or deployment.
+
+## 5. Remaining decisions
+
+ADP-02 through ADP-11 remain OPEN except ADP-01, which is recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
