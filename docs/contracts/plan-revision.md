@@ -81,7 +81,7 @@ For the first plan:
 4. If the initial workspace and task bindings remain current and there are no prior operations to drain, Kernel atomically activates the revision and updates the Task's active-plan pointer.
 5. The Task can move from Planning to Ready; execution begins only when a PlanStep becomes Ready.
 
-### 3.15 Change classification and tactical fast path (PROPOSED refinement)
+### 3.1.1 Change classification and tactical fast path (PROPOSED refinement)
 
 A plan switch applies only when an accepted structural authority/goal constraint must change. Domain Orchestration proposes one of three reasoned change classes; Kernel validates **protected-field diffs** rather than trusting the model's label:
 
