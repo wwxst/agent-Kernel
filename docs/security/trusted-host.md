@@ -106,7 +106,7 @@ The Host must:
 
 - bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, AuthorityFenceEpoch, tool snapshot, workspace/project generation, budget reservation ID/version, and fencing epoch;
 - enter the serialized LaunchGate and durably consume a one-use dispatch authorization bound to the current effective Active profile version/digest, AuthorityFenceEpoch, authority-version vector, workspace/project generation, and budget reservation at the physical process-creation boundary; a previously accepted plan, cached allowlist, or offline ticket is not sufficient;
-- serialize process creation and authority-fence advancement so revocation and launch have a provable total order; if current authority or ordering cannot be established, fail closed and do not create the process;
+- serialize physical process creation against **Host-local fence installation** within the same eligible launch arbiter; the remote Kernel revocation request and OS spawn are not one transaction. If current authority or local ordering cannot be established, fail closed and do not create the process;
 - record process/job creation before reporting the operation as started;
 - contain the process tree and retain stdout/stderr/progress channels under the declared resource limits;
 - report progress as non-authoritative telemetry associated with the Host run ID;
