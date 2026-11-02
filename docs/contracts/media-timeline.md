@@ -69,7 +69,27 @@ Rounding is explicit per operation. For an interval whose semantics require pres
 
 Floating-point seconds and timecode strings are presentation values only. They may be generated for UI display but cannot be the sole basis for source-range identity, cut boundaries, or provenance. The conversion policy/version and resulting mappings are included in the TimelineRevision/RenderPlan digests.
 
-## 4. Canonical structures
+## 4. Canonical structures### 3.2 Piecewise stream-to-asset presentation mapping
+
+All streams in one MediaAsset are related through an immutable asset-relative presentation clock represented as an exact rational value. Each stream maps to that clock through one or more explicit StreamTimeMapping segments. This is a logical mapping contract; it does not select a container parser, decoder, database encoding, or media library.
+
+For a continuous video segment, the mapping is:
+
+    asset_time = anchor_asset_time + (source_pts - anchor_source_pts) × stream_time_base
+
+For a continuous decoded-audio segment, the mapping is:
+
+    asset_time = anchor_asset_time + (sample_index - anchor_sample_index) / sample_rate
+
+Each mapping segment records the stream ID, segment ID, source-coordinate interval, anchor source coordinate, anchor asset time, exact time base/sample rate, mapping provenance, and any gap, overlap, discontinuity, or uncertainty. A discontinuity starts a new segment. The system must not interpolate across a gap or reset a stream to zero without an explicit normalization operation and mapping record.
+
+For audio, the mapping must preserve the relationship among packet PTS, stream time base, decoded presentation sample positions, sample rate, codec priming/skip-sample metadata, discard padding, and resampling. Packet positions and decoded presentation sample positions are not assumed to be identical. For VFR video, preserve each available frame PTS and duration. If duration is derived from the next PTS, the derivation is valid only inside the same verified continuity segment and is labelled as derived; otherwise duration remains unknown.
+
+A/V alignment is computed by mapping the relevant video and audio coordinates onto the same asset-relative clock. A mathematically exact mapping is not by itself proof of perceptual synchronization; output verification separately measures rendered A/V drift against the selected profile tolerance. Numeric tolerance remains an evaluation/profile decision, not a universal timeline constant.
+
+All intermediate arithmetic remains exact rational/integer arithmetic. Overflow or an unrepresentable value must produce an explicit failure or use a declared wider exact representation; floating-point seconds are never a silent fallback or canonical substitute.
+
+
 
 ### 4.1 Media references and provenance
 
