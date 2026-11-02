@@ -23,14 +23,14 @@ It is a repository-level design synthesis. It does not report a runtime spike, b
 | ID | Decision area | Recommended direction | Owner decision / draft status |
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | Complete autonomous editing loop within a bounded core operation set; defer editor-grade features | REVISED — APPROVED 2026-11-02 |
-| ADP-02 | Media analysis | Whole-source technical/coverage accounting, task-conditioned depth, adaptive evidence expansion; no default full multimodal pass | Draft prepared — OPEN |
-| ADP-03 | Workflow Profile lifecycle | Immutable versions; current-effective admission and dispatch gate; revocation blocks launch; UNKNOWN remains held | Draft prepared — OPEN |
+| ADP-02 | Media analysis | Whole-source technical accounting; modality-scoped, gap-accounted coverage manifests; task-conditioned depth and adaptive evidence expansion | Refined draft — OPEN |
+| ADP-03 | Workflow Profile lifecycle | Immutable versions; linearizable Host LaunchGate/revocation fence; current-effective authority; UNKNOWN remains held | Refined draft — OPEN |
 | ADP-04 | Artifact and media storage | Generic immutable artifact manifest plus opaque blob/object payload; journal stores references, not large media bytes | Confirm logical contract |
-| ADP-05 | Media time | Per-stream integer PTS/sample coordinates, rational time bases, explicit versioned conversion/rounding and A/V mapping | Draft prepared — OPEN |
+| ADP-05 | Media time | Per-stream integer PTS/sample coordinates, piecewise asset-clock mappings, rational time bases, explicit conversion/rounding and A/V mapping | Refined draft — OPEN |
 | ADP-06 | Output profiles | Versioned profile registry; one compatibility profile candidate; no silent defaults | Confirm target profile values |
 | ADP-07 | Verification and human review | Criterion-level evidence classes; independent content review; human disposition for explicitly subjective/high-impact criteria | Confirm review policy |
 | ADP-08 | Host and resource policy | Hard-enforce only Host-supported dimensions; bounded source/output admission; GPU optional | Confirm supported Host envelope |
-| ADP-09 | Cross-domain handoff | Separate Tasks, exact immutable ArtifactRef, scoped handoff authorization, no inherited permissions/context | Draft prepared — OPEN |
+| ADP-09 | Cross-domain handoff | Separate Tasks, exact immutable ArtifactRef, resolver-mediated ScopedReadGrant, no inherited permissions/context | Refined draft — OPEN |
 | ADP-10 | Preview and approval surface | Contact sheet/low-resolution preview plus approve/revise/reject; no manual timeline editor | Confirm minimum user surface |
 | ADP-11 | Implementation order | Freeze logical contracts first, then isolated contract spikes, then separately authorized runtime work | Confirm stage gates |
 
