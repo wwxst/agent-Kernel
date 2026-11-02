@@ -70,12 +70,7 @@ Skills, MCP adapters, Hooks, plugins, workers and future sub-agents are untruste
 
 Multi-Agent / D9 remains **DEFERRED / NOT AUTHORIZED**. This baseline does not authorize ChildTask scheduling, worker pools, distributed execution or inherited capability implementation.
 
-## 7. Verification status
-
-Production authentication, principal-to-OS identity binding, approval revocation propagation, sandbox enforcement, cgroup isolation, network policy, process-tree convergence, receipt signing, key rotation and cross-host recovery remain **UNVERIFIED**.
-
-
-## 8. Long-running Host jobs
+## 7. Long-running Host jobs
 
 A long-running operation such as FFmpeg rendering remains a Kernel ToolInvocation executed by Trusted ToolHost; a typed RenderJob does not create a second execution authority.
 
@@ -92,3 +87,10 @@ The Host must:
 A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication.
 
 For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.
+
+
+## 8. Verification status
+
+Production authentication, principal-to-OS identity binding, approval revocation propagation, sandbox enforcement, cgroup isolation, network policy, process-tree convergence, receipt signing, key rotation and cross-host recovery remain **UNVERIFIED**.
+
+
