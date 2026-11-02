@@ -82,7 +82,7 @@ An analysis run states what it did not inspect. Sparse frame samples cannot supp
 
 ### 3.1 Progressive analysis and source-wide coverage accounting
 
-The proposed default ladder is:
+The approved logical default ladder is:
 
 1. **Technical baseline:** every supplied asset receives fingerprinting and technical probing, or an explicit failed/unavailable result.
 2. **Coverage accounting:** every source asset receives a coverage manifest. For content-based selection, the selected source set receives a coarse temporal navigation index (such as representative frames and shot-boundary candidates) whose sampling density and gaps are explicit. This accounts for coverage; it does not claim exhaustive semantic understanding of every frame.
@@ -115,6 +115,9 @@ Segments use end-exclusive intervals and form a disjoint, gap-accounted partitio
 | NotRequested | The task/policy did not request this modality; this is not a failed analysis and is not evidence of absence. |
 | Unavailable | The required source/stream/access/decoder/environment was unavailable. |
 | DecodeFailed | Decoding was attempted and failed for the declared interval. |
+
+A modality stream that is absent from the source is recorded as a **stream-inventory fact by the technical probe**, not fabricated as a stream-scoped coverage segment and not mislabeled as DecodeFailed. If the accepted GoalContract requires that absent modality, the corresponding evidence requirement remains unavailable/unsatisfied and cannot support a content claim. Stream absence is distinct from an existing stream that is inaccessible or fails to decode.
+
 
 A status change within an interval requires a segment boundary. A video observation cannot satisfy an audio coverage obligation, nor can a transcript satisfy a visual one. A negative content claim must cite the exact modality-specific intervals, sampling method, resolution, and evidence scope that justify it. NotSampled, NotRequested, Unavailable, and DecodeFailed never count as evidence that an event is absent.
 
