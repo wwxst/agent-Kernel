@@ -4,7 +4,7 @@
 
 The current product direction and ADP-01/ADP-02 dispositions are recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md) and the [Decision Log](decision-log.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). ADP-01 and ADP-02 are REVISED/APPROVED; no other item is approved merely because it appears in the proposal packet.
 
-### First-batch decision-draft readiness
+### First-batch decision status
 
 ADP-02 is **REVISED/APPROVED**. The remaining first-batch drafts — **ADP-03, ADP-05, and ADP-09** — specify Host launch/revocation linearization, piecewise asset-clock mappings, and resolver-mediated scoped handoff grants; they remain **OPEN** until explicit owner disposition. These are documentation contracts, not empirically verified implementations, and approval does not authorize implementation.
 
