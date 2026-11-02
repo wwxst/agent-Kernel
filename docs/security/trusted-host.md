@@ -39,18 +39,20 @@ A model statement that a tool is approved is not approval evidence.
 
 ### 2.1 Serialized Host LaunchGate
 
-An AdmissionTicket is evidence of admission, not a self-sufficient launch permission. The dispatch authorization is short-lived, one-use, and bound to the exact invocation, tool/argument digest, profile ID/version/digest, profile-authority epoch, principal/capability/policy/approval versions, workspace/project identity, budget reservation, Host target, fencing epoch, expiry, and nonce.
+An AdmissionTicket is evidence of admission, not a self-sufficient launch permission. The dispatch authorization is short-lived, one-use, and bound to the exact invocation, tool/argument digest, profile ID/version/digest, AuthorityFenceEpoch, principal/capability/policy/approval version vector, workspace/project identity and generation/snapshot digest, budget reservation ID/version, Host target, fencing epoch, expiry, and nonce.
 
-The Trusted ToolHost must expose a serialized LaunchGate whose process-creation operation and profile-authority fence advancement share one linearizable ordering boundary. The gate revalidates current authority and consumes the ticket at the physical launch boundary; it must not validate a cached ticket and spawn outside the gate.
+The Trusted ToolHost must expose a serialized LaunchGate whose physical process-creation operation and AuthorityFenceEpoch advancement share one linearizable ordering boundary for the affected invocation-authority scope. At that boundary, the gate revalidates the current epoch and exact principal/capability/policy/approval/profile version vector, workspace/project generation, and live budget reservation. It must not validate a cached ticket and spawn outside the gate.
 
 The launch boundary has a total order with revocation:
+Before process creation, the Host durably consumes the one-use ticket nonce and records a unique LaunchAttempt in the Host Ledger under the same serialized gate. This is the anti-replay boundary: a consumed nonce can never become launchable again, including after Host restart. If the Host crashes after nonce consumption but before process creation, preserve the attempt for reconciliation and do not replay the ticket or issue a replacement until non-execution is established. If process creation may have occurred before a durable receipt, preserve OutcomeUnknown.
+
 - If process creation crosses the gate before the new authority fence commits, the invocation is recorded as launched under the old epoch and follows the predeclared drain/cancel policy.
 - If the authority fence commits first, the old ticket is rejected and no process is created.
 - If the gate cannot prove the ordering or current authority, it fails closed. No offline or cached ticket may launch while authority is unavailable.
 
-The Host records a durable LaunchBoundaryCommitted fact with the Host run/process identity, invocation, ticket, profile digest, authority/fencing epochs, gate sequence, and timestamp before reporting the operation as started. A crash after process creation but before that receipt is durable leaves OutcomeUnknown until Host Ledger and target/output reconciliation resolve it; it is not evidence of non-execution.
+The Host records a durable LaunchBoundaryCommitted fact with the Host run/process identity, invocation, ticket ID/nonce, LaunchAttempt ID, profile/DomainBinding digest, AuthorityFenceEpoch, exact authority-version vector, workspace/project generation, fencing epoch, gate sequence, and timestamp before reporting the operation as started. A crash after process creation but before that receipt is durable leaves OutcomeUnknown until Host Ledger and target/output reconciliation resolve it; it is not evidence of non-execution.
 
-A revocation request stops new Kernel admissions and ticket issuance. The authority is RevocationPending until every Host gate that could accept a ticket acknowledges the new fence or is verifiably disabled. Revoked means no stale ticket can cross an eligible gate; it does not mean existing processes have terminated. A Host that cannot contact current authority fails closed and cannot accept offline dispatch.
+A revocation request advances the affected AuthorityFenceEpoch and stops new Kernel admissions and ticket issuance. The profile authority is RevocationPending until every Host gate that could accept an old ticket acknowledges the new fence or is verifiably disabled. Revoked means no stale ticket can cross an eligible gate; it does not mean existing processes have terminated. A Host that cannot contact current authority fails closed and cannot accept offline dispatch.
 
 ### 2.2 Scoped ArtifactResolver
 
@@ -101,8 +103,8 @@ A long-running operation such as FFmpeg rendering remains a Kernel ToolInvocatio
 
 The Host must:
 
-- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, profile-authority epoch, tool snapshot, budget reservation, and fencing epoch;
-- enter the serialized LaunchGate and consume a one-use dispatch authorization bound to the current effective Active profile version/digest and epoch at the physical process-creation boundary; a previously accepted plan, cached allowlist, or offline ticket is not sufficient;
+- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, AuthorityFenceEpoch, tool snapshot, workspace/project generation, budget reservation ID/version, and fencing epoch;
+- enter the serialized LaunchGate and durably consume a one-use dispatch authorization bound to the current effective Active profile version/digest, AuthorityFenceEpoch, authority-version vector, workspace/project generation, and budget reservation at the physical process-creation boundary; a previously accepted plan, cached allowlist, or offline ticket is not sufficient;
 - serialize process creation and authority-fence advancement so revocation and launch have a provable total order; if current authority or ordering cannot be established, fail closed and do not create the process;
 - record process/job creation before reporting the operation as started;
 - contain the process tree and retain stdout/stderr/progress channels under the declared resource limits;
