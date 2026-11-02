@@ -194,6 +194,8 @@ A single task-level Orchestration coordinator may perform intent analysis, momen
 
 The same feature must not appear in multiple phases with conflicting meanings. Output aspect ratio and codec selection belong to post-production adaptation; editorial framing intent may be expressed by the planner, but the output adapter determines profile-specific conversion. Generated captions are enhanced editorial capability; preserving an existing subtitle stream is profile-controlled pass-through, not caption generation.
 
+The core capability boundary in this table is the owner-approved revised ADP-01 decision; the detailed intelligence design, analysis policy, and typed execution contracts remain proposed/open. See the [Decision Log](../../decisions/decision-log.md).
+
 ## 6. Evaluation implications
 
 Video evaluation separately measures message/criterion fulfillment; candidate-moment retrieval and source-range accuracy; beat coverage/order and context preservation; factual/causal distortion and contradiction; narrative coherence, pacing, continuity, and audiovisual coordination; technical output validity; revision locality/fidelity and regression; source-to-output provenance completeness; human preference/review disposition; and shared Kernel safety/recovery metrics.
