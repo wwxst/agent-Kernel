@@ -230,9 +230,9 @@ Retain the current integer/rational time model and make conversion rules explici
 
 Use a versioned, finite Output Profile registry. A profile defines container, video/audio codec, pixel format, dimensions, aspect/pixel ratio, frame-rate policy, color policy, audio layout/sample rate, subtitle behavior, metadata, quality/bitrate constraints, and verification tolerances.
 
-For the first slice, prefer one general-compatibility SDR delivery profile rather than exposing a large codec menu. A candidate default for owner review is MP4 with H.264 video and AAC audio, progressive SDR output, preserved display aspect ratio, and an explicit maximum output resolution. This is a compatibility-oriented proposal, not a selected codec policy or a claim about every playback target.
+For the first slice, prefer one general-compatibility SDR delivery profile rather than exposing a large codec menu. A candidate default for owner review is MP4 with H.264 video and AAC audio, progressive SDR output, preserved display aspect ratio, and a 1080p-class maximum resolution. This is a compatibility-oriented proposal, not a selected codec policy or a claim about every playback target.
 
-Frame-rate behavior, resolution cap, color handling, audio layout, and quality/size trade-offs must be explicit profile fields. If a user does not specify them, the system must either apply a documented profile default and disclose it as an assumption or ask a question when the choice materially affects the deliverable.
+Frame-rate behavior, exact resolution cap, color handling, audio layout, and quality/size trade-offs must be explicit profile fields. A reasonable candidate is to preserve the source rate when the selected sources share a compatible timing policy and otherwise require an explicit project output rate. If a user does not specify profile fields, the system must either apply a documented profile default and disclose it as an assumption or ask a question when the choice materially affects the deliverable.
 
 **Alternatives**
 
@@ -410,21 +410,22 @@ The review surface does not expose arbitrary track editing, drag-and-drop, or fr
 
 **Recommendation — PROPOSED**
 
-After the owner approves the relevant architecture decisions and explicitly authorizes implementation planning:
+After the owner approves the relevant architecture decisions and explicitly authorizes implementation planning, use this sequence:
 
-1. **Logical contract freeze:** settle the common artifact envelope, Workflow Profile lifecycle, temporal model, initial operation registry, output-profile schema, verification classes, and Host capability declarations.
-2. **Schema/contract review:** produce examples and deterministic validation rules for GoalContract, DomainBinding, TimelineRevision, RenderPlan, RenderJob, ArtifactRef, and VerificationReport.
-3. **Isolated contract spikes:** only with separate authorization, test rational-time conversion, timeline compilation, artifact staging/finalization, and Host process convergence using deterministic fixtures/fake providers.
-4. **Shared Kernel implementation plan:** map the approved authority, Journal/Host, admission, budget, cancellation, recovery, and Completion Guard contracts to module boundaries without yet selecting unreviewed dependencies.
-5. **Domain implementation plans:** keep Coding and Video plans separate; prioritize a thin vertical slice that exercises the shared Kernel through one domain tool path.
+1. **Shared Kernel minimum foundation first:** define the authoritative Task/Plan lifecycle, admission, budget reservation/settlement, Journal/Host receipt boundary, UNKNOWN reconciliation, cancellation, generic ArtifactRef/manifest, and Completion Guard interfaces. Do not implement domain semantics in Kernel.
+2. **Coding vertical slice second:** use the retained Coding research to exercise repository snapshotting, read/write tool admission, tests, evidence freshness, plan revision, and criterion-level completion with deterministic fixtures.
+3. **Video vertical slice third, immediately after the shared path is stable:** exercise large immutable media artifacts, source/timebase provenance, long-running RenderJob, CPU/disk accounting, process-tree cancellation, UNKNOWN reconciliation, staged publication, and technical/content verification.
+4. **Schema/contract review:** produce examples and deterministic validation rules for GoalContract, DomainBinding, TimelineRevision, RenderPlan, RenderJob, ArtifactRef, and VerificationReport before domain implementation expands.
+5. **Isolated contract spikes:** only with separate authorization, test rational-time conversion, timeline compilation, artifact staging/finalization, and Host process convergence using deterministic fixtures/fake providers.
 6. **Evaluation preparation:** freeze separate Coding and Video task schemas/rubrics and the shared Kernel fault-injection matrix before any baseline run.
 7. **Runtime and external execution:** require separate explicit authorization for code, dependencies, real models, external media, network, budgets, and stop conditions.
 
+The Coding-first order is a sequencing recommendation, not permission to make Kernel code-repository-specific. The generic artifact and long-running Host contracts must exist before the Coding slice so that the subsequent Video slice validates shared abstractions rather than requiring a Kernel redesign.
+
 **Alternatives**
 
-- Implement Video first because its render lifecycle exposes long-running Host/resource behavior.
-- Implement Coding first because its repository/test loop may exercise more shared tool and verification paths.
-- Implement a thin shared Kernel skeleton before either domain vertical slice.
+- Implement Video first because its render lifecycle exposes long-running Host/resource behavior; this is preferable if Video is the immediate product priority and the shared artifact/Host contracts are already stable.
+- Implement a thin shared Kernel skeleton before either domain vertical slice, then run the two domain slices in parallel; this increases coordination and integration cost.
 
 **Risks and trade-offs**
 
@@ -436,9 +437,12 @@ After the owner approves the relevant architecture decisions and explicitly auth
 **Acceptance criteria**
 
 - Every stage has explicit inputs, outputs, owner approval, and exit criteria.
+- The shared Kernel foundation passes deterministic authority, receipt, UNKNOWN, cancellation, budget, artifact-integrity, and completion-contract checks before domain-specific implementation expands.
+- The Coding slice validates repository/workspace/test/evidence behavior without introducing domain-specific authority into Kernel.
+- The Video slice validates large artifacts and long-running media execution through the same shared interfaces.
 - Contract spikes use deterministic fixtures and report PASS/FAIL/NOT RUN accurately.
 - No implementation or benchmark authorization is inferred from architecture approval.
-- The first vertical slice validates a real domain workflow end-to-end without merging the domain models.
+- The first vertical slices validate each domain end-to-end without merging their models.
 
 ## 13. Owner decision record
 
