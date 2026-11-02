@@ -253,7 +253,7 @@ Revocation cannot undo side effects from an already running process. A Host outa
 11. Deterministic race fixtures prove both total-order outcomes: launch-boundary commit before revocation fence, and revocation fence before launch-boundary commit. The latter must reject the ticket without creating a process.
 12. Host unavailability, authority-service loss, duplicate/replayed tickets, and crashes between durable launch intent, process creation, and receipt persistence fail closed or remain UNKNOWN; none may be interpreted as proof of non-execution.
 13. A dispatch ticket nonce is durably consumed before physical process creation. Duplicate/replayed tickets remain rejected after Host restart; a crash after consumption requires reconciliation and cannot restore the ticket's launchability.
-14. Revocation of principal, capability, policy, or approval after admission but before launch advances the effective fence and rejects the stale ticket just as profile revocation does.
+14. Revocation of principal, capability, policy, or approval after admission but before launch advances the affected AuthorityFenceEpoch and rejects the stale ticket just as profile revocation does.
 15. A workspace/project generation or budget-reservation version change after admission invalidates the execution snapshot and blocks launch.
 16. The set of Host gates capable of accepting tickets is authoritative and enumerable. Revocation is not globally complete until every eligible gate acknowledges the fence or is verifiably disabled; an unreachable gate cannot launch offline.
 
