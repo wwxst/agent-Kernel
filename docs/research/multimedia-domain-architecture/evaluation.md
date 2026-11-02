@@ -15,7 +15,7 @@ Prepare a reproducible task set with pinned source assets/digests, provenance an
 Candidate task families:
 
 1. **Technical ingest and media understanding:** mixed streams, metadata, VFR/CFR, rotation, timebase, audio/subtitle streams, decode defects, and incomplete coverage.
-2. **Progressive analysis and escalation:** compare source-wide coverage accounting, task-conditioned modality selection, adaptive evidence expansion, unnecessary analysis, unresolved UNKNOWN, and privacy/retention behavior.
+2. **Progressive analysis and escalation:** compare source-wide coverage accounting, per-asset/per-stream/per-modality segment manifests, task-conditioned modality selection, adaptive evidence expansion, unnecessary analysis, unresolved UNKNOWN, and privacy/retention behavior.
 3. **Query-conditioned moment retrieval:** select source intervals relevant to a message or requested event, including low-salience but contextually necessary moments.
 4. **Highlight ranking and diversity:** distinguish salience, query relevance, narrative utility, coverage, and redundancy.
 5. **Message-driven narrative edit:** same source material, different editing messages; produce distinct valid beat sequences without losing factual context.
@@ -58,9 +58,9 @@ Compared systems receive the same source media, message, constraints, profile, p
 | Moment retrieval | Temporal IoU, Recall@K, precision/recall, ranking metrics where annotations support them | A correct interval may still be a poor narrative choice |
 | Highlight selection | Salience ranking, query relevance, coverage/diversity, redundancy, reviewer preference | Salience is not message utility |
 | Source-range accuracy | Boundary error, temporal overlap, correct stream/asset selection | Does not prove context is sufficient |
-| Analysis coverage and evidence gaps | Coverage-manifest completeness, sampled/unsampled/unavailable interval accounting, relevant-event miss rate where annotated | Coverage accounting is not exhaustive semantic recall |
+| Analysis coverage and evidence gaps | Per-asset/per-stream/per-modality manifest completeness, disjoint interval partition, explicit gaps, Observed/Sampled/NotSampled/NotRequested/Unavailable/DecodeFailed accounting, relevant-event miss rate where annotated | Coverage accounting is not exhaustive semantic recall; one modality cannot satisfy another modality's coverage |
 | Progressive analysis efficiency | Analysis cost per source-minute/task, unnecessary modality runs, escalation trigger precision/recall, unresolved UNKNOWN | Compare only on matched task criteria and source sets |
-| Timestamp conversion correctness | PTS/timebase round-trip, frame/sample boundary inclusion, VFR mapping preservation, deterministic rounding | Exact arithmetic does not alone prove rendered A/V quality |
+| Timestamp conversion correctness | PTS/timebase round-trip, piecewise stream-to-asset mapping, discontinuity/gap handling, frame/sample boundary inclusion, VFR preservation, audio priming/padding and deterministic rounding | Exact arithmetic does not alone prove rendered A/V quality or perceptual synchronization |
 | Narrative structure | Beat coverage, beat order/dependency validity, message transmission, contextual depth | Rubric/judgment required for many genres |
 | Factual/context integrity | Unsupported causal links, quote distortion, omitted qualifications, chronology errors, required-context recall | Must be checked against source evidence and task criteria |
 | Semantic continuity | Action/eyeline/screen-direction/speaker/location/time continuity; intentional discontinuity rationale | No universal continuity score |
@@ -114,9 +114,11 @@ A high-severity unauthorized execution, false completion, unresolved UNKNOWN rep
 
 After a stable baseline exists, vary one capability at a time:
 
-- metadata-only probing versus source-wide coverage accounting plus task-conditioned progressive analysis;
+- metadata-only probing versus source-wide, per-stream/per-modality coverage accounting plus task-conditioned progressive analysis;
+- coarse global coverage labels versus disjoint interval manifests with explicit NotRequested, NotSampled, Unavailable, and DecodeFailed states;
 - fixed sparse sampling versus adaptive evidence expansion triggered by criterion-level gaps;
 - uniform frame sampling versus task-conditioned temporal coverage;
+- single-origin stream normalization versus explicit piecewise stream-to-asset clock mappings across PTS discontinuities and audio sample offsets;
 - generic salience ranking versus query/message-conditioned moment retrieval;
 - single-score ranking versus dimension-level multi-objective selection;
 - no explicit NarrativePlan versus beat-structured planning;
