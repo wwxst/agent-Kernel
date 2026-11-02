@@ -4,6 +4,10 @@
 
 The current product direction and ADP-01 disposition are recorded in [Unified Agent Kernel — approved product direction](unified-domain-direction.md) and the [Decision Log](decision-log.md). The cross-domain architecture proposal is [here](../architecture/domain-architecture.md), and consistency findings are in [Cross-domain architecture review](cross-domain-architecture-review.md). Candidate recommendations, alternatives, risks, and acceptance criteria are collected in [Architecture Decision Proposals](architecture-decision-proposals.md). ADP-01 is REVISED/APPROVED; no other item is approved merely because it appears in the proposal packet.
 
+### First-batch decision-draft readiness
+
+Detailed drafts and linked contract/evaluation updates are prepared for **ADP-02, ADP-03, ADP-05, and ADP-09**. They remain **OPEN** until the owner explicitly accepts, revises, defers, or rejects each item. Draft readiness is not approval and does not authorize implementation.
+
 ## 1. Approved product direction
 
 - One shared Agent Kernel supports Autonomous Coding and Autonomous Video Editing.
@@ -21,11 +25,11 @@ See [unified domain direction](unified-domain-direction.md).
 **PROPOSED — owner review pending.**
 
 - Which fields belong in the minimal common GoalContract/PlanRevision envelope versus typed domain payloads?
-- How should DomainBinding and Workflow Profile versions be accepted, revoked, migrated, and recovered?
+- How should DomainBinding and Workflow Profile versions be accepted, revoked, migrated, and recovered, including the dispatch-time current-version gate and UNKNOWN hold?
 - What is the minimal generic artifact envelope needed for both code and media deliverables?
 - Which non-token resource dimensions can be hard-enforced across supported hosts?
 - How should long-running jobs and progress events be represented in the common ToolInvocation/Host lifecycle?
-- How should cross-domain linked tasks exchange artifacts without sharing domain authority?
+- How should cross-domain linked tasks exchange exact immutable ArtifactRefs with scoped authorization and no inherited producer permissions or context?
 
 See [Domain Workflow contract](../contracts/domain-workflow.md) and the proposed dispositions in [ADP-03, ADP-04, ADP-08, and ADP-09](architecture-decision-proposals.md).
 
@@ -47,8 +51,8 @@ See [Coding design](../research/autonomous-coding-agent/design.md), [Coding refe
 **PROPOSED — first-phase design and contracts drafted.**
 
 - What typed timeline schemas, deterministic compiler mappings, and per-operation evidence obligations are required to implement the ADP-01-approved core operation set?
-- Which visual/audio/transcription analysis capabilities are required for initial task families?
-- How should source PTS, VFR conversion, audio sample alignment, and rounding be represented across supported media?
+- Which visual/audio/transcription analysis capabilities are required for initial task families, and how should whole-source coverage accounting, adaptive expansion, and UNKNOWN be represented?
+- How should source PTS, VFR conversion, audio sample alignment, exact conversion records, and operation-specific rounding be represented across supported media?
 - Which output profiles/containers/codecs should be offered initially?
 - Which media checks are deterministic and which require independent model/human review?
 - How much preview/contact-sheet interaction is useful without building a full editor?
