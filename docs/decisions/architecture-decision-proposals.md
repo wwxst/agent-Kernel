@@ -218,6 +218,8 @@ Kernel's `RevocationRequested` transaction advances the desired AuthorityFenceEp
 
 Before trying OS spawn, Host durably consumes the unique nonce and records LaunchAttempt. A consumed ticket cannot be replayed after a Host crash. Host Ledger persistence and OS process creation are not one atomic transaction. If physical outcome cannot be established between durable intent, spawn and receipt, preserve OutcomeUnknown, original invocation identity, reservation and conflict hold until trustworthy reconciliation. Do not claim exactly-once external side effects or automatic process convergence.
 
+**Gate proof (G0):** record `RevocationRequested(K)`, `HostFenceInstalled(H)` and `Revoked(K)` as distinct durable events, including request-before-fence old-ticket launch, fence-first rejection and unreachable-Host Pending fixtures. The Host validates an authenticated locally effective authority snapshot and bounded live grant inside the **same** serialized gate as OS spawn (no validate-then-spawn TOCTOU). Persist H-local DispatchInbox/nonce/LaunchAttempt before spawn; H Ledger and OS spawn are non-atomic. Refer to [Core protocol](../contracts/core-protocol.md).
+
 **Deferred and unapproved:** linearizable *global* launch and revocation across multiple independent Hosts, Host failover during partitions, and an atomic OS process/ledger commit. These require separate Host membership/fence protocol and fault injection. The single-Host guarantee cannot be widened by protocol prose. See [Trusted ToolHost](../security/trusted-host.md) and [Minimal provable core protocol](../contracts/core-protocol.md).
 
 ### Alternatives not selected
@@ -245,7 +247,7 @@ Revocation cannot undo side effects from an already running process. A Host outa
 11. Deterministic single-Host race fixtures prove both total-order outcomes: physical launch before local Host fence installation, and local Host fence installation before physical launch. The latter must reject the ticket without creating a process.
 12. Host unavailability, authority-service loss, duplicate/replayed tickets, and crashes between durable launch intent, process creation, and receipt persistence fail closed or remain UNKNOWN; none may be interpreted as proof of non-execution.
 13. A dispatch ticket nonce is durably consumed before physical process creation. Duplicate/replayed tickets remain rejected after Host restart; a crash after consumption requires reconciliation and cannot restore the ticket's launchability.
-14. Revocation of principal, capability, policy, or approval after admission but before launch advances the affected AuthorityFenceEpoch and rejects the stale ticket just as profile revocation does.
+14. Revocation of principal, capability, policy, or approval after admission advances the Kernel **desired** AuthorityFenceEpoch and stops new admission immediately. An already issued ticket is rejected **after HostFenceInstalled**; a launch crossing the Host-local gate before installation remains a permitted in-flight old-epoch operation and must be reconciled.
 15. A workspace/project generation or budget-reservation version change after admission invalidates the execution snapshot. The Host must establish a live coherent proof and a local serialized decision; unprovable remote invalidation-versus-spawn order fails closed rather than being described as globally atomic.
 16. The invocation-authority scopes and eligible Host gates are authoritative and enumerable. Revocation remains Pending until all eligible gates have acknowledged a local fence or are provably disabled. An unreachable, potentially launchable Host is **not** presumed offline-safe.
 
@@ -597,7 +599,7 @@ The architecture first needs a small **provable protocol** rather than a broader
 
 | Gate | Required artifact/evidence | Authorization boundary |
 | --- | --- | --- |
-| **G0: architecture convergence** | Authoritative state/transition table, illegal combinations, budget/candidate separation, scoped Host fence/revocation semantics, L0/L1/L2 replan classification, protected-input scope, fault scenario specifications, and updated ADP cross-references | Architecture documents only; owner approval required for decisions |
+| **G0: architecture convergence** | Authoritative K/O/H transaction ownership, event/state/guard table, illegal combinations, explicit RevocationRequested/HostFenceInstalled/Revoked + TOCTOU, MaximumChargeCertificate, one-time InvocationApproval, trusted effective Coding execution view, normalized crash traces and updated ADP cross-references | Architecture documents only; owner approval required for decisions |
 | **G1: protocol feasibility** | Deterministic state-machine traces for Task/Plan/ModelStep/Invocation, Journal/Inbox/Outbox replay, concurrent winner selection without invoice barrier, cancellation/UNKNOWN and model budget exposure | Separate approval for any code, tests, tools, or experiments |
 | **G2: single-Host trust boundary** | Controlled local LaunchGate/fence race, durable nonce crash windows, Host incarnation/receipt, process descendants and writable-handle convergence, failure-to-contact-authority, scoped UNKNOWN recovery | No unproven global multi-Host revocation promise |
 | **G3: Coding vertical slice** | Real bounded repository task exploring/editing/testing/repairing/verifying; simple-loop versus strategic/tactical/assurance comparison under equal budgets/permissions | Separate Runtime/model authorization |
@@ -609,9 +611,9 @@ The architecture first needs a small **provable protocol** rather than a broader
 **Failure and stopping rules:**
 
 - Any actual unauthorized launch, stale completion, automatic retry of conflicting UNKNOWN or unbounded hard-budget exposure is a safety-gate blocker.
-- A hung losing ModelAttempt or missing final invoice must not block a correctly bounded selected response; the money stays reserved and late overrun enforcement remains append-only.
+- A hung losing ModelAttempt or missing final invoice must not block a correctly bounded selected response; Hard Budget needs a verified per-Attempt MaximumChargeCertificate covering pricing, input/output units, cache, extras and retries. The money stays reserved and late overrun enforcement remains append-only.
 - Unknown external execution does not automatically become FailedKnown. An unresolved conflict may require manual hold rather than pretending the Task is live.
-- Required tests must bind immutable protected inputs; ordinary generated test outputs may be separated without silently excluding source or config.
+- Required tests must bind immutable protected inputs **and trusted evidence of the actual execution filesystem view**, including overlay/mount/symlink shadowing checks; normal generated outputs remain separate.
 - Evaluation must include success, cost, latency, recovery and false-completion metrics. Compare the three cognitive loops against a simpler controlled loop before making them a production default.
 - Every experiment reports PASS / FAIL / NOT RUN from observed evidence. Written contracts never count as successful experiments.
 
