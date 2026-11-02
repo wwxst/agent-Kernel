@@ -120,7 +120,7 @@ Typed schemas, fixtures, tests, thresholds, and Host-specific enforcement are la
 
 ## 3. ADP-02 — Task-conditioned progressive media analysis
 
-**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative owner disposition is recorded in the [Decision Log — ADP-02](decision-log.md#adp-02-task-conditioned-progressive-media-analysis).
+**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative owner disposition is recorded in the [Decision Log — ADP-02](decision-log.md#4-adp-02-task-conditioned-progressive-media-analysis).
 
 Adopt a progressive analysis ladder that provides source-wide visibility and explicit coverage accounting without running every expensive modality over every asset by default. The analysis strategy is selected from the accepted GoalContract, source characteristics, evidence gaps, privacy policy, and remaining budget.
 
