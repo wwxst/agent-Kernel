@@ -1,7 +1,7 @@
 name: Prototype contracts (synthetic only)
 on:
   push:
-    branches: [prototype/kernel-contracts-g1-20261103]
+    branches: [prototype/kernel-contracts-g1-20261103, main]
   pull_request:
     paths:
       - 'kernel_contracts/**'

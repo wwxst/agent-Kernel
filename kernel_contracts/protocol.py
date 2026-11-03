@@ -65,7 +65,7 @@ class _Store:
 
 
 class Kernel(_Store):
-    TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "TIMED_OUT"}
+    TERMINAL = {"COMPLETED", "FAILED", "CANCELLED"}
 
     def __init__(self, path: str, *, trusted_bound_issuers: frozenset[str] = frozenset(), allow_r1: bool = False):
         super().__init__(path)
@@ -77,7 +77,8 @@ class Kernel(_Store):
               id TEXT PRIMARY KEY, state TEXT NOT NULL, control_version INTEGER NOT NULL,
               plan_epoch INTEGER NOT NULL, authority_epoch INTEGER NOT NULL,
               workspace_digest TEXT NOT NULL, workspace_epoch INTEGER NOT NULL,
-              criteria TEXT NOT NULL, revocation_pending INTEGER NOT NULL DEFAULT 0);
+              criteria TEXT NOT NULL, revocation_pending INTEGER NOT NULL DEFAULT 0,
+              cancel_accepted INTEGER NOT NULL DEFAULT 0, terminal_reason TEXT);
             CREATE TABLE IF NOT EXISTS budget (
               task_id TEXT PRIMARY KEY REFERENCES task(id), ceiling INTEGER NOT NULL,
               spent INTEGER NOT NULL DEFAULT 0, enforcement_hold INTEGER NOT NULL DEFAULT 0);
@@ -108,6 +109,10 @@ class Kernel(_Store):
               id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS command (
               id TEXT PRIMARY KEY, request_digest TEXT NOT NULL, result TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS unresolved_hold (
+              id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES task(id),
+              reason TEXT NOT NULL, conflict_scope TEXT NOT NULL,
+              resolution_state TEXT NOT NULL DEFAULT 'OPEN');
             """)
 
     def _command(self, command_id: str, request: dict, act: Callable):
@@ -126,8 +131,8 @@ class Kernel(_Store):
 
     @staticmethod
     def _active(c, task_id: str):
-        row = c.execute("SELECT state,plan_epoch,authority_epoch,workspace_epoch,workspace_digest,revocation_pending,control_version,criteria FROM task WHERE id=?", (task_id,)).fetchone()
-        if not row or row[0] != "RUNNING" or row[5]:
+        row = c.execute("SELECT state,plan_epoch,authority_epoch,workspace_epoch,workspace_digest,revocation_pending,control_version,criteria,cancel_accepted FROM task WHERE id=?", (task_id,)).fetchone()
+        if not row or row[0] != "RUNNING" or row[5] or row[8]:
             raise Rejected("task not active or authority revocation pending")
         return row
 
@@ -135,29 +140,33 @@ class Kernel(_Store):
         if not task_id or not workspace_digest or ceiling_minor < 0 or not criteria or len(criteria) != len(set(criteria)):
             raise Rejected("invalid task contract")
         with self.transaction() as c:
-            c.execute("INSERT INTO task VALUES (?,?,?,?,?,?,?,?,?)", (task_id, "RUNNING", 0, 1, 1, workspace_digest, 1, canonical(criteria), 0))
+            c.execute("INSERT INTO task (id,state,control_version,plan_epoch,authority_epoch,workspace_digest,workspace_epoch,criteria,revocation_pending) VALUES (?,?,?,?,?,?,?,?,?)", (task_id, "RUNNING", 0, 1, 1, workspace_digest, 1, canonical(criteria), 0))
             c.execute("INSERT INTO budget(task_id,ceiling) VALUES (?,?)", (task_id, ceiling_minor))
             c.execute("INSERT INTO journal(kind,ref) VALUES ('TaskCreated',?)", (task_id,))
 
     def progress_fingerprint(self, task_id: str) -> str:
-        """Task-local *derived* progress, not an authority/CAS version or global journal cursor."""
+        """A conservative synthetic *goal-progress* signal, not an authority.
+
+        Budget settlement, model attempts and receipt chatter never count.
+        This is NOT a production-grade novelty/repair-progress proof.
+        """
         with self.lock:
-            c=self.conn
-            fragments=[
-                c.execute("SELECT state,control_version,plan_epoch,authority_epoch,workspace_epoch,workspace_digest FROM task WHERE id=?",(task_id,)).fetchall(),
-                c.execute("SELECT id,status,selected_attempt FROM step WHERE task_id=? ORDER BY id",(task_id,)).fetchall(),
-                c.execute("SELECT id,state,candidate_digest,billed FROM attempt WHERE task_id=? ORDER BY id",(task_id,)).fetchall(),
-                c.execute("SELECT id,state,converged FROM invocation WHERE task_id=? ORDER BY id",(task_id,)).fetchall(),
-                c.execute("SELECT criterion_id,plan_epoch,workspace_epoch,receipt_id,verdict FROM evidence WHERE task_id=? ORDER BY criterion_id",(task_id,)).fetchall(),
-            ]
-        return digest(fragments)
+            c = self.conn
+            task = c.execute(
+                "SELECT workspace_digest FROM task WHERE id=?", (task_id,)
+            ).fetchall()
+            evidence = c.execute(
+                "SELECT criterion_id,plan_epoch,workspace_digest,receipt_id,verdict "
+                "FROM evidence WHERE task_id=? ORDER BY criterion_id", (task_id,)
+            ).fetchall()
+        return digest([task, evidence])
 
     def task(self, task_id: str) -> dict:
         with self.lock:
-            r = self.conn.execute("SELECT state,control_version,plan_epoch,authority_epoch,workspace_epoch,workspace_digest,revocation_pending FROM task WHERE id=?", (task_id,)).fetchone()
+            r = self.conn.execute("SELECT state,control_version,plan_epoch,authority_epoch,workspace_epoch,workspace_digest,revocation_pending,cancel_accepted,terminal_reason FROM task WHERE id=?", (task_id,)).fetchone()
         if not r:
             raise Rejected("unknown task")
-        return dict(zip(("state", "control_version", "plan_epoch", "authority_epoch", "workspace_epoch", "workspace_digest", "revocation_pending"), r))
+        return dict(zip(("state", "control_version", "plan_epoch", "authority_epoch", "workspace_epoch", "workspace_digest", "revocation_pending", "cancel_accepted", "terminal_reason"), r))
 
     def budget(self, task_id: str) -> dict:
         with self.lock:
@@ -328,51 +337,119 @@ class Kernel(_Store):
         pending = c.execute("SELECT COUNT(*) FROM invocation WHERE task_id=? AND (state IN ('DISPATCH_PENDING','UNKNOWN') OR converged=0)", (task_id,)).fetchone()[0]
         return pending == 0
 
+    def request_cancel(self, command_id: str, *, task_id: str, expected_control_version: int):
+        """Accept cancellation as its own durable, admission-blocking control fact."""
+        def act(c):
+            t = c.execute(
+                "SELECT state,control_version,cancel_accepted FROM task WHERE id=?",
+                (task_id,)
+            ).fetchone()
+            if not t or t[0] != "RUNNING" or t[1] != expected_control_version:
+                raise Conflict("cancellation CAS stale or task not Open")
+            if t[2]:
+                return {"cancel_accepted": True, "control_version": t[1]}
+            c.execute(
+                "UPDATE task SET cancel_accepted=1,control_version=control_version+1 "
+                "WHERE id=?", (task_id,)
+            )
+            c.execute("INSERT INTO journal(kind,ref) VALUES ('CancelAccepted',?)", (task_id,))
+            return {"cancel_accepted": True, "control_version": t[1]+1}
+        return self._command(
+            command_id, dict(op="request_cancel",task=task_id,version=expected_control_version), act
+        )
+
+    def commit_terminal(self, command_id: str, *, task_id: str, expected_control_version: int,
+                        status: str, reason: Optional[str] = None):
+        """One authority path for Completed/Failed/Cancelled (synthetic only).
+
+        A Failed(UnresolvedEffect) retains a durable, *unfenced* recovery hold.
+        This reference MUST NOT be interpreted as actual Host isolation.
+        """
+        if status not in self.TERMINAL:
+            raise Rejected("unsupported terminal status")
+        valid_failure_reasons = {
+            "DeadlineExceeded", "NoProgress", "BudgetExhausted", "UnsafeEnvironment",
+            "RepairExhausted", "UnresolvedEffect", "DependencyFailed", "PolicyDenied",
+        }
+        valid_cancel_reasons = {
+            "UserRequested", "Superseded", "AuthorityRevoked", "DependencyCancelled",
+        }
+        if (status == "FAILED" and reason not in valid_failure_reasons or
+            status == "CANCELLED" and reason not in valid_cancel_reasons or
+            status == "COMPLETED" and reason is not None):
+            raise Rejected("invalid status-specific terminal reason")
+
+        def act(c):
+            t = c.execute(
+                "SELECT state,control_version,cancel_accepted,plan_epoch,workspace_epoch,"
+                "workspace_digest,criteria FROM task WHERE id=?", (task_id,)
+            ).fetchone()
+            if not t or t[0] != "RUNNING" or t[1] != expected_control_version:
+                raise Conflict("terminal CAS stale or task already terminal")
+            unresolved = not self._no_unresolved_effect(c, task_id)
+            if status == "COMPLETED":
+                if t[2] or unresolved:
+                    raise Rejected("cancellation pending or physical effects unresolved")
+                if c.execute(
+                    "SELECT enforcement_hold FROM budget WHERE task_id=?",
+                    (task_id,)
+                ).fetchone()[0]:
+                    raise Rejected("budget integrity hold")
+                for criterion in json.loads(t[6]):
+                    row = c.execute(
+                        "SELECT plan_epoch,workspace_epoch,workspace_digest,"
+                        "effective_digest,verdict,sealed,isolated FROM evidence "
+                        "WHERE task_id=? AND criterion_id=?", (task_id, criterion)
+                    ).fetchone()
+                    if not row or row != (t[3],t[4],t[5],t[5],"PASS",1,1):
+                        raise Rejected("required criterion unverified or stale")
+                c.execute(
+                    "INSERT INTO journal(kind,ref) VALUES ('CompletionCommitted',?)",
+                    (task_id,)
+                )
+            elif status == "CANCELLED":
+                if not t[2] or unresolved:
+                    raise Rejected("cancellation not accepted or effects not converged")
+            elif unresolved and reason != "UnresolvedEffect":
+                raise Rejected("unresolved effect requires typed failure and hold")
+
+            if status == "FAILED" and reason == "UnresolvedEffect":
+                if not unresolved:
+                    raise Rejected("no unresolved effect to hold")
+                c.execute(
+                    "INSERT INTO unresolved_hold(id,task_id,reason,conflict_scope) "
+                    "VALUES (?,?,?,?)",
+                    ("terminal-hold:"+task_id,task_id,reason,"task:"+task_id)
+                )
+                c.execute(
+                    "INSERT INTO journal(kind,ref) VALUES ('UnresolvedEffectHoldOpened',?)",
+                    (task_id,)
+                )
+            c.execute(
+                "UPDATE task SET state=?,terminal_reason=?,control_version=control_version+1 "
+                "WHERE id=?", (status,reason,task_id)
+            )
+            c.execute("INSERT INTO journal(kind,ref) VALUES ('TaskTerminal',?)", (task_id,))
+            c.execute(
+                "INSERT INTO outbox VALUES (?,?,?)",
+                ("terminal:"+task_id,"K_TO_USER",
+                 canonical({"task":task_id,"state":status,"reason":reason}))
+            )
+            return {"state":status,"reason":reason}
+
+        return self._command(
+            command_id,
+            dict(op="commit_terminal",task=task_id,version=expected_control_version,
+                 status=status,reason=reason),
+            act
+        )
+
     def complete(self, command_id: str, *, task_id: str, expected_control_version: int):
-        def act(c):
-            t = self._active(c,task_id)
-            if t[6] != expected_control_version:
-                raise Conflict("terminal CAS stale")
-            if not self._no_unresolved_effect(c,task_id):
-                raise Rejected("physical process or effect has not converged")
-            if c.execute("SELECT COUNT(*) FROM invocation WHERE task_id=? AND (state!='SUCCEEDED' OR workspace_epoch!=?)", (task_id,t[3])).fetchone()[0]:
-                raise Rejected("failed or stale tool outcome")
-            if c.execute("SELECT enforcement_hold FROM budget WHERE task_id=?", (task_id,)).fetchone()[0]:
-                raise Rejected("budget integrity hold")
-            criteria=json.loads(t[7])
-            for criterion in criteria:
-                row=c.execute("SELECT plan_epoch,workspace_epoch,workspace_digest,effective_digest,verdict,sealed,isolated FROM evidence WHERE task_id=? AND criterion_id=?", (task_id,criterion)).fetchone()
-                if not row or row != (t[1],t[3],t[4],t[4],"PASS",1,1):
-                    raise Rejected("required criterion unverified or stale")
-            c.execute("UPDATE task SET state='COMPLETED',control_version=control_version+1 WHERE id=?", (task_id,))
-            c.execute("INSERT INTO journal(kind,ref) VALUES ('TaskCompleted',?)", (task_id,))
-            c.execute("INSERT INTO outbox VALUES (?,?,?)", ("terminal:"+task_id,"K_TO_USER",canonical({"task":task_id,"state":"COMPLETED"})))
-            return {"state":"COMPLETED"}
-        return self._command(command_id,dict(op="complete",task=task_id,version=expected_control_version),act)
-
-    def request_stop(self, command_id: str, *, task_id: str, reason: str):
-        if reason not in ("FAILED", "CANCELLED", "TIMED_OUT"):
-            raise Rejected("invalid terminal reason")
-        def act(c):
-            t = c.execute("SELECT state FROM task WHERE id=?", (task_id,)).fetchone()
-            if not t or t[0] != "RUNNING":
-                raise Rejected("cannot stop inactive task")
-            c.execute("UPDATE task SET state=?,control_version=control_version+1 WHERE id=?", ("STOPPING_"+reason,task_id))
-            c.execute("INSERT INTO journal(kind,ref) VALUES ('TaskStopRequested',?)", (task_id,))
-            return {"state":"STOPPING_"+reason}
-        return self._command(command_id,dict(op="request_stop",task=task_id,reason=reason),act)
-
-    def finalize_stop(self, command_id: str, *, task_id: str):
-        def act(c):
-            t=c.execute("SELECT state FROM task WHERE id=?", (task_id,)).fetchone()
-            if not t or not t[0].startswith("STOPPING_") or not self._no_unresolved_effect(c,task_id):
-                raise Rejected("cannot finalize with unresolved physical effects")
-            target=t[0].removeprefix("STOPPING_")
-            c.execute("UPDATE task SET state=?,control_version=control_version+1 WHERE id=?", (target,task_id))
-            c.execute("INSERT INTO journal(kind,ref) VALUES ('TaskStopped',?)", (task_id,))
-            c.execute("INSERT INTO outbox VALUES (?,?,?)", ("terminal:"+task_id,"K_TO_USER",canonical({"task":task_id,"state":target})))
-            return {"state":target}
-        return self._command(command_id,dict(op="finalize_stop",task=task_id),act)
+        """Compatibility adapter: delegates to the sole CommitTerminal transaction."""
+        return self.commit_terminal(
+            command_id, task_id=task_id, expected_control_version=expected_control_version,
+            status="COMPLETED"
+        )
 
 
 class GatewaySendLedger(_Store):
@@ -412,13 +489,16 @@ class SingleLoop:
             if self.kernel.task(task_id)["state"] != "RUNNING":
                 return self.kernel.task(task_id)["state"]
             if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
-                self.kernel.request_stop("loop:timeout:"+task_id,task_id=task_id,reason="TIMED_OUT")
-                break
+                self.kernel.commit_terminal("loop:deadline:"+task_id,task_id=task_id,
+                    expected_control_version=self.kernel.task(task_id)["control_version"],
+                    status="FAILED",reason="DeadlineExceeded")
+                return "FAILED"
             action=policy(i)
             if action == "WAIT":
-                return "BLOCKED"  # persisted state remains nonterminal; external resume/deadline needed
+                return "BLOCKED"  # still no durable WaitRecord/watchdog in this disposable prototype
             if action == "COMPLETE":
-                self.kernel.complete("loop:complete:"+task_id,task_id=task_id,expected_control_version=self.kernel.task(task_id)["control_version"])
+                self.kernel.complete("loop:complete:"+task_id,task_id=task_id,
+                    expected_control_version=self.kernel.task(task_id)["control_version"])
                 return "COMPLETED"
             new_cursor=self.kernel.progress_fingerprint(task_id)
             if action not in ("PROGRESS", "NO_PROGRESS"):
@@ -429,12 +509,11 @@ class SingleLoop:
             else:
                 stalled+=1
                 if stalled >= self.max_no_progress:
-                    self.kernel.request_stop("loop:stalled:"+task_id,task_id=task_id,reason="FAILED")
-                    break
-        else:
-            self.kernel.request_stop("loop:limit:"+task_id,task_id=task_id,reason="FAILED")
-        try:
-            self.kernel.finalize_stop("loop:finalize:"+task_id,task_id=task_id)
-        except Rejected:
-            return "STOPPING_UNRESOLVED"
-        return self.kernel.task(task_id)["state"]
+                    self.kernel.commit_terminal("loop:stalled:"+task_id,task_id=task_id,
+                        expected_control_version=self.kernel.task(task_id)["control_version"],
+                        status="FAILED",reason="NoProgress")
+                    return "FAILED"
+        self.kernel.commit_terminal("loop:limit:"+task_id,task_id=task_id,
+            expected_control_version=self.kernel.task(task_id)["control_version"],
+            status="FAILED",reason="NoProgress")
+        return "FAILED"

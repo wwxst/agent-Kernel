@@ -152,11 +152,13 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(Rejected):
             self.k.complete("premature",task_id="t",expected_control_version=0)
         self.k.host_result("ambiguous",invocation_id="tool",status="UNKNOWN",converged=False,authenticated=True)
-        self.k.request_stop("cancel",task_id="t",reason="CANCELLED")
+        self.k.request_cancel("cancel",task_id="t",expected_control_version=0)
         with self.assertRaises(Rejected):
-            self.k.finalize_stop("not-converged",task_id="t")
+            self.k.commit_terminal("not-converged",task_id="t",expected_control_version=1,
+                                   status="CANCELLED",reason="UserRequested")
         self.k.host_result("reconcile",invocation_id="tool",status="FAILED",converged=True,authenticated=True)
-        self.assertEqual(self.k.finalize_stop("final",task_id="t")["state"],"CANCELLED")
+        self.assertEqual(self.k.commit_terminal("final",task_id="t",expected_control_version=1,
+                         status="CANCELLED",reason="UserRequested")["state"],"CANCELLED")
         with self.assertRaises(Rejected):
             self.k.complete("after-stop",task_id="t",expected_control_version=2)
 
@@ -201,14 +203,22 @@ class ContractTests(unittest.TestCase):
         self.evidence(plan_epoch=2)
         self.assertEqual(self.k.complete("complete-new-plan",task_id="t",expected_control_version=1)["state"],"COMPLETED")
 
-    def test_terminal_states_cancel_timeout_failure(self):
-        for reason in ("CANCELLED","TIMED_OUT","FAILED"):
+    def test_terminal_states_cancel_deadline_failure(self):
+        for status, reason in (("CANCELLED","UserRequested"),
+                               ("FAILED","DeadlineExceeded"),("FAILED","NoProgress")):
             task="task-"+reason
             self.k.new_task(task,workspace_digest="s",criteria=("c",),ceiling_minor=0)
-            self.assertEqual(self.k.request_stop("stop:"+task,task_id=task,reason=reason)["state"],"STOPPING_"+reason)
-            self.assertEqual(self.k.finalize_stop("done:"+task,task_id=task)["state"],reason)
+            version=0
+            if status == "CANCELLED":
+                version=self.k.request_cancel("cancel:"+task,task_id=task,
+                                              expected_control_version=0)["control_version"]
+            self.assertEqual(self.k.commit_terminal("done:"+task,task_id=task,
+                             expected_control_version=version,status=status,
+                             reason=reason)["state"],status)
+            self.assertEqual(self.k.task(task)["terminal_reason"],reason)
             with self.assertRaises(Rejected):
-                self.k.request_stop("again:"+task,task_id=task,reason=reason)
+                self.k.commit_terminal("again:"+task,task_id=task,
+                    expected_control_version=version,status=status,reason=reason)
 
     def test_one_controller_fast_path_stall_and_deadline(self):
         self.evidence()
@@ -219,7 +229,8 @@ class ContractTests(unittest.TestCase):
         self.k.new_task("hang",workspace_digest="s",criteria=("c",),ceiling_minor=0)
         self.assertEqual(loop.run("hang",lambda i:"PROGRESS"),"FAILED") # false progress has no journal change
         self.k.new_task("timed",workspace_digest="s",criteria=("c",),ceiling_minor=0)
-        self.assertEqual(loop.run("timed",lambda i:"NO_PROGRESS",deadline_monotonic=time.monotonic()-1),"TIMED_OUT")
+        self.assertEqual(loop.run("timed",lambda i:"NO_PROGRESS",deadline_monotonic=time.monotonic()-1),"FAILED")
+        self.assertEqual(self.k.task("timed")["terminal_reason"],"DeadlineExceeded")
 
     def test_unrelated_task_activity_does_not_reset_stall_limit(self):
         self.k.new_task("idle",workspace_digest="x",criteria=("c",),ceiling_minor=0)
@@ -251,6 +262,67 @@ class ContractTests(unittest.TestCase):
             self.k.update_workspace("unsafe",task_id="t",old_epoch=1,new_digest="v2")
         self.k.host_result("done",invocation_id="i",status="SUCCEEDED",converged=True,authenticated=True)
         self.assertEqual(self.k.update_workspace("safe",task_id="t",old_epoch=1,new_digest="v2")["workspace_epoch"],2)
+
+    def test_old_failed_tool_does_not_poison_repaired_current_evidence(self):
+        t=self.k.task("t")
+        self.k.admit_tool("tool-broken",task_id="t",invocation_id="broken",
+            args_digest="test-before-fix",nonce="n-failed",plan_epoch=1,
+            authority_epoch=1,workspace_epoch=1,risk="R0")
+        self.k.host_result("failure",invocation_id="broken",status="FAILED",
+                           converged=True,authenticated=True)
+        self.k.update_workspace("fix",task_id="t",old_epoch=1,new_digest="source-fixed")
+        self.k.record_coding_evidence("proof-fixed",task_id="t",criterion_id="tests",
+            plan_epoch=1,workspace_epoch=2,source_digest="source-fixed",
+            effective_digest="source-fixed",receipt_id="fresh-independent-synthetic-receipt",
+            trusted=True,sealed_readonly=True,outputs_disjoint=True,verdict="PASS")
+        self.assertEqual(self.k.complete("success-after-repair",task_id="t",
+                         expected_control_version=0)["state"],"COMPLETED")
+        self.assertEqual(self.k.conn.execute(
+            "SELECT state FROM invocation WHERE id='broken'").fetchone()[0],"FAILED")
+
+    def test_unresolved_effect_terminal_hold_is_durable_but_not_a_fence(self):
+        self.k.admit_tool("tool",task_id="t",invocation_id="unknown",
+            args_digest="effect",nonce="n-unknown",plan_epoch=1,
+            authority_epoch=1,workspace_epoch=1,risk="R0")
+        self.k.host_result("unknown-state",invocation_id="unknown",status="UNKNOWN",
+                           converged=False,authenticated=True)
+        with self.assertRaises(Rejected):
+            self.k.commit_terminal("unsafe-fail",task_id="t",expected_control_version=0,
+                                   status="FAILED",reason="NoProgress")
+        first=self.k.commit_terminal("safe-fail",task_id="t",expected_control_version=0,
+                                     status="FAILED",reason="UnresolvedEffect")
+        self.assertEqual(first,self.k.commit_terminal("safe-fail",task_id="t",
+                         expected_control_version=0,status="FAILED",reason="UnresolvedEffect"))
+        self.assertEqual(self.k.conn.execute(
+            "SELECT resolution_state FROM unresolved_hold WHERE task_id='t'"
+        ).fetchone()[0],"OPEN")
+        self.k.host_result("late",invocation_id="unknown",status="SUCCEEDED",
+                           converged=True,authenticated=True)
+        self.assertEqual(self.k.task("t")["state"],"FAILED")
+        with self.assertRaises(Rejected):
+            self.k.complete("cannot-reopen",task_id="t",expected_control_version=1)
+
+    def test_cancel_needs_accepted_request_and_blocks_new_admission(self):
+        with self.assertRaises(Rejected):
+            self.k.commit_terminal("not-authorized",task_id="t",expected_control_version=0,
+                                   status="CANCELLED",reason="UserRequested")
+        self.k.request_cancel("accept",task_id="t",expected_control_version=0)
+        with self.assertRaises(Rejected):
+            self.admit("forbidden-after-cancel",1)
+        self.assertEqual(self.k.commit_terminal("cancel-commit",task_id="t",
+                         expected_control_version=1,status="CANCELLED",
+                         reason="UserRequested")["state"],"CANCELLED")
+
+    def test_financial_chatter_is_not_goal_progress(self):
+        self.admit("a",1)
+        loop=SingleLoop(self.k,max_decisions=10,max_no_progress=2)
+        def settle_on_first(i):
+            if i==0:
+                self.k.settle_charge("settle-now",attempt_id="a",
+                                     billed_minor=1,authenticated=True)
+            return "PROGRESS"
+        self.assertEqual(loop.run("t",settle_on_first),"FAILED")
+        self.assertEqual(self.k.task("t")["terminal_reason"],"NoProgress")
 
     def test_hard_budget_unrelated_task_has_separate_scope(self):
         self.admit(amount=10)

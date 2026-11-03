@@ -2,7 +2,7 @@
 
 **Status: IMPLEMENTED locally / synthetic tests verified / external G0–G5 gates OPEN.**
 
-This branch is deliberately based on the architecture review Draft PR #1, NOT on the production-ready main branch. Owner approval of G0, ADP-03–11 and a final language/OS/Provider technology choice remains open. This Python 3.11+ standard-library slice is a **disposable executable reference** of a subset of the protocol: it does not imply approval of Python as the final Kernel stack. No inherited/deleted legacy code is used.
+The original prototype branch diverged from the earlier architecture-review baseline; it is intentionally integrated as a separate disposable research slice, not adopted as the production Kernel. Owner approval of G0, ADP-03–11 and a final language/OS/Provider technology choice remains open. This Python 3.11+ standard-library slice is a **disposable executable reference** of a subset of the protocol: it does not imply approval of Python as the final Kernel stack. No inherited/deleted legacy code is used.
 
 ## Run
 
@@ -19,11 +19,13 @@ No dependencies, model API keys, OS permissions or external tools are needed. Te
 | --- | --- | --- |
 | P0 K-local idempotent admission + durable Model/Tool Outbox | SQLite `BEGIN IMMEDIATE`, command digest dedup, journal/intent/outbox in one local transaction; concurrent two-connection budget race | No real dispatcher, K/O/H recovery protocol, filesystem fsync/storage fault proof (G1 partial) |
 | P0 Provider ambiguous send + runaway cost | Separate durable G send marker, no automatic replay, UNKNOWN held, new Attempt independently funded, bill/selection separated | Issuer `synthetic-test-issuer` is a TEST DOUBLE, not a real charge certificate; no authenticated Provider status/billing (G1 partial) |
-| P0 bounded candidate/termination | Incomplete candidate rejected, journal-order irreversible selection; Completed/Failed/Cancelled/TimedOut immutable, stop needs effects converged | No actual model tool-call argument schema/stream parser, delivery consumer, or real long-job reconciler |
+| P0 bounded candidate/termination | Incomplete candidate rejected, journal-order irreversible selection; Completed/Failed/Cancelled terminal via one CommitTerminal transaction (deadline is Failed(DeadlineExceeded)); unresolved effect failure writes a durable synthetic Hold | No actual model tool-call argument schema/stream parser, delivery consumer, or real long-job reconciler |
 | P0 Host revocation/nonce | Synthetic local gate serializes fence/launch callback, consumes nonce durably, expires ticket, denies offline/unknown/R2 | **No OS spawn, sandbox, cryptographic grants, real clock/lease/Host ledger attestation**. These are G2 specification checks, not a G2 PASS |
-| P0 verification guard | Coding criterion/effective digest/read-only/disjoint output/receipt fields must match; UNKNOWN/failed/unconverged tools block terminal | Receipt trust is an injected boolean; **no actual sealed SourceSnapshot mount** or actual test execution view. S1–S3 and Video verification NOT RUN |
+| P0 verification guard | Coding criterion/effective digest/read-only/disjoint output/receipt fields must match; UNKNOWN/unconverged tools block success; historical failed-but-converged tools do not poison fresh current evidence | Receipt trust is an injected boolean; **no actual sealed SourceSnapshot mount** or actual test execution view. S1–S3 and Video verification NOT RUN |
 | P1 selective versions / plan changes | Routine Attempt/Tool do not CAS on global TaskControl; protected workspace/plan/authority epoch checks; L2 structural CAS; old evidence invalidated | No full protected-field L0/L1/L2 classifier, no multi-Host, no Domain intelligence path |
 | P1/P2 single loop and bounded progress | One decision driver with fast completion, task-local derived progress, decision cap, no-progress cap, deadline, explicit BLOCKED | No model scheduling, adaptive context assembler, retry policy, watchdog service or real Coding/Video loop |
+
+**The synthetic `UnresolvedEffectHold` is only a SQLite record, not an OS fence or external reconciliation service. No physical safety claim follows from writing it.**
 
 **Do not interpret the synthetic tests as a G1 or G2 gate pass.** `ChargeBound.all_billable_dimensions_proven`, `authenticated=True` and `sealed_readonly=True` are deliberately injected by tests, not trusted/cryptographically verified facts. A live adapter/Host MUST replace these seams and fail closed until proof is available. This code must not be exposed as a production API for effectful tools.
 
@@ -39,7 +41,7 @@ No dependencies, model API keys, OS permissions or external tools are needed. Te
 
 ## Validation status (record results independently from this file)
 
-- The unit suite additionally covers unrelated-task activity not resetting stall detection, known Host outcome followed by later process convergence, and blocking workspace cutover while a tool is unresolved. Tests cover idempotent replay, missing charge certificate, ambiguous Gateway send and restart, competing reservations, budget overrun, candidate ordering, snapshot invalidation, unsafe shadow/false completion, cancel/timeout/failure finalization, bounded no-progress, local Host fence ordering and nonce recovery.
+- The unit suite additionally covers repaired historical tool failure followed by fresh Pass, one atomic terminal transaction, terminal hold persistence, cancellation authorization, billing noise not counting as progress, unrelated-task activity not resetting stall detection, known Host outcome followed by later process convergence, and blocking workspace cutover while a tool is unresolved. Tests cover idempotent replay, missing charge certificate, ambiguous Gateway send and restart, competing reservations, budget overrun, candidate ordering, snapshot invalidation, unsafe shadow/false completion, cancel/timeout/failure finalization, bounded no-progress, local Host fence ordering and nonce recovery.
 - Tests are **synthetic local deterministic tests**, not full Coding/Video tasks. Workload quality/latency/token cost versus pi-agent, Codex, Claude Code, DeepSeek Harness or an existing baseline is **not comparable**, because this repository has no runnable production baseline.
 - Benchmark script reports only local micro-operation timings, no model tokens or external tool timings; never label them as end-to-end Agent performance gains.
 
