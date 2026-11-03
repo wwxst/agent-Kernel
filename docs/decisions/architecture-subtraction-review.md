@@ -73,19 +73,29 @@ The **minimum evidence interface** is `EvidenceRef(id, sourceKind, immutableSour
 
 1. **Host grant liveness and check/spawn TOCTOU:** no OS-level proof yet that local gate and process creation are indivisible with respect to fence installation; H ledger/spawn crash windows remain UNKNOWN.
 2. **Selective version read-set:** concrete K storage must demonstrate atomic validation of Plan/Authority/Workspace/Budget across independent aggregates without bypassing a revocation; use a narrower transaction or explicit fences, **not** an unproven distributed read.
-3. **Effective execution-view enforcement:** mount namespace, overlay, symlink and dynamic file opens need real Host/OS isolation proof. Fall back to Unverified if unsupported.
-4. **Provider hard maximum:** hidden charges, server-side retries and mutable pricing can invalidate Hard Budget eligibility.
+3. **Read-only effective execution view:** first prove sealed readonly source and isolated writable output mounts on target OS and toolchains; reject overlay/symlink shadowing. Unavailable sandbox means Unverified; full per-file tracing remains optional experiment.
+4. **Provider ambiguous submission + hard maximum:** HTTP ACK loss or Gateway crash may leave accepted/billable request UNKNOWN. Without qualified Provider execution-and-invoice idempotency, no resend; original budget held. Hidden fees/server retries/pricing may separately invalidate Hard Budget.
 5. **PlanStep/ActionProposal migration:** past lifecycle records remain historical; conversion to projections must preserve auditability and avoid changing in-flight semantics.
 6. **Parallel scheduling:** only enable after conflict and process-handle containment fixtures; no speculative parallel writes by default.
 7. **Cognitive quality:** a simpler loop may be insufficient for coding/debugging or video narrative; preserve richer *Domain* methods and measure their incremental value rather than deleting capabilities.
+
+### G0 refinement: Provider ambiguous send and minimal Host policy
+
+**MUST KEEP:** K-local ModelAttempt admission + maximum reservation + Outbox; G durable `SendMayHaveOccurred` before any external request bytes; one immutable Attempt/request identity, truthful ProviderOutcomeUnknown, **no unqualified automatic resend** on ACK loss/timeout/crash, billing exposure held until trusted settlement. A separately submitted Provider execution always gets a new Attempt and independently reserved budget; qualifying an identical idempotent transport replay requires Provider **execution and charge** deduplication, not an SDK header.
+
+**MUST KEEP:** Host local Fence ordering; distinct K RevocationRequested, H HostFenceInstalled and K Revoked; grant expiry enforced inside physical launch critical section. **SIMPLIFY:** R0 read-only / R1 reversible isolated / R2 destructive or externally irreversible risk policy; default-disable R2 until Owner chooses a proven acceptable race window or stronger verified protocol. Do not assert instant revoke from a signed TTL alone.
+
+**SIMPLIFY:** Coding verification Host uses a **sealed read-only SourceSnapshot** as actual process input with disjoint writable build/test output mounts, restricted symlinks/remounts and authenticated execution view. **EXPERIMENT REQUIRED:** platform/OS proof for readonly enforcement and toolchain compatibility. A full file-open mutation tracer is a separately reviewed fallback, not mandatory baseline; an unsupported toolchain cannot fabricate Passed evidence.
+
+**EXPERIMENT REQUIRED:** G1 K/G send-marker and acceptance/ACK/retry/cost cases M1–M6; G2 expiry/high-risk/fence and sealed-view cases R5–R7/S1–S3. All remain NOT RUN. Owner choices for grant lifetime/risk exceptions and Provider capabilities remain OPEN (see [Open decisions](open-decisions.md)); no design acceptance is implied.
 
 ## 7. G0–G5 gates and review status
 
 | Gate | Deliverable / proof | Status |
 | --- | --- | --- |
 | **G0** | Resolve this proposal, minimized state authority, selective-version admission, Host fence/P0 view/transaction contracts, ADD/KEEP/EXPERIMENT dispositions and ADP dependencies | **OPEN / NOT APPROVED** |
-| **G1** | Deterministic event/state-model and K/O/H crash replay, optimistic concurrency with interleaved independent actions and invalidations, certificate bounds | **NOT RUN** |
-| **G2** | Single Host local gate/fence/TTL, process descendants, trusted verification view, UNKNOWN reconciliation | **NOT RUN** |
+| **G1** | Deterministic K/G Provider admission, durable send marker, ACK loss/crash/qualifying dedup or no-retry, new Attempt budget isolation and K/H transactional traces M1–M6 | **NOT RUN** |
+| **G2** | Host local gate/fence/expiry and risk policy R5–R7, enforced sealed read-only verification sandbox / isolated outputs S1–S3, process/UNKNOWN reconciliation | **NOT RUN** |
 | **G3** | Coding full autonomous repair/verify loop, simple vs richer policy quality/cost/latency under equal limits | **NOT RUN** |
 | **G4** | Video full autonomous edit→render→inspect→revise loop, blind content review, latency/cost/recovery | **NOT RUN** |
 | **G5** | Shared Kernel contract reuse for Coding and Video without cross-domain semantic authority | **NOT RUN** |
