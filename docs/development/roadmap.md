@@ -71,6 +71,8 @@ Before any implementation planning, review [Architecture subtraction and contrac
 
 **Exit:** owner-approved implementation plan and evaluation method. No runtime code or production dependency is authorized by this gate.
 
+**G0 implementation simplification (still OPEN):** first prove a Gateway local durable send marker and no-unqualified-Provider-retry rule; qualify Provider idempotency and charge limits separately. For Host, prioritize **sealed read-only SourceSnapshot + isolated outputs** and a local serialized LaunchGate/fence with explicit grant validity/risk policy. Full file-open tracers, multi-Host linearization and distributed transactions are **not first-slice requirements**; if selected OS/Provider cannot meet the safety contract, mark unsupported rather than silently weakening guarantees. See [Core protocol M1–M6/R5–R7/S1–S3](../contracts/core-protocol.md).
+
 ## Stage 5 — Contract verification and task-set preparation
 
 - If separately authorized, test **TaskControl versus aggregate-local CAS and protected read-set races**, K/O/H outbox replay, Host fence/actual Coding execution view, budget hold versus completion, UNKNOWN, L2 cutover, bounded scheduling and both Domain Completion contracts with deterministic providers/hosts/renderers.
