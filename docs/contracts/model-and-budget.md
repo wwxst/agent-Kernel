@@ -19,6 +19,17 @@ A ModelStep purpose should identify the decision being made, such as reconnaissa
 
 ### 2.1 Three independent dimensions (PROPOSED refinement)
 
+Each Attempt has independent (a) provider execution outcome, (b) candidate eligibility/ModelStep selection, and (c) financial exposure/settlement. A provider execution success is not a billing settlement. A billing delay does not retroactively invalidate an otherwise valid response if **all possible charges were covered by a credible reservation bound at admission**.
+
+A response is eligible to be recorded as a candidate only when:
+
+- the provider response is complete, not truncated or interrupted;
+- schema and structural validation pass, including complete unambiguous tool arguments;
+- plan/workspace bindings remain current and the candidate was not completed after effective Cancel Intent;
+- the owning Attempt was admitted under an enforceable hard-budget reservation or an explicitly accepted soft-budget mode.
+
+A complete candidate is not itself permission to perform a tool side effect. A partial/truncated response never becomes executable.
+
 ### 2.2 Provider request ambiguity and Gateway send boundary (G0 PROPOSED)
 
 **The Kernel's model-request Outbox is safe to redeliver only to the Model Gateway. It is *not* permission to resend bytes to a Provider.** Model Gateway owns the potentially charge-bearing HTTP send; Kernel owns the Attempt identity, admission, budget exposure and selection. No global distributed transaction is asserted.
@@ -42,17 +53,6 @@ A ModelStep purpose should identify the decision being made, such as reconnaissa
 **Liveness boundary:** an unknown Attempt cannot produce executable tool proposals or be selected from partial output. A separately completed valid candidate can still be selected while this Attempt's reserved exposure remains held, subject to other admission constraints. A blocked funding scope must not freeze unrelated scopes. Task cancellation does not prove Provider did not receive or bill a request. Late authenticated response/usage can reconcile the original Attempt; it cannot replace an already irrevocably selected candidate.
 
 **G1 proof obligation:** fixtures must distinguish K Outbox replay, Gateway marker before send, Provider-accepted but ACK lost, Provider idempotent replay with same key, non-idempotent unknown, crash before/after send, late billing and replacement-admission budget race. No Provider is declared idempotent or Hard Budget compatible merely because this document describes the protocol. See [Core protocol](core-protocol.md).
-
-Each Attempt has independent (a) provider execution outcome, (b) candidate eligibility/ModelStep selection, and (c) financial exposure/settlement. A provider execution success is not a billing settlement. A billing delay does not retroactively invalidate an otherwise valid response if **all possible charges were covered by a credible reservation bound at admission**.
-
-A response is eligible to be recorded as a candidate only when:
-
-- the provider response is complete, not truncated or interrupted;
-- schema and structural validation pass, including complete unambiguous tool arguments;
-- plan/workspace bindings remain current and the candidate was not completed after effective Cancel Intent;
-- the owning Attempt was admitted under an enforceable hard-budget reservation or an explicitly accepted soft-budget mode.
-
-A complete candidate is not itself permission to perform a tool side effect. A partial/truncated response never becomes executable.
 
 ## 3. Deterministic candidate and final selection
 
