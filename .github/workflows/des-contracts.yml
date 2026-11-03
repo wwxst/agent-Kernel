@@ -1,0 +1,25 @@
+name: DES contract structural conformance
+on:
+  push:
+    branches: [docs/rfi-construction-20261103, main]
+    paths:
+      - 'schemas/execution-strategy-v0.1.schema.json'
+      - 'examples/execution-strategies.json'
+      - 'scripts/check_des_contracts.py'
+      - '.github/workflows/des-contracts.yml'
+  pull_request:
+    paths:
+      - 'schemas/execution-strategy-v0.1.schema.json'
+      - 'examples/execution-strategies.json'
+      - 'scripts/check_des_contracts.py'
+      - '.github/workflows/des-contracts.yml'
+jobs:
+  structural-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate schema and mutation-negative fixtures
+        run: python scripts/check_des_contracts.py

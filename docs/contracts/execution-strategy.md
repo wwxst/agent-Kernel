@@ -54,7 +54,7 @@ The Kernel rejects any strategy that would authorize, weaken or omit the followi
 
 ## 4. Strategy schema
 
-All fields are required unless marked optional. §7 is a **partial policy table for discussion**, not a complete machine-loadable strategy object. Implementations must use the versioned machine schema and complete strategy fixtures (see the P0 closure decision) before treating an example as admissible. Numeric values are **policy ceilings** interpreted as "at most"; a value of `0` means "not permitted". `null` means "not applicable". Durations are integer milliseconds.
+All fields are required unless marked optional. The strict [v0.1 JSON Schema](../../schemas/execution-strategy-v0.1.schema.json), [complete Coding/Video fixtures](../../examples/execution-strategies.json), and [stdlib validator](../../scripts/check_des_contracts.py) provide machine-checkable structural examples. The `digest` is SHA-256 of canonical sorted-key JSON excluding the `digest` field. These examples have **unqualified demonstration policy references**, so they are not valid live authority grants; full Profile/Host/VerificationPolicy checks are required for admission. §7 is a **partial policy table for discussion**, not a complete machine-loadable strategy object. Implementations must use the versioned machine schema and complete strategy fixtures (see the P0 closure decision) before treating an example as admissible. Numeric values are **policy ceilings** interpreted as "at most"; a value of `0` means "not permitted". `null` means "not applicable". Durations are integer milliseconds.
 
 ### 4.1 Identity and binding
 
@@ -134,13 +134,13 @@ All fields are required unless marked optional. §7 is a **partial policy table 
 
 `ValidateStrategy(strategy, profile, binding)`:
 
-1. Schema/version/canonical digest check; reject unknown required fields.
+1. Validate against the closed JSON Schema, reject unknown fields/enums, verify the canonical digest and version. The bundled stdlib fixture validator covers structural/floor examples; runtime must separately validate authority, policy refs and actual Host/profile limits.
 2. `domain_id` equals binding domain (namespace consistency only).
 3. Every referenced enum, tool class, resource dimension and error code is known to this Kernel version.
 4. Floor check F1–F12; any violation is `StrategyRejected` with the failing floor id.
 5. Envelope check: every value ≤ profile limit (concurrency, resource, token ceilings, deadlines) and every assurance value ≥ profile minimum.
 6. Deadline/consistency check: `step_deadline ≤ task_deadline`; `convergence_deadline ≤ task_deadline`; `admission_timeout ≤ task_deadline`; `max_wait` values positive; no `0`-timeout loops.
-7. Internal consistency: `semantic_review=never` requires no criterion with semantic independence; `deterministic_only` requires no adaptive step; `max_concurrent[R1] > 1` requires non-empty `disjoint_scopes`.
+7. Internal consistency: any skipped optional semantic review leaves all policy-required independent evidence intact; `deterministic_only` requires no adaptive step; `max_concurrent[R1] > 1` requires non-empty **proven** `disjoint_scopes`.
 8. Record `strategy_digest` in the binding and emit `DomainBindingValidated`.
 
 Admission-time recheck (cheap, no domain interpretation): current `strategy_ref` digest equals the binding's; effective concurrency/resource ceilings still within Host capability; no floor drift.

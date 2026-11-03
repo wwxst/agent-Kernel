@@ -1,0 +1,543 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/wwxst/agent-Kernel/blob/main/schemas/execution-strategy-v0.1.schema.json",
+  "title": "Domain Execution Strategy (DES v0.1): structural profile",
+  "description": "Strict object and enum validation. Profile bounds, authorization, signature and referenced verification policy are checked by authoritative Kernel admission, not by JSON Schema alone.",
+  "type": "object",
+  "properties": {
+    "strategy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "domain_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contract_version": {
+      "const": "0.1"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "rationale_ref": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tuning_evidence_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "minLength": 1
+    },
+    "supersedes": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1
+    },
+    "planning_mode": {
+      "type": "string",
+      "enum": [
+        "full_plan",
+        "incremental_plan",
+        "deterministic_only"
+      ]
+    },
+    "max_model_steps_per_task_class": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "fast_path": {
+      "type": "object",
+      "properties": {
+        "eligible_task_classes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "require_independent_oracle": {
+          "type": "boolean"
+        },
+        "max_repair_rounds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "eligible_task_classes",
+        "require_independent_oracle",
+        "max_repair_rounds"
+      ],
+      "additionalProperties": false
+    },
+    "decision_batching": {
+      "type": "string",
+      "enum": [
+        "single",
+        "plan_then_act",
+        "act_per_item"
+      ]
+    },
+    "preferred_purpose_sequence": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "strategic",
+          "tactical",
+          "assurance",
+          "planning",
+          "verification",
+          "summary"
+        ]
+      }
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "input_token_ceiling": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "retrieved_item_cap": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "mandatory_sections": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "goal",
+              "criteria",
+              "current_step",
+              "unresolved_unknown",
+              "authority",
+              "workspace"
+            ]
+          }
+        },
+        "compaction_trigger": {
+          "type": "object",
+          "properties": {
+            "token_pct": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "turn_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "milestone": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "token_pct",
+            "turn_count",
+            "milestone"
+          ],
+          "additionalProperties": false
+        },
+        "summary_policy": {
+          "type": "string",
+          "enum": [
+            "none",
+            "referenced",
+            "hierarchical"
+          ]
+        },
+        "cache": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "ttl_class_map": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "max_entries": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "invalidation": {
+              "const": "digest_deps"
+            }
+          },
+          "required": [
+            "enabled",
+            "ttl_class_map",
+            "max_entries",
+            "invalidation"
+          ],
+          "additionalProperties": false
+        },
+        "truncation_record": {
+          "const": true
+        }
+      },
+      "required": [
+        "input_token_ceiling",
+        "retrieved_item_cap",
+        "mandatory_sections",
+        "compaction_trigger",
+        "summary_policy",
+        "cache",
+        "truncation_record"
+      ],
+      "additionalProperties": false
+    },
+    "schedule": {
+      "type": "object",
+      "properties": {
+        "max_concurrent": {
+          "type": "object",
+          "properties": {
+            "R0": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "R1": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "R2": {
+              "const": 0
+            }
+          },
+          "required": [
+            "R0",
+            "R1",
+            "R2"
+          ],
+          "additionalProperties": false
+        },
+        "disjoint_scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "batch_tool": {
+          "type": "boolean"
+        },
+        "fairness": {
+          "type": "object",
+          "properties": {
+            "per_task": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "per_principal": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "per_class": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "per_task",
+            "per_principal",
+            "per_class"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "max_concurrent",
+        "disjoint_scopes",
+        "batch_tool",
+        "fairness"
+      ],
+      "additionalProperties": false
+    },
+    "resource": {
+      "type": "object",
+      "properties": {
+        "requested": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "per_task_cap": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "per_host_cap": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "admission_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "requested",
+        "per_task_cap",
+        "per_host_cap",
+        "admission_timeout_ms"
+      ],
+      "additionalProperties": false
+    },
+    "wait": {
+      "type": "object",
+      "properties": {
+        "external_job_wake": {
+          "type": "string",
+          "enum": [
+            "event",
+            "bounded_poll"
+          ]
+        },
+        "poll_interval_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "max_poll_attempts": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "max_wait_ms": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      },
+      "required": [
+        "external_job_wake",
+        "poll_interval_ms",
+        "max_poll_attempts",
+        "max_wait_ms"
+      ],
+      "additionalProperties": false
+    },
+    "progress": {
+      "type": "object",
+      "properties": {
+        "evidence_required": {
+          "const": true
+        },
+        "max_consecutive_no_progress": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "max_same_step_repairs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 5
+        }
+      },
+      "required": [
+        "evidence_required",
+        "max_consecutive_no_progress",
+        "max_same_step_repairs"
+      ],
+      "additionalProperties": false
+    },
+    "verify": {
+      "type": "object",
+      "properties": {
+        "policy_ref": {
+          "type": "object",
+          "properties": {
+            "policy_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            },
+            "digest": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "policy_id",
+            "version",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "check_catalog_ref": {
+          "type": "object",
+          "properties": {
+            "catalog_id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "catalog_id",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "additional_triggers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "implementer_authored_oracle",
+              "low_confidence_evidence",
+              "protected_input_changed",
+              "high_impact_claim",
+              "disputed_evidence",
+              "manual_request"
+            ]
+          }
+        },
+        "additional_human_gates": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "shadow_audit_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "review_deadline_ms": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "policy_ref",
+        "check_catalog_ref",
+        "additional_triggers",
+        "additional_human_gates",
+        "shadow_audit_rate",
+        "review_deadline_ms"
+      ],
+      "additionalProperties": false
+    },
+    "terminate": {
+      "type": "object",
+      "properties": {
+        "task_deadline_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "step_deadline_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "convergence_deadline_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "retry_classes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "degraded_delivery": {
+          "type": "string",
+          "enum": [
+            "forbidden",
+            "explicit_criteria"
+          ]
+        }
+      },
+      "required": [
+        "task_deadline_ms",
+        "step_deadline_ms",
+        "convergence_deadline_ms",
+        "retry_classes",
+        "degraded_delivery"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "strategy_id",
+    "version",
+    "digest",
+    "domain_id",
+    "contract_version",
+    "owner",
+    "rationale_ref",
+    "tuning_evidence_ref",
+    "created_at",
+    "supersedes",
+    "planning_mode",
+    "max_model_steps_per_task_class",
+    "fast_path",
+    "decision_batching",
+    "preferred_purpose_sequence",
+    "context",
+    "schedule",
+    "resource",
+    "wait",
+    "progress",
+    "verify",
+    "terminate"
+  ],
+  "additionalProperties": false
+}

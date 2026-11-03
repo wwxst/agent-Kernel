@@ -1,6 +1,6 @@
 # P0 execution-contract closure (2026-11-03)
 
-> Status: **REPAIRED IN DESIGN / TEST EVIDENCE PENDING**. This is a targeted amendment of ARB-01, not a claim that runtime PE/VI is passing. Historical DF PASS remains the outcome of the earlier documented audit; it must not be presented as independent approval of these subsequent changes.
+> Status: **REPAIRED IN DESIGN / AUTOMATED SCHEMA TESTS DEFINED; EXECUTION EVIDENCE PENDING**. This is a targeted amendment of ARB-01, not a claim that runtime PE/VI is passing. Historical DF PASS remains the outcome of the earlier documented audit; it must not be presented as independent approval of these subsequent changes.
 
 ## Scope and source-derived discrepancies
 
@@ -10,7 +10,7 @@
 | P0-02 | Core WakeEvent had no internal continuation cause for empty model response, rejected action, stale CAS or Guard rejection | Closed outcomes `Dispatch / ContinueBounded / Park / Terminal / Escalate`, with durable deduplicated `InternalContinue` and limits | No orphan Open tasks; crash and duplicate wakes cannot reset budget |
 | P0-03 | Completion G01 blocked *every* active Invocation while G12 conditionally permitted unrelated isolated work; G06 hardcoded Coding view semantics | G01/G12 use a proof-based dependency scope; G06 checks applicable policy, with Coding verification in Coding profile | Coding/Video/Office shared Guard; unknown overlap always blocks |
 | P0-04 | Core referred to one success Guard for all terminal types, although Failed and Cancelled cannot require success evidence | One `CommitTerminal`, status-specific validation, exactly one TaskTerminal + delivery Outbox; only Completed appends CompletionCommitted; unresolved effects require separate durable Hold | Competing terminal/cancel/deadline/receipt CAS, unresolved-effect timeout |
-| P0-05 | DES v0.1 §7 used names/enum values not defined in §4 | Canonical field names; adapter-specific repeat-test rule outside DES; full machine schema/fixtures required for deployment | Every domain fixture validates; invalid field/enum/floor rejected |
+| P0-05 | DES v0.1 §7 used names/enum values not defined in §4 | Canonical field names; adapter-specific repeat-test rule outside DES; full machine schema/fixtures required for deployment | Coding and Video full fixtures validate via stdlib checks; unknown field/enum/bound/digest rejected; live policy/Host binding still unverified |
 | P0-06 | Synthetic prototype blocks successful completion if any historical tool ever failed | Completion depends on current accepted criteria/evidence and all *relevant* effects converged; historical failure remains auditable | Failure → repair → fresh Pass → Completed, with UNKNOWN and stale evidence negative controls |
 
 ## Deliberate architecture subtraction

@@ -1,0 +1,275 @@
+[
+  {
+    "contract_version": "0.1",
+    "owner": "Kernel Architecture",
+    "rationale_ref": "docs/contracts/execution-strategy.md#7-reference-strategies-hypotheses-not-results",
+    "tuning_evidence_ref": null,
+    "created_at": "2026-11-03T00:00:00Z",
+    "supersedes": null,
+    "max_model_steps_per_task_class": {
+      "simple": 6,
+      "complex": 20
+    },
+    "fast_path": {
+      "eligible_task_classes": [
+        "simple"
+      ],
+      "require_independent_oracle": true,
+      "max_repair_rounds": 2
+    },
+    "decision_batching": "plan_then_act",
+    "preferred_purpose_sequence": [
+      "tactical",
+      "assurance"
+    ],
+    "schedule": {
+      "max_concurrent": {
+        "R0": 4,
+        "R1": 1,
+        "R2": 0
+      },
+      "disjoint_scopes": [],
+      "batch_tool": true,
+      "fairness": {
+        "per_task": 1,
+        "per_principal": 1,
+        "per_class": 1
+      }
+    },
+    "resource": {
+      "requested": [
+        "cpu_ms",
+        "disk_bytes"
+      ],
+      "per_task_cap": {
+        "cpu_ms": 600000,
+        "disk_bytes": 1000000000
+      },
+      "per_host_cap": {
+        "cpu_ms": 1200000,
+        "disk_bytes": 2000000000
+      },
+      "admission_timeout_ms": 30000
+    },
+    "wait": {
+      "external_job_wake": "event",
+      "poll_interval_ms": null,
+      "max_poll_attempts": null,
+      "max_wait_ms": {
+        "HostReconciliation": 600000,
+        "Approval": 3600000
+      }
+    },
+    "progress": {
+      "evidence_required": true,
+      "max_consecutive_no_progress": 3,
+      "max_same_step_repairs": 2
+    },
+    "verify": {
+      "policy_ref": {
+        "policy_id": "profile-verification-policy",
+        "version": "0.1",
+        "digest": "unqualified-demo-policy"
+      },
+      "check_catalog_ref": {
+        "catalog_id": "domain-checks",
+        "version": "0.1"
+      },
+      "additional_triggers": [
+        "implementer_authored_oracle"
+      ],
+      "additional_human_gates": [],
+      "shadow_audit_rate": 0.1,
+      "review_deadline_ms": 600000
+    },
+    "terminate": {
+      "task_deadline_ms": 3600000,
+      "step_deadline_ms": 600000,
+      "convergence_deadline_ms": 120000,
+      "retry_classes": {
+        "Timeout": 2,
+        "OutcomeUnknown": 0
+      },
+      "degraded_delivery": "forbidden"
+    },
+    "strategy_id": "coding.construction.v0.1",
+    "version": "0.1",
+    "domain_id": "coding",
+    "planning_mode": "incremental_plan",
+    "context": {
+      "input_token_ceiling": {
+        "planning": 24000,
+        "tactical": 16000,
+        "assurance": 20000
+      },
+      "retrieved_item_cap": {
+        "planning": 24,
+        "tactical": 12,
+        "assurance": 16
+      },
+      "mandatory_sections": [
+        "goal",
+        "criteria",
+        "current_step",
+        "unresolved_unknown"
+      ],
+      "compaction_trigger": {
+        "token_pct": 80,
+        "turn_count": 12,
+        "milestone": true
+      },
+      "summary_policy": "referenced",
+      "cache": {
+        "enabled": true,
+        "ttl_class_map": {
+          "source": "until-digest-change",
+          "test_output": "one-run"
+        },
+        "max_entries": 128,
+        "invalidation": "digest_deps"
+      },
+      "truncation_record": true
+    },
+    "digest": "sha256:8732c592cef736f19f57f271d3f020862ad028925f476648bba30e45ee4eabc2"
+  },
+  {
+    "contract_version": "0.1",
+    "owner": "Kernel Architecture",
+    "rationale_ref": "docs/contracts/execution-strategy.md#7-reference-strategies-hypotheses-not-results",
+    "tuning_evidence_ref": null,
+    "created_at": "2026-11-03T00:00:00Z",
+    "supersedes": null,
+    "max_model_steps_per_task_class": {
+      "simple": 6,
+      "complex": 20
+    },
+    "fast_path": {
+      "eligible_task_classes": [
+        "simple"
+      ],
+      "require_independent_oracle": true,
+      "max_repair_rounds": 2
+    },
+    "decision_batching": "plan_then_act",
+    "preferred_purpose_sequence": [
+      "tactical",
+      "assurance"
+    ],
+    "schedule": {
+      "max_concurrent": {
+        "R0": 4,
+        "R1": 1,
+        "R2": 0
+      },
+      "disjoint_scopes": [],
+      "batch_tool": true,
+      "fairness": {
+        "per_task": 1,
+        "per_principal": 1,
+        "per_class": 1
+      }
+    },
+    "resource": {
+      "requested": [
+        "cpu_ms",
+        "gpu_ms",
+        "disk_bytes",
+        "output_bytes"
+      ],
+      "per_task_cap": {
+        "cpu_ms": 1200000,
+        "gpu_ms": 900000,
+        "disk_bytes": 2000000000,
+        "output_bytes": 1000000000
+      },
+      "per_host_cap": {
+        "cpu_ms": 2400000,
+        "gpu_ms": 1800000,
+        "disk_bytes": 4000000000,
+        "output_bytes": 2000000000
+      },
+      "admission_timeout_ms": 30000
+    },
+    "wait": {
+      "external_job_wake": "event",
+      "poll_interval_ms": null,
+      "max_poll_attempts": null,
+      "max_wait_ms": {
+        "HostReconciliation": 600000,
+        "Approval": 3600000
+      }
+    },
+    "progress": {
+      "evidence_required": true,
+      "max_consecutive_no_progress": 3,
+      "max_same_step_repairs": 2
+    },
+    "verify": {
+      "policy_ref": {
+        "policy_id": "video-verification-policy",
+        "version": "0.1",
+        "digest": "unqualified-demo-video-policy"
+      },
+      "check_catalog_ref": {
+        "catalog_id": "video.checks.v1",
+        "version": "0.1"
+      },
+      "additional_triggers": [
+        "high_impact_claim",
+        "disputed_evidence"
+      ],
+      "additional_human_gates": [],
+      "shadow_audit_rate": 0,
+      "review_deadline_ms": 600000
+    },
+    "terminate": {
+      "task_deadline_ms": 3600000,
+      "step_deadline_ms": 600000,
+      "convergence_deadline_ms": 120000,
+      "retry_classes": {
+        "Timeout": 2,
+        "OutcomeUnknown": 0
+      },
+      "degraded_delivery": "forbidden"
+    },
+    "strategy_id": "video.construction.v0.1",
+    "version": "0.1",
+    "domain_id": "video",
+    "planning_mode": "full_plan",
+    "context": {
+      "input_token_ceiling": {
+        "planning": 20000,
+        "tactical": 12000,
+        "assurance": 16000
+      },
+      "retrieved_item_cap": {
+        "planning": 24,
+        "tactical": 12,
+        "assurance": 16
+      },
+      "mandatory_sections": [
+        "goal",
+        "criteria",
+        "current_step",
+        "unresolved_unknown"
+      ],
+      "compaction_trigger": {
+        "token_pct": 80,
+        "turn_count": 12,
+        "milestone": true
+      },
+      "summary_policy": "referenced",
+      "cache": {
+        "enabled": true,
+        "ttl_class_map": {
+          "source": "until-digest-change",
+          "test_output": "one-run"
+        },
+        "max_entries": 128,
+        "invalidation": "digest_deps"
+      },
+      "truncation_record": true
+    },
+    "digest": "sha256:5083a53197f6d7ca648ff0b78cfee75afc1ce6e768af6fa25140b2c335d1ff83"
+  }
+]
