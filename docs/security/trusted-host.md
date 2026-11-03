@@ -59,6 +59,31 @@ An AdmissionTicket is a Kernel admission fact, **not** a physical launch permiss
 
 **Host not reachable:** no offline new dispatch. If a Host's old launch capability cannot be proven disabled, Kernel keeps `RevocationPending`, even when the desired epoch is already advanced. A lost Host fence ACK is reconciled from Host Ledger; never infer fence installation from a timeout.
 
+### 2.1.1 Revocation-effective window, expiry, and risk policy (G0 PROPOSED)
+
+**Preserve the existing Host-local ordering guarantee; do not claim immediate physical revoke at K request.** For a previously issued live ticket, the exposure window is the interval from `K.RevocationRequested` **until the first of** (a) H-local `HostFenceInstalled`, (b) the ticket/grant's **enforceable launch deadline**, or (c) verifiable disablement of the Host's launch authority. The Host may launch inside that interval only if all original scope, signed grant, current **Host-installed** epoch, liveness and local expiry checks pass **inside the serialized gate**. No revoked operation is newly admitted at K. A wall-clock latency bound is **not established** unless both maximum grant lifetime, issued-at/expiry verification, clock uncertainty and channel-loss fail-closed behavior are proven. A signed expiry without enforceable monotonic/clock semantics is not a safety bound.
+
+**Initial minimal expiry mechanism:** exact invocation-bound, short-lived, non-renewable-for-the-same-ticket grant plus Host-local fence epoch. H uses monotonic elapsed-time limits for locally received grants with authenticated initial time evidence, enforces a conservative clock-skew/uncertainty budget, checks expiry at the **physical spawn boundary** and aborts if validity lapses while waiting in the critical section. Renewals are *new authenticated authority decisions*, never silent ticket lifetime extension. Network/channel loss, stale grant identity or unbounded clock uncertainty causes **fail closed to new effectful launch**. Timer expiry does not mean a process already launched has stopped: drain/cancel and ProcessConverged require separate Host evidence.
+
+**Risk-sensitive launch rule (proposed classes, policy values OPEN):**
+
+| Class | Example effects | Initial admissibility until proven |
+| --- | --- | --- |
+| **R0 Read-only bounded** | Inspect repository, inspect declared media metadata with no external publication | Existing short bounded grant, Host-local fence, current workspace/asset scopes; no unapproved write |
+| **R1 Reversible isolated write** | Edit inside a disposable workspace, isolated build/test output, stage nonpublished media renders | Host-local fence with **Owner-accepted maximum exposure window**, enforceable expiry/containment, cancellation policy, and per-Invocation approval where required |
+| **R2 High-risk or non-reversible** | Destructive operations, credential/secret export, external network mutation, production deployment, remote publication, final irreversible file overwrite, high-impact render publication | **Disabled in first-slice default** unless Owner explicitly accepts a proved bounded post-request exposure window for that exact operation class **or** separately approves a stronger online/serialized launch protocol whose immediate-revocation guarantee has passed G2. A mere synchronous check outside the local gate is NOT an immediate-revocation proof. |
+
+Risk is determined by the effective operation/tool/target/effect profile, **not by the model's label**. Higher risk cannot be downgraded by splitting commands. Under any class, K request immediately stops new issuance; H local fence blocks later old-epoch starts; unrelated already running effects must follow separately specified drain/cancel and ProcessConverged checks.
+
+**Owner decisions required before G0 approval / effect enablement:**
+
+1. The **maximum allowed post-K-request launch exposure** for each R0/R1 effect class, including grant lifetime, clock uncertainty allowance, fence propagation/acknowledgement target and how a missed target fails closed. No numeric value is assumed.
+2. Which exact capabilities/targets are R2, whether each is initially disabled, accepts a bounded race window or requires a separately proved stronger online/fenced protocol; whether any class requires **no possible launch after K commit** (unsupported by the current design).
+3. Pre-existing process policy per class: graceful drain vs mandatory cancel/kill, time bounds, descendant/writable-handle checks, and what cannot be rolled back.
+4. Host lease/channel/clock evidence, deployment membership and disablement proof requirements; no multi-Host guarantee is approved.
+
+**G2 tests:** force request-before-fence with valid grant; fence-before-launch; expiry while waiting for the serialized gate; lost Host authority channel; clock skew beyond allowed bound; high-risk request without Owner-approved policy; and previously launched process still writing after Revoked. PASS requires exact H Ledger gate ordering, no post-fence/expired launch, correct RevocationPending vs Revoked, safe denial of unapproved R2, and independent ProcessConverged evidence. See [Core protocol](../contracts/core-protocol.md) and [Open decisions](../decisions/open-decisions.md).
+
 ### 2.2 Scoped ArtifactResolver
 
 Artifact IDs and ArtifactRefs are identifiers, not filesystem authority. The Host resolves payload bytes through a trusted ArtifactResolver using a server-side ScopedReadGrant bound to the exact handoff, artifact ID/digest/schema, consumer Task/DomainBinding, purpose, access mode, authorizing principal/policy version, expiry, and revocation epoch. No model-supplied path, producer workspace path, signed URL, or bearer secret is accepted as a payload locator.
