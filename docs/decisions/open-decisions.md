@@ -14,6 +14,13 @@ ADP-02 is **REVISED/APPROVED**. The remaining first-batch drafts — **ADP-03, A
 
 **G0 remains OPEN; G1–G5 NOT RUN. ADP-03–11 remain OPEN.** Specific implementation choices remain open for multi-aggregate transaction isolation, Host grant/OS proof, sandbox file view and Provider maximum-charge certificates.
 
+### Current Draft PR #1 G0 Owner choices (all OPEN)
+
+- **Provider ambiguity / cost:** approve whether a Provider adapter can claim **exact request identity plus server-side execution-and-billing dedup within a verified lifetime**. Without that proof, Gateway must never automatically retransmit a possibly submitted request; `ProviderOutcomeUnknown` and original reservation remain. A distinct replacement Attempt needs explicit admission, separate budget and reconciliation of hosted external effects. Decide Provider-specific hard/soft compatibility, cancellation/status authority and maximum unresolved cost hold.
+- **Host revocation window:** decide allowed R0/R1 request-to-HostFenceInstalled/expiry exposure, measurable grant TTL/clock-skew/liveness and fence ACK target, and whether any risk class requires **zero post-K-request launch** (unsupported by local fence only). Decide R2 high-risk effect map, default disabled exceptions and drain/cancel authority.
+- **Verification Host baseline:** prefer enforceable read-only sealed SourceSnapshot and disjoint writable build/test outputs, with authenticated ExecutionViewManifest. Approve OS/toolchain/profile support; no automatic full file tracing, writable protected overlay or distributed transaction framework. An unsupported toolchain stays Unverified until a separate alternative passes G2.
+- **G1/G2 proof:** [Core protocol](../contracts/core-protocol.md) M1–M6, R5–R7 and S1–S3 are **specified but NOT RUN**; no G0 acceptance, runtime authorization or numerical safety target is inferred.
+
 ## 1. Approved product direction
 
 - One shared Agent Kernel supports Autonomous Coding and Autonomous Video Editing.
