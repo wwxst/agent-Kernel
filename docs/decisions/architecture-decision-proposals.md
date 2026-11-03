@@ -1,6 +1,6 @@
 # Architecture Decision Proposals — Cross-Domain Convergence
 
-> **Status: MIXED.** ADP-01 and ADP-02 are **REVISED (owner-approved 2026-11-02)** and recorded in the [Decision Log](decision-log.md). ADP-03 through ADP-11 remain **OPEN/PROPOSED**. This packet is a decision aid and proposal register, not blanket approval. No decision authorizes Runtime implementation, selects a production technology stack, or claims empirical validation.
+> **Status: HISTORICAL PROPOSAL PACKET (superseded as a status register by ARB-01, 2026-11-03).** This file preserves ADP alternatives, risks and acceptance criteria for audit. Current dispositions are in the [Decision Log](decision-log.md): ADP-01/02 are REVISED, ADP-03–10 are ACCEPTED (construction scope), ADP-11 is superseded. The draft-status column below reflects 2026-11-02 and is not current. No decision here authorizes Runtime implementation, selects a technology stack, or claims empirical validation.
 
 ## 1. Purpose and decision boundary
 
@@ -36,7 +36,7 @@ It is a repository-level design synthesis. It does not report a runtime spike, b
 
 ## 2. ADP-01 — Video first-phase autonomous editing capability and operation boundary
 
-**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative decision record is [Decision Log — ADP-01](decision-log.md#adp-01-video-first-phase-autonomous-editing-capability-and-operation-boundary).
+**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative decision record is [Decision Log — ADP-01](decision-log.md) §3.
 
 ### Final selection
 
@@ -120,7 +120,7 @@ Typed schemas, fixtures, tests, thresholds, and Host-specific enforcement are la
 
 ## 3. ADP-02 — Task-conditioned progressive media analysis
 
-**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative owner disposition is recorded in the [Decision Log — ADP-02](decision-log.md#4-adp-02-task-conditioned-progressive-media-analysis).
+**Owner decision: REVISED — APPROVED in revised form on 2026-11-02.** The authoritative owner disposition is recorded in the [Decision Log — ADP-02](decision-log.md) §4.
 
 Adopt a progressive analysis ladder that provides source-wide visibility and explicit coverage accounting without running every expensive modality over every asset by default. The analysis strategy is selected from the accepted GoalContract, source characteristics, evidence gaps, privacy policy, and remaining budget.
 

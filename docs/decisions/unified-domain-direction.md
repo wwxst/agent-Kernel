@@ -1,6 +1,6 @@
 # Unified Agent Kernel — approved product direction
 
-> **Status: APPROVED PRODUCT DIRECTION; ADP-01 REVISED/APPROVED; REMAINING ARCHITECTURE DETAILS PROPOSED.** This record captures the owner's explicit one-Kernel/two-domain decision and the revised first-phase autonomous-editing capability boundary. It does not approve Runtime implementation or a final technology stack.
+> **Status: APPROVED PRODUCT DIRECTION (2026-11-02); construction baseline accepted under ARB-01 (2026-11-03).** This record captures the owner's explicit one-Kernel/two-domain decision and the revised first-phase autonomous-editing capability boundary. It does not approve Runtime implementation or a final technology stack.
 
 ## 1. Approved direction
 

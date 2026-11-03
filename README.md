@@ -1,83 +1,82 @@
 # Agent Kernel
 
-> **Project status: Unified two-domain product direction APPROVED; ADP-01 Video capability scope REVISED/APPROVED; remaining architecture PROPOSED and under owner review.** The project is one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing. The domain models, workflow profiles, and execution capabilities remain separate. No Runtime implementation or final technology stack is authorized.
+> **Project status: CONSTRUCTION BASELINE v1 accepted (ARB-01, 2026-11-03). Ready for Implementation at the documentation/design level (DF passed). No implementation exists; all runtime, performance and quality claims are UNVERIFIED and every fixture is NOT RUN.**
 
 ## Purpose
 
-Build a unified autonomous Agent platform that can understand different classes of work, create and revise plans, execute through a trusted boundary, recover from interruption, verify the actual deliverable, and return useful artifacts.
+Build one autonomous Agent platform that can understand different classes of work, plan and execute them safely, recover from interruption, verify the actual deliverable, and return a usable result.
 
 The first two domains are:
 
-- **Autonomous Coding** — understand code repositories, plan development work, modify code, run tests, diagnose/repair, and deliver verified code.
-- **Autonomous Video Editing** — understand natural-language editing instructions, analyze source media, construct a timeline, render a finished video, inspect the output, and deliver the video.
+- **Autonomous Coding** — understand repositories, plan changes, edit code, run checks, diagnose/repair, and deliver verified code.
+- **Autonomous Video Editing** — understand natural-language editing intent and source media, analyze assets, construct a timeline, render, inspect the actual output, and deliver the video.
 
-The product principle is **one Kernel, two independent domains**. Coding and Video share execution authority and lifecycle mechanics; they do not share a forced cognitive model.
+The product principle is **one Kernel, independent domain strategies**. Coding and Video share execution authority, lifecycle mechanics and evidence contracts; they do not share a forced cognitive model or an identical execution strategy.
+
+## Architecture in one page
+
+| Layer | Responsibility |
+| --- | --- |
+| **Shared Agent Kernel** | Task/Goal/Plan state, model admission, tool admission, budgets, permissions, Journal/Inbox/Outbox, Host boundary, cancellation, recovery, completion and delivery |
+| **Domain Extension** | Version-pinned manifest and adapter ports (`interpretGoal`, `projectContext`, `decideNext`, `interpretOutcome`, `verifyCriteria`, `describeRecovery`); proposal-only |
+| **Domain Strategy** | Data-driven per-domain policy (fast path, context budget, scheduling, waits, resources, verification triggers, termination bounds) |
+| **Domain Execution** | Domain tools and artifacts executed only through Kernel admission and Trusted ToolHost |
+
+The Kernel never branches on `domain_id`. Adding a domain means adding a manifest, adapter, tools, task strategy and verification policy — not editing the Kernel state machine. A fourth domain is required to land with a **zero Kernel diff** ([Domain Extension](docs/contracts/domain-extension.md)).
+
+Normative starting points:
+
+- [Kernel data model](docs/contracts/kernel-data-model.md) — records, enums, events, commands, errors, invariants.
+- [Core protocol](docs/contracts/core-protocol.md) — transaction ownership, transitions, loop, terminalization.
+- [Execution Strategy](docs/contracts/execution-strategy.md) — why domains differ without forking the Kernel.
+- [Permissions](docs/security/permissions.md) — capability grants, one-use approvals, separation of duties, tenancy.
+- [Trusted Host](docs/security/trusted-host.md) — LaunchGate, effect classes, UNKNOWN reconciliation.
+- [Completion](docs/contracts/completion.md) — assurance floor, evidence, Guard, holds.
+- [Roadmap and construction plan](docs/development/roadmap.md) — DF/SA/PE/VI gates and the work breakdown.
 
 ## Video Editing capability boundary
 
-The first Video Editing capability is natural-language-driven automatic editing, not a full video editor. The current proposal separates three capability classes:
+The first Video capability is natural-language-driven automatic editing, not a full video editor (ADP-01 REVISED, approved 2026-11-02):
 
-- **Core automatic-editing foundation — ADP-01 REVISED/APPROVED:** ingest/probe; task-conditioned basic video/shot analysis; task-relevant highlight/moment selection; basic NarrativePlan and simple sequencing/pacing; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio controls; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification, and delivery. Exact analysis policy and typed operation contracts remain OPEN.
-- **Enhanced editorial capabilities:** richer cross-scene narrative planning, semantic continuity, music-aware pacing, generated captions/titles, advanced audio mixing, speed ramps, overlays, reframing, color matching, and deeper perceptual critique. These are roadmap capabilities, not implied first-phase support.
-- **Post-production/platform adaptation:** codec/container/resolution/aspect/frame-rate/color/audio profiles, subtitle mux/sidecar, metadata, thumbnails, platform safe areas, packaging, and optional platform delivery. This is a separate output-adaptation stage, not story intelligence.
+- **Core automatic editing:** ingest/probe; task-conditioned analysis; moment selection; basic NarrativePlan; trim/reorder/hard cut/concatenate; simple fade/crossfade; limited source-audio controls; immutable timeline; bounded FFmpeg render; actual-output checks; revision/re-render/re-verification.
+- **Deferred:** captions/music generation, multi-track audio, advanced transitions, compositing/color/VFX, manual NLE, plugin marketplace, external publication.
 
-Deferred: full visual nonlinear editor/manual multitrack workstation, professional VFX/compositing/color-grading suite, plugin marketplace, Multi-Agent / D9, and Runtime implementation during the current research stage.
+See [Video design](docs/research/multimedia-domain-architecture/design.md) and [Video intelligence](docs/research/multimedia-domain-architecture/intelligence.md).
 
-See [Video Editing Intelligence](docs/research/multimedia-domain-architecture/intelligence.md) and [Second-round architecture revision](docs/decisions/second-round-architecture-revision.md).
+## Coding and Video construction specs
 
-## Architecture baseline
+- Coding: [design](docs/research/autonomous-coding-agent/design.md) (tools, patch, recon budget, test selection, fast path), [failure model](docs/research/autonomous-coding-agent/failure-model.md), [evaluation](docs/research/autonomous-coding-agent/evaluation.md) (C-01…C-15).
+- Video: [design](docs/research/multimedia-domain-architecture/design.md), [operation registry and timeline](docs/contracts/media-timeline.md), [render compiler](docs/contracts/render-compiler.md), [RenderJob](docs/contracts/render-job.md), [evaluation](docs/research/multimedia-domain-architecture/evaluation.md) (V-01…V-13).
 
-The platform has three logical layers:
+## Office as the third-domain test
 
-1. **Shared Agent Kernel** — Task/Turn/Step, GoalContract/PlanRevision envelopes, Model Gateway, Context Engine infrastructure, Tool Runtime, Permission, Budget, Journal, Trusted ToolHost boundary, Recovery, Verification envelope, and Delivery.
-2. **Domain Intelligence** — independent Coding Intelligence and Video Editing Intelligence, each with its own domain model, planning semantics, evidence interpretation, and verifier.
-3. **Domain Execution** — independent domain tool/capability sets executed under shared Kernel admission, resource accounting, Host process control, cancellation, and receipts.
+Office is **design-only** in this baseline. It registers a manifest, two R0/R1 tools (`office.document.read`, `office.document.export`), typed criteria and UNKNOWN/wait paths — without changing a single Kernel state, enum or event. External in-place edits remain R2 and disabled.
 
-See [Unified domain architecture](docs/architecture/domain-architecture.md) and [Architecture overview](docs/architecture/overview.md).
+- [Domain Extension §6](docs/contracts/domain-extension.md) — Office sample and X1–X13 fixtures.
+- Falsification: if Office requires a Kernel state-machine change, the extension boundary is rejected and the architecture re-opened.
 
-## Research map
+## Readiness: what is claimed, and what is not
 
-- [Autonomous Coding Agent design](docs/research/autonomous-coding-agent/README.md) — retained first/second-round Coding Domain Intelligence design.
-- [Multimedia Domain Architecture](docs/research/multimedia-domain-architecture/README.md) — natural-language Video Editing design, timeline, render, and evaluation.
-- [Video Editing Intelligence](docs/research/multimedia-domain-architecture/intelligence.md) — media understanding, message-conditioned moment selection, narrative planning, pacing, continuity, audiovisual coordination, and revision.
-- [Second-round architecture revision](docs/decisions/second-round-architecture-revision.md) — complete revision plan, change mapping, consistency review, and unresolved questions.
-- [Shared Kernel reference review](docs/research/shared-kernel/reference-review.md) — Pi, Codex, DeepSeek Harness, and Claude Agent SDK execution-layer review.
-- [Shared Kernel evaluation](docs/research/shared-kernel/evaluation.md) — common cross-domain safety, authority, lifecycle, and recovery metrics.
-- [Unified domain direction](docs/decisions/unified-domain-direction.md) — owner-approved product scope and authorization boundary.
-- [Cross-domain architecture review](docs/decisions/cross-domain-architecture-review.md) — consistency review and remaining questions.
-- [Architecture Decision Proposals](docs/decisions/architecture-decision-proposals.md) — recommendations, alternatives, risks, and acceptance criteria for ADP-02 through ADP-11 owner review.
-- [Decision Log](docs/decisions/decision-log.md) — authoritative owner dispositions; ADP-01 is REVISED/APPROVED.
+**Claimed:** the construction baseline is frozen; a competent team can build directly from the documents; P0 documentation defects are closed; the work breakdown has dependencies and acceptance conditions.
 
-## Current state
+**Not claimed:**
 
-- Unified one-Kernel/two-domain product direction: **APPROVED**.
-- Coding Domain Intelligence: first- and second-round research retained; proposed.
-- Video Editing first-phase capability boundary: **REVISED/APPROVED under ADP-01**; detailed Domain Intelligence and contracts remain proposed/open.
-- DomainBinding and Workflow Profile contract: proposed.
-- MediaProjectModel, TimelineRevision, and RenderJob contracts: proposed.
-- Runtime implementation and production dependencies: not started / not authorized.
-- Technology choices: open.
-- Multi-Agent / D9: deferred and not authorized.
-- Legacy code migration: not started.
+- No runtime code exists; no fixture has been executed (`M1–M6`, `R1–R7`, `S1–S3`, `C-01…`, `V-01…`, `X1–X13` are all NOT RUN).
+- No provider, OS, storage, sandbox or media stack is selected.
+- No performance, token, quality or reliability result is measured.
+- R2/external/destructive effects are disabled by default.
+- Multi-Agent / D9 remains deferred and unauthorized.
+
+Release-level claims require the PE (Prototype Evidence) and VI (Verified Implementation) gates, not this document. See [Roadmap §2](docs/development/roadmap.md) and the [readiness review](docs/decisions/construction-readiness-review.md).
 
 ## Repository rules
 
-- This repository is the sole formal development home for the new Kernel.
-- The former repository wwxst/agent- has been deleted by its owner. It is not an available source, dependency, or ongoing project.
-- Only knowledge and architecture principles already re-authored in this repository are available; do not assume deleted files, branches, or commits can be recovered.
-- No old Git history, old Kernel implementation, obsolete architecture draft, or development-process archive is imported.
-- Knowledge may be re-authored when useful; code is not migrated unless it is reviewed independently against this repository's contracts.
-- Architecture principles and contracts are versioned here. Unresolved design and technology choices remain explicitly open.
-- No production implementation, dependency stack, or security capability is claimed until it is implemented and verified.
+- This repository is the sole formal development home for the Kernel. The former `wwxst/agent-` repository is deleted and is not a source, dependency or authority.
+- No old code, history or obsolete design is imported. Knowledge is re-authored and reviewed here.
+- Architecture principles and contracts are versioned here; unresolved external facts remain explicitly OPEN.
+- No production implementation, dependency stack or security capability is claimed until implemented and verified.
+- Do not create a PR, release or deployment without an explicit request.
 
 ## How to work in this repository
 
-Read [AGENTS.md](AGENTS.md) before changing project files. Use [Open decisions](docs/decisions/open-decisions.md) and the research documents to distinguish approved direction, proposed contracts, and unknowns.
-
-The current milestone is cross-domain architecture research and contract reconciliation. Implementation starts only after the relevant contracts, experiments, and scope have been explicitly agreed.
-
-## Domain extension and construction readiness — G0 candidate
-
-The long-term product is **a general-purpose Agent Kernel**, not a Kernel that grows a new state machine for each domain. Coding and Video Editing are the initial independent domain strategies; future Office, Browser and Data would add versioned profiles, adapters, typed tools and verification policies, retaining shared permission, budget, ModelStep, Invocation, cancellation, recovery and completion authority. [Domain Extension Contract v0.1](docs/contracts/domain-extension.md) gives a design-only Office test and explicit no-Kernel-branch falsification cases. The proposed fast path uses one primary loop, lazy context and conditional review **without dropping mandatory correctness evidence**.
-
-**Current readiness: BLOCKED for full Ready for Implementation.** G0 owner dispositions (including ADP-03–11, Provider/Host/OS/assurance choices) are OPEN, and G1–G5 executed evidence is NOT RUN. The [Stage 9 roadmap](docs/development/roadmap.md) has a concrete post-approval implementation graph and measurable gates; the current edits are documentation only. Nothing here authorizes Runtime, multi-agent/D9 execution, external high-risk effects or deployment.
+Read [AGENTS.md](AGENTS.md) first, then the [documentation map](docs/README.md). The map defines document classes, precedence and the normative surface. Change the owning document — never a restatement — and record a decision when authority or a safety property changes.

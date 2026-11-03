@@ -1,6 +1,6 @@
 # Second-Round Architecture Revision — Video Intelligence, Media Lineage, and Trusted Rendering
 
-> **Status: PROPOSED second-round revision package — final architecture review pending.** This document records the targeted revisions made against the existing unified architecture. It does not replace the approved one-Kernel/two-domain product direction, approve detailed contracts, authorize Runtime work, select a production stack, or claim empirical validation.
+> **Status: HISTORICAL REVISION RECORD (superseded by ARB-01, 2026-11-03).** Git/branch/commit counts and link-audit PASS claims in this file describe an earlier branch state and are stale; they must not be cited as evidence. Its technical content informed the current Video contracts, which are the normative source.
 
 ## 1. Review scope and baseline
 

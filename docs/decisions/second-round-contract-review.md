@@ -1,6 +1,6 @@
 # Second-round contract review
 
-> **Status: PROPOSED review record — owner approval pending.** This record summarizes the second-round contract reconciliation. It is not an architecture freeze, implementation authorization, or claim of runtime verification.
+> **Status: HISTORICAL REVIEW RECORD (superseded by ARB-01, 2026-11-03).** Its authority table points at research documents; current normative ownership is defined in the [documentation map](../README.md) and [Kernel data model](../contracts/kernel-data-model.md). The findings remain informative.
 
 ## 1. Scope
 

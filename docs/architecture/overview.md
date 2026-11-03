@@ -1,171 +1,101 @@
 # Architecture overview
 
-> **Status: Cross-domain architecture proposal.** The one-Kernel/two-domain product direction is approved. The shared execution contracts, DomainBinding, Workflow Profiles, and domain-specific extensions remain proposed. No Runtime implementation or technology stack is approved.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** This is an **informative** map of the normative contracts. Where it disagrees with an owning contract, that contract wins ([documentation map](../README.md)).
 
 ## 1. Product objective
 
-Build one autonomous Agent platform with two initial execution domains:
+One autonomous Agent platform with two initial execution domains — Autonomous Coding and Autonomous Video Editing — and a Kernel that does not grow per domain.
 
-- **Autonomous Coding** — understand software repositories, plan changes, edit code, run tests, debug/repair, verify, and deliver code.
-- **Autonomous Video Editing** — understand natural-language editing instructions, analyze media, generate a timeline, render, inspect the output, and deliver video.
+- **Coding:** understand a repository, plan changes, edit, run checks, debug/repair, verify, deliver.
+- **Video:** understand natural-language editing intent and source media, analyze, build a narrative and timeline, render, inspect the actual output, revise, deliver.
 
-The platform must combine:
+The platform is not two agents behind one UI. It is one Kernel hosting independent domain workflows with shared authority and recovery.
 
-- **Shared execution authority:** task lifecycle, model calls, scheduling, permission, budgets, durable state, trusted process execution, cancellation, recovery, and completion gating.
-- **Independent domain intelligence:** each domain owns its semantic model, goal interpretation, planning quality, evidence interpretation, and verifier.
-- **Typed domain execution:** domain tools use a shared admission/Host boundary but have separate capabilities and artifacts.
+## 2. Three layers plus one policy surface
 
-The product is not two agents joined by a common UI. It is one Kernel that hosts separate domain workflows. The detailed proposal is [Unified domain architecture](domain-architecture.md).
-
-## 2. Architectural principles
-
-1. **One shared Kernel.** Both domains use the same authoritative Task, model, tool, budget, Journal, Host, recovery, and completion controls.
-2. **Separate domain cognition.** Coding uses RepositoryModel; Video uses MediaProjectModel. Their planners, evidence semantics, and verifiers remain independent.
-3. **Orchestration proposes; Kernel commits.** Semantic interpretation and technical strategy are adaptive. State, budget, permission, admission, and completion are deterministic.
-4. **Common contracts, typed payloads.** GoalContract and PlanRevision share lifecycle and authority envelopes; domain-specific payload schemas are versioned and validated without importing their semantics into Kernel.
-5. **Workflow Profiles bind domain behavior.** Each Task binds one immutable domain/profile version, tool snapshot set, resource policy, and verification obligations.
-6. **All side effects use one trusted path.** Domain tools do not bypass Kernel admission, Tool Runtime, or Trusted ToolHost.
-7. **Evidence before completion.** A tool exit code or model statement is not proof that the domain deliverable satisfies the user's request.
-8. **Artifacts are versioned.** Code changes and media timelines/renders are immutable, provenance-bound artifacts with explicit lineage.
-9. **Context is a projection, not authority.** RepositoryModel, MediaProjectModel, EvidenceGraph, summaries, and memory cannot rewrite execution facts.
-10. **No implementation topology is implied.** Logical responsibilities may be separately testable modules without becoming microservices.
-
-## 3. Three architectural layers
-
-| Layer | Responsibility | Must not own |
+| Layer | Owns | Must not own |
 | --- | --- | --- |
-| Shared Agent Kernel | Minimal authority for Task/Plan/Attempt/Invocation state commits, policy admission, budget reservations, Kernel Journal/Inbox/Outbox, recovery decisions, Completion Guard, delivery | Domain semantic models, Host physical launch/ledger facts, cognitive strategy |
-| Domain Intelligence | Domain goal interpretation, domain model, evidence semantics, planning/replanning, debugging/repair, criterion selection, verification decisions | Direct provider calls, direct side-effect execution, authoritative Kernel state writes |
-| Domain Execution | Domain-specific tools, media/code adapters, artifact creation, render/build/test operations under common execution controls | Permission grants, task state, plan activation, completion authority |
+| **Shared Kernel** | Task/Goal/Plan state, ModelStep selection, ToolInvocation admission, budgets, permissions, Journal/Inbox/Outbox, completion, delivery | Domain semantics, Host physical facts, cognitive strategy |
+| **Domain Intelligence / adapter** | Goal interpretation, domain model, planning and repair policy, evidence interpretation, criterion verification, recovery suggestion | Provider calls, side-effect execution, Kernel state writes |
+| **Domain Execution** | Typed tools, artifacts and operations executed only through admission + Trusted Host | Permission grants, task state, plan activation, completion |
+| **Execution Strategy (data)** | Fast path, context budget, scheduling, waits, resources, additional verification triggers, termination bounds | Assurance floor, effect classes, terminal choice |
 
-## 4. Shared Kernel responsibilities
+The fourth row is why adding a domain does not require editing the Kernel: the loop branches on **state and policy values**, never on `domain_id`.
 
-The Kernel remains the sole authority for:
+## 3. Authority boundaries
 
-- authoritative TaskControl (accepted goal/plan, cancel/terminal), ModelStep/Attempt selection, ToolInvocation admission and budget transitions; Turn/runtime Step/ActionProposal activity can be derived from committed facts instead of separate authoritative lifecycles;
-- accepted GoalContract/PlanRevision versions, PlanStep work/verification state, and legal transitions;
-- deterministic contract validation, protected-field confirmation references, and plan-switch barriers;
-- model request admission, candidate selection and hard budget reservations/settlement; Model Gateway observes provider facts rather than committing Kernel authority. **K model Outbox replay ends at Gateway**; Gateway durably records SendMayHaveOccurred before external Provider send and never blind-retries an ambiguous, potentially billable request;
-- ToolInvocation identity, immutable tool-definition snapshots, policy/capability/approval checks, hard resource reservations, and durable intent;
-- Tool Runtime admission authority and fencing requirements; Tool Runtime schedules and Trusted ToolHost independently owns the physical launch gate and process facts;
-- Kernel Journal/Inbox/Outbox, authenticated import and reconciliation of the **Host-owned** Ledger/receipts, scoped UNKNOWN holds and recovery decisions;
-- generic artifact identity, digest, provenance, lineage, and delivery references;
-- VerificationReport binding and deterministic Completion Guard checks.
+Canonical statements live in [Core protocol](../contracts/core-protocol.md) §2–§5 and [Kernel data model](../contracts/kernel-data-model.md) §8. In brief:
 
-These are logical authority boundaries, not an instruction to implement a monolithic Kernel class or deploy separate services. [Core protocol](../contracts/core-protocol.md) defines the fast path and cross-module feasibility gates.
+1. **Kernel commits.** TaskControl CAS applies to accepted goal, structural plan cutover, cancellation and terminal only. Routine model/tool/budget/receipt operations use owning-aggregate versions and a selective read-set.
+2. **Orchestration proposes.** Adapters emit bounded, immutable decisions; they cannot admit, settle, converge or complete.
+3. **Gateway observes.** Provider send facts and usage are Gateway records; Kernel owns Attempt identity, reservation and selection.
+4. **Host executes.** A trusted Host owns nonce consumption, launch/fence ordering, process facts, its own ledger and authenticated receipts.
+5. **Completion requires evidence.** A model statement, exit code or renderer exit is never completion.
 
-The resource ledger must be able to represent more than model tokens: wall time, CPU, memory, disk, GPU where applicable, input media volume/duration, and output size are candidate dimensions. Exact resource enforcement remains open until researched and implemented.
+Kernel Journal and Host Ledger remain separate fact boundaries. No document claims an atomic transaction spanning Kernel state and an external side effect.
 
-## 5. Domain Intelligence and Context Engine
+## 4. The two architecture decisions that matter
 
-The two domains have distinct models:
+**Decision A — domains extend, the Kernel does not grow.** A domain registers an immutable manifest, adapter ports, typed tools, artifact/evidence schemas, a verification policy and an execution strategy. Kernel validates envelope, authority, references and legal transitions; the adapter owns interpretation. A fourth domain must land with **zero Kernel file/enum/event changes** ([Domain Extension](../contracts/domain-extension.md), fixture X13).
 
-| Domain | Model | Domain intelligence | Domain verifier |
-| --- | --- | --- | --- |
-| Coding | RepositoryModel | Repository reconnaissance, dependency-aware code plan, implementation, hypothesis-driven debugging | Tests/build/static analysis/API/security and code review evidence |
-| Video Editing | MediaProjectModel | Media analysis, story/pacing interpretation, source-range selection, timeline generation/revision | Timeline, probe/decode, audio/video integrity, content and perceptual review |
+**Decision B — shared Kernel does not mean identical execution.** Bottlenecks differ, so policy is data:
 
-Context Engine is one **lazy projection assembler** for Planning/Execution/Verification views over provenance-bound source references. EvidenceGraph may be a disposable optional index; only typed EvidenceRefs and criterion-level current evidence bindings are mandatory. Milestone checkpoints aid recovery but never replace the Journal/Host facts.
+| Domain | Dominant cost | Strategy emphasis |
+| --- | --- | --- |
+| Coding | model round-trips, search, repeated tests | incremental context, fast locate, targeted verification, serialized writes |
+| Video | probe/analysis, preview, render | digest-keyed caches, bounded parallel analysis, asynchronous jobs, media resource admission |
+| Office | parsing, external APIs, batch edits | structured range ops, caching, batching, rate/quota control |
+| Browser | page load, waits, DOM churn | incremental page state, event-driven waits, timeout budgets |
 
-## 6. Workflow Profiles and DomainBinding
+The strategy cannot lower a safety floor ([Execution Strategy](../contracts/execution-strategy.md) F1–F12). This is what makes "one Kernel" compatible with "different domains, different performance strategies".
 
-Each Task binds one immutable Workflow Profile version. The profile selects:
+## 5. Execution path
 
-- domain and contract/schema versions;
-- GoalContract domain payload and PlanStep kinds;
-- domain context projections and evidence types;
-- tool-definition snapshots and effect/conflict declarations;
-- resource dimensions, hard limits, and verification/repair reserve;
-- criterion-to-evidence mapping and required assurance level;
-- output artifact and delivery requirements;
-- cancellation/recovery rules for long-running operations.
+1. Application submits Task + immutable UserIntent; Kernel binds a DomainBinding/Workflow Profile/Strategy.
+2. Adapter proposes a GoalContract; Kernel validates schema, bindings and required confirmations.
+3. Kernel activates a PlanRevision (structural cutover only when protected fields change).
+4. Orchestrator wakes on a typed cause, assembles a purpose-scoped context projection, and requests one bounded decision.
+5. Kernel independently admits each ToolInvocation (read-set, effect class, approval, budget, conflict scope, durable intent + outbox).
+6. Tool Runtime dispatches through the Trusted Host launch gate; the Host records physical facts and returns authenticated receipts.
+7. Adapter interprets outcomes and updates its domain projection; evidence bindings and invalidations are recorded.
+8. When mandatory evidence is current, a `CommitTerminal` command runs the deterministic Completion Guard; only it can commit `Completed`.
+9. Delivery references immutable artifacts and the exact goal/plan/binding/report versions.
 
-The profile can narrow available capabilities but cannot grant permission. Kernel still checks current principal, policy, approval, budget, workspace/project, and fencing at each invocation.
+Cancellation, deadline, no-progress and UNKNOWN are convergence protocols with durable waits and typed dispositions — never a UI flag or a claim that effects were rolled back.
 
-A profile change is not a prompt edit. It creates a new binding candidate and triggers impact analysis; protected scope/capability/evidence changes require confirmation and a safe plan switch.
+## 6. Domain chains
 
-See [Domain Workflow binding contract](../contracts/domain-workflow.md).
+**Coding:** RepositoryModel → typed tools (`discover`, `read_ranges`, `apply_patch`, `run_build_test`, `freeze_source`, `publish_patch`) → sealed read-only source + disjoint test outputs → `ExecutionViewManifest` → fail-to-pass/pass-to-pass/hidden evidence → Guard. See [Coding construction spec](../research/autonomous-coding-agent/design.md).
 
-## 7. High-level execution path
+**Video:** canonical asset/snapshot identity → coverage-accounted analysis → NarrativePlan → immutable TimelineRevision → deterministic RenderPlan compiler → bounded RenderJob → decode/probe + content inspection + provenance map → Guard. See [Media Project](../contracts/media-project.md), [Timeline](../contracts/media-timeline.md), [Render Compiler](../contracts/render-compiler.md), [RenderJob](../contracts/render-job.md).
 
-1. Application submits a task and immutable user-intent reference.
-2. Kernel admits the Task and binds the selected DomainBinding/Workflow Profile.
-3. Domain Intelligence proposes a GoalContract with a typed domain payload; material ambiguity is clarified.
-4. Context Engine builds the appropriate domain projection: RepositoryModel or MediaProjectModel.
-5. Domain Intelligence proposes a PlanRevision using the shared PlanRevision envelope and typed domain PlanSteps.
-6. Kernel validates and safely activates the revision; a subsequent revision uses freeze → drain → reconcile → refresh → validate → atomic activate.
-7. Context Engine assembles a version-bound Execution Context.
-8. The single Task Orchestrator selects a Strategic/Tactical/Assurance purpose, receives a complete Kernel-managed ModelStep response and records a bounded immutable action-intent envelope; it does not start another ActionProposal state machine.
-9. Kernel independently admits each ToolInvocation under current policy, approval, capability, budget, domain profile, and fencing.
-10. Tool Runtime dispatches admitted work through Trusted ToolHost.
-11. Host records physical process/job facts and returns receipt, artifacts, and output evidence; UNKNOWN is reconciled rather than blindly retried.
-12. Domain Intelligence updates its model and decides continue, debug, replan, ask, wait, verify, or stop.
-13. Domain verifier produces criterion-specific evidence; Completion Guard checks the common VerificationReport envelope and current bindings.
-14. Delivery publishes the domain artifact only after required evidence and finalization rules pass.
+Both use the same admission, budget, UNKNOWN, cancellation, receipt and completion machinery. Neither imports its semantics into the Kernel.
 
-## 8. Domain execution examples
+## 7. Evidence and completion
 
-### Autonomous Coding
+The shared evidence envelope is intentionally small: `EvidenceRef` + `CriterionEvidenceBinding` + `VerificationReport`. Domain evidence lives in typed artifacts referenced by `domain_evidence_refs[]` (schema id + digest). Optional indexes (EvidenceGraph, summaries, checkpoints) accelerate reasoning and are rebuildable; they are never completion authority.
 
-RepositoryModel → coding GoalContract/PlanRevision → file/Git/build/test tools → Host receipts and diffs → code verification → verified repository artifacts.
+A criterion passes only with current, provenance-bound evidence of the required class and independence. Human-gated criteria require an authenticated human disposition. The Guard is deterministic and always runs; a fast path may skip a model review, never a mandatory check.
 
-The existing [Coding Intelligent Execution design](../research/autonomous-coding-agent/design.md) remains the domain-specific cognitive proposal.
+## 8. Invariants (summary, not canonical)
 
-### Autonomous Video Editing
+1. One Kernel owns authoritative state; Host owns physical facts.
+2. Kernel does not branch on domain; adapters cannot hold authority.
+3. Every effect is an independently admitted ToolInvocation with durable intent, budget and Host evidence.
+4. UNKNOWN is not failure; no blind retry or conflicting publication.
+5. Terminal facts are immutable; late evidence creates holds/remediation, not rewrites.
+6. Completion requires current criterion evidence and the Kernel assurance floor.
+7. Strategy may tighten policy, never weaken a floor.
+8. A new domain extends data and tools; it does not edit the state machine.
+9. Multi-Agent / D9 remains deferred.
 
-MediaProjectModel → video GoalContract/PlanRevision → MediaAsset analysis → TimelineRevision → RenderPlan → FFmpeg RenderJob → probe/decode/content verification → video and timeline delivery.
+## 9. Readiness and non-goals
 
-The first phase is automatic editing, not a manual visual editor. See [Video Editing domain design](../research/multimedia-domain-architecture/design.md).
+The construction baseline is frozen (DF). No implementation exists; all protocols are `UNVERIFIED` until PE/VI ([Roadmap](../development/roadmap.md)). Not in scope:
 
-## 9. Authority and evidence boundaries
+- No runtime code, production dependency, deployment or technology selection.
+- No full video editor, VFX suite or manual NLE.
+- No external R2 effects by default, no multi-tenant shared Host.
+- No Multi-Agent / D9, no legacy code migration.
 
-- Kernel Journal and reconstructable aggregates are authoritative for Task, accepted plans, ModelSteps/Attempts, ToolInvocations, budgets, and completion.
-- Trusted ToolHost Host Ledger and authenticated receipts describe physical process/job execution; Kernel reconciles them.
-- Workspace/project snapshots and content hashes are authoritative only within their declared scope and Host evidence.
-- RepositoryModel, MediaProjectModel, EvidenceGraph, timeline candidates, render plans, context packs, model output, and summaries are projections/candidates, not execution authority.
-- Domain Intelligence decides semantic adequacy; Kernel validates typed contracts and authority.
-- A RenderJob's progress and exit code do not prove the video meets the GoalContract. A coding tool's successful exit does not prove code acceptance criteria passed.
-- Kernel Journal and Host Ledger remain separate fact boundaries; there is no distributed atomic transaction spanning Kernel state and physical side effects.
-
-## 10. Core invariants
-
-1. One Kernel owns authoritative task and execution state for both domains.
-2. Each Task is bound to one domain and Workflow Profile version at a time.
-3. Domain Intelligence cannot write Kernel state or bypass Model Gateway/Tool Runtime/Host.
-4. Kernel does not interpret RepositoryModel or MediaProjectModel semantics.
-5. Every side effect has independent ToolInvocation identity, admission, budget, durable intent, Host receipt, and outcome.
-6. UNKNOWN is not FailedKnown and cannot trigger blind retry.
-7. Cancellation is a convergence protocol, not a UI flag or a claim that side effects were rolled back.
-8. Domain artifacts are versioned and provenance-bound; user revisions create new versions.
-9. Completion requires criterion-linked evidence bound to the current GoalContract, PlanRevision, DomainBinding, and final artifact snapshot.
-10. A successful loop stop, command exit, or renderer exit is not Task completion.
-11. Multi-Agent / D9 and a full Video Editor remain out of scope.
-12. Current work is documentation/research only; Runtime development is not authorized.
-
-## 11. Deployment principle
-
-**First-slice execution path is one Task Orchestrator loop**, choosing Strategic/Tactical/Assurance as decision purposes. No three-loop runtime, ControlProposal arbitrator, mandatory graph database or global speculative scheduler. ActionProposal is an immutable bounded decision/intent record, EvidenceGraph an optional provenance index, and context purpose views are lazily assembled. The default scheduler serializes work, allowing separately admitted bounded parallel operations only when conflict safety is proven. TaskControl CAS applies to accepted goal/structural plan/cancel/terminal changes, not every tool receipt; ordinary actions bind selective authority, workspace and budget versions. See [Architecture subtraction review](../decisions/architecture-subtraction-review.md).
-
-The initial design does not assume microservices. Application, Orchestration, Kernel, Gateway, Context Engine, and Tool Runtime may begin as separately testable responsibilities in one application process. Trusted ToolHost must retain a real process/OS trust boundary from untrusted tool code.
-
-Concrete process topology, runtime, language, database, sandbox product, media-analysis models, and deployment model remain **OPEN**.
-
-## 12. Explicit non-goals for this baseline
-
-- No old Kernel source is treated as the implementation foundation.
-- No technology stack is selected by implication.
-- No production readiness or security certification is claimed.
-- Multi-Agent / D9 remains deferred and unauthorized.
-- No full Video Editing workstation or manual timeline editor is included in the first phase.
-- No package list or microservice topology is mandated by the cognitive design.
-- No runtime implementation, dependency addition, real-model benchmark, external media processing, or legacy code migration is authorized by this architecture draft.
-
-## 13. Minimal operational convergence and extension boundary (G0 candidate)
-
-The proposed implementation shape is **one primary Task Orchestrator + minimal authoritative Kernel + Gateway/Context/Tool Runtime/Trusted Host composed behind explicit ports + version-pinned Domain Extensions**. Strategic/Tactical/Assurance are optional decision purposes, **not** separate mandatory model calls or independently running controller state machines. A Domain extension contributes goal/context/decision/verification policies and typed tool/artifact schemas. Kernel does **not** contain `if coding / if video / if office` execution logic. See [Domain Extension v0.1](../contracts/domain-extension.md).
-
-**Kernel hot path** is a K-local transactional selective-read-set admission and durable outbox, not a K/O/H distributed transaction or a global Task CAS for routine receipts. Physical launch remains a separate Host-local serialized gate, with an acknowledged revocation race and UNKNOWN crash windows. Execution starts sequentially; only proven non-conflicting reads/jobs may run with bounded concurrency. Context is lazily assembled by relevance/digest rather than repeatedly replayed in full. A fresh independent model Verifier is policy-triggered; deterministic accepted checks, real Coding execution-view attestation, actual Video output inspection and Completion Guard are never omitted for speed. See [Core §12](../contracts/core-protocol.md).
-
-**Target extensions:** Coding owns search/edit/test/debug semantics and RepositoryModel; Video owns progressive media understanding, NarrativePlan/TimelineRevision/render/inspect semantics; a future Office adapter owns structured document/range operations and external app revision/approval semantics. Office does not require new Task, ModelStep, Invocation, budget, cancellation or terminal transitions in the proposed X1–X8 conformance scenarios. A failed Office fixture would force reopening the boundary decision rather than adding an Office branch to the Kernel.
-
-**Readiness is two-dimensional:** document/port completeness can pass a static construction walk-through, but G0 owner approval and G1–G5 runtime safety/domain/cross-domain evidence remain explicitly separate. This amendment does not approve ADP-03–11, select a production technology stack, authorize implementation, or assert benchmark gains.
+See the [construction readiness review](../decisions/construction-readiness-review.md) for what may and may not be claimed.

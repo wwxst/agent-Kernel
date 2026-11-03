@@ -1,6 +1,6 @@
 # Architecture subtraction and contract feasibility — convergence review (G0 proposal)
 
-> **Status: PROPOSED / G0 NOT APPROVED / NO RUNTIME EXECUTED.** This is an architecture amendment to [Core protocol](../contracts/core-protocol.md) and the existing Domain contracts on Draft PR #1. It preserves the recorded owner approvals of ADP-01/02 and does not approve ADP-03–11. Its recommendations require owner/architect disposition before architecture freeze.
+> **Status: HISTORICAL REVIEW RECORD (superseded by ARB-01, 2026-11-03).** Its KEEP/SIMPLIFY/EXPERIMENT recommendations informed the construction baseline. The G0–G5 gate labels are superseded by DF/SA/PE/VI in the [Roadmap](../development/roadmap.md). No runtime work was performed; no clause here is current authority.
 
 ## 1. Non-negotiable product and safety boundaries
 
@@ -104,7 +104,7 @@ No thresholds or successful experiments are invented. ADP-03–11 remain OPEN; A
 
 ## 8. Role-separated adversarial review and construction simulation — 2026-11-03
 
-**Design passes:** Runtime, performance/Token, Coding, Video, domain extension and security/reliability concerns were assessed against the existing one-loop + K/G/H, immutable SourceSnapshot, Host fence and budget-certificate contracts. Recommend preserving these safety invariants while minimizing mandatory model stages, read-set contention, repeated context and fixed Verifier overhead; add [Extension v0.1](../contracts/domain-extension.md), bounded terminal protocol and [Stage 9](../development/roadmap.md). This is a role-separated analysis of the documentation, **not a claim that separate external reviewers or executable sub-agent workers signed off**.
+**Design passes:** Runtime, performance/Token, Coding, Video, domain extension and security/reliability concerns were assessed against the existing one-loop + K/G/H, immutable SourceSnapshot, Host fence and budget-certificate contracts. Recommend preserving these safety invariants while minimizing mandatory model stages, read-set contention, repeated context and fixed Verifier overhead; add extension v0.2, bounded terminal protocol and the construction plan. This is a role-separated analysis of the documentation, **not a claim that separate external reviewers or executable sub-agent workers signed off**.
 
 **Counterexample-driven pass, distinct from design criteria:**
 
@@ -115,9 +115,9 @@ No thresholds or successful experiments are invented. ADP-03–11 remain OPEN; A
 | Bounded parallel reads have different source generation | Same immutable source version or reject/refetch; shared CAS and C-08 |
 | Timeout during live render descendant writes | Separate H process/handle convergence vs Task failure + UNKNOWN hold; V-04 |
 | Provider timeout after possible send | G-local SendMayHaveOccurred, cost hold and no blind retry; M1–M6 |
-| Office provider edit ACK lost or OAuth permission revoked | Exact revision/status reconciliation and reauthorization, no Office-specific Kernel status; X1–X8 |
+| Office provider edit ACK lost or OAuth permission revoked | Exact revision/status reconciliation and reauthorization, no Office-specific Kernel status; X1–X13 |
 | Completing after TaskControl cancellation wins CAS | Guard rereads protected versions under K transaction and loses; terminal race fixture |
 
-**Construction simulation (document-only):** K-00–K-06 have explicit required ports and event/transaction owners; Coding C-01/C-02 bind patch, SourceSnapshot and executed test evidence; Video V-01–V-03 bind exact source, timeline, render staging and inspected output; Office X-01 maps scoped external API edit/etag/UNKNOWN without changing Kernel Loop/TaskControl/Host. These are reviewable paper traces, not implemented unit tests or actual external verification. **B0–B6 remain blocker candidates and G0/G1–G5 status unchanged**.
+**Construction simulation (document-only):** K-00–K-06 have explicit required ports and event/transaction owners; Coding C-01/C-02 bind patch, SourceSnapshot and executed test evidence; Video V-01–V-03 bind exact source, timeline, render staging and inspected output; Office X-01 maps scoped external API edit/etag/UNKNOWN without changing Kernel Loop/TaskControl/Host. These are reviewable paper traces, not implemented unit tests or actual external verification. **This record's 2026-11-03 status statements (B0–B6, G0–G5) were superseded by ARB-01; see the [Decision Log](decision-log.md).**
 
 **Iteration bound:** one focused design repair and one reverse-review/cross-document scan; unresolved owner choices are escalated instead of endlessly redesigning. Benchmark hypotheses remain unverified and no P0/P1 is marked resolved absent its specified proof.

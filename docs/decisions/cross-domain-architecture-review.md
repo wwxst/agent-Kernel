@@ -1,6 +1,6 @@
 # Cross-domain architecture consistency review
 
-> **Status: PROPOSED review record — product direction approved; architecture approval pending.** This review checks whether Autonomous Coding and Autonomous Video Editing can use one Kernel without collapsing their domain models. It is a documentation/contract review only; no Runtime, media processing, benchmark, or fault-injection test was run. **Later proposed refinement:** [Minimal provable core protocol](../contracts/core-protocol.md) limits initial LaunchGate claims to single-Host local fencing and decouples bounded model delivery from final invoices; historical findings below are not a multi-Host guarantee.
+> **Status: HISTORICAL REVIEW RECORD (superseded by ARB-01, 2026-11-03).** Its G0 "NOT APPROVED" verdict and the "174 relative link targets PASS" claim describe the 2026-11-02 state and are stale; neither may be cited as current evidence. Current readiness is defined in the [Roadmap](../development/roadmap.md), current document ownership in the [documentation map](../README.md). The technical findings remain informative.
 
 ## 1. Review basis
 

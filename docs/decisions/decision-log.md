@@ -1,129 +1,130 @@
 # Architecture Decision Log
 
-> **Authority:** This file records explicit owner dispositions for Architecture Decision Proposals (ADPs). It is the authoritative status register. A decision approves only the stated scope and does not implicitly approve related contracts, implementation, experiments, technology choices, or deployment.
+> **Authority:** This file is the sole status register for Architecture Decision Proposals (ADP) and Architecture Review Board decisions (ARB). A decision approves only the scope it quotes. It never implies implementation, runtime evidence, technology selection or deployment authorization.
 
 ## 1. Decision status vocabulary
 
 | Status | Meaning |
 | --- | --- |
-| **ACCEPTED** | The proposal is approved as proposed. |
-| **REVISED** | The proposal is approved only in the explicitly revised form recorded in the decision entry. |
-| **DEFERRED** | The decision is intentionally postponed; no implementation authority is inferred. |
-| **REJECTED** | The proposal is explicitly declined. |
-| **OPEN** | No owner decision has been made. |
+| **ACCEPTED** | Approved as proposed, for the recorded scope. |
+| **ACCEPTED (construction scope)** | Binding on construction documents and code interfaces, but **not** evidence that any runtime behaviour works. No implementation authority is granted. |
+| **REVISED** | Approved only in the explicitly revised form recorded in the entry. |
+| **DEFERRED** | Intentionally postponed; no implementation authority is inferred. |
+| **REJECTED** | Explicitly declined. |
+| **OPEN** | No decision has been made. |
 
-Every decision entry records the final selection, rationale, alternatives not selected, risks/limitations, acceptance conditions, related contracts/documents, and authorization boundary. An ADP approval is not Runtime implementation authorization.
+Every entry records the selection, rationale, alternatives not selected, risks, acceptance conditions, related documents and authorization boundary.
 
 ## 2. Decision register
 
-| ID | Decision | Status | Owner disposition date |
+| ID | Decision | Status | Date |
 | --- | --- | --- | --- |
 | ADP-01 | Video first-phase autonomous editing capability and operation boundary | **REVISED** | 2026-11-02 |
 | ADP-02 | Task-conditioned progressive media analysis | **REVISED** | 2026-11-02 |
-| ADP-03 | Workflow Profile lifecycle | OPEN | — |
-| ADP-04 | Artifact and media storage contract | OPEN | — |
-| ADP-05 | Media time, PTS, VFR, and audio sample alignment | OPEN | — |
-| ADP-06 | Output profiles and defaults | OPEN | — |
-| ADP-07 | Verification and human review | OPEN | — |
-| ADP-08 | Host and resource policy | OPEN | — |
-| ADP-09 | Cross-domain handoff | OPEN | — |
-| ADP-10 | Preview and approval surface | OPEN | — |
-| ADP-11 | Implementation order and authorization gates | OPEN | — |
+| ADP-03 | Workflow Profile lifecycle, revocation and migration | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-04 | Generic artifact and media storage contract | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-05 | Media time, PTS, VFR and audio alignment | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-06 | Output profile registry and defaults | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-07 | Criterion-level verification and human review | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-08 | Host capability and resource envelope | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-09 | Cross-domain artifact handoff | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-10 | Minimal preview and approval surface | **ACCEPTED (construction scope)** | 2026-11-03 |
+| ADP-11 | Implementation order and gates | **SUPERSEDED by ARB-01 / roadmap** | 2026-11-03 |
+| ARB-01 | Construction baseline v1, document hierarchy, readiness model and architecture selection | **ACCEPTED (construction scope)** | 2026-11-03 |
 
 ## 3. ADP-01 — Video first-phase autonomous editing capability and operation boundary
 
 - **Status:** REVISED — approved in revised form.
 - **Owner disposition date:** 2026-11-02.
 - **Owner response:** “REVISED：按本轮提出的完整自主剪辑闭环方案修订后批准。”
-- **Supplementary comment:** None.
-- **Final selection:** Deliver a genuinely autonomous natural-language video-editing Agent that can complete an end-to-end editing task within a bounded core operation set. The task-level loop is: understand the request → analyze source media → identify/select useful moments → organize a basic narrative → create an immutable timeline revision → render → inspect the actual output → revise from user feedback → re-render/re-verify → deliver.
-- **Included first-phase capabilities:**
-  1. Ingest, fingerprint, and technically probe user-supplied source media.
-  2. Perform task-conditioned basic video/content/shot analysis under the four-stage progressive-analysis and modality-scoped coverage policy approved by ADP-02; provider/model and task-family-specific evidence calibration remain detailed design.
-  3. Identify and select task-relevant moments/highlights with evidence, rationale, and uncertainty.
-  4. Understand natural-language editing intent and form a basic, genre-flexible NarrativePlan with message, useful beats/moments, necessary context, sequence, and simple duration/pacing allocation.
-  5. Support trim, reorder, hard cut, concatenate, simple fade/crossfade, and limited source-audio preserve/mute/per-clip gain/simple fades.
-  6. Generate an immutable TimelineRevision and render through a bounded FFmpeg RenderPlan/Trusted ToolHost path.
-  7. Inspect the actual rendered artifact against technical and task/content criteria; successful process exit alone is insufficient.
-  8. Accept natural-language revisions, create new EditIntent/TimelineRevision versions, re-render, re-verify, and preserve prior versions/evidence.
-  9. Deliver the video with relevant timeline, render, verification, and source-provenance artifacts.
-- **Autonomy boundary:** Within the accepted GoalContract, authorized source set, bounded operation registry, permissions, and resource envelope, the Agent makes ordinary editing decisions autonomously; the user is not required to specify every clip or tool call. It must clarify or stop safely for material ambiguity, insufficient evidence, unauthorized scope, material factual risk, or exhausted budget.
-- **Explicitly deferred:** Generated captions/subtitles and title graphics; music generation/acquisition and external music sourcing; voice synthesis; multi-track audio mixing/ducking and advanced loudness mastering; advanced multi-objective highlight ranking; rich cross-scene narrative reasoning; advanced semantic continuity; music/beat-aware pacing; complex transitions; compositing, motion graphics, keyframes, stabilization, advanced color grading, VFX, arbitrary effects graphs; manual timeline editing/full NLE; professional editor collaboration/plugin marketplace; unrequested external asset acquisition and external upload/publication. Existing subtitle-stream pass-through, if supported, is an output-profile concern rather than caption generation. Codec/container/resolution/aspect/frame-rate/color/audio adaptation is separate under ADP-06.
-- **Rationale:** The product outcome is an independently completed and verified edit, not the count of tools or filters exposed. A bounded but coherent operation set exercises understanding, content selection, narrative organization, editing, rendering, inspection, revision, and delivery without prematurely building a professional editor.
-- **Alternatives considered and not selected:**
-  - A richer first phase with captions/titles, music, multi-track audio, and advanced effects was not selected because it expands content-generation, rights, compiler, and verification obligations before the core loop is established.
-  - An ultra-minimal trim/reorder/concatenate-only first phase was not selected because it risks visually crude outputs and under-exercises the editing loop.
-  - A full visual editor was not selected because it is outside the natural-language autonomous-editing product boundary.
-  - These are not permanent product rejections; future scope requires a separate decision.
-- **Risks and limitations:** Basic moment selection/narrative planning may be insufficient for complex genres; weak or conflicting analysis evidence may require clarification/human review; simple transitions still require timebase/audio/render validation; a bounded operation set will not satisfy every professional workflow; technical validity does not prove semantic correctness. Provider/model and task-family-specific evidence calibration remain detailed design under ADP-02; temporal, output, verification, resource, and interaction contracts remain open under ADP-03 through ADP-10.
-- **Acceptance conditions:**
-  1. A task starts from a natural-language request and authorized source set without the user specifying every operation.
-  2. The Agent produces task-conditioned source understanding and evidence-backed moment selection.
-  3. The Agent creates a basic NarrativePlan and derives a valid immutable TimelineRevision.
-  4. Core operations have typed representations, validation, deterministic render compilation, and evidence obligations.
-  5. Rendering uses the bounded RenderPlan/Trusted ToolHost path; unsupported operations fail closed.
-  6. Verification inspects the actual output against technical and task/content criteria.
-  7. Follow-up natural-language instructions produce traceable new revisions, with affected obligations re-rendered/re-verified.
-  8. Delivery retains source-to-output provenance and required acceptance evidence.
-  9. Material ambiguity, insufficient evidence, unauthorized scope, or exhausted budget causes clarification/safe stop rather than false completion.
-  10. End-to-end evaluation measures task completion and editing quality, not merely tool success.
-- **Related decisions/contracts:** ADP-02 (analysis); ADP-03 (profile authority); ADP-04 (artifacts); ADP-05 (time); ADP-06 (output profiles); ADP-07 (verification); ADP-08 (resources/Host); ADP-09 (handoff); ADP-10 (preview/progress/approval); ADP-11 (implementation sequence); MediaProject, Media Timeline, RenderPlan security, RenderJob, Trusted ToolHost, Completion, Video Intelligence, and Video evaluation.
-- **Authorization boundary:** This decision approves the product capability boundary only. It does not authorize Runtime code, production dependencies, real-model/media experiments, external asset acquisition, external publication, a final technology stack, or deployment. Those require separate explicit decisions/authorizations.
+- **Final selection:** Deliver a genuinely autonomous natural-language video-editing Agent that completes an end-to-end editing task within a bounded core operation set: understand request → analyze source media → identify/select useful moments → organize a basic narrative → create an immutable TimelineRevision → render → inspect the actual output → revise from user feedback → re-render/re-verify → deliver.
+- **Included first-phase capabilities:** ingest/fingerprint/probe; task-conditioned basic video/content/shot analysis under ADP-02; task-relevant moment/highlight selection with evidence and uncertainty; genre-flexible NarrativePlan with message, beats, sequence, simple pacing; trim, reorder, hard cut, concatenate, simple fade/crossfade, limited source-audio controls; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification and delivery.
+- **Autonomy boundary:** within the accepted GoalContract, authorized source set, bounded operation registry, permissions and resource envelope the Agent decides autonomously; it must clarify or stop safely for material ambiguity, insufficient evidence, unauthorized scope, material factual risk or exhausted budget.
+- **Explicitly deferred:** generated captions/titles; music generation/acquisition; voice synthesis; multi-track audio mixing/ducking/advanced loudness; advanced multi-objective ranking; rich cross-scene narrative reasoning; advanced continuity; music-aware pacing; complex transitions; compositing/motion graphics/keyframes/stabilization/advanced color/VFX/arbitrary filter graphs; manual timeline editing/full NLE; plugin marketplace; unrequested external asset acquisition and external publication. Codec/container/resolution/aspect/rate/color/audio adaptation is ADP-06.
+- **Risks:** basic selection/narrative may be insufficient for complex genres; weak or conflicting analysis evidence may require clarification/human review; simple transitions still require timebase/audio/render validation; technical validity does not prove semantic correctness.
+- **Acceptance conditions:** natural-language start without per-operation instruction; evidence-backed analysis and selection; valid immutable timeline; typed core operations with deterministic compilation and evidence obligations; bounded render path failing closed; actual-output verification; traceable revisions; source-to-output provenance; material ambiguity/insufficient evidence/unauthorized scope/exhausted budget produce clarification/safe stop; evaluation measures completion and quality, not tool success.
+- **Authorization boundary:** product capability boundary only. Does not authorize runtime code, dependencies, real-model/media experiments, external acquisition/publication, a final technology stack or deployment.
 
 ## 4. ADP-02 — Task-conditioned progressive media analysis
 
 - **Status:** REVISED — approved in revised form.
 - **Owner disposition date:** 2026-11-02.
 - **Owner response:** “批准”.
-- **Supplementary comment:** None.
-- **Final selection:** Adopt a four-stage progressive analysis policy:
-  1. **Intake and technical baseline — always.** Fingerprint and technically probe every supplied source asset; establish asset/stream identity, duration, start timestamps, rational time bases, frame/sample characteristics, and decode warnings. This stage records technical facts, not semantic understanding.
-  2. **Source-wide coverage accounting — always.** Every supplied asset receives a CoverageManifest bound to the exact ProjectSnapshot/input manifest and source digest. For content-based moment selection, create a coarse temporal navigation index over the selected source set, with explicit sampling density and gaps. This is a coverage/navigation obligation, not exhaustive semantic comprehension.
-  3. **Task-conditioned deep analysis — as required.** Accepted GoalContract criteria determine which modalities and intervals are needed. Full transcription, dense visual analysis, OCR, audio-event analysis, or other expensive analysis is not run merely because a source contains that modality.
-  4. **Adaptive evidence expansion — when needed.** Expand sampling, neighboring context, modalities, or analysis when evidence is incomplete, contradictory, low-confidence, stale, boundary-sensitive, or insufficient for a required criterion. Record the triggering gap, expected evidence, cost reservation, and result. If unresolved, preserve Partial/Inconclusive/UNKNOWN and seek user input when material.
-- **Coverage semantics:** Coverage is scoped per asset, stream, modality, and declared source interval. Coverage segments are disjoint, gap-accounted, and use end-exclusive interval semantics. The six mutually exclusive statuses are **Observed**, **Sampled**, **NotSampled**, **NotRequested**, **Unavailable**, and **DecodeFailed**. A status change requires a segment boundary. One modality cannot satisfy another modality's coverage obligation. A source that lacks a stream for a modality records that fact in the technical stream inventory; it does not fabricate a stream-scoped coverage segment or conflate absence with decode failure. If the GoalContract requires the absent modality, the evidence requirement remains unavailable/unsatisfied.
-- **Evidence and claim boundary:** NotSampled, NotRequested, Unavailable, and DecodeFailed never support a negative content claim. Sparse sampling, shot summaries, and transcript-only evidence cannot establish whole-source absence. Negative claims require a method and observed coverage adequate for the specific claim. Every claim retains source/stream/timebase, method/configuration, evidence scope, uncertainty, and freshness.
-- **Rationale:** The approved policy preserves source-wide visibility and auditable gaps while avoiding the cost, latency, privacy exposure, and noisy claims of unconditional full multimodal analysis. It also prevents sparse or modality-mismatched evidence from being mistaken for proof of absence.
-- **Alternatives considered and not selected:**
-  - **Always run complete visual/audio/transcription analysis:** not selected because its cost and exposure are unnecessary for tasks whose criteria do not require every modality.
-  - **Technical metadata only:** not selected because it is insufficient for autonomous moment selection and narrative editing.
-  - **Sparse sampling without explicit coverage accounting:** not selected because it hides unobserved intervals and encourages unsupported negative claims.
-- **Risks and limitations:** Progressive analysis can miss unanticipated cues; coarse indexing is not exhaustive semantic comprehension; analysis models may disagree or hallucinate; dense expansion consumes budget; raw evidence may contain sensitive material. These risks require explicit coverage, uncertainty, budget, privacy, and escalation records. No universal confidence threshold is approved.
-- **Acceptance conditions:**
-  1. Every supplied asset has a technical probe result or an explicit failed/unavailable record.
-  2. Every declared stream/modality analysis scope is represented by a complete, disjoint, gap-accounted CoverageManifest.
-  3. Content-based moment-selection tasks have a coarse temporal index over the selected source set, with density and gaps declared.
-  4. GoalContract criteria map to required analysis kinds and minimum evidence scopes; unnecessary modalities are not implicitly mandatory.
-  5. Evidence expansion is bounded, reasoned, budget-reserved, and recorded.
-  6. Incomplete/conflicting/weak evidence remains Partial/Inconclusive/UNKNOWN; unsupported absence claims are rejected.
-  7. Evaluation measures manifest completeness, relevant-moment recall/miss rate where ground truth exists, false detections, source-range accuracy, escalation quality, and analysis cost separately.
-- **Related decisions/contracts:** [Architecture Decision Proposals — ADP-02](architecture-decision-proposals.md#3-adp-02-task-conditioned-progressive-media-analysis), [MediaProject and MediaAnalysis](../contracts/media-project.md), [Media Timeline](../contracts/media-timeline.md), [Video evaluation](../research/multimedia-domain-architecture/evaluation.md), [Completion](../contracts/completion.md), and ADP-08 resource policy.
-- **Authorization boundary:** This decision approves the logical progressive-analysis policy and coverage/evidence semantics only. It does not select a provider, model, storage technology, media-processing stack, confidence threshold, production pipeline, or numeric performance target. It does not authorize Runtime implementation, real-model/media experiments, production dependencies, or deployment.
+- **Final selection:** four-stage policy. (1) Intake and technical baseline always: fingerprint and probe every source asset; record asset/stream identity, duration, start timestamps, rational time bases, frame/sample characteristics, decode warnings. (2) Source-wide coverage accounting always: one CoverageManifest per asset bound to the exact ProjectSnapshot/input manifest and source digest; for content-based selection, a coarse temporal navigation index with sampling density and gaps. (3) Task-conditioned deep analysis only as required by accepted criteria. (4) Adaptive evidence expansion when evidence is incomplete, contradictory, low-confidence, stale, boundary-sensitive or insufficient, recording trigger, expected evidence, cost reservation and result; unresolved evidence stays Partial/Inconclusive/UNKNOWN.
+- **Coverage semantics:** scoped per asset, stream, modality and declared interval; disjoint, gap-accounted, end-exclusive; six mutually exclusive statuses **Observed, Sampled, NotSampled, NotRequested, Unavailable, DecodeFailed**; a status change requires a segment boundary; one modality cannot satisfy another's coverage obligation; absence of a stream is an inventory fact, not a fabricated segment; if the GoalContract requires the absent modality the evidence requirement remains unsatisfied.
+- **Evidence boundary:** NotSampled/NotRequested/Unavailable/DecodeFailed never support a negative content claim; sparse sampling, shot summaries and transcript-only evidence cannot establish whole-source absence; negative claims need a method and coverage adequate to the claim; every claim retains source/stream/timebase, method/configuration, scope, uncertainty and freshness.
+- **Rationale:** preserves source-wide visibility and auditable gaps while avoiding unconditional full multimodal cost, latency, privacy exposure and noisy absence claims.
+- **Risks:** progressive analysis can miss unanticipated cues; coarse indexing is not comprehension; analyzers may disagree; dense expansion consumes budget; raw evidence may be sensitive. No universal confidence threshold is approved.
+- **Acceptance conditions:** every asset has a probe or explicit failed/unavailable record; every declared modality scope has a complete gap-accounted CoverageManifest; content-selection tasks have a coarse index with density/gaps declared; criteria map to analysis kinds and minimum scopes; expansion is bounded/reasoned/reserved; weak evidence stays Partial/Inconclusive/UNKNOWN; evaluation measures manifest completeness, recall/miss rate, false detections, source-range accuracy, escalation quality and analysis cost separately.
+- **Authorization boundary:** logical policy and coverage/evidence semantics only; no provider, model, storage, media stack, confidence threshold, production pipeline or numeric target is selected.
 
-## 5. First-batch decision status
+## 5. ADP-03…ADP-11 dispositions (2026-11-03)
 
-ADP-02 is now **REVISED/APPROVED** and recorded above. The remaining first-batch drafts — ADP-03, ADP-05, and ADP-09 — have been refined on the architecture branch and remain **OPEN** pending explicit owner disposition. Their contracts specify Host launch/revocation ordering, piecewise stream-to-asset time mapping, and resolver-mediated ScopedReadGrant boundaries; none is empirically verified. Documentation approval does not authorize Runtime implementation, experiments, technology selection, or deployment.
+These are **construction-scope** dispositions: they freeze the contract shape needed to build, not the values or implementations that require external facts. Each links to its normative text; where a downstream fact is unknown, the contract defines a fail-closed capability probe instead of inventing an answer.
 
-## 6. Remaining decisions
+| ID | Disposition and scope | Still decided at build time |
+| --- | --- | --- |
+| ADP-03 | **ACCEPTED (construction scope).** Immutable, digest-pinned Workflow Profile; one authority-epoch registry; single-Host serialized `LaunchGate`; distinct `RevocationRequested` / `HostFenceInstalled` / `Revoked`; UNKNOWN holds; multi-Host ordering unapproved. See `contracts/domain-workflow.md`, `security/trusted-host.md`, `contracts/core-protocol.md`. | Named Host/OS and membership; exact grant TTL per risk class (provisional defaults recorded in ARB-01.6). |
+| ADP-04 | **ACCEPTED (construction scope).** Generic immutable artifact manifest + opaque content-addressed payload; Journal stores references, never large bytes; six-state minimum projection (Staging/Published/Quarantined/Missing/DigestMismatch/Unverified). | Storage technology, placement, encryption, retention implementation. |
+| ADP-05 | **ACCEPTED (construction scope).** Per-stream integer PTS/sample coordinates; piecewise asset-clock mapping; rational time bases; explicit conversion/rounding records; A/V mapping. See `contracts/media-timeline.md`. | Container/codec matrix and platform probing details. |
+| ADP-06 | **ACCEPTED (construction scope).** Versioned output-profile registry; no silent defaults; one compatibility profile candidate. | Which profiles ship first and their exact parameter values. |
+| ADP-07 | **ACCEPTED (construction scope).** Criterion-level evidence classes via a single `VerificationPolicy` owner; independent content review; human disposition for subjective/high-impact criteria; Kernel assurance floor is non-negotiable. | Reviewer availability, rubric detail, blind-review logistics. |
+| ADP-08 | **ACCEPTED (construction scope).** Hard-enforce only Host-supported dimensions; R0 allowed, R1 only under a recorded effect policy, R2 disabled; bounded source/output admission; GPU optional and admission-controlled. | Named enforcement mechanisms and measured limits. |
+| ADP-09 | **ACCEPTED (construction scope).** Separate Tasks, exact immutable ArtifactRef, resolver-mediated ScopedReadGrant, per-read authorization, no inherited permissions/context; sequential `CompositePlan` handoff at the application layer. | Multi-tenant handoff, fan-out, autonomous composition. |
+| ADP-10 | **ACCEPTED (construction scope).** Contact-sheet/low-resolution preview plus approve/revise/reject; no manual timeline editor; preview never substitutes final inspection. | UI surface and preview encoding parameters. |
+| ADP-11 | **SUPERSEDED.** Replaced by the DF/SA/PE/VI gate model and the WBS in `development/roadmap.md`. | — |
 
-ADP-03 through ADP-11 remain OPEN. ADP-01 and ADP-02 are recorded above as REVISED. Their recommendations and alternatives are maintained in [Architecture Decision Proposals](architecture-decision-proposals.md). No status is inferred from roadmap order, document presence, or dependency relationships.
+**Authorization boundary:** these dispositions do not authorize runtime implementation, dependencies, real media/provider runs, external effects or deployment. They remove documentation ambiguity so construction *can* be planned and authorized.
 
-## 7. Subsequent architecture-subtraction proposal — **NO OWNER DECISION**
+## 6. ARB-01 — Construction baseline v1 (2026-11-03)
 
-The Draft PR #1 [architecture subtraction review](architecture-subtraction-review.md) proposes a single primary autonomous loop with Strategic/Tactical/Assurance **modes**, unique state authorities with selective version read-sets rather than global Task CAS on every operation, L2-only structural plan revisions, minimum EvidenceRef/criterion bindings instead of mandatory EvidenceGraph lifecycle, bounded immutable ActionProposal intent, lazy Context views, sequential-first scheduling and milestone checkpoints. It **retains** single-Host fence/revocation distinctions, K/O/H transactional owners, Coding effective execution-view attestation, Hard Budget, UNKNOWN recovery and evidence-gated Completion.
+- **Status:** ACCEPTED (construction scope).
+- **Method:** eight independent role reviews (Kernel runtime, performance/Token, Coding, Video, domain extension/Office, security/reliability, adversarial architecture, documentation integrity) followed by a chief-architect adjudication and a construction WBS. Design, review and acceptance were role-separated. The reviewers were AI subagents; this is a **document-level** review, not an external human certification. No runtime evidence exists.
+- **Scope:** the normative surface needed to build the Kernel, the Coding and Video domains, the Office design sample and the composition path.
 
-**Status: REVIEW PROPOSAL ONLY.** G0 not approved; G1–G5 not run. This **non-decision record** does not alter ADP-01/02 REVISED/APPROVED dispositions, approve ADP-03–11, authorize Runtime development or freeze architecture. Any future acceptance requires an explicit owner decision entry with exact revision and scope.
+### 6.1 Sub-decisions
 
-### G0 provider-send and Host policy follow-up — non-decision addendum
+| ID | Decision | Rationale | Alternatives rejected |
+| --- | --- | --- | --- |
+| ARB-01.1 | **Document classes and precedence.** Normative contracts are those listed in `docs/README.md` as `NORMATIVE`; architecture/ADP/research documents are informative unless they quote a normative clause; `decision-log.md` is the sole status register; a document that links a record does not restate its fields. | 40+ overlapping documents had nine restatements of authority rules and no precedence rule; a single owner per record is required for independent implementation. | "Everything is normative" (contradiction-prone); "nothing is normative until code exists" (unbuildable). |
+| ARB-01.2 | **Readiness model.** Gates become **DF (Design Freeze) → SA (Spike Authorization) → PE (Prototype Evidence) → VI (Verified Implementation)**. RFI means DF passed; it never implies PE/VI. | The old G0–G5 chain made RFI require a finished implementation, which requires authorization that RFI was supposed to gate. | Keeping G0–G5 with renamed labels (cycle remains). |
+| ARB-01.3 | **Architecture selection.** One authoritative Kernel + version-pinned domain adapters + data-driven per-domain Execution Strategy, with K/G/H ownership, UNKNOWN handling, Host fence, hard-budget interface and evidence-gated completion retained. | Only this shape satisfies both owner constraints: adding a domain does not grow the Kernel, and domains may have different execution strategies. | Two separate domain agents (duplicate authority/recovery; cross-domain handoff becomes a new integration problem); a generic durable-workflow engine (host/provider ambiguity and admission authority are not expressible as activities); a monolithic domain-aware Kernel (every domain edits the authority core). |
+| ARB-01.4 | **Canonical data model and permission model are normative.** One record/enum/event/error catalog; principals, capabilities, approval records, separation of duties and tenancy are specified. | Independent implementations cannot interoperate on prose; approval was previously only a version number. | Per-module schemas with a translation layer (doubles the surface; no single authority). |
+| ARB-01.5 | **Execution semantics.** One numbered loop with one priority order; `WakeEvent` causes; `CommitTerminal` as the only terminal path; a single terminal rule for unresolved effects (fail with `UnresolvedEffect` + separate durable hold, never falsely converged); `PlanStep` state is versioned and event-sourced. | Three loop orders, two terminal rules and an unversioned PlanStep state made the core unimplementable. | Leave the loop to implementation discretion (untestable termination). |
+| ARB-01.6 | **Effect and evidence policy.** R2 disabled; R1 admissible only under a recorded effect policy with provisional defaults (30 s TTL, 2 s clock uncertainty, 5 s fence ACK, fail-closed); sealed read-only source + disjoint outputs; `DependencyRoot` and `HiddenOracleInput` are declared digest-bound inputs; the shared `VerificationReport` is domain-neutral (`domain_evidence_refs[]`). | The sealed-snapshot equality rule contradicted hidden oracles and real toolchain writes; domain-named report fields contradicted Kernel neutrality. | Full file-open tracing (unnecessary complexity); writable overlay with post-run hashing (cannot prove what ran); per-domain report fields (Kernel branching by another name). |
+| ARB-01.7 | **Performance and Token policy.** Per-domain strategy fields are normative data with Kernel floors; ceilings in the documents are **TARGET/UNMEASURED**; cost gates use exposure-adjusted cost and cost per verified success; ablation includes a cheating arm and a four-architecture comparison. | The owner's primary goals had no normative contract, only metrics; numeric "targets" must not masquerade as results. | Leaving budgets OPEN (nothing to design against); declaring measured gains (fiction). |
+| ARB-01.8 | **Domain construction specs.** Coding: six typed tools, patch formalism, recon budget, test-selection record, formal evidence catalog with fail-to-pass, fast-path predicate. Video: canonical media identity, closed operation registry, deterministic compiler contract, reconciliation/publication protocol, acceptance catalog. Office: R0 read + R1 local export only; zero Kernel diff. | Domain chains were obligation prose without schemas or algorithms; "deterministic" was aspirational. | Design-by-example with no registry (incompatible implementations); full Office external effects (R2 disabled). |
+| ARB-01.9 | **Cross-domain composition.** A derived, read-only `CompositePlan` executed by the application layer over ordinary independently authorized Tasks; failure policies `require_success` and `skip_on_failed_dependency`; no composite Task, shared budget, inherited approval or autonomous fan-out. | The owner requires combining domain tools/artifacts; the safety model forbids shared authority or a composite Task state. | A composite Task aggregate (new authority); partial-consumption policy (contradicts non-consumable partial artifacts); D9 multi-agent (deferred). |
+| ARB-01.10 | **ADP-03…11 dispositions** as recorded in §5. | Needed to remove documentation ambiguity before construction. | Leaving them OPEN while claiming readiness (contradiction). |
 
-The Draft PR #1 review now additionally specifies **potentially accepted/billable Provider requests without ACK**: a durable Gateway SendMayHaveOccurred marker, conservative ProviderOutcomeUnknown, original budget exposure, qualified same-Attempt Provider execution+charging idempotency or a freshly reserved new Attempt. It also proposes explicit Host grant expiry/risk-class revocation windows and a first-slice sealed read-only Coding SourceSnapshot with isolated output roots rather than compulsory full file tracing. These are **PROPOSED contract refinements only**, not Owner approval or experimentally verified guarantees. Specific Provider idempotency, Host risk windows and effect enablement remain OPEN. G0 NOT APPROVED; G1–G5 NOT RUN. ADP-01/02 remain approved within their recorded scopes; ADP-03–11 remain OPEN.
+### 6.2 Why this shape is preferred (argument, not measurement)
 
-## 4. Convergence proposal of 2026-11-03 — NOT an owner disposition
+The owner asked for a unified Kernel that does not grow per domain, while allowing domains different execution strategies, and for the choice to be justified against alternatives. The justification is a **reasoned comparison plus a falsifiable experiment**, not a measured result:
 
-**ARCH-EXT-2026-11-03: PROPOSED.** Architecture recommendation: retain one minimal authoritative Kernel, the distinct K/G/H durable ownership and Host-local physical fence, one primary Orchestrator loop (Strategic/Tactical/Assurance as decision purposes), and register version-pinned Domain adapters through [Domain Extension v0.1](../contracts/domain-extension.md). Prefer lazy context and conditional risk/evidence-triggered fresh Verifier over mandatory multi-model stages; never eliminate declared tests, actual Coding execution-view attestation, real Video output inspection or deterministic Completion Guard. Schedule proven independent R0/disjoint jobs with bounded resources; stop on no-progress/timeout/UNKNOWN instead of spinning.
+| Alternative | Why it loses on the stated goals | Falsifier that would overturn this |
+| --- | --- | --- |
+| Two independent domain agents | Duplicates admission, budget, UNKNOWN, Host fencing and completion authority; each still needs the same safety machinery, so the safety surface roughly doubles; cross-domain handoff becomes an integration project rather than a scoped grant | If two agents match the unified Kernel on false completion, terminal correctness and maintenance cost, the unified Kernel is unjustified |
+| Generic durable-workflow engine + domain activities | Provider ambiguity, one-use Host launch, sealed execution views and criterion evidence are not expressible as ordinary activities; the engine would need the same custom safety code plus an engine | If A3 reproduces M1–M6/R1–R7 with less custom safety code, the bespoke Kernel is over-engineering |
+| Monolithic domain-aware Kernel | Every new domain edits the authority core; regression surface grows with each domain, contradicting the extension invariant | If an Office adapter lands by editing Kernel state/enums/events, the extension boundary is rejected |
+| Shared Kernel + data-driven Execution Strategy (selected) | One authority core; domain differences are policy; a new domain is manifest/tools/policy; performance tuning does not touch Kernel code | If any domain needs a Kernel branch to hit its required strategy, the strategy contract is insufficient and the boundary must reopen |
 
-**Alternatives considered:** separate Coding/Video kernels duplicate authority and recovery; a universal domain ontology, distributed speculative scheduler, plugin marketplace or swarm controller expands core complexity without first-slice evidence; dropping Host fence/UNKNOWN or required assurance to save Tokens is disallowed. Whether this single-loop/adapters choice improves end-to-end latency, cost and quality remains an **UNVERIFIED benchmark hypothesis**, not a measured result.
+These are **falsifiers, not results**. The A1–A4 experiment and the zero-Kernel-diff Office audit are designed in [Shared evaluation](../research/shared-kernel/evaluation.md) §9.5 and are `NOT RUN`. No sentence in this baseline may claim that the selected shape is faster, cheaper or more reliable until that evidence exists.
 
-**Specific counter-risks and mitigation:** skipping model Verifier may miss semantic failures → criterion assurance floor + hidden/original tests + independent video-content rubric; parallel reads may mix source versions → immutable input snapshot/read-set; caches may omit new protected data → digest dependency invalidation + real execution-view proof; Provider timeout may duplicate bill → durable send marker/UNKNOWN reservation/no blind retry; deadline with lingering Host children → separate physical reconciliation/hold and never claim process convergence.
+### 6.3 Accepted residual risks
 
-This is **not ACCEPTED** by the owner. ADP-01/02 retain their previously **REVISED/APPROVED** scopes, ADP-03–11 remain OPEN; G0 is NOT OWNER APPROVED and G1–G5 are NOT RUN. No runtime code, technology/Host provider qualification or real-world performance is approved by recording these proposals.
+1. **No runtime evidence.** Every protocol property (serializability, fence ordering, sealed view, provider non-duplication, cancellation convergence) remains unproven until PE.
+2. **Provider hard-budget eligibility is unknown.** Until a provider is qualified, only explicitly authorized soft-budget mode is honest; hard budget fails closed at admission.
+3. **R1 window is a risk acceptance.** The provisional values are construction defaults, not measured safe bounds; the owner may tighten or disable per effect class.
+4. **Toolchain compatibility is partial.** Sealed read-only source may not support every ecosystem; affected criteria must remain `Unsupported`/`Unverified` rather than silently pass.
+5. **Adversarial review disagreement on RFI.** The independent reviewer recommended requiring prototype evidence before any "ready" claim and narrowing the freeze to a Coding-first slice. This decision keeps RFI as a document-level freeze because the owner's mandate is documentation-only; the disagreement is recorded rather than hidden. Release claims still require PE/VI.
+6. **Performance hypotheses unmeasured.** All ceilings are design hypotheses; the ablation may show no benefit or a regression.
+
+### 6.4 Authorization boundary
+
+This decision freezes documents and interfaces for construction planning. It does **not** authorize writing runtime code, adding production dependencies, selecting a final technology stack, running real providers/media, performing external effects, or deploying. Spike work requires a separate SA authorization. Multi-Agent/D9 remains deferred.
+
+## 7. Prior non-decisions and history (superseded, retained for audit)
+
+- The architecture-subtraction review and the convergence proposal were **proposals only**; their content is now subsumed by ARB-01 where accepted.
+- The earlier G0/G1–G5 labels are superseded by DF/SA/PE/VI. Any historical text that cites them remains a record of the review, not a current gate.
+- ADP-01/ADP-02 remain the only prior owner dispositions; nothing in this log reopens their scope.
