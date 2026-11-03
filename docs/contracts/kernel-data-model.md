@@ -229,7 +229,7 @@ Checkpoint integrity is historical; current authorizations are **not** part of i
 
 ### 3.15 WakeEvent
 
-`{wake_id, task_id, cause, dedupe_key, source_ref, occurred_at, sequence}`. `cause` is closed: `TaskAdmitted \| UserInput \| ApprovalResolved \| CancelAccepted \| DeadlineDue \| HostReceipt \| ProviderResult \| CutoverReady \| RecoveryTimer`. The Orchestrator consumes wakes through a durable cursor, coalesces duplicate `dedupe_key` values, and never derives a new cause from model text. A wake is a scheduling hint, not authority: every wake handler re-reads current state and admission conditions.
+`{wake_id, task_id, cause, dedupe_key, source_ref, occurred_at, sequence}`. `cause` is closed: `TaskAdmitted \| UserInput \| ApprovalResolved \| CancelAccepted \| DeadlineDue \| HostReceipt \| ProviderResult \| CutoverReady \| RecoveryTimer \| InternalContinue`. The Orchestrator consumes wakes through a durable cursor, coalesces duplicate `dedupe_key` values, and never derives a new cause from model text. `InternalContinue` is persisted by the scheduler only with `source_ref` pointing to a typed previous disposition and an enforced per-Task continuation allowance; it never bypasses model/no-progress/deadline limits. A wake is a scheduling hint, not authority: every wake handler re-reads current state and admission conditions.
 
 ### 3.16 VerificationPolicy
 

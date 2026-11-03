@@ -54,7 +54,7 @@ The Kernel rejects any strategy that would authorize, weaken or omit the followi
 
 ## 4. Strategy schema
 
-All fields are required unless marked optional. Numeric values are **policy ceilings** interpreted as "at most"; a value of `0` means "not permitted". `null` means "not applicable". Durations are integer milliseconds.
+All fields are required unless marked optional. §7 is a **partial policy table for discussion**, not a complete machine-loadable strategy object. Implementations must use the versioned machine schema and complete strategy fixtures (see the P0 closure decision) before treating an example as admissible. Numeric values are **policy ceilings** interpreted as "at most"; a value of `0` means "not permitted". `null` means "not applicable". Durations are integer milliseconds.
 
 ### 4.1 Identity and binding
 
@@ -149,23 +149,23 @@ Admission-time recheck (cheap, no domain interpretation): current `strategy_ref`
 
 The loop reads only generic strategy fields:
 
-```text
-wake(task):
-  if terminal: reconcile outboxes; return
-  if cancel/deadline/authority-changed: safe_stop()
-  if conflicting UNKNOWN: reconcile_or_park()
-  if wait_active and not due: return
-  if completion_possible(): if CompletionGuard(): commit_terminal(); return
-  if missing_mandatory_evidence(): next = adapter.verifyCriteria(...)      // domain decides *what*
-  else if strategy.decision.fast_path.eligible(state): next = adapter.decideNext(...)
-  else: next = adapter.decideNext(...)                                    // same call, different context budget
-  candidates = bound_items(next)                                          // generic envelope
-  for item in candidates:
-      if invocation(item) conflicts with running/UNKNOWN: park_or_serialize()
-      admit(item)  // read_set, effect class, budget, approval, Host ticket
-  schedule per strategy.schedule and proven conflict scopes
-  wait per strategy.wait; wake on Host events, not model spins
-```
+\`\`\`text
+wake(task):  # consult Core §12.2; this is a summary, not a competing priority order
+  if terminal: reconcile_and_deliver(); return Terminal
+  if cancellation_or_deadline_or_revocation: return safe_stop_disposition()
+  if conflicting_unknown: return reconcile_or_park()
+  if wait_active_and_not_due: return Park
+  if completion_eligible: return CommitTerminal(Completed)  # K rechecks
+  ready = adapter.computeRunnableWorkAndVerification(current_snapshot)
+  # Missing evidence does NOT imply verification is ready.
+  if structural_cutover_required(ready): return cutover_or_park()
+  if deterministic_item_ready(ready): return admit_and_dispatch(ready)
+  if limits_exhausted: return diagnose_once_then_park_escalate_or_fail()
+  decision = adapter.decideNext(incremental_context, strategy.fast_path)
+  if valid_independent_items(decision): return admit_each_and_dispatch()
+  return bounded_internal_continue_or_owned_wait_or_typed_terminal
+\`\`\`
+
 
 `decideNext`, `verifyCriteria`, `interpretOutcome`, `projectContext`, `describeRecovery` come from the domain adapter ([Domain Extension](domain-extension.md)). The loop branches on **state and policy values**, not on `domain_id`. A grep-level conformance check (S-1) forbids `domain_id` string comparisons in the Kernel source tree.
 
@@ -181,15 +181,15 @@ Each domain starts from a minimal strategy; numbers are starting points to be ca
 | `decision_batching` | `plan_then_act` | One decision may propose a locate+read batch; edits are admitted individually. |
 | `max_model_steps_per_task_class` | `simple: 6, complex: 20` | Bound runaway loops; calibrated by C-evaluation. |
 | `context.input_token_ceiling` | `planning: 24k, tactical: 16k, assurance: 20k` | Prefer structural locate (symbols/diffs) over repository dumps. |
-| `context.cache.ttl_class` | `source: until digest change, test_output: 1 run, parse_index: until tool version change` | Repeated test design must not re-read the whole repo. |
+| `context.cache.ttl_class_map` | `source: until digest change, test_output: 1 run, parse_index: until tool version change` | Repeated test design must not re-read the whole repo. |
 | `schedule.max_concurrent` | `R0: 4, R1: 1, R2: 0` | Parallel reads; serialized writes/tests that share a worktree. |
 | `wait.external_job_wake` | `event` | Build/test completion wakes the loop; no polling model calls. |
 | `verify.policy_ref` | policy version whose floor applies | Never overridable by strategy |
-| `verify.additional_triggers` | `risk_triggered` extras | Independent tests plus Guard remain mandatory; trigger a fresh review for implementer-authored oracles |
+| `verify.additional_triggers` | `implementer_authored_oracle`, `high_impact_claim` | Independent tests plus Guard remain mandatory; trigger a fresh review for implementer-authored oracles |
 | `verify.shadow_audit_rate` | `0.1` for Coding | Sampled audit of skipped reviews; enables false-completion measurement |
 | `verify.review_deadline_ms` | `600000` | Bounds human/reviewer wait |
-| `terminate.max_consecutive_no_progress` | `3` | Diagnose once, then replan or stop. |
-| `repeat_test_policy` | `rerun only when bound inputs changed or a repair occurred` | Avoid the "same red test three times" loop; freshness is bound by digest. |
+| `progress.max_consecutive_no_progress` | `3` | Diagnose once, then replan or stop. |
+**Coding adapter rule (not a DES field):** rerun a test only when bound inputs changed or an authorized repair occurred; repeat detection uses result digests and failure signatures. This rule belongs in the domain adapter, not in the closed cross-domain strategy schema.
 
 ### 7.2 Video
 
@@ -200,12 +200,12 @@ Each domain starts from a minimal strategy; numbers are starting points to be ca
 | `context.input_token_ceiling` | `planning: 20k, tactical: 12k, assurance: 16k` | Media evidence is referenced by time ranges, not raw frames. |
 | `schedule.max_concurrent` | `R0 probe/analyze: 4, R1 render: 1 per Host, R2: 0` | Parallel analysis, serialized publication; GPU/disk bounded. |
 | `resource.per_task_cap` | `{gpu_ms, disk_bytes, output_bytes, media_input_seconds}` declared by profile | Render must be admission-controlled, not best-effort. |
-| `wait.external_job_wake` | `event` with bounded status polling ≤ 1/min | Long renders must not burn model turns. |
+| `wait.external_job_wake` | `event` (bounded fallback polling only through `bounded_poll` policy) | Long renders must not burn model turns. |
 | `verify.policy_ref` | Video verification policy version | Owns required evidence class, independence and human gates |
 | `verify.check_catalog_ref` | `video.checks.v1` | `decode/probe/stream/timeline-invariant/audio-integrity` are mandatory checks, never delegated to a model |
 | `verify.additional_triggers` | `high_impact_claim`, `disputed_evidence` | Tightens review; cannot skip rendered-output inspection |
 | `verify.shadow_audit_rate` | `0` when every content criterion is always reviewed | No skipped review to audit |
-| `cache` | `probe: immutable per source digest; proxy: per proxy spec; shot/transcript: per analyzer version` | Asset processing dominates cost; cache must be provenance-keyed. |
+| `context.cache.ttl_class_map` | `probe: source digest, proxy: proxy spec digest, shot/transcript: analyzer version digest` | Asset processing dominates cost; cache must be provenance-keyed. |
 
 ### 7.3 Office (illustrative, non-normative)
 
