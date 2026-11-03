@@ -1,6 +1,6 @@
 # Response delivery and durable inbox contract
 
-> **Status: Approved delivery principles re-authored as an initial contract.** The contract is not yet implemented or verified.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** Scope: at-least-once response delivery, durable Inboxes/Outboxes, bounded redelivery and the Kernel→Orchestration event subscription. Record, event and error shapes are owned by the [Kernel data model](kernel-data-model.md). The contract is not yet implemented or verified.
 
 ## 1. Delivery boundary
 
@@ -49,7 +49,7 @@ Kernel deduplicates each command by `commandId`.
 - Same command ID + different digest: return an idempotency conflict, audit and quarantine; do not execute the target transition.
 - New command: validate identity, permission, the **owning aggregate's version** and the relevant protected read-set (TaskControl CAS only for accepted Goal/structural plan/cancel/terminal); commit the target transition / Journal event and KernelCommandInbox result in one K-local transaction. An unrelated Task event or Journal sequence advance is not by itself a conflict.
 
-Persisted command results include Applied, Rejected or NoOp. A business rejection is still a durable result; receipt of a request is not.
+Persisted command results include Applied, Rejected, NoOp or Conflict. A business rejection is still a durable result; receipt of a request is not.
 
 ## 5. Dispatch and final ACK
 
@@ -60,6 +60,12 @@ When Kernel returns a durable result, Orchestration stores the result reference 
 The delivery batch is complete only when every required command has a durable Kernel result. Only then may the final Delivery ACK become eligible. ACK confirms durable processing, not business success; it must include references to any rejected command results.
 
 ACK is bound to delivery ID, idempotency key, payload digest, consumer identity, projection result and all required command/result references. ACK loss is handled by resending the same ACK. Duplicate ACKs are idempotent. Conflicting digests are quarantined.
+
+### 5.1 Bounded redelivery and retention
+
+Every Outbox/Inbox dispatch — delivery envelopes, commands, ACKs, Host receipts and Kernel events — uses **bounded** redelivery: an attempt cap, exponential backoff with jitter, and a durable dead-letter record with operator escalation when the cap is reached. No sender retries indefinitely, including K→G model-request delivery. An exhausted retry becomes a typed stall (`StorageUnavailable` or `DeliveryStalled`) for the owning scope and is visible; it is never an invisible infinite loop. Attempt counts and next-attempt times are recorded on the Outbox record, not in memory only, so a restart cannot reset an exhausted budget.
+
+**Retention.** Dedup state (CommandInbox, HostResultInbox, delivery dedup, event-subscription cursor) is retained at least for the maximum redelivery window plus the correlation window of the facts it guards, and is archived with audit provenance before deletion. GC never removes an unresolved Inbox/Outbox entry, an unacknowledged delivery, an UNKNOWN correlation, a hold or a terminal fact. Retention durations are deployment configuration; no numeric default is claimed here.
 
 ## 6. Delivery semantics
 
@@ -86,3 +92,13 @@ This response-delivery/command Inbox protocol must not be generalized into an **
 - Same ID with different digest: quarantine and alert; never overwrite.
 
 Persistence, authentication, transaction isolation and crash recovery are **UNVERIFIED** until fault-injection tests demonstrate them.
+
+## 8. Kernel event subscription (K→O)
+
+ModelStep responses use the delivery path above. Every other fact the loop needs to wake on — `TaskTerminal`, `HostReceiptImported`, `WaitPersisted`/`WaitResolved`, `CompletionHoldOpened`/`CompletionHoldResolved`, `AuthorityFenceChanged`, `PlanRevisionActivated` — uses **one** durable subscription, not a second inbox:
+
+- **Durable cursor.** Orchestration persists `(subscription_id, consumer_identity, last_journal_sequence)`, reads events strictly after it, and advances the cursor in the same O-local transaction as its projection update.
+- **At-least-once, idempotent by `event_id`.** A duplicate event is a `NoOp`; the same `event_id` with different bytes is an integrity conflict and is quarantined.
+- **Gap and rebuild.** If the cursor falls behind the retained Journal window, or an event schema major is unknown, Orchestration rebuilds its projection from the last Kernel checkpoint/snapshot plus the Journal cursor instead of guessing or skipping.
+- **No duplicate channel for the same fact.** A ModelStep response travels only on the delivery path; other facts travel only on the subscription. If both are ever emitted for one fact, the event is a wake hint and the delivery envelope remains the authoritative payload carrier.
+- **Facts, not authority.** An event never authorizes an action; Orchestration re-reads current Kernel admission state before acting, and an adapter that writes the Journal directly is a protocol violation.

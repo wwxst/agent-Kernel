@@ -1,6 +1,6 @@
 # Model execution and budget contract
 
-> **Status: Approved principles re-authored as an initial contract and extended by a PROPOSED intelligent-execution model.** Provider-specific usage evidence and runtime implementation remain unverified.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** Scope: ModelStep/ModelAttempt lifecycle, provider send ambiguity, deterministic candidate selection, hard/soft budget admission and settlement. Record and enum shapes are owned by the [Kernel data model](kernel-data-model.md); domain execution policy by [Execution Strategy](execution-strategy.md). Provider-specific usage evidence and runtime implementation remain unverified.
 
 ## 1. Ownership
 
@@ -17,7 +17,7 @@ A ModelStep is one logical model decision point. A ModelAttempt is **one admitte
 
 A ModelStep purpose should identify the decision being made, such as reconnaissance, goal analysis, planning, implementation, debugging, verification, or summary. The purpose label supports policy, observability, and evaluation; it does not itself grant extra permissions.
 
-### 2.1 Three independent dimensions (PROPOSED refinement)
+### 2.1 Three independent dimensions
 
 Each Attempt has independent (a) provider execution outcome, (b) candidate eligibility/ModelStep selection, and (c) financial exposure/settlement. A provider execution success is not a billing settlement. A billing delay does not retroactively invalidate an otherwise valid response if **all possible charges were covered by a credible reservation bound at admission**.
 
@@ -30,13 +30,13 @@ A response is eligible to be recorded as a candidate only when:
 
 A complete candidate is not itself permission to perform a tool side effect. A partial/truncated response never becomes executable.
 
-### 2.2 Provider request ambiguity and Gateway send boundary (G0 PROPOSED)
+### 2.2 Provider request ambiguity and Gateway send boundary
 
 **The Kernel's model-request Outbox is safe to redeliver only to the Model Gateway. It is *not* permission to resend bytes to a Provider.** Model Gateway owns the potentially charge-bearing HTTP send; Kernel owns the Attempt identity, admission, budget exposure and selection. No global distributed transaction is asserted.
 
 **Required send facts, without a new high-level state machine:**
 
-- **K-local commit:** Kernel atomically persists `ModelAttemptAdmitted`, immutable canonical request digest, Provider/adapter and pricing certificate, Attempt-specific idempotency key (if eligible), budget reservation and `ModelRequestOutbox(Pending)` in the same K transaction. K-Outbox retransmits the **same envelope** to Gateway until the Gateway returns its *durable local receipt*; it must never manufacture a second Attempt or automatically call the Provider itself.
+- **K-local commit:** Kernel atomically persists `ModelAttemptAdmitted`, immutable canonical request digest, Provider/adapter and pricing certificate, Attempt-specific idempotency key (if eligible), budget reservation and `ModelRequestOutbox(Pending)` in the same K transaction. K-Outbox redelivers the **same envelope** to Gateway with bounded attempts and backoff (dead-letter plus operator escalation on exhaustion, per [Delivery and Inbox](delivery-and-inbox.md) §5.1); it never retransmits indefinitely, never manufactures a second Attempt and never calls the Provider itself.
 - **G-local durable send ledger:** Gateway atomically deduplicates `AttemptId + canonicalRequestDigest + providerKey` and persists a one-use `SendMayHaveOccurred` marker **before any request bytes can leave its controlled transport boundary**. This is a durable uncertainty marker, not evidence the Provider received anything. Replaying the Kernel delivery may query/return this stored disposition but may not trigger a second Provider transmission unless the exact Provider idempotency proof below permits it. If Gateway and Kernel share a database, the marker may share K-local storage, but the physical network send still cannot be made atomic with it; no additional distributed workflow engine is required.
 - **Provider acceptance/ACK:** Provider request accepted, response headers, request identifier, streamed output, final usage and invoice are **different facts**. A TCP write, local timeout, HTTP 5xx, reset, client cancellation, lost ACK, partial stream or Gateway crash **does not prove non-acceptance**. A Provider receipt/status lookup is authoritative only for the exact account, request identity, acceptance and charging semantics explicitly documented by that Provider.
 - **Outcome projection:** `AdmittedUnsentKnown` means Gateway durably proves no send marker and no transport path could send; it may perform the *initial* send under the already-admitted Attempt. After `SendMayHaveOccurred`, any unresolved acceptance/response is `ProviderOutcomeUnknown`, with reserved cost retained. A complete authenticated response can become `Complete`; `FailedKnownNotAccepted` requires a trustworthy non-acceptance/zero-charge proof, not an exception or timeout. A known accepted request with an incomplete output remains non-selectable and financially accountable. These are **facts/projections of existing ModelAttempt**, not a duplicate Gateway execution state machine.
@@ -52,24 +52,30 @@ A complete candidate is not itself permission to perform a tool side effect. A p
 
 **Liveness boundary:** an unknown Attempt cannot produce executable tool proposals or be selected from partial output. A separately completed valid candidate can still be selected while this Attempt's reserved exposure remains held, subject to other admission constraints. A blocked funding scope must not freeze unrelated scopes. Task cancellation does not prove Provider did not receive or bill a request. Late authenticated response/usage can reconcile the original Attempt; it cannot replace an already irrevocably selected candidate.
 
-**G1 proof obligation:** fixtures must distinguish K Outbox replay, Gateway marker before send, Provider-accepted but ACK lost, Provider idempotent replay with same key, non-idempotent unknown, crash before/after send, late billing and replacement-admission budget race. No Provider is declared idempotent or Hard Budget compatible merely because this document describes the protocol. See [Core protocol](core-protocol.md).
+**PE-1 (G1 group) proof obligation:** fixtures must distinguish K Outbox replay, Gateway marker before send, Provider-accepted but ACK lost, Provider idempotent replay with same key, non-idempotent unknown, crash before/after send, late billing and replacement-admission budget race. No Provider is declared idempotent or Hard Budget compatible merely because this document describes the protocol. See [Core protocol](core-protocol.md).
 
 ## 3. Deterministic candidate and final selection
 
 - Every eligible complete response is durably recorded with Attempt ID, response digest and Kernel Journal sequence. The earliest eligible journal-append sequence wins; provider timestamps and client receive times do not arbitrate.
 - `candidateAttemptId` is provisional. `selectedAttemptId` is irreversible after the one Kernel transaction that commits final selection, ModelStep Completed and ResponseDeliveryOutbox.
 - Once a valid response is selected, later candidates cannot replace it. Nonselected responses may be kept as historical evidence and **must not** produce ActionProposals or ToolInvocations.
-- Losing or still-running Attempts receive Cancel Intent and remain accountable for their **entire outstanding maximum charge** until trustworthy settlement/convergence. Do not wait for their cancel acknowledgement, usage invoice or provider closure merely to commit and deliver the selected response.
+- Losing or still-running Attempts receive an `AttemptCancelRequested` fact and remain accountable for their **entire outstanding maximum charge** until trustworthy settlement/convergence. Do not wait for their cancel acknowledgement, usage invoice or provider closure merely to commit and deliver the selected response.
 - If the winner's response was journaled before a competing cancellation, selection remains eligible subject to the ordinary snapshot and admission checks. A response first completed/recorded after effective cancellation remains late evidence, not a selectable candidate.
 - Invalid/stale response, missing credible charge bound under hard budget, or unrelated Task authority change can block selection. **Delayed final invoices alone cannot block selection when complete outstanding exposure remains reserved.**
+
+**Cancellation facts.** `AttemptCancelRequested` is a durable, attempt-scoped request carrying the requesting command ID; it is neither evidence that the Provider stopped nor evidence that it did not bill, and it changes neither the Attempt's execution state nor its reservation. A ModelStep becomes `Abandoned` when no candidate from it can ever be selected — the Task reached a terminal fact, a cutover superseded its binding, or the strategy abandoned the decision; an abandoned ModelStep admits no further candidate and produces no ActionProposal. **Effective cancellation** is the journal sequence of the committed `CancelAccepted` fact for the Task or ModelStep: a candidate whose own journal-append sequence is earlier remains selectable, and one recorded after it is late evidence only.
 
 ## 4. Budget reservation, settlement and verification reserve
 
 Kernel is the only hard-budget ledger authority. It records budget scope/limit, per-Attempt reservation identity and maximum amount, pinned pricing/request contract and charge authority, execution outcome, usage evidence, provisional/settled accounting, adjustment/reversal, overrun/debt and enforcement hold.
 
+**Funding scope identity.** A `BudgetScope` is identified by `(tenant_id, funding-owner kind/id, unit or currency)` and carries a limit, a hard/soft mode and a `budget_scope_version`; the record shape is owned by the Kernel data model. A Task is bound to one or more funding scopes at admission and cannot borrow from, or silently share, an unrelated scope.
+
 For every applicable hard-budget funding scope, admission maintains:
 
-`confirmed_spend + maximum_unsettled_exposure + proposed_reservation <= hard_budget`
+`confirmed_spend + maximum_unsettled_exposure + proposed_reservation + protected_verification_repair_reserve <= hard_budget`
+
+The last term is the **verification/repair reserve**: spend that is not available for exploration and is released only by an authorized budget change or at terminalization once reconciliation proves it unused. An admission that would consume it is rejected with `BudgetExhausted` or parked as a `BudgetAction` wait; the reserve is never silently reallocated and never counted as free budget.
 
 The total exposure includes every concurrent Attempt (including losing, cancelled-but-unconfirmed and provider-side retry attempts) that may still be charged. A provider must support a **trusted finite per-request maximum** under the pinned request/pricing contract; explicit output limits alone are not a guaranteed currency bound if hidden charges or uncontrolled retries remain possible. A request without a credible maximum is **not eligible for hard-budget execution**. Missing usage is never assumed to be zero.
 
@@ -96,7 +102,7 @@ Minimum certificate fields and required evidence:
 
 If any term is unbounded, hidden, mutable without a contractual cap or unenforceable by the provider, the certificate is invalid for Hard Budget. **Fail closed at admission** or require an explicitly authorized, separately labeled Soft Budget with an admitted cost risk; never silently downgrade hard to soft. An unexpected late charge above a valid certificate records a pricing/integrity violation, append-only debt and appropriate enforcement hold, without rewriting the previously selected model response or terminal Task.
 
-The provider-specific certificate schema, trustworthy evidence and exact price-bound algorithms remain **PROPOSED / UNVERIFIED** until G1 adapter verification; this document defines admission obligations without asserting any current Provider qualifies.
+The provider-specific certificate schema, trustworthy evidence and exact price-bound algorithms remain **UNVERIFIED** until PE-1 adapter verification; this document defines admission obligations without asserting any current Provider qualifies.
 
 The Model Gateway records complete results, durable send ambiguity facts and Provider usage evidence; the Kernel maintains append-only budget responsibility. Billing may settle after ModelStep selection, response delivery, or even Task termination. Adjustments cannot rewrite a previously committed selection or terminal Task. Losing Attempts' unused reservation is released **only** when a trusted terminal usage bound/result establishes safe releasability, never because a timeout or cancellation request occurred.
 
@@ -114,7 +120,7 @@ If an authoritative late bill exceeds its Reservation:
 - Keep in-flight UNKNOWN Attempts / Invocations tied to their original IDs and reservations. Do not release or replay them without reconciliation.
 - Unfreeze only after an authorized BudgetTopUp / BudgetOverrunWaiver and required in-flight UNKNOWN reconciliation.
 
-Task completion and a late budget overrun are ordered by **K-local serializable transactions**: Completion Guard atomically checks relevant BudgetScope enforcement-hold versions/read-set **together with** its TaskControl terminal CAS; a simultaneous BudgetScope overrun write conflicts or is ordered by that protected read-set. If hold commits first, completion is denied; if terminal completion commits first, late debt becomes a PostTerminalBudgetOverrun record. The overrun writer does not need to CAS the unrelated TaskControl aggregate. G1 must prove this interleaving and reject a storage implementation incapable of a coherent K-local read-set.
+Task completion and a late budget overrun are ordered by **K-local serializable transactions**: Completion Guard atomically checks relevant BudgetScope enforcement-hold versions/read-set **together with** its TaskControl terminal CAS; a simultaneous BudgetScope overrun write conflicts or is ordered by that protected read-set. If hold commits first, completion is denied; if terminal completion commits first, late debt becomes a PostTerminalBudgetOverrun record. The overrun writer does not need to CAS the unrelated TaskControl aggregate. PE-1 must prove this interleaving and reject a storage implementation incapable of a coherent K-local read-set.
 
 
 
@@ -133,6 +139,7 @@ Candidate Host/domain dimensions include:
 - input media bytes, duration, resolution, and estimated decoded workload;
 - output artifact size and duration;
 - network transfer where explicitly permitted;
+- external API calls per minute and quota consumption (request units or quota units) for providers and integrations that meter them;
 - verification and bounded-repair reserve.
 
 Each reservation binds the Task, DomainBinding/Workflow Profile, ToolInvocation, Host run/job ID, resource policy version, and hard limits. Kernel performs admission and reservation; Host reports measured consumption and terminal process facts; Kernel settles usage and records overruns/unknown usage.
@@ -157,7 +164,7 @@ The following are not decided by this contract:
 
 All of these remain **OPEN / UNVERIFIED** until evidence is gathered.
 
-## 8. Model-path cost control without reducing safety (G0 candidate)
+## 8. Model-path cost control without reducing safety
 
 **One complete response, one selected ModelStep, bounded intent.** For routine decisions, the primary orchestrator requests one context-bounded candidate and directly proposes admitted tool actions; do not mechanically invoke a Strategic call, then Tactical call, then Assurance call. Conditional fresh semantic Verifier policy is in [Completion](completion.md). Expensive deliberation/alternative model Attempts must be driven by uncertainty, explicit model failure, criterion risk or demonstrated quality gains, **not** by a fixed depth pipeline. Never run concurrent potentially billable Attempts without a distinct maximum reservation for each. A cached context prefix or provider prompt-cache discount may reduce cost only if exact provider pricing and cache semantics are proven in the maximum-charge certificate.
 
@@ -165,4 +172,4 @@ All of these remain **OPEN / UNVERIFIED** until evidence is gathered.
 
 **Cost-performance instrumentation:** for each Task/ModelStep report attempted and selected provider calls; complete/incomplete/UNKNOWN attempts; input, output, reasoning and modality Tokens; cached read/write Tokens; bound maximum, accrued final cost, outstanding liability and settlement age; model queue/network first-token/total latency; provider status-query time and repeated same-digest calls. Track billed/requested Tokens by provider pricing snapshot, not an invented universal token unit. Gate simplified prompting on success, false-completion, recovered-error and terminal-correctness metrics in [Shared evaluation](../research/shared-kernel/evaluation.md), not cost alone.
 
-**Backpressure:** Kernel rejects additional hard-budget model Attempts when `spent + all unresolved maximum reservations + candidate maximum` exceeds any governing scope; optional soft mode requires independent explicit authorization and a visible exposure cap. When reserve cannot fund the required tests/assurance, stop before irreversible work and ask for budget/plan change or fail with a typed disposition. Delayed invoices may remain reserved past successful delivery, provided Completion Guard's other obligations and hold rules are satisfied. Provider capability matrices and true billing/error-bound measurements are G1 requirements; they remain OPEN here.
+**Backpressure:** Kernel rejects additional hard-budget model Attempts when `spent + all unresolved maximum reservations + candidate maximum` exceeds any governing scope; optional soft mode requires independent explicit authorization and a visible exposure cap. When reserve cannot fund the required tests/assurance, stop before irreversible work and ask for budget/plan change or fail with a typed disposition. Delayed invoices may remain reserved past successful delivery, provided Completion Guard's other obligations and hold rules are satisfied. Provider capability matrices and true billing/error-bound measurements are PE-1 requirements; they remain OPEN here.

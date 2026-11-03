@@ -1,19 +1,18 @@
 # Lifecycle and state model
 
-> **Status: PROPOSED cross-domain lifecycle contract.** This document aligns Task, DomainBinding, GoalContract, PlanRevision, PlanStep, runtime Step, ModelStep, Attempt, and ToolInvocation semantics for Coding and Video Editing. Runtime transitions, transaction behavior, and crash recovery remain unimplemented and unverified. See [PlanRevision and PlanStep lifecycle contract](../contracts/plan-revision.md) and [Domain Workflow contract](../contracts/domain-workflow.md).
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** Scope: Task, DomainBinding, GoalContract, PlanRevision, PlanStep, ModelStep, ModelAttempt and ToolInvocation semantics shared by Coding and Video. Record shapes are owned by the [Kernel data model](../contracts/kernel-data-model.md); principal and approval semantics by [Permissions](../security/permissions.md). Runtime transitions, transaction behavior and crash recovery remain unimplemented and unverified. See [PlanRevision contract](../contracts/plan-revision.md) and [Domain Workflow contract](../contracts/domain-workflow.md).
 
 ## 1. Core entities
 
 - **Session** — durable conversation and execution-history boundary.
 - **UserIntent** — immutable original user request plus append-only clarification references. It is never replaced by a model-generated GoalContract.
 - **Task** — durable unit of user intent, one active DomainBinding, accepted GoalContract, active plan, budget, execution, verification, and completion.
+- **TaskRecord** — the persisted Task facts: `task_id`, principal, tenant, DomainBinding digest, accepted GoalContract version, active PlanRevision, `task_control_version`, state (`Open | Completed | Failed | Cancelled`), terminal reason, deadline and budget scopes. Field-level shape is owned by the Kernel data model; this document owns when they change.
 - **DomainBinding** — immutable domain ID and Workflow Profile/schema/policy version snapshot bound to a Task; it is not a permission grant.
 - **Workflow Profile** — versioned composition of domain schemas, context projections, tool snapshots, resource limits, and verification obligations.
 - **GoalContract** — immutable accepted version of desired outcome, scope, exclusions, constraints, acceptance criteria, assumptions, risk, DomainBinding, and typed domain payload. Orchestration proposes; Kernel records acceptance after deterministic checks and required confirmation evidence.
-- **Turn** — one interaction cycle within a Task/Session.
 - **PlanRevision** — immutable accepted version of the dependency-aware outcome plan. It moves through Proposed, AcceptedPendingCutover, Active, Superseding, Superseded, or Rejected.
-- **PlanStep** — outcome-oriented work unit in one PlanRevision. WorkStatus and VerificationStatus are separate dimensions.
-- **Step** — runtime execution unit such as reconnaissance, planning, model invocation, tool batch, verification, or checkpoint work.
+- **PlanStep** — outcome-oriented work unit in one PlanRevision. WorkStatus and VerificationStatus are separate persisted dimensions with their own `plan_step_version`.
 - **ModelStep** — one logical model decision point, potentially containing one or more Attempts. Planner, Explorer, Implementer, Debugger, Verifier, and summary calls all use this lifecycle.
 - **ModelAttempt** — one actual provider request associated with a ModelStep.
 - **ActionProposal** — durable typed decision record from Orchestration; not an authorization or execution ticket.
@@ -26,6 +25,8 @@
 - **VerificationReport** — criterion-to-evidence report bound to GoalContract, PlanRevision, workspace, environment, and actual verification runs.
 - **Receipt** — authenticated Host evidence for a specific execution or workspace operation.
 - **Checkpoint** — immutable task-progress snapshot; readable as historical progress independently of whether the authorizations recorded at checkpoint time are still current.
+
+`Turn` (a conversation cycle) and `Step` (an execution grouping) are **UI-only derived concepts**: they carry no durable identity, no Kernel aggregate and no bound ID. Any record that needs a runtime identity uses PlanStep or ModelStep.
 
 ## 2. GoalContract lifecycle
 
@@ -57,23 +58,30 @@ NotStarted, Ready, Running, Blocked, Completed, Superseded.
 
 NotRequired, Pending, Running, Passed, Failed, Stale, Inconclusive.
 
-The two dimensions are independent. WorkStatus=Completed and VerificationStatus=Failed is valid. ToolInvocation or ModelAttempt FailedKnown is not a PlanStep failure. Repair uses an explicit rework event and preserves prior artifacts/reports. Evidence invalidation moves a previously Passed verification to Stale. Superseded steps are immutable and cannot be reactivated in place; a new revision may create a new step with explicit lineage/carry-forward references.
+Both dimensions are **persisted, event-sourced PlanStep state** guarded by a per-step `plan_step_version`; the legal transitions and guards are owned by the [PlanRevision contract](../contracts/plan-revision.md) §5. They are not model-facing display labels, not a second Task state machine and never advance `taskControlVersion`.
+
+The two dimensions are independent. WorkStatus=Completed and VerificationStatus=Failed is valid. ToolInvocation or ModelAttempt FailedKnown is not a PlanStep failure. Repair uses an explicit rework event and preserves prior artifacts/reports. Evidence invalidation moves a previously Passed verification to Stale through the invalidation rule in the PlanRevision contract. Superseded steps are immutable and cannot be reactivated in place; a new revision may create a new step with explicit lineage/carry-forward references.
 
 A PlanStep being Completed or Passed does not complete the Task. Task completion is based on the full GoalContract and Completion Guard.
 
-## 4. Task control and derived operating phases (architecture subtraction PROPOSED)
+## 4. Task control and derived operating phases
 
-**TaskControl is the only Task-level transition authority.** K persists accepted intent/GoalContract, current active PlanRevision, structural switch barrier, cancellation intent and terminal completion under `taskControlVersion`. Task presentation labels (`Planning`, `Ready`, `Running`, `Verifying`, `Waiting`, `Blocked`, `Reconciling`, `CompletionHold`) are **derived from these facts, open approvals/UNKNOWN, plan/evidence conditions and active Invocations**; they are not independently CAS-locked state machines. Existing historical Task state labels remain readable as projections/events and are not retroactively rewritten.
+**TaskControl is the only Task-level transition authority.** K persists accepted intent/GoalContract, current active PlanRevision, structural switch barrier, cancellation intent and terminal completion under `taskControlVersion`. Task presentation labels (`Planning`, `Ready`, `Running`, `Verifying`, `Waiting`, `Blocked`, `Reconciling`, `CompletionHold`) are **derived views** over these facts, open approvals/UNKNOWN, plan/evidence conditions and active Invocations; they are not CAS-locked state machines, are never read by admission, and authorize nothing. Existing historical Task state labels remain readable as projections/events and are not retroactively rewritten.
 
 Task creation/admission, accepted Goal/structural Plan cutover, cancellation and Completed/Failed/Cancelled terminal facts require TaskControl authorization/CAS. A plan switch fences new old-plan admissions, drains/reconciles conflicting work, then atomically changes the active Plan pointer. A recovery hold does not erase the last legal TaskControl state. Terminal states never reopen; late evidence creates a separate hold or remediation task.
 
-**Minimal version scope:** `taskControlVersion` changes on structural goal/plan/cancel/terminal transitions only. A normal ModelAttempt result, ToolInvocation/Host Receipt, per-Invocation approval, budget adjustment, checkpoint or evidence update **must not** advance TaskControl solely because it occurred. Such operations use their own owning-aggregate version and relevant Goal/Plan/Authority/Workspace/Budget binding checks at admission. The Journal append sequence remains the global audit order, not a lock on all task progress.
+**Durable non-terminal records.** Two records live outside TaskControl's structural fields and never advance `taskControlVersion`:
+
+- `WaitRecord` (`wait_id`, own version, reason code, blocking scope, owner, wake source, `created_at`, `next_wake_at`, `max_wait_until`, recovery strategy). Required for any parking that survives a wake; a wait without a wake source or maximum wait is a protocol defect.
+- `CompletionHold` (`hold_id`, own version, the conflicting fact that opened it, blocked scope, review state, owner, resolution deadline). A hold is a durable **safety barrier with its own resolve command**, not a display label: opening or resolving it blocks or unblocks completion and conflicting side effects without rewriting the last legal TaskControl state, and a timeout never silently clears it.
+
+**Minimal version scope:** `taskControlVersion` changes on structural goal/plan/cancel/terminal transitions only. A normal ModelAttempt result, ToolInvocation/Host Receipt, per-Invocation approval, budget adjustment, checkpoint, wait, hold or evidence update **must not** advance TaskControl solely because it occurred. Such operations use their own owning-aggregate version and relevant Goal/Plan/Authority/Workspace/Budget binding checks at admission. The Journal append sequence remains the global audit order, not a lock on all task progress.
 
 ## 5. Main loop, ModelStep and action intent
 
 A single **primary Task Orchestrator** cycles through Strategic, Tactical or Assurance *decision purposes*. They are not parallel controllers with separate lifecycles. Each iteration selects relevant context, a bounded decision, ToolInvocations admitted one by one where required, ingests receipts, updates domain evidence and loops until an authorized completion, safe wait or escalation.
 
-`ModelStep` is one logical provider decision and `ModelAttempt` is a concrete request. The Kernel owns winning response selection; the model output is **not** tool authority. `ActionProposal` is a **bounded immutable decision/action-intent envelope**, with selected ModelStep/Attempt ID, canonical item digests and only relevant Goal/Plan/Workspace/Authority/Tool bindings. It has **no authoritative Recorded→Selected→Executing→PartiallyExecuting→Settled lifecycle**. Historical proposal events remain auditable; live item progress derives from child ToolInvocation outcomes. An internal exploratory thought or user-facing explanation does not require a new ActionProposal object. Each persisted effectful child still has a durable identified proposal/decision origin and separate Admission.
+`ModelStep` is one logical provider decision and `ModelAttempt` is a concrete request. The Kernel owns winning response selection; the model output is **not** tool authority. `ActionProposal` (historical name) and `DecisionIntent` (adapter port name) refer to the **same bounded immutable decision envelope**, with selected ModelStep/Attempt ID, canonical item digests and only relevant Goal/Plan/Workspace/Authority/Tool bindings. Its persisted binding is `decision_id` plus item digests; it is not a Kernel aggregate, has no version and has **no authoritative Recorded→Selected→Executing→PartiallyExecuting→Settled lifecycle**. Historical proposal events remain auditable; live item progress derives from child ToolInvocation outcomes. An internal exploratory thought or user-facing explanation does not require a new envelope. Each persisted effectful child still has a durable identified decision origin and separate Admission.
 
 ## 6. ToolInvocation and single Host physical authority
 
@@ -129,8 +137,10 @@ The unified platform binds each Task to exactly one domain and one immutable Wor
 
 Video TimelineRevision and RenderJob contracts are specified in [Media Timeline](../contracts/media-timeline.md) and [RenderJob](../contracts/render-job.md). These are domain extensions over the common artifact and execution envelopes, not separate Kernel authorities.
 
-## 11. Terminal correctness and bounded waiting — first-slice amendment (PROPOSED)
+## 11. Terminal correctness and bounded waiting
 
-The existing Task terminal enum remains `Completed | Failed | Cancelled`; a time limit is recorded as `Failed(reason=DeadlineExceeded)`, not an extra Task authority state. `Waiting/Blocked/Reconciling` are **derived nonterminal views** with durable reason, owner, next wake-up, deadline and reconciliation reference. A Task may stop autonomous decisions while a Host/Provider incident stays unresolved; a terminal `Failed(reason=UnresolvedEffect)` must **not** assert physical failure or that all effects converged. Its unresolved-effect record keeps conflicting targets fenced and is reconciled separately; TaskControl is not reopened by late facts. For Completed, all required process/evidence convergence must still be proven.
+The Task terminal enum remains `Completed | Failed | Cancelled`; a time limit is recorded as `Failed(reason=DeadlineExceeded)`, not an extra Task authority state. `Waiting/Blocked/Reconciling` are **derived nonterminal views** backed by a durable `WaitRecord` (reason, owner, next wake-up, `max_wait_until`, reconciliation reference). A Task may stop autonomous decisions while a Host/Provider incident stays unresolved; a terminal `Failed(reason=UnresolvedEffect)` must **not** assert physical failure or that all effects converged. Its `UnresolvedEffectHold` keeps conflicting targets fenced and is reconciled separately; TaskControl is not reopened by late facts.
 
-Every user/cancel/timeout event is persisted once under TaskControl CAS. Cancel acceptance stops model/new admissions and initiates H fencing; a cancel request alone never commits physical convergence. Deadlines and progress budgets cannot create unlimited retries. Each parked state has an explicit wake source, owner and escalation/max-wait policy; a continuously rescheduled identical model response or repeated tool result is not progress. Implementation must test races among completed Guard, cancellation, deadline, Host receipt, and terminal CAS: exactly one terminal fact wins and other facts are preserved as late evidence. See [Core protocol §12](../contracts/core-protocol.md), [Domain Extension §4](../contracts/domain-extension.md).
+**Single terminal path.** Only the Kernel-local `CommitTerminal` command (Core protocol §4.1) creates a terminal fact: the Orchestrator proposes a status and reason, Kernel runs Completion Guard or the typed failure disposition inside that command, and commits exactly one terminal fact or a typed rejection. No other command, event, receipt, model output, verifier disposition or operator path writes a terminal state.
+
+Every user/cancel/timeout event is persisted once under TaskControl CAS. Cancel acceptance stops model/new admissions and initiates H fencing; a cancel request alone never commits physical convergence. Deadlines and progress budgets cannot create unlimited retries. Each parked state has an explicit wake source, owner and escalation/max-wait policy; a continuously rescheduled identical model response or repeated tool result is not progress. If convergence cannot be proven and no deadline forces a disposition, the Task stays `Open` with a bounded wait rather than being falsely terminal. Implementation must test races among completed Guard, cancellation, deadline, Host receipt, and terminal CAS: exactly one terminal fact wins and other facts are preserved as late evidence. See [Core protocol §12](../contracts/core-protocol.md), [Domain Extension §4](../contracts/domain-extension.md).

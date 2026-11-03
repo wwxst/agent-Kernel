@@ -1,6 +1,6 @@
-# Minimal provable Kernel protocol — architecture convergence draft
+# Minimal provable Kernel protocol — construction baseline
 
-> **Status: PROPOSED / NOT APPROVED / NOT IMPLEMENTED.** Architecture review amendment, not an ADP owner disposition or runtime authorization. This document narrows and links the cross-module protocol described in [Trusted ToolHost](../security/trusted-host.md), [Model and Budget](model-and-budget.md), [PlanRevision](plan-revision.md), [Completion](completion.md), and [Domain Workflow](domain-workflow.md). In case of disagreement, the corresponding authority-owning contract must be amended before any architecture freeze; this draft alone does not silently override approved decisions.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** Scope: the cross-module protocol linking [Trusted ToolHost](../security/trusted-host.md), [Model and Budget](model-and-budget.md), [PlanRevision](plan-revision.md), [Completion](completion.md), and [Domain Workflow](domain-workflow.md). This document owns authority boundaries, guards and transitions; record shapes, enums, events and error codes are owned by the Kernel data model, domain execution policy by the Execution Strategy contract, and principals/approvals by the Permissions contract. In case of disagreement on authority, the corresponding authority-owning contract must be amended in the same change; no clause here is evidence of runtime behaviour.
 
 ## 1. Objective and non-goals
 
@@ -10,7 +10,7 @@ This protocol describes **logical authorities** and requires no microservice spl
 
 ## 2. Authority scope, event identity, and **transaction ownership**
 
-Each Kernel command binds a stable command/idempotency key and the **version of its owning aggregate**, not an automatically required global Task version. Structural Goal/Plan/cancel/terminal commands use `taskControlVersion`; ModelStep selection uses `modelStepVersion`; Invocation/receipt updates use `invocationVersion`; budget changes use `budgetScopeVersion`. Admission binds a **selective protected read-set**: accepted GoalContract and active PlanRevision epoch, DomainBinding/profile, exact tool/argument digest, current authority/fence, relevant workspace/project generation, budget reservation version, and any affected PlanStep/precondition identity. K validates that read-set atomically with its local admission/write-set. A global Journal sequence is audit order, **not** a mandatory CAS token for every operation. A repeated command ID with the same digest returns its original durable disposition; the same ID with different bytes is quarantined. A Host run binds Invocation ID, LaunchAttempt ID, Host identity/incarnation, one-use nonce, authority fence, exact target/input snapshot and tool digest.
+Each Kernel command binds a stable command/idempotency key and the **version of its owning aggregate**, not an automatically required global Task version. Structural Goal/Plan/cancel/terminal commands use `taskControlVersion`; ModelStep selection uses `modelStepVersion`; Invocation/receipt updates use `invocationVersion`; budget changes use `budgetScopeVersion`. Admission binds a **selective protected read-set**: `tenant_id` and principal scope, accepted GoalContract and active PlanRevision epoch, DomainBinding/profile, exact tool/argument digest, current authority/fence, relevant workspace/project generation, budget reservation version, and the affected PlanStep identity with its `plan_step_version` and precondition digest. K validates that read-set atomically with its local admission/write-set. A global Journal sequence is audit order, **not** a mandatory CAS token for every operation. A repeated command ID with the same digest returns its original durable disposition; the same ID with different bytes is quarantined. A Host run binds Invocation ID, LaunchAttempt ID, Host identity/incarnation, one-use nonce, authority fence, exact target/input snapshot and tool digest.
 
 **Distinct logical records do not mean distinct physical transaction domains.** The first protocol has these **local durable owners** (Gateway G can be colocated with K without a new service):
 
@@ -34,6 +34,19 @@ K, O, H, and G (unless G is colocated with K) are independent transaction domain
 
 No cross-owner atomic transaction, atomic Provider acceptance or distributed exactly-once side effect is claimed. A Provider key is trustworthy only if its server-side execution **and charging deduplication** are documented and independently qualified for the request/billing scope; a client-generated key alone proves nothing. See [Response delivery and Inbox](delivery-and-inbox.md) and [Trusted Host](../security/trusted-host.md).
 
+### 2.1 Storage and retention profile (required properties)
+
+An implementation may choose any persistence technology, but it cannot claim this protocol without proving these properties for K persistence. Record, event and error shapes are fixed in [Kernel data model](kernel-data-model.md).
+
+1. **Read-set validation.** Validation of the owning aggregate version and every protected read-set field is serializable — or an equivalent mechanism with the same guarantee — inside one K-local transaction with a documented lock/acquisition order. A field validated outside that transaction, or a read-then-write split across transactions, is not this protocol.
+2. **Retry.** A serialization conflict aborts with a typed retryable result and no partial write. The caller retries the **same** command ID and digest; a retry may not re-reserve budget.
+3. **Durability point.** Journal, Intent, reservation and Outbox are durable (fsync or equivalent) **before** any Outbox dispatch. A crash between commit and send leaves a pending Outbox record, never an inferred send.
+4. **Bounded recovery.** Startup scanning is bounded by a configured high-water/age window, reports skipped or unreadable records, and never runs an unbounded scan.
+5. **Bounded redelivery.** Every Inbox/Outbox redelivery is bounded by attempts and backoff, then dead-lettered with operator escalation. No retry loop is unbounded, including K→G delivery.
+6. **Retention and GC.** Journal, Command Inbox, HostResultInbox and dedup tables have configured retention; dedup entries outlive the maximum redelivery and correlation window. GC archives audit-relevant records before deletion and never deletes an unresolved Intent, UNKNOWN, hold or terminal fact.
+7. **Tamper evidence.** Journal and Ledger records are hash-chained or equivalently ordered so that deletion, reordering or truncation is detectable, with a periodic signed digest and an external anchor requirement. The mechanism is an implementation choice; without an anchor the property is `UNVERIFIED`.
+8. **Fail closed.** Disk-full, corruption, a broken hash chain or unavailable storage rejects new admission with typed `StorageUnavailable`; Kernel never admits without durable intent and never silently drops an unresolved record.
+
 ## 3. Authoritative state projections
 
 These tables define a **minimal projection** of the existing richer contracts; they do not rename or remove their additional states.
@@ -45,7 +58,7 @@ These tables define a **minimal projection** of the existing richer contracts; t
 | ModelAttempt execution | AdmittedUnsentKnown → SendMayHaveOccurred → Complete/FailedKnownNotAccepted/**ProviderOutcomeUnknown** (projection); cancellation or lost ACK does not prove non-acceptance. Financial exposure is independent. | G owns physical send facts; K commits logical Attempt and reservation |
 | Budget reservation | Reserved → ProvisionallyAccounted → Settled/Adjusted or HeldUnknown; no release on timeout | Kernel |
 | ToolInvocation | Proposed → Admitted → DispatchPending → Running/Rejected/OutcomeUnknown → reconciled terminal outcome; lifecycle applies only to Invocation, **not to an ActionProposal batch** | Kernel logical admission; Host owns physical truth |
-| Host LaunchAttempt | IntentDurable → GateRejected or LaunchBoundaryRecorded or OutcomeUnknown; nonce never re-usable | Trusted ToolHost |
+| Host LaunchAttempt | IntentDurable → Spawning → LaunchBoundaryRecorded or ProvenNotLaunched or OutcomeUnknown; nonce never re-usable | Trusted ToolHost |
 | Verification / Completion | Bound evidence → criterion review → CompletionGuardAccepted/Blocked; Completed commits once | Kernel Guard |
 
 No planner, verifier or model output is an authority to change these states directly. A non-terminal UNKNOWN can coexist with durable facts and must be handled with a typed reconciliation reason and conflict scope.
@@ -67,17 +80,36 @@ All K-transaction events below require expected aggregate version + stable comma
 | InstallHostFence | ordered inside the **same Host-local gate** as physical process creation | H: HostFenceInstalled(seq, epoch, Host incarnation), durable acknowledgement | local fence blocks old launches; Kernel request itself does not |
 | MarkRevoked | K RevocationRequested exists and all eligible H gates have trusted installed-fence ACK or verified disablement | K: Revoked + acknowledgements + Journal | never mark Revoked with unaccounted Host |
 | ActivateNewPlan | conflicting work converged; snapshot current; L2 accepted | K: old superseded + new active + Plan pointer + barrier event | exactly one Active revision |
-| CompleteTask | required evidence including exact execution view; no conflicting effectful UNKNOWN; current sealed artifact | K: CompletionCommitted + TaskCompleted + Journal + delivery reference | exactly one terminal fact |
+| CommitTerminal | required evidence including exact execution view; no conflicting effectful UNKNOWN; current sealed artifact; expected `taskControlVersion` | K: CompletionCommitted + TaskTerminal + Journal + delivery reference (Completion Guard runs inside this command) | exactly one terminal fact; same command ID returns its original result |
 
 The Host Ledger + OS spawn are never atomic. A stable Host launch attempt is only proof that the exact physical step occurred where independently evidenced, not proof of external business success. Missing physical evidence is recorded as OutcomeUnknown.
 
-**Forbidden transition:** K-Outbox delivery is not permitted until K Intent/Admission/Outbox commit is durable. A consumer cannot reconstruct a new nonce for an unresolved original dispatch. A stale or denied per-Invocation approval never authorizes launch. **No global TaskControl CAS on every Attempt/Invocation/receipt:** it would generate artificial conflicts and is not part of this minimized protocol. Domain/Kernel state reads must still revalidate the *relevant* protected epochs and read-set under K-local transaction isolation. If the chosen persistence cannot prove this, G1 cannot pass.
+**Forbidden transition:** K-Outbox delivery is not permitted until K Intent/Admission/Outbox commit is durable. A consumer cannot reconstruct a new nonce for an unresolved original dispatch. A stale or denied per-Invocation approval never authorizes launch. **No global TaskControl CAS on every Attempt/Invocation/receipt:** it would generate artificial conflicts and is not part of this minimized protocol. Domain/Kernel state reads must still revalidate the *relevant* protected epochs and read-set under K-local transaction isolation. If the chosen persistence cannot prove this, PE-1 cannot pass.
+
+### 4.1 Single terminal path and Invocation edges
+
+`CommitTerminal` is the **only** path to a terminal Task. The Orchestrator never writes a terminal state: it emits `CommitTerminal(expected_task_control_version, proposed_status, reason_code, completion_report_ref)` as an idempotent Kernel command. Completion Guard runs **inside** that K-local command, re-reads its protected read-set together with `task_control_version`, and commits `CompletionCommitted` + `TaskTerminal` + delivery reference atomically, or rejects with a typed reason and no state change. A retried command keeps its original ID; a lost response returns the original durable result. No other command, event, receipt, model output or verifier disposition creates a terminal state.
+
+Invocation edges not covered by the main table. Each uses `invocation_version` CAS, records a typed reason, and never invents Host evidence:
+
+| Situation | Result | Rule / evidence |
+| --- | --- | --- |
+| Host gate rejects (stale fence/epoch, expired grant, profile mismatch) | `Rejected(reason)`; no spawn | Authenticated H gate-rejection receipt carries fence sequence and epoch; a ticket rejected before spawn is **not** `OutcomeUnknown` |
+| Grant expires while waiting for the gate | `Rejected(GrantExpired)`; reservation per §6 | A fresh attempt needs a new admission, approval and nonce; a ticket is never renewed |
+| Duplicate dispatch after crash (nonce already consumed) | Original disposition; no second launch, never `Running` | H DispatchInbox dedup |
+| Receipt imported after `CancelAccepted` | `Succeeded`/`FailedKnown` from Host evidence only; historical projection | A late receipt never reopens the Task or authorizes old-plan work |
+| Duplicate receipt (same identity and digest) | `NoOp`; original outcome returned | K HostResultInbox dedup |
+| Same receipt identity, different digest | `Rejected(IntegrityConflict)`; quarantine, no state change | Operator escalation; never overwrite the original |
+| Reconciliation of `OutcomeUnknown` | `Succeeded` \| `FailedKnown` \| `NotExecutedProven` \| `Abandoned` | `NotExecutedProven` requires Host proof that no process crossed the spawn boundary; absence of a receipt is never proof. `Abandoned` means Kernel permanently disclaims the logical operation under a terminal/hold disposition; its reservation is retained until trusted release evidence. Disposition-to-state mapping for the Invocation record: `Succeeded`→`Succeeded`, `FailedKnown`→`FailedKnown`, `NotExecutedProven`→`Rejected`, `Abandoned`→`Cancelled` |
+| Reconciliation deadline reached, still ambiguous | Stays `OutcomeUnknown`; Task may terminalize only with an `UnresolvedEffectHold` (§12.4) | No automatic retry; no fabricated convergence |
+
+A terminal Task and an `OutcomeUnknown` Invocation are different records: the Task is a decision about further autonomous work, the Invocation remains a fact that is still unresolved and remains fenced.
 
 ## 5. Single-Host launch and revocation ordering (initial scope)
 
 **Three authoritative events, two ordering domains:**
 
-1. `RevocationRequested(K, requestedEpoch)`: durable K transaction, immediately prevents new related admission/ticket issuance and records desired epoch. This is **not** a guarantee that a previously issued ticket cannot still launch on H.
+1. `RevocationRequested(K, requestedEpoch)`: durable K transaction that records the desired epoch and blocks any admission whose transaction reads the new epoch. The epoch read and the admission write **must be serialized in one transaction**; without that, "blocks new admission" is not guaranteed and PE-1 must fail. This is **not** a guarantee that a previously issued ticket cannot still launch on H.
 2. `HostFenceInstalled(H, installedEpoch, gateSequence, hostIncarnation)`: a durable local H gate event serialized against the physical spawn boundary. After installation, a ticket with an older epoch **cannot** start on that H. An old launch that crossed the local gate first remains in flight even if K had already committed RevocationRequested.
 3. `Revoked(K, hostAckSet)`: K transition only when every eligible Host gate is verified fenced or verifiably disabled. It means no eligible old-epoch **new launch**, not that running jobs or descendants are stopped; `ProcessConverged` remains independent.
 
@@ -85,7 +117,7 @@ The intermediary authority state is `RevocationPending`. The interval `K.Revocat
 
 **Proof eligible for the Host gate:** H must be authoritative for a locally serialized and durably persisted effective authorization/fence snapshot. An execution grant must bind scope, Host ID/incarnation, immutable profile/tool, authority version vector, installed-fence epoch, workspace generation, budget reservation generation, exact invocation nonce and a short bounded validity interval. H must establish (a) authenticity, (b) unexpired grant and Host live-authority channel/lease, (c) no locally installed newer fence or known invalidation, and (d) no inconsistent workspace/reservation view. Remote changes not installable through the same H gate are **not globally linearized**: their effectiveness is defined by H's acknowledged local installation. A cached grant alone, an offline Host, or a stale independent read is insufficient. A Host without a bounded and trusted authority/fencing channel must refuse effectful launch.
 
-Under the **same serialized local critical section**, H validates effective local snapshot, durably consumes the nonce with LaunchAttempt, then crosses the process-creation boundary; H fence installation and any locally mutable validity invalidations must use that same serialization. Checking outside the critical section and spawning later is forbidden TOCTOU. The gate must not remain authorized beyond the grant's permitted launch deadline; an unprovable expiration or network loss fails closed. A long-running operation launched before the local fence is governed by drain/cancel policy, not retroactive non-execution.
+Under the **same serialized local critical section**, H validates the effective local snapshot, durably records `LaunchAttempt = Spawning` with a pre-spawn run cookie, then crosses the process-creation boundary; H fence installation and any locally mutable validity invalidations use that same serialization. The record and the spawn are **ordered, not atomic**: a crash between them is `OutcomeUnknown` unless the restart can prove the cookie unclaimed and no process/handle/output evidence exists (`ProvenNotLaunched`). Checking outside the critical section and spawning later is forbidden TOCTOU. The gate must not remain authorized beyond the grant's permitted launch deadline; an unprovable expiration or network loss fails closed. A long-running operation launched before the local fence is governed by drain/cancel policy, not retroactive non-execution. See [Trusted Host](../security/trusted-host.md) §2.1.
 
 The above proof does **not** assert that H has a linearizable view of K's most recent revocation request at every instant. Such a stronger requirement would prohibit the acknowledged-request/pending-local-fence race and would require a different protocol. Multi-Host global ordering remains deferred. See [Trusted Host](../security/trusted-host.md).
 
@@ -95,7 +127,7 @@ Execution, candidate selection, and final financial settlement are independent. 
 
 A certificate must bind at least: Provider/account and model/SKU; pricing version/effective interval/currency; canonical request digest; exact **maximum billable input** (including system/tool/cache, variable input and provider prompt transformations); enforced maximum output/reasoning/tool tokens where billed; cache write/read minimum/maximum price treatment; fixed fees, batch, retrieval, image/audio/video/other modalities and extras; retry/redirect/continuation multiplier with a provider-enforced ceiling; conservative rounding/taxes/FX policy where applicable; computed total upper bound and evidence of each enforceable limit; validity/expiry and verifier identity. Unknown extra charges, unbounded server-side retries, uncapped output or mutable unpinned pricing invalidate the certificate.
 
-The adapter computes the upper bound conservatively and supplies enforceability evidence; Kernel **validates the certificate's coverage, version and trusted adapter identity, but does not trust model assertions**. For each funding scope, reserve every concurrently chargeable Attempt using `confirmed_spend + outstanding_reserved_max + proposed_max <= hard_limit`. Abort hard-budget admission if any bound is unprovable; explicitly opt-in to separately tracked Soft Budget or choose another Provider. A late bill above the certificate triggers append-only overrun/enforcement hold and incident classification; it does not rewrite the winning response or a terminal Task.
+The adapter computes the upper bound conservatively and supplies enforceability evidence; Kernel **validates the certificate's coverage, version and trusted adapter identity, but does not trust model assertions**. For each funding scope, reserve every concurrently chargeable Attempt using `confirmed_spend + outstanding_reserved_max + proposed_max + protected_verification_repair_reserve <= hard_limit`; the reserve term is defined in [Model and Budget](model-and-budget.md) §4 and is never spent on exploration. Abort hard-budget admission if any bound is unprovable; explicitly opt-in to separately tracked Soft Budget or choose another Provider. A late bill above the certificate triggers append-only overrun/enforcement hold and incident classification; it does not rewrite the winning response or a terminal Task.
 
 A complete valid winning response can commit while losing Attempts/invoices remain unresolved **only if all outstanding charge exposure remains reserved**. Timeouts and cancellation do not release reservations. See [Model and Budget](model-and-budget.md).
 
@@ -103,17 +135,28 @@ A complete valid winning response can commit while losing Attempts/invoices rema
 
 A **single primary Task Orchestrator** chooses Strategic, Tactical or Assurance as **decision purposes**, not independently running control loops or separate ControlProposal state machines. It observes current authoritative facts, selects one next decision, admits each proposed side effect independently, updates the domain projection, and returns to the same loop. A higher-priority cancellation, conflicting UNKNOWN, user instruction or assurance failure preempts the next decision, not the already started Host facts. See [Architecture subtraction review](../decisions/architecture-subtraction-review.md).
 
-- **L0 TacticalAdjustment:** search, debugging hypothesis, tool choice, and an existing planned operation's *one-use InvocationApproval* grant/denial within the current GoalContract, PlanStep, declared capability/effect/scope and risk ceiling. A per-invocation approval is checked at admission/launch, recorded with the exact Invocation, argument digest, authority versions, expiration and nonce. It does **not** alter immutable PlanRevision, so does not trigger cutover.
+- **L0 TacticalAdjustment:** search, debugging hypothesis, tool choice, and an existing planned operation's *one-use InvocationApproval* grant/denial within the current GoalContract, PlanStep, declared capability/effect/scope and risk ceiling. A per-invocation approval is checked at admission/launch, recorded with the exact Invocation, argument digest, authority versions, expiration and nonce. It does **not** alter immutable PlanRevision, so does not trigger cutover. Approval request/decision records, one-use consumption and separation of duties are defined in [Permissions](../security/permissions.md); a strategy, profile or model statement is never an approval.
 - **L1 PlanStepRework:** explicit rerun of the same objective and authority envelope, retaining current PlanRevision and invalidating affected verification evidence. An ordinary InvocationApproval may independently be required for a rework tool.
 - **L2 StructuralReplan:** the accepted GoalContract/PlanRevision protected scope, capability/effect envelope, risk policy, required approval **policy or approval boundary**, task-level resource envelope, dependency graph or acceptance obligation changes. Full freeze/drain/reconcile/refresh/validate/cutover is mandatory.
 
 **Revocation is orthogonal to plan classification.** Revoking an individual invocation's approval immediately stops further K admissions for that approval and initiates its H fence/needed cancellation; it does not *automatically* create L2. Domain Orchestration assesses whether the existing plan can continue with alternative authorized invocations; only a protected plan/goal/policy change triggers L2. A grant may not silently widen plan scope, capability or risk level. Kernel checks the effective protected-field diff rather than trusting the model's L0/L1 label.
 
-## 8. Sealed SourceSnapshot, isolated output and Completion
+## 8. Verification evidence classes, protected input and Completion
 
-**First-slice Coding Host policy: enforce a read-only immutable SourceSnapshot as the effective input tree**, with disjoint writable output/cache/temp mounts, a trusted execution namespace, pinned toolchain/environment and blocked remount/symlink/path shadowing. The Host attests an `ExecutionViewManifest` binding exact command, Host run, cwd/root and effective read-only source mount/digest, protected path resolution restrictions, disjoint output roots, enforcement through process convergence and output provenance. Completion Guard requires the authenticated executed view to match the accepted final SourceSnapshot and criterion evidence; comparing lower-layer snapshot hashes alone is insufficient.
+Verification evidence is expressed in six **domain-neutral classes** (enum owned by [Completion §1.1](completion.md)); a Workflow Profile declares which classes each criterion requires. Kernel, Host and Completion Guard branch on class, effect and policy — **never on `domain_id`**. The four classes most relevant to first-slice Coding/Video are detailed below; `machine_check` and `human_disposition` are defined in Completion §1.1.
 
-**No default full file-open tracing or writable input overlay.** If a toolchain cannot operate against read-only source with redirected build/cache outputs, mark the affected verification Unsupported/Unverified until an Owner-reviewed Host-specific alternative is proved. A full open/mutation tracing scheme is an optional separately scoped G2 experiment, not an automatic complexity escalation. Sandbox controls must actually prevent writable overlays, alternate symlink/bind-mount sources, cwd/PATH resolution to unpinned inputs and runtime mount changes; otherwise evidence is Invalid even if sourceDigestBefore/sourceDigestAfter/sourceDigestAtGuard match. Video continues with source/project/timeline/render/output lineage and full autonomous render inspection, not a Coding filesystem tracer. See [Completion](completion.md), [Workspace Freeze](workspace-freeze.md).
+| Class | Meaning | First-slice instantiation |
+| --- | --- | --- |
+| `protected_input_view` | Exact immutable inputs an execution may read, with enforcement and authenticated effective-view attestation | Coding: sealed read-only SourceSnapshot as the effective input tree, disjoint writable output/cache/temp mounts, trusted namespace, pinned toolchain/environment, blocked remount/symlink/path shadowing, Host-attested `ExecutionViewManifest` binding command, Host run, cwd/root, source mount/digest, path-resolution restrictions and enforcement through process convergence |
+| `output_inspection` | Authenticated inspection of the actual produced artifact, not metadata or agent narrative | Video: probe/decode plus content inspection of the rendered output; Coding: test/build reports from the sealed view |
+| `external_target_identity` | Exact identity/version/etag of an external system mutated by the operation | Office-style remote edits under an approved profile; R2 remains disabled by default |
+| `provenance_map` | Mapping from delivered output to exact inputs, versions and transformations | Video: output-interval to source-interval lineage; Coding: diff/artifact to source snapshot |
+| `machine_check` | A deterministic check ran with a bound result on the sealed view | Coding build/test/type; Video decode/profile/timeline invariant |
+| `human_disposition` | An authenticated authorized human judgment with declared independence | Subjective Video criteria; high-impact external actions |
+
+Completion Guard requires the class evidence bound to the accepted final snapshot and criterion; comparing lower-layer snapshot hashes alone is insufficient.
+
+**No default full file-open tracing or writable input overlay.** If a toolchain cannot operate against a read-only `protected_input_view` with redirected build/cache outputs, mark the affected verification Unsupported/Unverified until an Owner-reviewed Host-specific alternative is proved. A full open/mutation tracing scheme is an optional separately scoped PE experiment, not an automatic complexity escalation. Sandbox controls must actually prevent writable overlays, alternate symlink/bind-mount sources, cwd/PATH resolution to unpinned inputs and runtime mount changes; otherwise evidence is Invalid even if the before/after/at-Guard digests match. A profile that cannot declare and enforce a required class marks the affected criterion Unverified; no Host policy is selected by domain name. See [Completion](completion.md), [Workspace Freeze](workspace-freeze.md).
 
 ## 9. Safety invariants and illegal combinations
 
@@ -128,20 +171,19 @@ A **single primary Task Orchestrator** chooses Strategic, Tactical or Assurance 
 9. No TaskCompleted without current required criterion evidence, final snapshot and relevant process convergence.
 10. Inbox/Outbox replay cannot create a second authoritative selection, plan activation, completion or consumed launch token.
 11. Coding/Video semantic judgments stay outside Kernel; Domain does not grant physical execution authority.
+12. `K.RevocationRequested` without `H.HostFenceInstalled` cannot be used as evidence that an existing ticket was unable to launch; `K.Revoked` requires trusted Host ACK/disablement. `H.HostFenceInstalled` must forbid later old-epoch spawn.
+13. `AdmitToolInvocation` is one K-local atomic write-set (Journal + durable Intent + budget hold + DispatchOutbox); separate K/O/H owners have no distributed atomic guarantee.
+14. A passed verification report requires actual `protected_input_view` execution evidence (`ExecutionViewManifest` identity and digest) and trustworthy no-shadow protected-path evidence; equality of lower-layer source digests alone is insufficient.
+15. One-use `InvocationApproval` inside an existing immutable PlanRevision is not L2; expanding the plan's protected authorization envelope is L2.
+16. Hard-budget Attempt admission requires a validated, bound `MaximumChargeCertificate` covering all potentially billable dimensions; unbounded provider charges cannot enter Hard Budget.
 17. Ordinary ModelStep/Invocation/receipt/evidence operations use owning-aggregate CAS and protected read-set checks; they do **not** require global TaskControlVersion equality. TaskControl CAS still protects Goal/Plan/cancel/terminal transitions.
 18. ActionProposal is a bounded immutable intent envelope with no authoritative executing/settled state; per-Invocation events determine its derived progress. EvidenceGraph is a non-authoritative optional index, not a second ledger.
-19. Strategic/Tactical/Assurance are modes of one controller; Task and PlanStep work/verification display views are derived from canonical facts and may not act as independent approval authorities.
+19. Strategic/Tactical/Assurance are modes of one controller; PlanStep work/verification state is persisted event-sourced state with its own `plan_step_version` and may not act as an independent approval authority.
 20. K→G duplicate delivery does not imply G→Provider duplicate send. G durable SendMayHaveOccurred without reliable Provider result stays ProviderOutcomeUnknown and retains original budget exposure.
 21. A distinct Provider execution must use a **new Attempt ID, new provider request identity and independent reservation**; an unresolved old reservation cannot be silently released. Same-Attempt retransmission needs a qualified Provider billing/execution dedup guarantee or is forbidden.
 22. Host local revocation windows and grant expiry apply by risk policy; high-risk effects with no acceptable bounded window or strict fence proof are **not eligible** for launch.
-
-Additional G0 invariants:
-
-12. `K.RevocationRequested` without `H.HostFenceInstalled` cannot be used as evidence that an existing ticket was unable to launch; `K.Revoked` requires trusted Host ACK/disablement. `H.HostFenceInstalled` must forbid later old-epoch spawn.
-13. `AdmitToolInvocation` is one K-local atomic write-set (Journal + durable Intent + budget hold + DispatchOutbox); separate K/O/H owners have no distributed atomic guarantee.
-14. A passed Coding verification report requires actual `ExecutionViewManifest` identity and trustworthy no-shadow protected-path evidence; equality of lower-layer source digests alone is insufficient.
-15. One-use `InvocationApproval` inside an existing immutable PlanRevision is not L2; expanding the plan's protected authorization envelope is L2.
-16. Hard-budget Attempt admission requires a validated, bound `MaximumChargeCertificate` covering all potentially billable dimensions; unbounded provider charges cannot enter Hard Budget.
+23. A Task has exactly one terminal fact, and only `CommitTerminal` (§4.1) may create it. No receipt, model output, verifier disposition, retry or operator action writes a second terminal state; late facts create an `UnresolvedEffectHold` or a separately authorized remediation Task.
+24. An ExecutionStrategy binding never lowers the Kernel safety floor F1–F12, never raises an effect class, and never introduces Kernel-visible domain semantics; a strategy that cannot be expressed within that floor reopens the extension boundary instead of adding a Kernel branch.
 
 Forbidden pairs include: `RevocationRequested + falsely reported Revoked without HostFenceInstalled ACK`, `CompletionPassed + unproven actual protected input view`, `KernelDispatchOutbox committed without same-transaction Intent`, `HardBudgetAttempt + missing max-charge certificate`, `Revoked + unacknowledged eligible Host`, `Completed + unresolved conflicting effectful UNKNOWN`, `Superseded Plan + new admitted old-plan write`, `HardBudgetAttempt + unbounded charge`, `Selected + incomplete candidate`, and `HostStarted + no matching durable LaunchAttempt` (except that missing facts after a crash are explicitly represented as OutcomeUnknown, not silently fabricated).
 
@@ -168,7 +210,7 @@ Each fixture specifies initial durable records, interleaving, injected crash/par
 | **B2** Candidate wins while another Attempt hangs with bounded reservation | Winner completes and delivers; loser reservation retained; late authoritative adjustment is append-only |
 | **C1** Coding/Video common identity/admission/receipt/Completion envelope | Same Kernel authority semantics, no domain import |
 
-### G1/G2 protocol fixture specification (PROPOSED, not executed)
+### G1/G2 protocol fixture specification (specified, NOT RUN)
 
 **Test harness contract when separately authorized:** start from a pinned contract/schema version and K/G/H durable snapshots. Inject the indicated message/crash at a named durable boundary; capture exact event IDs, journal/ledger sequence, reservations, observed Provider submissions and Hosted/OS side effects. Replay identical commands twice and replay with changed digest. Assert both the stated safety invariant and the allowed progress/hold disposition. PASS only if deterministic event order and all expected durable facts match; blocked safe outcomes count as correct **safety**, never as autonomous task success. A trace described here is **NOT RUN** until independently executed.
 
@@ -187,11 +229,13 @@ Each fixture specifies initial durable records, interleaving, injected crash/par
 | **S2 / G2** Writable overlay/bind mount/symlink shadows protected test script or config; or source mount becomes writable | Host cannot attest required sealed-view property: reject/Invalid evidence even when original snapshot hashes match. No false Completed. |
 | **S3 / G2** Required toolchain cannot run with sealed source / disjoint outputs, platform cannot enforce protection | Mark Unverified/Unsupported and block Completion; **do not** switch silently to full file tracing or a weaker hash-only pass. Alternate monitoring is a separately reviewed experiment. |
 
-**Gate conditions:** G1 requires M1–M6 and K/G crash/duplicate-message consistency to PASS for a concrete adapter capability profile; idempotent/provider Hard Budget eligibility must be recorded per Provider, never assumed globally. G2 requires R5–R7, S1–S3 plus pre-existing R1–R4, V1–V3 process/handle and fence cases to PASS for a concrete Host/OS/profile. If Provider idempotency is absent, a fixture **passes** by proving **no resend and correct UNKNOWN hold**, not by claiming liveness. If high-risk immediate-revocation is required but unproven, disabling that effect class is a passing safe policy result, not proof of immediate revocation.
+**Gate conditions:** PE-1 (G1 group) requires M1–M6 and K/G crash/duplicate-message consistency to PASS for a concrete adapter capability profile; idempotent/provider Hard Budget eligibility must be recorded per Provider, never assumed globally. PE-2 (G2 group) requires R5–R7, S1–S3 plus pre-existing R1–R4, V1–V3 process/handle and fence cases to PASS for a concrete Host/OS/profile. If Provider idempotency is absent, a fixture **passes** by proving **no resend and correct UNKNOWN hold**, not by claiming liveness. If high-risk immediate-revocation is required but unproven, disabling that effect class is a passing safe policy result, not proof of immediate revocation.
 
-**G0 — documentation gate (NOT APPROVED):** review K/G/H transaction ownership, Provider send/ACK ambiguity and budget, Host requested/installed/Revoked risk/TTL window and open Owner choices, sealed read-only input profile, state tables/invariants, normalized executable fault cases, pending ADPs.
+**Fixture-group note:** `G1` (provider/transaction) and `G2` (Host) below are **fixture-group names** retained for traceability; they are evidence groups executed at PE, not gates.
 
-**G1 — protocol feasibility (NOT RUN):** M1–M6 plus existing transaction, candidate and budget read-set fixtures. **G2 — Host trust (NOT RUN):** R5–R7/S1–S3 plus existing LaunchGate, read-only sandbox, UNKNOWN and process-convergence cases. **G3/G4 — Domain slices (NOT RUN). G5 — Cross-domain reuse (NOT RUN).** Each requires separate authorization; no PASS may be inferred from these documents.
+**DF — design freeze (ACCEPTED by ARB-01, 2026-11-03):** K/G/H transaction ownership, Provider send/ACK ambiguity and budget, Host requested/installed/Revoked risk/TTL window, effect policy, sealed read-only input profile, state tables/invariants, normalized fault cases and ADP dispositions have been reviewed and dispositioned for construction. DF authorizes no runtime work.
+
+**PE — prototype evidence (NOT RUN; requires SA):** G1 group M1–M6 plus transaction, candidate and budget read-set fixtures; G2 group R5–R7/S1–S3 plus LaunchGate, sealed-view, UNKNOWN and process-convergence cases; domain slices and cross-domain reuse (NOT RUN). **VI** requires the full fault matrix and domain evidence. No PASS may be inferred from these documents.
 
 ## 11. Architecture-review checklist
 
@@ -204,37 +248,55 @@ Each fixture specifies initial durable records, interleaving, injected crash/par
 - Have single-Host and multi-Host promises been kept separate?
 - Are ADP-03 through ADP-11 explicitly still OPEN until owner decisions?
 
-## 12. Construction-level main-loop scheduling and terminalization (G0 candidate)
+## 12. Construction-level main-loop scheduling and terminalization
 
-The following **proposed first-slice algorithm** narrows, rather than replaces, Sections 2–11 and [Domain Extension](domain-extension.md). It is deliberately **one Orchestrator loop per Task**, not a mandatory multi-phase chain or a parallel autonomous verifier.
+The following algorithm narrows, rather than replaces, Sections 2–11, [Domain Extension](domain-extension.md) and [Execution Strategy](execution-strategy.md). It is **one Orchestrator loop per Task** — not a mandatory multi-phase chain, not a parallel autonomous verifier, and not three controllers.
 
-```text
-OnTaskWake(task_id, cause):
-  load the durable K projections and relevant authority/read-set
-  if TaskControl has a terminal fact: deliver/reconcile pending outboxes; do not run another decision
-  if cancel / authority revoked / deadline reached: stop new admissions; follow convergence/safe-stop path
-  if conflicting Invocation/Provider outcome UNKNOWN: reconcile or park, never repeat the effect
-  if awaiting approval/clarification/external job: persist wait owner, condition and wake-up deadline; return
-  if current accepted criteria and evidence suffice: execute deterministic Completion Guard CAS; on success return
-  if mandatory criterion evidence is missing: choose the minimal authorized domain verification action
-  else if actual L2 protected-field change is required: propose structural replan and cutover
-  else: request at most one bounded model decision for the next needed action
-  validate exact decision/binding; commit each admitted Invocation through K-local transaction
-  dispatch via H gate; event-driven receipts advance progress and reschedule only affected work
-  if no-progress / budget / retry cap reached: diagnose without repeating effects; wait or terminalize safely
-```
+### 12.1 Wake contract
 
-The ordering above does not mean a low-risk single-step task needs separate Planner, Implementer, and Verifier model requests. Initial Goal/Plan acceptance still uses required schema/confirmation checks. Model responses may be cached only if **identical binding, normalized request and policy/context digests** prove reuse safe; completion and side-effect admission are never cached. A selected complete candidate ends its ModelStep; incomplete provider streams cannot dispatch actions.
+The loop advances only on an explicit wake:
 
-**Scheduler contract:** one write/effectful Invocation per Task by default. Optional parallel R0 observations require the same authorized immutable input, bounded worker/concurrency resources, distinct invocation IDs and no unresolved overlap; optional R1 jobs require proven disjoint target sets and independent Host conflict scopes. R2/external/destructive effects remain disabled by default until separately approved. Two writes that may overlap, unknown conflict scopes, tests using mutable shared caches, Git index/worktree operations and final render publication serialize. Host enforces process/resource limits for both short commands and long RenderJobs; Kernel enforces aggregate reservations and deterministic admission, not a speculative global DAG executor. **Proposed initial tuning caps** (not performance claims): `maxConcurrentR0PerTask=4`, `maxConcurrentWritePerTask=1`, `maxConcurrentRenderPerHost=1`. If a Host cannot prove the corresponding isolation, effective cap is 1 or admission is denied. Fairness is bounded queueing per Task/principal/resource class, not unlimited forked work.
+`WakeEvent{cause ∈ TaskAdmitted | UserInput | ApprovalResolved | CancelAccepted | DeadlineDue | HostReceipt | ProviderResult | CutoverReady | RecoveryTimer; dedupe_key; seq}`
 
-**Event and wait semantics:** every wait has `reason_code, blocking_scope, evidence_ref, owner, created_at, next_wake_at, max_wait_until, recovery_strategy` in an authoritative K record. User approval and missing input may wait for external action but consume no model spins; provide a visible disposition. Render/probe jobs wake from authenticated Host progress/terminal events, not polling through new LLM turns. A delayed receipt or invoice settles through the existing K/G/H Inbox/Outbox protocols, even after the Orchestrator stops. Timer expiry triggers one deterministic safe-stop/reconciliation decision, not another blind side-effect submission.
+- `dedupe_key` is stable for the fact that caused the wake (event ID, wait ID, command ID or receipt ID). A duplicate wake with the same key while a cause is still pending is **coalesced**; it never produces a second decision.
+- `seq` orders wakes within a Task. Wakes may arrive concurrently; only the highest-priority unconsumed cause is consumed per iteration (§12.2), and lower-priority pending causes remain pending — they are not lost.
+- Host receipts, Provider results and timer expiries wake the loop; they never start an independent decision. A receipt that arrives after terminalization is imported and parked (§12.4), not executed.
 
-**Progress proof:** count meaningful newly accepted evidence/artifact/version, resolved blocker, completed criterion or user input; extra summaries, repeated search result hashes, identical model proposals and no-op tool calls do not reset progress. With `maxConsecutiveNoProgress=3` and `maxSameStepRepairs=2` initial configurable hypotheses, diagnose at most once and then require new evidence, user action or a justified L2 plan change; otherwise fail with typed reason. Never silently extend a hard deadline or verification budget. Record decisions that were skipped because deterministic tools already established completion.
+### 12.2 The algorithm (one priority order)
 
-**Task final disposition:** `Completed` only via Completion Guard and exact current evidence. `Cancelled` only with appropriate cancellation disposition and proven state of effects; `Failed(reason=DeadlineExceeded|NoProgress|BudgetExhausted|UnsafeEnvironment|RepairExhausted|UnresolvedEffect)` is the proposed explicit terminal reason taxonomy, **not** an additional Task terminal enum. If an effect remains physically UNKNOWN at the deadline, suspend all conflicting admissions, record the unresolved-effect hold, fail the *agent decision task* with `UnresolvedEffect` or `DeadlineExceeded` **without claiming process convergence or rollback**, and continue narrow reconciliation under a separate durable recovery/incident record. A terminal Task does not restart because a receipt arrives; late facts may create a post-terminal evidence hold/remediation Task. If failure disposition itself cannot safely be committed because K persistence is unavailable, recovery must reconstruct it from a persisted intent before accepting new work. There is no unbounded live model loop.
+`OnWake(task_id, WakeEvent)` — the order below is the **only** priority order in this repository; no other document may define a second one:
 
-### 12.1 Explicit fast/slow traces and failure contrast
+1. **Terminal/outbox.** If TaskControl holds a terminal fact: deliver/reconcile pending outboxes and stop. A terminal Task never runs another decision.
+2. **Safety stop.** If cancel was accepted, authority was revoked, or the deadline is due: stop new admissions and follow the convergence/safe-stop path (§12.4 and [Lifecycle §8](../architecture/lifecycle.md)). No model or tool work is emitted.
+3. **UNKNOWN.** If a conflicting Invocation/Provider outcome is `OutcomeUnknown`: reconcile, or park with a WaitRecord; never repeat the effect.
+4. **Wait.** If a WaitRecord is active and not yet due: keep it and consume no model spin. If due: treat as `RecoveryTimer`.
+5. **Completion check.** If current accepted criteria and evidence already suffice, with no hold and no conflicting UNKNOWN: emit `CommitTerminal(Completed)` and stop; Guard decides inside K. This is the cheap deterministic path and must be tried before any model call.
+6. **Evidence gap.** If mandatory criterion evidence is missing: choose the minimal authorized verification action; a deterministic check suffices, so no model call.
+7. **L2.** Else if an actual protected-field change is required: propose a structural replan and cutover.
+8. **Decision.** Else request **at most one** bounded model decision for the next needed action, validate the exact decision/binding/digest, and admit each effectful item through its own K-local `AdmitInvocation`.
+9. **Progress/limits.** If no new authoritative evidence, artifact/version, resolved blocker, completed criterion, wait resolution or user input was committed since the previous iteration: apply the strategy's no-progress bound. If a budget, iteration or repair ceiling is reached: diagnose once from existing facts, then park, terminalize through `CommitTerminal` (§4.1), or stop with a typed reason. **There is no unbounded live model loop.**
+
+**Decision-envelope validation.** A response is admitted as a candidate only if it is complete and its envelope schema/digests validate. Each item is then validated and admitted independently: an item with a stale tool digest, out-of-envelope effect class or invalid argument is rejected with a typed reason, and valid sibling items may still proceed. The batch itself has no atomic settlement and no aggregate outcome; "no executable partial candidate" refers to a truncated/incomplete response, never to a complete envelope that contains one rejected item. A rejected item is durable evidence, not a silent omission.
+
+Dispatch goes only through the Host gate; event-driven receipts advance progress and reschedule only affected work. The ordering does not mean a low-risk single-step task needs separate Planner, Implementer and Verifier requests. Initial Goal/Plan acceptance still uses required schema/confirmation checks. Model responses may be cached only if **identical binding, normalized request and policy/context digests** prove reuse safe; completion and side-effect admission are never cached. A selected complete candidate ends its ModelStep; incomplete provider streams cannot dispatch actions.
+
+**Scheduler contract:** one write/effectful Invocation per Task by default. Optional parallel R0 observations require the same authorized immutable input, bounded worker/concurrency resources, distinct invocation IDs and no unresolved overlap; optional R1 jobs require proven disjoint target sets and independent Host conflict scopes. R2/external/destructive effects remain disabled by default until separately approved. Two writes that may overlap, unknown conflict scopes, tests using mutable shared caches, Git index/worktree operations and final render publication serialize. Host enforces process/resource limits for both short commands and long jobs; Kernel enforces aggregate reservations and deterministic admission, not a speculative global DAG executor. **Construction-default caps** (DES values; a profile or Host may lower them, never raise them, and they are not performance claims): `maxConcurrentR0PerTask=4`, `maxConcurrentWritePerTask=1`, `maxConcurrentLongJobPerHost=1`. If a Host cannot prove the corresponding isolation, the effective cap is 1 or admission is denied. Fairness is bounded queueing per Task/principal/resource class, not unlimited forked work.
+
+### 12.3 Progress, waits and iteration bounds
+
+Every wait that persists across a wake has a durable `WaitRecord` (shape owned by the Kernel data model) with a wake source, owner and `max_wait_until`; a wait missing either is a protocol defect. User approval and missing input may wait for external action but consume no model spins; provide a visible disposition. Long jobs wake from authenticated Host progress/terminal events, not polling through new LLM turns. A delayed receipt or invoice settles through the existing K/G/H Inbox/Outbox protocols, even after the Orchestrator stops. Timer expiry triggers one deterministic safe-stop/reconciliation decision, not another blind side-effect submission.
+
+**Progress proof:** progress is a **committed fact**, not an assertion — newly accepted evidence/artifact/version, a resolved blocker, a completed criterion or user input. Extra summaries, repeated search result hashes, identical model proposals and no-op tool calls do not reset progress. Each Task carries an iteration counter incremented once per consumed wake; the strategy's `max_model_steps_per_task_class`, `progress.max_consecutive_no_progress` and `progress.max_same_step_repairs` bound decisions, and reaching a bound is a typed disposition, never a silent reset. Never silently extend a hard deadline or verification budget. Record decisions skipped because deterministic tools already established completion.
+
+### 12.4 Terminalization (single path)
+
+- `Completed` only through `CommitTerminal` after Completion Guard passes (§4.1). `Cancelled` only with a cancellation disposition and the proven state of effects at that time. `Failed(reason=DeadlineExceeded|NoProgress|BudgetExhausted|UnsafeEnvironment|RepairExhausted|UnresolvedEffect|DependencyFailed|PolicyDenied)` is a reason taxonomy, **not** an additional Task state.
+- The loop **never** writes a terminal state. It emits the idempotent `CommitTerminal` command with `expected_task_control_version`; Guard runs inside that K-local command and commits exactly one terminal fact or a typed rejection.
+- If a potentially conflicting effect may be unresolved at the deadline: commit `Failed(reason=UnresolvedEffect)` **plus** a durable `UnresolvedEffectHold{hold_id, version, task_id, invocation_ids[], conflict_scope, reconciliation_owner, next_wake_at, max_reconcile_until, disposition}` that keeps the conflicting targets fenced and is reconciled after the terminal fact. The reason must **not** claim physical failure, process convergence or rollback; a late receipt never reopens the Task, and remediation is a separate authorized Task.
+- If convergence (not merely classification) cannot yet be proven and no deadline forces a disposition, the Task stays `Open` with a `WaitRecord` and `max_wait_until`; a Task that cannot prove convergence is never falsely marked terminal.
+- If K persistence is unavailable, admission fails closed with `StorageUnavailable`; a failure disposition is reconstructed from a persisted intent before accepting new work.
+
+### 12.5 Explicit fast/slow traces and failure contrast
 
 | Scenario | Required causal sequence | Prohibited shortcut |
 | --- | --- | --- |
@@ -245,4 +307,4 @@ The ordering above does not mean a low-risk single-step task needs separate Plan
 | Provider request timed out | G SendMayHaveOccurred → original Attempt UNKNOWN + bounded reservation retained → authenticated status reconciliation / separate funded request only if policy allows | Blind Provider retransmission, charging UNKNOWN as zero |
 | Approval absent | Store exact request/scope/expiry/wake condition → park Task without model spins → resume with fresh K/H authority checks or safely fail by policy | Reuse stale approval after authority/profile change |
 
-These are **design fixtures, NOT runtime PASS**. G1/G2 must test K/G/H crash boundaries and serializability, G3/G4 must test both domain end-to-end paths and quality of skipped reviews, G5 must test Office and handoff reuse.
+These are **design fixtures, NOT runtime PASS**. PE-1/PE-2 (the G1/G2 fixture groups) must test K/G/H crash boundaries and serializability; PE domain slices must test both domain end-to-end paths and quality of skipped reviews; PE cross-domain must test Office and handoff reuse.

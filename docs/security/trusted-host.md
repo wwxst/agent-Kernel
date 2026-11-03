@@ -1,6 +1,6 @@
 # Trusted ToolHost and security boundary
 
-> **Status: Security architecture baseline.** No production sandbox, host identity, admission ticket, or receipt implementation is claimed.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** No production sandbox, host identity, admission ticket, receipt or ledger-chain implementation is claimed. Record shapes are owned by [Kernel data model](../contracts/kernel-data-model.md); authorization and approval by [Permissions](permissions.md).
 
 ## 1. Threat model
 
@@ -24,20 +24,32 @@ Only trusted authorization components and the Host execution boundary can admit 
 
 Before any side-effecting invocation, Kernel must validate:
 
-1. Task / Turn / Step / Invocation identity and ownership.
+1. Task / Invocation identity and ownership (Turn and runtime Step are UI-derived concepts, not bound identities).
 2. Complete canonical arguments and schema.
 3. Immutable tool definition and implementation identity for the current Step.
-4. Principal, capability, policy and approval versions/revocation state, plus the current AuthorityFenceEpoch.
-5. Workspace/project identity, generation/hash, and current fencing epoch.
-6. Budget reservation and limits.
+4. Principal, tenant, capability, policy, approval **records** and versions including approval consumption state, plus current `authority_epoch` ([Permissions](permissions.md)).
+5. Workspace/project identity, `workspace_generation`, and content generation/hash.
+6. Budget reservation and limits, plus the active `EffectPolicyId` ([Effect Admission Matrix](#212-effect-admission-matrix-v0)).
 7. Host target and required isolation profile.
 8. Durable Intent and stable idempotency identity.
 
-Kernel issues a short-lived AdmissionTicket bound to the exact invocation, profile/DomainBinding digest, tool version, argument hash, principal/capability/policy/approval version vector, AuthorityFenceEpoch, workspace/project identity and generation/hash, Host target, fencing epoch, budget-reservation ID/version, expiry and nonce. Tool Runtime cannot manufacture or widen it. Host validates it again at execution time.
+Kernel issues a short-lived AdmissionTicket bound to the exact invocation, profile/DomainBinding digest, tool version, argument hash, principal/capability/policy/approval version vector, `authority_epoch`, workspace/project identity and `workspace_generation`, content generation/hash, Host target and incarnation, `ticket_epoch`, budget-reservation ID/version, `EffectPolicyId`, expiry and nonce. Tool Runtime cannot manufacture or widen it. Host validates it again at execution time.
+
+**Epoch registry (normative). Exactly three counters exist; no other epoch name is valid.** Earlier drafts and sibling sections that say `AuthorityFenceEpoch`, "fencing epoch" or `fencingEpoch` refer to these counters and must be amended to the names below in the same change; an implementation must not introduce a fourth counter.
+
+| Counter | Granularity | Advanced by |
+| --- | --- | --- |
+| `authority_epoch` | one **authority scope** = principal + capability + policy + approval + profile | Kernel, on any grant/approval/profile/principal change or revocation in that scope ([Permissions](permissions.md) §3) |
+| `workspace_generation` | one workspace/project | Kernel record plus Host-installed fence at freeze, snapshot, publication or declared write-boundary change |
+| `ticket_epoch` | value bound into one dispatch ticket | Not independent: it is the pair `{authority_epoch, workspace_generation}` plus `gate_sequence` and `host_incarnation` used for ordering at the Host gate |
+
+**One comparison rule.** At the Host gate, a launch is rejected without process creation unless **all** hold inside the serialized critical section: `ticket.authority_epoch == locally_installed.authority_epoch`; `ticket.workspace_generation == locally_installed.workspace_generation`; the grant is unexpired under the policy clock budget; the nonce is unconsumed. "Newer" is never accepted implicitly — an unverifiable or mismatched component fails closed. Kernel admission separately compares current aggregate versions (goal/plan/profile/authority/workspace/budget/tool) in its own transaction; it never derives authority from a Host-installed epoch.
+
+**Eligible Host set (normative).** The set is the registered, `Active` Hosts in the same tenant holding a live lease bound to their `host_incarnation`. It is an explicit registry record, not a configuration guess: a Host not in the registry can never satisfy `MarkRevoked`, and a Host removed from the registry must first be decommissioned — lease revoked, launch authority verifiably disabled (session/key withdrawn and fence installed, or the Host destroyed under operator attestation), and the evidence recorded. If a Host cannot be proven disabled, Kernel stays `RevocationPending` with a durable escalation record `{owner, deadline, evidence_refs[]}`, and no new effectful launch is admitted for the affected scope. It never becomes `Revoked` by timeout, missing ACK or absence of a reply. Escalation expiry denies launch; it does not grant it. `ProcessConverged` remains a separate Host fact.
 
 A model statement that a tool is approved is not approval evidence.
 
-### 2.1 Serialized Host LaunchGate — single-Host authority scope (second-round PROPOSED refinement)
+### 2.1 Serialized Host LaunchGate — single-Host authority scope (ACCEPTED for construction v0)
 
 An AdmissionTicket is a Kernel admission fact, **not** a physical launch permission. A short-lived one-use dispatch ticket binds ToolInvocation, exact tool/argument digests, profile/DomainBinding, authority epoch/version vector, workspace/project generation, budget reservation, target Host/incarnation, expiry and nonce. The initial authority scope has **one eligible Host launch arbiter** and a locally serialized gate; global multi-Host ordering remains unapproved.
 
@@ -45,48 +57,58 @@ An AdmissionTicket is a Kernel admission fact, **not** a physical launch permiss
 
 | Event | Owner | Meaning and guarantee |
 | --- | --- | --- |
-| `RevocationRequested` and desired `AuthorityFenceEpoch` | Kernel transaction | Stops **new** related Kernel Admission/ticket issuance immediately. Does **not** prove a previously issued ticket cannot still launch before Host fence installation. |
-| `HostFenceInstalled` (epoch, gate sequence, Host incarnation) | Trusted Host Ledger and serialized local LaunchGate | The fence is durably installed in the **same local order** as OS process creation. No older ticket can cross that Host gate **after installation**. Earlier launched operations stay in flight. |
+| `RevocationRequested` and desired `authority_epoch` | Kernel transaction | Blocks any Kernel admission **transaction committed after** this record, provided admission reads the epoch inside its own serializable transaction (otherwise the guarantee does not hold and PE-1 must fail). It does **not** prove a previously issued ticket cannot still launch before Host fence installation, and it never implies cross-system immediacy. |
+| `HostFenceInstalled` (`ticket_epoch`, gate sequence, Host incarnation) | Trusted Host Ledger and serialized local LaunchGate | The fence is durably installed in the **same local order** as OS process creation. No ticket with an older component can cross that Host gate **after installation**. Earlier launched operations stay in flight. |
 | `Revoked` (acknowledged eligible Host set) | Kernel transaction | Only after all eligible Host gates provide verified HostFenceInstalled ACKs or verified disablement; not proof that already-started processes are terminated. `ProcessConverged` is a separate trusted fact. |
 
 **Request-before-fence race is permitted:** `Kernel.RevocationRequested → Host.launch(old ticket) → Host.HostFenceInstalled → Kernel.Revoked` is valid if the old launch crossed the Host-local gate before fence installation. Kernel maintains `RevocationPending` throughout this interval. An `HostFenceInstalled → Host.launch(old ticket)` order is forbidden and must reject without process creation. The request and local installation do not share an atomic transaction.
 
 **What counts as usable authority proof inside LaunchGate:** a trusted, versioned *locally effective* authorization state + authenticated, scope/Host-incarnation-bound, finite-lived execution grant or equivalent live authority channel. It must prove the immutable profile and exact invocation/arguments, current **installed local** authority epoch/version, admitted workspace/project generation, budget-reservation version, revocation policy and nonce; identify the authority source and local fence sequence; have an enforceable launch deadline; and demonstrate Host liveness/connectivity as required by its authority policy. Changes to mutable local versions or resource fences must be serialized against spawn through **the same local gate**. Independent remote reads, stale caches, a ticket alone, or an offline Host do not suffice. This is a proof about the latest **Host-installed** authority, **not** a claim that the Host sees a newly committed Kernel revocation instantly. If global immediacy is required, this protocol is insufficient and execution must not be enabled under that requirement.
 
-**No TOCTOU launch:** inside a single serialized Host critical section, (1) read/validate the local effective authority and lease/grant, expiry and conflicting input/permission/resource fences, (2) durably consume one unique nonce and persist a LaunchAttempt/IntentDurable with Host DispatchInbox dedup key, and (3) invoke the physical process-creation operation **before releasing the gate**, ordered against HostFenceInstalled. Never validate outside the gate and later spawn. A grant expiring before the physical launch boundary, a lost required authority channel, or inability to prove local validity fails closed. The Host persists a LaunchBoundaryRecorded receipt before reporting a known Started result.
+**No TOCTOU launch *ordering* (not atomicity):** inside a single serialized Host critical section, (1) read/validate the local effective authority and lease/grant, expiry and conflicting input/permission/resource fences, (2) durably consume one unique nonce, persist a LaunchAttempt record and the Host DispatchInbox dedup key, and write a **run cookie** bound to the LaunchAttempt, and (3) invoke the physical process-creation operation **before releasing the gate**, ordered against HostFenceInstalled. Never validate outside the gate and later spawn. This claims *ordering*: steps (2) and (3) are not one atomic operation, so a crash between them cannot be reported as a launch. The in-gate authority/liveness check has its own bounded deadline; a check that cannot complete inside the gate window fails closed and releases the gate rather than blocking other launches. A grant expiring before the physical launch boundary, a lost required authority channel, or inability to prove local validity fails closed. The Host persists a LaunchBoundaryRecorded receipt before reporting a known Started result.
 
-**Crash and remote effects:** durable Host Ledger + OS process creation is not one atomic operation. Crash after durable nonce consumption, within spawn, or before process receipt may leave OutcomeUnknown. The consumed nonce cannot be replayed and a replacement needs reconciliation of original Invocation/process/output. Host records and retries its authenticated result under the original receipt identity; Kernel imports via its own deduplicating Inbox. No exactly-once remote effect or multi-Host fencing claim is inferred. See [Core protocol](../contracts/core-protocol.md).
+**LaunchAttempt state machine (normative; record shape in [Data model](../contracts/kernel-data-model.md)):**
+
+`IntentDurable → Spawning → LaunchBoundaryRecorded | ProvenNotLaunched | OutcomeUnknown`
+
+- `Spawning` is entered **after** nonce consumption and run-cookie persistence, **before** OS process creation. It is not evidence of either outcome.
+- After a Host restart, the Host may record `ProvenNotLaunched` only when the run cookie is unclaimed **and** no process/handle/output evidence for that cookie or LaunchAttempt exists. Absence of a Kernel receipt is never such proof.
+- `IntentDurable` alone plus a crash is `OutcomeUnknown`, not `ProvenNotLaunched`, because the same critical section continues immediately into spawn. A `ProvenNotLaunched` record allows a fresh Kernel admission for the same Invocation under a **new** nonce and ticket; it never reuses the old one.
+- The nonce stays consumed in every branch. `ProcessConverged` and any output/publication evidence are separate Host facts.
+
+**Crash and remote effects:** durable Host Ledger + OS process creation is not one atomic operation. Crash after durable nonce consumption, within spawn, or before process receipt may leave OutcomeUnknown. The consumed nonce cannot be replayed and a replacement needs reconciliation of original Invocation/process/output. Host retries its authenticated result under the original receipt identity with bounded backoff and a dead-letter/escalation deadline (unbounded redelivery is not permitted); Kernel imports via its own deduplicating Inbox. No exactly-once remote effect or multi-Host fencing claim is inferred. See [Core protocol](../contracts/core-protocol.md).
 
 **Host not reachable:** no offline new dispatch. If a Host's old launch capability cannot be proven disabled, Kernel keeps `RevocationPending`, even when the desired epoch is already advanced. A lost Host fence ACK is reconciled from Host Ledger; never infer fence installation from a timeout.
 
-### 2.1.1 Revocation-effective window, expiry, and risk policy (G0 PROPOSED)
+### 2.1.1 Revocation-effective window and expiry (ACCEPTED for construction v0)
 
 **Preserve the existing Host-local ordering guarantee; do not claim immediate physical revoke at K request.** For a previously issued live ticket, the exposure window is the interval from `K.RevocationRequested` **until the first of** (a) H-local `HostFenceInstalled`, (b) the ticket/grant's **enforceable launch deadline**, or (c) verifiable disablement of the Host's launch authority. The Host may launch inside that interval only if all original scope, signed grant, current **Host-installed** epoch, liveness and local expiry checks pass **inside the serialized gate**. No revoked operation is newly admitted at K. A wall-clock latency bound is **not established** unless both maximum grant lifetime, issued-at/expiry verification, clock uncertainty and channel-loss fail-closed behavior are proven. A signed expiry without enforceable monotonic/clock semantics is not a safety bound.
 
-**Initial minimal expiry mechanism:** exact invocation-bound, short-lived, non-renewable-for-the-same-ticket grant plus Host-local fence epoch. H uses monotonic elapsed-time limits for locally received grants with authenticated initial time evidence, enforces a conservative clock-skew/uncertainty budget, checks expiry at the **physical spawn boundary** and aborts if validity lapses while waiting in the critical section. Renewals are *new authenticated authority decisions*, never silent ticket lifetime extension. Network/channel loss, stale grant identity or unbounded clock uncertainty causes **fail closed to new effectful launch**. Timer expiry does not mean a process already launched has stopped: drain/cancel and ProcessConverged require separate Host evidence.
+**Initial minimal expiry mechanism:** exact invocation-bound, short-lived, non-renewable-for-the-same-ticket grant plus the Host-local installed fence state. H uses monotonic elapsed-time limits for locally received grants with authenticated initial time evidence, enforces a conservative clock-skew/uncertainty budget, checks expiry at the **physical spawn boundary** and aborts if validity lapses while waiting in the critical section. Renewals are *new authenticated authority decisions*, never silent ticket lifetime extension. Network/channel loss, stale grant identity or unbounded clock uncertainty causes **fail closed to new effectful launch**. Timer expiry does not mean a process already launched has stopped: drain/cancel and ProcessConverged require separate Host evidence. Grant TTL, skew budget and fence-ACK target are policy values in the `EffectPolicyId` record, not code constants ([§2.1.2](#212-effect-admission-matrix-v0)).
 
-**Risk-sensitive launch rule (proposed classes, policy values OPEN):**
+**Risk-sensitive launch rule** — see the [Effect Admission Matrix](#212-effect-admission-matrix-v0) below. Risk is determined by the effective operation/tool/target/effect profile, **not by the model's label**. Higher risk cannot be downgraded by splitting commands.
 
-| Class | Example effects | Initial admissibility until proven |
+### 2.1.2 Effect Admission Matrix v0
+
+This matrix replaces the earlier open risk table's role: it is the record a deployment must hold before any effectful launch. It is **not** a measured safety result and it does not prove any claim.
+
+| Class | Examples | Admissible only when |
 | --- | --- | --- |
-| **R0 Read-only bounded** | Inspect repository, inspect declared media metadata with no external publication | Existing short bounded grant, Host-local fence, current workspace/asset scopes; no unapproved write |
-| **R1 Reversible isolated write** | Edit inside a disposable workspace, isolated build/test output, stage nonpublished media renders | Host-local fence with **Owner-accepted maximum exposure window**, enforceable expiry/containment, cancellation policy, and per-Invocation approval where required |
-| **R2 High-risk or non-reversible** | Destructive operations, credential/secret export, external network mutation, production deployment, remote publication, final irreversible file overwrite, high-impact render publication | **Disabled in first-slice default** unless Owner explicitly accepts a proved bounded post-request exposure window for that exact operation class **or** separately approves a stronger online/serialized launch protocol whose immediate-revocation guarantee has passed G2. A mere synchronous check outside the local gate is NOT an immediate-revocation proof. |
+| **R0 Read-only bounded** | Inspect repository, inspect declared media/project metadata, no external publication | Active `EffectPolicyId` record; Host-local fence; declared read scopes; no write and no network mutation |
+| **R1 Reversible isolated write** | Writes confined to a disposable workspace, isolated build/test output roots, staged non-published renders | Active `EffectPolicyId` + enforceable grant TTL + clock-uncertainty budget + fence-ACK target + fail-closed rule + per-invocation approval where the profile requires it ([Permissions](permissions.md) §4). Nothing else — no credential export, no external mutation, no publication, no final-artifact overwrite |
+| **R2 High-risk or non-reversible** | Destructive operations, credential/secret export, external network mutation, production deployment, remote publication, final irreversible overwrite | **Denied in v0.** No deployment configuration enables R2; enabling it requires a separate owner decision plus a proved protocol and its own G2 evidence |
 
-Risk is determined by the effective operation/tool/target/effect profile, **not by the model's label**. Higher risk cannot be downgraded by splitting commands. Under any class, K request immediately stops new issuance; H local fence blocks later old-epoch starts; unrelated already running effects must follow separately specified drain/cancel and ProcessConverged checks.
+**Provisional construction defaults (PROVISIONAL POLICY VALUE — owner-ratifiable; not a measurement or certification):** grant TTL ≤ 30 s; clock-uncertainty budget ≤ 2 s; fence-ACK acknowledgement target ≤ 5 s. Each value is a field of the `EffectPolicyId` record, not a constant in code; changing any value creates a new policy version and requires the R1 envelope to be re-validated.
 
-**Owner decisions required before G0 approval / effect enablement:**
+**No silent default.** If no active `EffectPolicyId` record covers the tenant, tool, target and effect class, admission fails closed (`PolicyDenied` / `EffectClassDisabled`) and emits a security event. A deployment may not proceed on "no window configured". An R1 policy record lacking an enforceable TTL, a clock budget, a fence-ACK target or a fail-closed rule is **invalid**, not weak: the class is not admissible with it.
 
-1. The **maximum allowed post-K-request launch exposure** for each R0/R1 effect class, including grant lifetime, clock uncertainty allowance, fence propagation/acknowledgement target and how a missed target fails closed. No numeric value is assumed.
-2. Which exact capabilities/targets are R2, whether each is initially disabled, accepts a bounded race window or requires a separately proved stronger online/fenced protocol; whether any class requires **no possible launch after K commit** (unsupported by the current design).
-3. Pre-existing process policy per class: graceful drain vs mandatory cancel/kill, time bounds, descendant/writable-handle checks, and what cannot be rolled back.
-4. Host lease/channel/clock evidence, deployment membership and disablement proof requirements; no multi-Host guarantee is approved.
+**Owner ratifications still required (do not block construction of R0 or the R1 envelope above):** (a) ratify or replace the provisional TTL/skew/ACK values per class; (b) ratify the R2 map and keep it denied unless a stronger protocol is proved; (c) pre-existing process policy per class (graceful drain vs mandatory cancel/kill, descendant/writable-handle checks, what cannot be rolled back); (d) Host lease/channel/clock evidence and disablement proof; no multi-Host guarantee is approved. See [Open decisions](../decisions/open-decisions.md).
 
-**G2 tests:** force request-before-fence with valid grant; fence-before-launch; expiry while waiting for the serialized gate; lost Host authority channel; clock skew beyond allowed bound; high-risk request without Owner-approved policy; and previously launched process still writing after Revoked. PASS requires exact H Ledger gate ordering, no post-fence/expired launch, correct RevocationPending vs Revoked, safe denial of unapproved R2, and independent ProcessConverged evidence. See [Core protocol](../contracts/core-protocol.md) and [Open decisions](../decisions/open-decisions.md).
+**G2 tests:** force request-before-fence with valid grant; fence-before-launch; expiry while waiting for the serialized gate; lost Host authority channel; clock skew beyond allowed bound; no active policy record; crash in `Spawning` with and without a claimed run cookie; high-risk request without approved policy; and previously launched process still writing after Revoked. PASS requires exact H Ledger gate ordering, no post-fence/expired launch, correct `RevocationPending` vs `Revoked`, correct `ProvenNotLaunched` vs `OutcomeUnknown`, safe denial of R2 and of unconfigured effects, and independent `ProcessConverged` evidence. See [Core protocol](../contracts/core-protocol.md).
 
 ### 2.2 Scoped ArtifactResolver
 
-Artifact IDs and ArtifactRefs are identifiers, not filesystem authority. The Host resolves payload bytes through a trusted ArtifactResolver using a server-side ScopedReadGrant bound to the exact handoff, artifact ID/digest/schema, consumer Task/DomainBinding, purpose, access mode, authorizing principal/policy version, expiry, and revocation epoch. No model-supplied path, producer workspace path, signed URL, or bearer secret is accepted as a payload locator.
+Artifact IDs and ArtifactRefs are identifiers, not filesystem authority. The Host resolves payload bytes through a trusted ArtifactResolver using a server-side ScopedReadGrant bound to the exact handoff, artifact ID/digest/schema, consumer Task/DomainBinding, purpose, access mode, authorizing principal and policy version, expiry, and the current `authority_epoch`. No model-supplied path, producer workspace path, signed URL, or bearer secret is accepted as a payload locator.
 
 The resolver verifies the artifact digest and grant before opening the payload and before each subsequent range/stream read. It exposes only the exact authorized payload; it does not traverse parent, derived-from, sibling, project, workspace, or producer-Task references. Each related artifact requires a separate grant. Grant material remains outside model context and ordinary tool output.
 
@@ -115,11 +137,39 @@ Host Ledger records physical facts such as request acceptance, process start, ex
 
 The two ledgers are separate. Reconciliation can establish what happened; it cannot make external side effects transactionally atomic with Kernel database writes.
 
+### 4.1 Receipt signing and key lifecycle (required properties, no algorithm selected)
+
+- Every receipt names its `key_id`; Kernel resolves `key_id` to a pinned public key from a **trust root** it holds, never from a key supplied by the Host in the same message. An unresolvable or unpinned `key_id` rejects the receipt.
+- Host key material lives in a Host keystore/HSM the signing process cannot export for arbitrary use; the signing service identity is distinct from the worker process identity and from the Kernel service identity ([Permissions](permissions.md) §2).
+- **Rotation overlap window:** a new key is published before use, and the old key remains verification-only for a declared overlap period. Kernel records both `key_id` and the signing-validity interval, so a receipt signed while its key was valid remains verifiable after rotation.
+- **Revoked key:** a receipt signed by a revoked key is accepted only if it verifies, its signing time is inside the key's validity interval, and the key is not recorded as compromised. If the key was compromised, or the signing time cannot be established, the receipt is `Quarantined` and cannot support completion; a re-issued receipt must be signed with a currently valid key.
+- Signing time is Host-asserted and is not trusted for authority. Kernel binds the receipt to its own arrival/receipt-import time and to the Host Ledger position; where a genuine timestamp is required, an authenticated external time source is required rather than a wall clock.
+- Nothing here selects an algorithm, certificate encoding, canonical-encoding library or trust-root delivery mechanism: those remain **OPEN** and must be fixed before any cryptographic claim is made.
+
+### 4.2 Ledger integrity, tamper evidence and storage failure
+
+- Both the Kernel Journal and the Host Ledger are append-only and **hash-chained**: each record commits to the previous record digest and its own sequence number. A gap in the chain is an integrity failure, not a warning.
+- The chain head is periodically **anchored outside** the owning database (Kernel-side anchor for the Host Ledger, and an independent anchor for the Journal) with a signed digest and sequence. Anchoring frequency and the anchor store remain build-time choices; the property is that tampering with a historical record is detectable without trusting the same operator.
+- Tamper evidence is not tamper prevention: an operator with write access to both a ledger and every anchor cannot be detected by this mechanism. That residual risk is accepted and must be stated in the deployment threat model.
+- Storage failure is fail-closed: on write failure, checksum/page-integrity failure, or detected chain discontinuity, the owner stops admitting new work for affected scopes, keeps existing holds and UNKNOWNs, and surfaces a typed storage fault. A record that cannot be durably written is not "committed", and no caller may treat a transport success as durability.
+- Disk full, corruption and restore are operational states with a required procedure: stop admission, preserve the last verified anchor and chain head, restore from backup into a **new** location, replay/verify the chain and every referenced receipt digest, and only then resume. A restore that cannot reproduce the anchored head is not a valid restore and cannot be used to claim prior completion evidence.
+
 ## 5. UNKNOWN and reconciliation
 
 If the Host has accepted a request but cannot provide a complete trusted result, the invocation is OutcomeUnknown. Do not convert it to FailedKnown because a process exited, a timeout occurred or a client disconnected.
 
 Reconcile using Host Ledger, signed receipt, target-system state and verified idempotency evidence. If the outcome remains unknown, preserve the block and execution ownership; do not blindly retry.
+
+**Reconciliation oracle per effect class (normative).** Each unresolved Invocation is bound to one row; "no oracle" is itself an answer that forbids resolution by retry.
+
+| Effect class | Oracle | Closure evidence | Max lifetime | Owner | Escalation | Reservation release |
+| --- | --- | --- | --- | --- | --- | --- |
+| Workspace/filesystem write | Host Ledger write record + target digest + publication fence + writer quiescence + acceptance snapshot | Pre-image/post-image digest pair, absence of a live writer/handle for the target, and a sealed snapshot containing the resulting content | Bounded by the Invocation's reconciliation deadline (a policy value; no unbounded wait) | Task owner (operator on expiry) | Typed hold + operator incident; no retry under the same Invocation | Only on proven no-effect or on final settled accounting; never on timeout |
+| Provider request | Authenticated provider status/billing lookup, or a qualified execution-and-billing dedup contract | Provider-issued status/usage for the exact request identity, or dedup proof accepted by the adapter | Provider-dependent, recorded on the Attempt | Gateway + budget owner | `ProviderOutcomeUnknown` retained; replacement needs a new admitted Attempt and budget | Retained at full maximum until trusted financial evidence |
+| External API mutation | Target revision/ETag/status endpoint | Exact target identity re-read plus a revision/ETag that proves the intended state or proves it absent | Bounded by target system's reconciliation window | Domain adapter + operator | Manual verification with the target owner; never replay the same idempotency key | As above (trusted evidence only) |
+| Render / long job | Staging digest + process/descendant and writable-handle convergence + output probe | Host staging identity/digest, convergence evidence, independent probe of the staged output | Bounded by Host reconciliation deadline | Host operator | Quarantine staging, keep target-conflict hold, no publication | Host resource reservation settles on measured usage; unknown usage stays held |
+
+**Single disposition rule.** At the reconciliation deadline: if the unresolved effect can still conflict with the accepted deliverable or a protected target, the Task fails with `UnresolvedEffect` and a **separate durable hold** remains (never a silent completion, never a retry). If no such conflict exists, the Task may stay `Open` with a persisted `WaitRecord` (`owner`, `max_wait_until`, `recovery_strategy`) that carries sole responsibility, and may complete only through the `G12 unknown_closure` check in [Completion](../contracts/completion.md) §6. A hold is cleared only by trusted reconciliation evidence, never by elapsed time. This mirrors the Kernel decision rule in [Data model](../contracts/kernel-data-model.md) and [Core protocol](../contracts/core-protocol.md).
 
 ## 6. Extensions and sub-agents
 
@@ -133,8 +183,8 @@ A long-running operation such as FFmpeg rendering remains a Kernel ToolInvocatio
 
 The Host must:
 
-- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, AuthorityFenceEpoch, tool snapshot, workspace/project generation, budget reservation ID/version, and fencing epoch;
-- enter the serialized LaunchGate and durably consume a one-use dispatch authorization bound to the current effective Active profile version/digest, AuthorityFenceEpoch, authority-version vector, workspace/project generation, and budget reservation at the physical process-creation boundary; a previously accepted plan, cached allowlist, or offline ticket is not sufficient;
+- bind a durable Host run/job ID to the exact ToolInvocation, AdmissionTicket, DomainBinding, Workflow Profile ID/version/digest, `authority_epoch`, tool snapshot, `workspace_generation`, budget reservation ID/version and `EffectPolicyId`;
+- enter the serialized LaunchGate and durably consume a one-use dispatch authorization bound to the current effective Active profile version/digest, `authority_epoch`, authority-version vector, `workspace_generation`, `ticket_epoch` and budget reservation at the physical process-creation boundary; a previously accepted plan, cached allowlist, or offline ticket is not sufficient;
 - serialize physical process creation against **Host-local fence installation** within the same eligible launch arbiter; the remote Kernel revocation request and OS spawn are not one transaction. If current authority or local ordering cannot be established, fail closed and do not create the process;
 - record process/job creation before reporting the operation as started;
 - contain the process tree and retain stdout/stderr/progress channels under the declared resource limits;
@@ -145,7 +195,7 @@ The Host must:
 
 A missing progress event, timeout, client disconnect, or kill request is not proof of process convergence. Recovery must reconcile the Host Ledger and target/output state before retry or publication. A profile revoked or superseded after plan approval invalidates any not-yet-consumed dispatch authorization. Revocation remains Pending until every eligible Host gate acknowledges the new fence or is verifiably disabled; a Host that cannot check current authority launches nothing. A launch boundary that linearized before the fence is an already-running invocation and follows the predeclared drain/cancel policy. UNKNOWN remains held and cannot be cleared by profile migration.
 
-For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md) and [FFmpeg RenderPlan security contract](../contracts/render-plan-security.md). These Host requirements are proposed and remain unverified until process-tree and crash-recovery tests exist.
+For media-specific staging, validation, retry, and publication rules, see [RenderJob contract](../contracts/render-job.md) and [FFmpeg RenderPlan security contract](../contracts/render-plan-security.md). These Host requirements are ACCEPTED for construction; their enforcement remains **UNVERIFIED / NOT RUN** until process-tree and crash-recovery tests exist.
 
 ### 7.1 Media render-specific Host obligations
 
@@ -162,9 +212,9 @@ FFmpeg may write only to a unique staging target. Host seals the output after pr
 
 ## 8. Verification status
 
-Production authentication, principal-to-OS identity binding, approval revocation propagation, sandbox enforcement, cgroup isolation, network policy, process-tree convergence, receipt signing, key rotation and cross-host recovery remain **UNVERIFIED**.
+Production authentication, principal-to-OS identity binding, approval revocation propagation, sandbox enforcement, cgroup isolation, network policy, process-tree convergence, receipt signing, key lifecycle/rotation, Journal and Ledger hash chaining/anchoring, disk-full/corruption handling, backup-and-restore verification and cross-host recovery remain **UNVERIFIED / NOT RUN**. No key, chain, anchor or receipt mechanism exists in this repository.
 
-## 9. Scheduling, bounded waits and physical termination (G0 candidate)
+## 9. Scheduling, bounded waits and physical termination (ACCEPTED for construction v0)
 
 Tool Runtime may queue or coalesce **proven read-only** observations and schedule disjoint work within declared Host resource dimensions; it never mints launch rights. Every invocation preserves unique identity, intent, reservation, timeout, conflict scope and the current one-use Host gate ticket. Host local gate/fence proof still serializes **physical spawn against local invalidations**, even when read-only requests are concurrently queued. Default same-Task write concurrency is one; any higher concurrency must show disjoint targets, isolated writable roots and absence of cross-process cache/handle interference.
 

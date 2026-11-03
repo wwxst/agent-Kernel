@@ -1,6 +1,8 @@
 # Context Engine
 
-> **Status: PROPOSED cross-domain context architecture.** Context infrastructure is shared; domain semantic projections remain independent. Retrieval, indexing, evidence projection, compaction, checkpoint, and memory implementations remain open and unverified.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); measurement design only; all targets are UNMEASURED and all runs NOT RUN.**
+>
+> Context infrastructure is shared; domain semantic projections remain independent. This document owns context assembly, the `ContextManifest` measurement fields and the context TARGET envelope. **Per-domain strategy values are owned by [Execution Strategy](../contracts/execution-strategy.md) (DES); record identity and digests by [Kernel data model](../contracts/kernel-data-model.md).** Where a value disagrees, DES wins for policy values and this document wins for manifest fields. Retrieval, indexing, evidence projection, compaction, checkpoint and memory *algorithms* remain OPEN; the ceilings in §11 are design targets to build against, not results.
 
 ## 1. Context is a projection, not authority
 
@@ -148,7 +150,7 @@ These are design requirements, not a claim that prompt injection is already solv
 
 ## 8. Context assembly and freshness
 
-**PROPOSED:** assemble context by decision purpose rather than replaying the entire repository or conversation on every ModelStep.
+**REQUIRED (normative; §11 defines the envelope and instrumentation):** assemble context by decision purpose rather than replaying the entire repository or conversation on every ModelStep.
 
 Priority order:
 
@@ -163,7 +165,7 @@ Large files and command output should be sliced, summarized with provenance, or 
 
 Invalidate or refresh context when the base commit, file hash, workspace generation, dependency lock, environment digest, tool snapshot, plan, policy, approval, or budget version changes. Index freshness must be explicit; stale symbol maps cannot be treated as current facts.
 
-Token budgeting and retrieval ranking remain **OPEN** and must be evaluated on task success and evidence recall, not only prompt size.
+Token budgeting *values* are now fixed as **TARGET ceilings** in §11 — design targets, UNMEASURED. Retrieval *ranking* algorithms remain **OPEN** and must be evaluated on task success and evidence recall, not only prompt size. A ceiling is an upper bound to design against; it is never evidence that the budget was met or that context was sufficient.
 
 ## 9. Checkpoint integrity, recovery, and compaction
 
@@ -212,14 +214,58 @@ Memory is separate from task-progress checkpoints. Candidate memory must have so
 
 Initial lifecycle: Candidate → Active / Rejected; Active may become Stale, Superseded, or Expired. Project Memory binds to project identity and source commit/file hashes. Source changes can make it stale. User and project memory have separate scope and authorization. Memory is never a substitute for TaskState, Approval, Tool Receipt, or VerificationReport.
 
-Retrieval algorithms, symbol indexing, evidence-graph projection, token budgeting, compaction policy, memory extraction/retention, and long-context evaluation remain **OPEN / UNVERIFIED**.
+Retrieval algorithms, symbol indexing, evidence-graph projection, compaction policy, memory extraction/retention, and long-context evaluation remain **OPEN / UNVERIFIED**. Token budget values are fixed as TARGET ceilings in §11; whether those ceilings are achievable without evidence loss is **UNMEASURED**.
 
-## 11. Latency and Token envelope — implementation candidate (PROPOSED)
+## 11. Context TARGET envelope and `ContextManifest` instrumentation
 
-One **lazy** context assembler builds purpose-scoped views for Strategic/Tactical/Assurance; do not create three resident context stores or re-summarize the full history on every command. Each assembly records `{task, purpose, goal/plan/profile digests, requested criterion/step, trusted snapshot generation, source IDs+digests, redaction policy version, tokenizer/model, output budget, assembly policy version}`. The resulting `ContextManifest` names raw sources, compacted sources, omitted sources and truncation reasons. Untrusted repository/media/Office content is quoted as data with explicit provenance, not inserted as system instructions.
+One **lazy** context assembler builds purpose-scoped views for Strategic/Tactical/Assurance; do not create three resident context stores or re-summarize the full history on every command. Untrusted repository/media/Office content is quoted as data with explicit provenance, not inserted as system instructions.
 
-**Incremental selection:** begin with accepted goal/constraints, current PlanStep, unresolved UNKNOWN/approvals, latest relevant receipts and evidence gaps; then retrieve smallest authorized file ranges/symbols, changed diffs, shot ranges/transcript spans or Office sections as needed. Prefer structural discovery (`rg`/symbol index, ffprobe/shot manifest, range index) to dumping entire repositories or all source frames. Cache immutable observations by source digest + tool/parser/version + scope + privacy policy, never by path or summary text alone. A source change invalidates dependent entries via declared read-sets; unrelated caches remain reusable. Cross-domain artifacts require a new scoped grant before even constructing a cache key; a cache must not leak previously accessible bytes after revocation.
+### 11.1 TARGET ceilings — design values, never results
 
-**Budget pressure:** reserve output plus required verification/repair Tokens before admitting exploratory model work. Apply explicit per-purpose input ceilings, retrieved-item caps and output trimming with `was_truncated` and source cursor; an observation that could be incomplete must not become positive verification evidence. Deduplicate exact repeated tool outputs, retain digests/cursors, and only expand on semantic uncertainty or failed acceptance. Keep a small stable prefix only when provider caching semantics/fees have been checked. Cache accounting includes writes/reads, transformed input and extra modalities per [Model and Budget](../contracts/model-and-budget.md).
+Ceilings are supplied per Task by the bound strategy ([DES](../contracts/execution-strategy.md) `context.input_token_ceiling`, `context.retrieved_item_cap`) and enforced here **before** a model call. The values below are the reference values DES §7 cites; status is **TARGET / UNMEASURED / ratifiable only at PE**. They are upper bounds to design against: exceeding one produces a recorded truncation, never a silent overrun, and no value here is a measurement.
 
-**Ablations:** compare eager full-history and staged fixed-mode baselines against this approach with matched accepted criteria, budgets, tools, model and Host. Record context Tokens by source class, retrieval precision/coverage, stale-cache errors, cache hit/miss, summarization calls, omitted evidence defects, task success/false completion and P50/P95; reductions in Tokens alone cannot pass if quality/safety degrades. No Token savings are claimed prior to runtime benchmarks.
+| Domain (DES reference strategy) | `planning` | `tactical` | `assurance` |
+| --- | --- | --- | --- |
+| Coding | 24k | 16k | 20k |
+| Video | 20k | 12k | 16k |
+| Default (any other domain) | 16k | 8k | 12k |
+
+The Coding and Video rows are the values DES §7 cites. The default row is this document's starting point for any domain DES does not tabulate (Office, Browser, future); the owning strategy must still declare its own values and pass DES validation.
+
+| Cap | Value (TARGET / UNMEASURED) | Enforcement |
+| --- | --- | --- |
+| `retrieved_item_cap` | planning 40 / tactical 20 / assurance 24 distinct sources | over-cap source is listed in `omitted_reasons[]`, never silently dropped |
+| `assemblies_per_step_max` | 2 (initial + one refresh after a protected read-set invalidation) | a third assembly requires a new ModelStep |
+| `assembly_deadline_ms` | 3000 / 1500 / 3000 (throwaway defaults) | expiry yields a partial manifest with `was_truncated=true`, never a blocking wait |
+
+**Rules.** A strategy may lower any ceiling, never raise it above the profile envelope. A ceiling governs *retrieval*, never an evidence obligation: a criterion-critical source that does not fit is listed in `omitted_reasons[]` and the affected criterion is `Unverified`, never `Pass`. Ceilings are tokenizer-specific; the tokenizer identity is part of the manifest.
+
+### 11.2 `ContextManifest` — required measurement fields
+
+Every assembly is exactly one `kind=context` span in the run trace. `ContextManifest` is a Context Engine projection record, not a Kernel authority record: Kernel binds only its digest (`ModelStep.binding.context_manifest_digest`, [Kernel data model](../contracts/kernel-data-model.md#36-modelstep-modelattempt-candidate)). The field names below are normative for that projection; if the data model later registers `ContextManifest` as a Kernel record, the data model wins for shape and this list becomes the measurement requirement that shape must satisfy.
+
+| Field | Definition |
+| --- | --- |
+| `assembly_id`, `span_id`, `model_step_id` | Join keys; `span_id` joins the assembly to the run's span records |
+| `purpose`, digests | purpose plus goal/plan/profile/strategy/redaction-policy/tokenizer/assembly-policy digests |
+| `input_tokens_by_source_class` | Measured tokens per class: policy, goal/criteria, plan/step, source-file/symbol, diff, tool-output, summary, conversation-history, `domain_evidence_refs`, media-reference. Their sum is `input_tokens`; a class without tokenizer attribution is reported separately, **never as zero** |
+| `output_budget`, `output_tokens` | Reserved versus used output capacity |
+| `assembly_ms` | Request-to-manifest latency, attributed to the context span, never to a model call |
+| `cache` | `{lookup, hit, miss_by_class[], hit_by_class[], stale_cache_errors}` |
+| `items[]` | `{source_kind, source_ref, digest, token_estimate, was_truncated, cursor, cache_state}` |
+| `omitted_reasons[]` | `{source_ref, reason: ceiling\|item_cap\|deadline\|access_denied\|not_found\|stale, criterion_ids[]}` |
+| `evidence_omission_rate` | See below |
+
+`evidence_omission_rate = |criterion-critical sources absent from this manifest| / |criterion-critical sources required by the accepted criteria|`, computed against the authoritative index and the harness oracle — never against the model's own summary and never self-reported. The assembler records the numerator it can observe; the **gate value** is recomputed post hoc ([Shared evaluation §9](../research/shared-kernel/evaluation.md)).
+
+`stale_cache_errors` counts cache hits whose entry would fail the invalidation predicate when re-checked against the authoritative source at hit time. A hit is valid only after that re-check; a mismatch is a forced miss plus one recorded error.
+
+### 11.3 Cache key and invalidation predicate
+
+`cache_key = digest(canonical_source_bytes) ⊕ tool_or_parser_id+version ⊕ scope_id ⊕ privacy_or_access_class+revocation_epoch ⊕ transform_parameters_digest`. A path, filename, summary text, capture time or model-chosen label is **never** part of the key (DES floor F9). Invalidate a dependent entry iff any key component changed, its `ttl_class` expired, or a `ScopedReadGrant` was revoked; unrelated entries stay reusable. A source change invalidates dependents through declared read-sets — never a global flush, and never a rebuild of unrelated projections. Cross-domain bytes require a new scoped grant before a key can even be constructed; a cache never serves bytes that were accessible only under a now-revoked grant.
+
+**Incremental selection:** begin with accepted goal/constraints, current PlanStep, unresolved UNKNOWN/approvals, latest relevant receipts and evidence gaps; then retrieve the smallest authorized file ranges/symbols, changed diffs, shot ranges/transcript spans or Office sections. Prefer structural discovery (`rg`/symbol index, ffprobe/shot manifest, range index) to dumping entire repositories or all source frames.
+
+**Budget pressure:** reserve output plus required verification/repair Tokens before admitting exploratory model work ([Model and Budget](../contracts/model-and-budget.md)). Apply the §11.1 ceilings and output trimming with `was_truncated` and source cursor; an observation that could be incomplete must not become positive verification evidence. Deduplicate exact repeated tool outputs by digest+cursor and expand only on semantic uncertainty or failed acceptance. Keep a small stable prefix only when provider caching semantics/fees have been checked. Cache accounting includes writes/reads, transformed input and extra modalities.
+
+**Ablations:** compare eager full-history and staged fixed-mode baselines against this approach with matched accepted criteria, budgets, tools, model and Host. Record context Tokens by source class, retrieval precision/coverage, stale-cache errors, cache hit/miss, summarization calls, omitted evidence defects, task success/false completion and P50/P95; reductions in Tokens alone cannot pass if quality or safety degrades. Metric definitions, the percentile method, the cost gate and the shadow audit are owned by [Shared evaluation §9](../research/shared-kernel/evaluation.md). No Token or latency saving is claimed before **PE** evidence.

@@ -1,6 +1,6 @@
 # PlanRevision and PlanStep lifecycle contract
 
-> **Status: PROPOSED second-round and cross-domain contract.** The original PlanRevision/PlanStep lifecycle remains shared. DomainBinding and typed domain payloads extend its envelopes; this document does not approve a runtime implementation, storage schema, or technology choice.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** Scope: PlanRevision and PlanStep lifecycle, deterministic acceptance boundary, orthogonal work/verification state, carry-forward and cutover. Record shapes and enums are owned by the [Kernel data model](kernel-data-model.md), domain execution policy by [Execution Strategy](execution-strategy.md), and principal/approval semantics by [Permissions](../security/permissions.md). This document does not approve a runtime implementation, storage schema, or technology choice.
 
 ## 1. Purpose and authority
 
@@ -163,13 +163,13 @@ Semantic responsibilities retained by Orchestration:
 
 Kernel must not call a model, inspect source code to judge architecture quality, or become a second Planner as part of PlanRevision acceptance.
 
-### 4.1 Minimal plan and selective contention (PROPOSED)
+### 4.1 Minimal plan and selective contention
 
-An accepted PlanRevision is one immutable **structural outcome contract**, not a record of every tool decision. L0 tactics and L1 bounded rework do not generate new revisions. A PlanStep retains objective, dependencies, preconditions, authority/effect envelope, artifact obligation and criterion links. WorkStatus and VerificationStatus in section 5 are **event-derived views** over PlanStep/Invocation facts and criterion evidence, not independent mutable authorities requiring a TaskControl transaction. A normal Host receipt does not stale an unrelated proposal simply by advancing a global Journal sequence. A structural PlanCandidate still requires TaskControlVersion/current-plan pointer equality; an Invocation validates only its relevant Plan/Authority/Workspace/Budget read-set.
+An accepted PlanRevision is one immutable **structural outcome contract**, not a record of every tool decision. L0 tactics and L1 bounded rework do not generate new revisions. A PlanStep retains objective, dependencies, preconditions, authority/effect envelope, artifact obligation and criterion links. WorkStatus and VerificationStatus are **persisted, event-sourced PlanStep state** (section 5) with a per-step `plan_step_version`; they are not derived views, not independent approval authorities, and never advance `taskControlVersion`. A normal Host receipt does not stale an unrelated proposal simply by advancing a global Journal sequence. A structural PlanCandidate still requires TaskControlVersion/current-plan pointer equality; an Invocation validates only its relevant Plan/Authority/Workspace/Budget read-set.
 
 ## 5. PlanStep: orthogonal work and verification state
 
-A PlanStep has two independent current-state dimensions. The append-only event/evidence history preserves every prior attempt and verdict.
+A PlanStep has two independent current-state dimensions, each **persisted** state changed only by a `PlanStepStatusChanged` event that CASes the step's `plan_step_version`, records a cause event and appends to the immutable history. Admission reads the step version and precondition digest as part of its read-set; a stale step version rejects admission with `StaleBinding`/`VersionConflict`. The append-only event/evidence history preserves every prior attempt and verdict.
 
 ### WorkStatus
 
@@ -180,7 +180,7 @@ NotStarted, Ready, Running, Blocked, Completed, Superseded.
 - Completed → Running is permitted only through an explicit, authorized PlanStepReworkStarted event. It starts a new work attempt; it does not erase the prior completed artifact set.
 - Any non-superseded status may become Superseded only through an accepted plan cutover. Superseded steps are immutable history and cannot be reactivated in place.
 
-FailedKnown is not a PlanStep WorkStatus. It belongs to a ModelAttempt or ToolInvocation. A failed command does not prove the engineering outcome is impossible. Orchestration may diagnose, retry safely, rework, block, or replan.
+Only these guards write WorkStatus. FailedKnown is not a PlanStep WorkStatus. It belongs to a ModelAttempt or ToolInvocation. A failed command does not prove the engineering outcome is impossible. Orchestration may diagnose, retry safely, rework, block, or replan.
 
 ### VerificationStatus
 
@@ -192,6 +192,21 @@ NotRequired, Pending, Running, Passed, Failed, Stale, Inconclusive.
 - A previously Passed result becomes Stale when any bound artifact, workspace generation, environment, dependency, criterion, GoalContract, or evidence source is invalidated.
 - Inconclusive is not a pass. It returns to Pending only after new evidence or a changed verification method is recorded.
 - NotRequired must be justified by the accepted PlanRevision and cannot be used to omit a required Task-level acceptance criterion.
+
+### 5.1 Invalidation rule (which change stales which state)
+
+A `PlanStepStatusChanged(Stale)` is required for exactly the steps and criteria whose evidence or preconditions depend on the changed binding; the mapping is deterministic, recorded, and never broader than this table:
+
+| Changed protected binding | Invalidated state |
+| --- | --- |
+| GoalContract version, or a criterion's version/meaning | Every step mapped to a changed criterion, and every criterion evidence binding for it |
+| PlanRevision cutover (new revision Active) | All steps of the previous revision become `Superseded`; carried-forward work enters as new steps with explicit lineage |
+| `workspace_generation`, source snapshot or `project_snapshot` | Every step whose artifact or evidence `freshness_basis` names the changed generation |
+| Tool definition, environment, toolchain or dependency-lock digest | Every verification that declares the changed tool/environment/lock |
+| Artifact digest change, replacement or removal | Every evidence binding that references that artifact |
+| Authority/approval revocation with no digest change | No work/verification state changes; admissions and launch rights stop per Host fence and Permissions contract |
+
+A binding change with no matching row does not stale anything. Staling is append-only: re-verification moves the step to `Pending` and requires fresh evidence, never a copied PASS.
 
 A PlanStep is not Task completion. Completion Guard evaluates the Task's complete acceptance-criteria contract and current evidence.
 
@@ -215,7 +230,7 @@ Completed work that is no longer needed remains in the old revision's history an
 
 ## 7. Concurrency, invocation binding, and UNKNOWN
 
-Every ToolInvocation binds the exact Task, PlanRevision, PlanStep, ActionProposal item, tool definition/version, canonical argument digest, workspace generation, policy/approval evidence, budget reservation, and fencing epoch.
+Every ToolInvocation binds the exact Task, PlanRevision, PlanStep, the step's `plan_step_version` and precondition digest, ActionProposal item, tool definition/version, canonical argument digest, workspace generation, policy/approval evidence, budget reservation, and fencing epoch.
 
 The L2 plan-switch barrier is linearized in Kernel TaskControl CAS and Journal; only L2 structural cutover, cancellation, changed intent and terminal Task control require this CAS. Routine Invocation/ModelStep/Host receipt/budget events use their own aggregate versions and selective snapshot/authority binding checks:
 
@@ -251,10 +266,10 @@ All runtime transition atomicity, concurrent admission behavior, and recovery pr
 
 The common PlanRevision lifecycle is reused by both domains; domain-specific semantics remain in typed payloads.
 
-- The Task and PlanRevision bind one immutable DomainBinding and Workflow Profile version.
+- The Task and PlanRevision bind one immutable DomainBinding and Workflow Profile version, including the `DomainBinding.strategy_ref` whose body is defined by the Execution Strategy contract.
 - Each PlanStep may carry a domain_step_payload with schema ID/version, expected domain artifact kinds, and domain-specific evidence obligations.
-- Coding payloads may describe repository inspection, implementation, test, migration, and compatibility work.
-- Video payloads may describe media probing, shot/audio analysis, source-range selection, TimelineRevision creation, rendering, and output inspection.
+- Coding payloads may describe repository inspection, implementation, test, migration, and compatibility work. The first Coding PlanStep kind enum is `coding.plan-step@0.1`: `Inspect | Implement | Test | Migrate | Compatibility | Diagnose`. Every kind declares required fields (target, expected artifact, evidence obligation, recovery disposition); the full per-kind field registry lives in the Coding Domain Intelligence design. Kernel validates the enum, required fields and payload digest; it does not interpret the kind.
+- Video payloads may describe media probing, shot/audio analysis, source-range selection, TimelineRevision creation, rendering, and output inspection; its kinds are registered by the Video profile, not by Kernel.
 - Kernel validates schema, identity, version, DAG, scope, capability/effect envelope, budget, and artifact references. It does not judge code quality, narrative coherence, shot selection, or edit pacing.
 - A Workflow Profile cannot grant permission. Every invocation is still admitted under current Kernel policy, principal, approval, budget, Host, and fencing state.
 

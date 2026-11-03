@@ -1,6 +1,8 @@
 # Shared Agent Kernel — Cross-Domain Evaluation Protocol
 
-> **Status: PROPOSED.** This protocol defines the shared Kernel safety, authority, lifecycle, and recovery measures for Autonomous Coding and Autonomous Video Editing. Domain quality remains separately evaluated. No Runtime, fault-injection, benchmark, or media-processing run is reported.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); measurement design only; all targets are UNMEASURED and all runs NOT RUN.**
+>
+> This protocol defines the shared Kernel safety, authority, lifecycle, recovery and cost-measurement measures. Domain quality remains separately evaluated. Gate labels are DF / SA / PE / VI (§9.0); legacy G0–G5 labels in historical records map onto them. No runtime, fault-injection, benchmark or media-processing run is reported.
 
 ## 1. Evaluation objective
 
@@ -100,7 +102,7 @@ At minimum, prepare deterministic scenarios for:
 43. **G2 sealed read-only SourceSnapshot:** run tests/build on authenticated read-only input mount with disjoint writable output/cache; assert execution-view/source identity, generated outputs do not stale inputs, no mandatory full file tracing.
 44. **G2 unsafe overlay/symlink or unsupported toolchain:** attempt to shadow protected script/config or write source via overlay; block or mark evidence Invalid. A toolchain needing in-source writes with no redirect remains Unsupported/Unverified, not Passed.
 
-**Normalized fixture protocol:** For 34–44 use [Core protocol G1/G2 cases M1–M6, R5–R7, S1–S3](../../contracts/core-protocol.md). Every run records initial durable K/G/H facts, the injected event boundary, event IDs, exact Provider request count and bill count, original/new reservations, effect/Host process count, eventual projection, and allowed next action. **G1 PASS** requires no duplicate unqualified Provider send, no lost charge exposure and correct reservation/concurrency behavior. **G2 PASS** requires Host fence/expiry/risk ordering and a sealed execution view or correctly rejected Unsupported evidence. A safe blocked outcome is *not* a successful autonomous task completion. Currently **NOT RUN**.
+**Normalized fixture protocol:** For 34–44 use [Core protocol G1/G2 cases M1–M6, R5–R7, S1–S3](../../contracts/core-protocol.md). Every run records initial durable K/G/H facts, the injected event boundary, event IDs, exact Provider request count and bill count, original/new reservations, effect/Host process count, eventual projection, and allowed next action. **G1 PASS** requires no duplicate unqualified Provider send, no lost charge exposure and correct reservation/concurrency behavior. **G2 PASS** requires Host fence/expiry/risk ordering and a sealed execution view or correctly rejected Unsupported evidence. A safe blocked outcome is *not* a successful autonomous task completion. Currently **NOT RUN**. Naming note: the `G1`/`G2` labels in scenarios 34–44 are retained as historical fixture-group names for cross-reference with the Core protocol; they denote **PE**-level evidence classes (§9.0), not a separate gate hierarchy.
 
 Use analogous domain fixtures where meaningful: a repository build/test process for Coding and an FFmpeg RenderJob for Video. The exact host process, resource dimensions, and artifacts differ, while the admission, receipt, cancellation, UNKNOWN, and recovery invariants remain the same.
 
@@ -133,7 +135,7 @@ The following are **qualitative blocker conditions**, not invented numeric thres
 - any unbounded hard-budget bypass or unaccounted Host consumption;
 - any cancellation marked complete while a process/descendant can still mutate the target.
 
-Numeric service levels, acceptable rates, and latency targets remain **OPEN** until the implementation and supported Host environments are known and measured baselines exist. Establish the fault-injection fixtures and metric definitions before selecting numeric targets.
+Numeric service levels are **provisional hypotheses**: §9.6 fixes their *form* now, their *values* are ratifiable only at **DF** after **PE** baselines exist, and none is approved today. Establish the fault-injection fixtures and metric definitions before debating values.
 
 A runtime or fault-injection baseline requires separate explicit authorization of implementation, Host environment, tools, budgets, and stop conditions. This architecture protocol does not authorize those runs.
 
@@ -147,32 +149,115 @@ Each domain report should include the shared Kernel metrics for its own runs and
 
 ## 8. Current status
 
-- Shared metric definitions: **DRAFTED**.
+- Shared metric definitions: **DRAFTED** — cost/exposure §9.1, percentiles §9.2, shadow audit §9.3.
 - Cross-domain fault-injection fixtures: **NOT BUILT**.
 - Runtime/fault-injection runs: **NOT RUN**.
-- Numeric safety/service thresholds: **OPEN**.
-- Kernel safety and recovery properties: **UNVERIFIED**.
+- Numeric thresholds and context ceilings: **PROVISIONAL HYPOTHESES**, ratifiable at **DF**.
+- Harness self-validation controls and the architecture-selection experiment A1–A4 (§9.4, §9.5): **NOT RUN**.
+- Kernel safety, recovery and cost properties: **UNVERIFIED**.
 
-## 9. Construction-level benchmark and regression contract (G0 candidate)
+## 9. Construction-level benchmark and regression contract (DF baseline; measurement design; NOT RUN)
 
-**Measurement design; NOT RUN.** Every `RunRecord` binds `scenario_id, task_set/seed, arm, source_artifact_digests, accepted_criteria, model/pricing/profile/host versions, budget_caps, monotonic_start/end, terminal_status/reason, criterion_verdicts, safety_incidents, spans, resource_samples, reserved_liability, settled_cost, unresolved_exposure, result_artifacts`. Spans carry `kind=context|model|queue|tool|Host|render|verify|recovery`, correlation/parent IDs, start/end, token in/out/reasoning/cache/modalities, wait reason, digest, retry and disposition. E2E is the critical-path wall time, **not the sum of parallel span durations**. Report blocked human wait separately and never turn unknown cost or missing telemetry into zero.
+**Measurement design; NOT RUN.** Every `RunRecord` binds `scenario_id, task_set/seed, arm, source_artifact_digests, accepted_criteria, model/pricing/profile/host versions, strategy_ref_digest, context_manifest_ids[], budget_caps, monotonic_start/end, terminal_status/reason, criterion_verdicts, safety_incidents, spans, resource_samples, reserved_liability, settled_cost, unresolved_exposure, result_artifacts`. Spans carry `kind=context|model|queue|tool|Host|render|verify|recovery`, correlation/parent IDs, start/end, token in/out/reasoning/cache/modalities, wait reason, digest, retry and disposition. E2E is the critical-path wall time, **not the sum of parallel span durations**. Report blocked human wait separately and never turn unknown cost or missing telemetry into zero.
 
 | Metric | Exact computation / treatment |
 | --- | --- |
 | Success | Terminal Completed with all independent required criteria PASS / all admitted benchmark tasks; failures, timeouts and safe refusals remain in denominator and are separately categorized |
-| Incorrect completion | Completed with any stale/missing/failed mandatory criterion / all Completed; also enumerate severity against all tasks |
+| Incorrect completion | Completed with any stale/missing/failed mandatory criterion / all Completed; also enumerate severity against all tasks, and report the gate denominator from §9.1 rule 2 |
 | Terminal correctness | Due tasks with exactly one legal terminal disposition or explicit safe UNKNOWN/incident hold / all due tasks; unresolved effects must not be called converged |
 | P50/P95 | End-to-end and separated model, tool queue, Host wait, render, recovery and user wait; pinned monotonic spans |
 | Model and Token cost | Admitted/attempted/selected/UNKNOWN model requests, input/output/reasoning/cache/modal tokens and provider-version settled charge plus retained maximum exposure |
 | Tool efficiency | Distinct versus repeated `tool+arguments+input snapshot+purpose` calls, tool wait and no-progress loops; record beneficial deliberate repeats separately |
 | Resources | CPU/GPU time, peak RSS, disk/output bytes, workers and saturation, orphan descendants and cancellation-to-convergence |
 | Recovery | Restart-to-safe-resume/typed stop, unsafe replay count, duplicate effects, outstanding UNKNOWN age, expired-authority rejection |
-| Context fidelity | Token share by raw/retrieved/summary, cache hit/invalidation, missed required evidence and stale-citation defects |
+| Context fidelity | Token share by raw/retrieved/summary, cache hit/invalidation, missed required evidence and stale-citation defects; assembly latency and assembly count per ModelStep |
 
-**Executable matrix:** existing sequential shared fault scenarios (1–44), Core M1–M6, Host R1–R7/S1–S3/V1–V3, [Coding C-01–C-12](../autonomous-coding-agent/evaluation.md), [Video V-01–V-10](../multimedia-domain-architecture/evaluation.md), and [Office/extension X1–X8](../../contracts/domain-extension.md). Include normal/simple, complex, long/recovery, concurrent/resource pressure, cancellation, expired approval, provider ACK loss, duplicate/out-of-order Outboxes, changed source/overlay shadow, process-tree leak and false-completion traps. Fault injector records event interleavings/seeds and an independent outcome oracle. K/G/H mocks establish protocol properties only; real Host enforcement requires named-OS G2 tests.
+### 9.0 Gate model and labels (naming only, no evidence)
+
+| Label | Meaning | Needs runtime evidence |
+| --- | --- | --- |
+| **DF** | Design Freeze: contracts, metric definitions, fixture set and threshold *form* agreed | No |
+| **SA** | Spike Authorization: explicit authorization to build a disposable harness or spike | No — authorization only |
+| **PE** | Prototype Evidence: executed fixtures/benchmarks on a named environment | Yes |
+| **VI** | Verified Implementation: implementation-level verification on supported environments | Yes |
+
+RFI is the construction-baseline instance of DF. A DF freeze — document review, link check or static walk-through — is **never** PE or VI, and no DF artifact may be cited as runtime evidence.
+
+### 9.1 Cost, exposure and denominators (normative formulas)
+
+- `settled_cost(task) = Σ CostRecord.settled_amount` over the task's funding scopes, including `late=true` records (append-only). A late cost is attributed to the run that incurred it, never to a later run.
+- `retained_exposure(task) = Σ Reservation.maximum` for every Reservation in `Reserved | ProvisionallyAccounted | HeldUnknown` — losing/concurrent Attempts, cancelled-but-unconfirmed and `ProviderOutcomeUnknown` included. Missing usage is never zero.
+- `exposure_adjusted_cost(task) = settled_cost(task) + retained_exposure(task)`.
+- `cost_per_verified_success = Σ_task exposure_adjusted_cost(task) / |{tasks : every required independent criterion PASS}|`.
+
+Rules. (1) **No cost gate may use `settled_cost` alone**; settled cost is diagnostic only. (2) Denominators are all admitted benchmark tasks, including failures, timeouts and safe refusals. A task that terminated Completed with a stale, missing or failed mandatory criterion counts as **not** a verified success, and `incorrect completion` is reported against all admitted tasks — the `/Completed` view is diagnostic. (3) Cost is reported per task in provider-pricing-snapshot currency (minor units) and separately as tokens; a token-only ratio is diagnostic and must name the tokenizer. (4) Report `retained_exposure` and settlement age both at run end **and** at report time, so exposure that settles later cannot vanish. (5) Harness spend is separate from task spend (§9.4).
+
+### 9.2 Percentiles, censoring and inference
+
+- **Method:** P50/P95 by linear interpolation over the ordered sample; the method is declared in every result and never switched between arms.
+- **Sample unit:** one run; report `N_runs` and `N_tasks` alongside every percentile.
+- **Censoring:** a run ending Blocked/UNKNOWN/deadline is not dropped. Each latency percentile is reported twice — (a) all runs, with censored runs at the worst observed rank (**gate value**), and (b) completed runs only (diagnostic). A failed run never improves a percentile.
+- **Pooling:** never pool across domains, task sets, model/provider versions or arms. Within one domain+task_set+arm, repeated runs are pooled only if `repeat_mode` is recorded; otherwise take the per-task median first and percentile the medians, and state which was used.
+- **Primary endpoint:** exactly one pre-registered per experiment (default: verified-success rate). Cost and latency are co-primary only if declared before the run, otherwise secondary and multiplicity-corrected.
+- **Intervals:** paired differences use a paired one-sided 95% CI (bootstrap acceptable: resampling unit = task, ≥10k resamples, seed recorded). Single-arm rates (false completion, missed defect) use the Wilson score interval at 95%.
+- **Multiplicity:** Holm–Bonferroni across strata and secondary metrics; report adjusted and unadjusted values.
+- **INCONCLUSIVE:** a CI too wide to exclude the non-inferiority margin is **INCONCLUSIVE**, never PASS. Size from observed paired variance after a ≥30-case-per-stratum pilot; 200/domain remains a planning estimate, not guaranteed power.
+
+### 9.3 Assurance-floor evidence — shadow audit (gate prerequisite)
+
+The sampling obligation and trigger classes are owned by `verification_policy` ([Completion](../../contracts/completion.md)); this protocol owns the recorded fields, the metrics and the gate condition, and does not restate policy fields.
+
+Every run records `verifier_trigger_class`, `shadow_audited`, `shadow_audit_disposition`, `shadow_audit_cost`. Per trigger class report:
+
+- `verifier_sensitivity = defects caught by review / defects present`, and `verifier_specificity = clean artifacts not blocked / clean artifacts`, where "defect present" is established by an independent oracle or hidden test — **never by the reviewer under test**;
+- `false_block_rate = blocked-clean / clean`;
+- `missed_defect_rate = independently confirmed defects among skipped reviews / skipped reviews`.
+
+A gate **cannot pass** on a stratum whose skipped reviews have no shadow audit: absent audit means `SKIP`, not PASS. A sample rate of zero is invalid for any profile that permits skipped semantic review. Reviewer model-vs-human mix and blinding class are reported, and sensitivity is never inferred from agreement between two non-independent reviewers.
+
+**Executable matrix:** existing sequential shared fault scenarios (1–44), Core M1–M6, Host R1–R7/S1–S3/V1–V3, [Coding C-01–C-15](../autonomous-coding-agent/evaluation.md), [Video V-01–V-13](../multimedia-domain-architecture/evaluation.md), and [Office/extension X1–X13](../../contracts/domain-extension.md). Include normal/simple, complex, long/recovery, concurrent/resource pressure, cancellation, expired approval, provider ACK loss, duplicate/out-of-order Outboxes, changed source/overlay shadow, process-tree leak and false-completion traps. Fault injector records event interleavings/seeds and an independent outcome oracle. K/G/H mocks establish protocol properties only; real Host enforcement requires named-OS **PE** tests.
 
 **Fair controls:** freeze prompt, source digest, accepted criteria, mandatory verification floor, model/provider/pricing, Host isolation, tool snapshot, budgets, hidden oracles and approval policy. Compare A (safe single-controller loop, fixed fresh Verifier, eager context and serial tools) with B (same loop, risk-triggered Verifier, incremental context, bounded isolated reads, event-driven Host progress and L0/L1 fast path). Randomize paired order and isolate each optimization; report all incomplete and failed tasks. Do **not** compare a candidate against a weaker-safety or higher-budget control.
 
-**Proposed thresholds requiring owner G0 calibration (NOT measured):** (1) deterministic safety/fence/UNKNOWN/false-terminal tests: 100% expected outcomes, zero unauthorized/non-idempotent duplicate effects or false high-severity Completed; (2) success point estimates never below matched control by domain/stratum, one-sided 95% paired lower CI of success difference at least -1 percentage point after power analysis, Video blinded content quality non-inferior; (3) at least 10% repeatable median improvement in *either* latency or fully exposure-adjusted cost with p95 E2E no worse than 1.05× control and no unapproved Token/resource regression; (4) all injected cancel/restart/timeout cases reach terminal or durable owned wait/UNKNOWN disposition with zero blind replays; (5) if CIs are too wide, mark **INCONCLUSIVE**, never PASS. Pilot at least 30 cases per stratum where practical, then calculate sample size from observed paired variance (200/domain is a **planning estimate**, not guaranteed power). Preserve raw traces, exclusions, censoring, bills, Host specs, reviewer disagreements and exact commits.
+### 9.4 Harness self-validation and measurement cost
 
-**Results schema:** `gate, fixture, environment, build_sha, arm, N, PASS|FAIL|NOT_RUN|SKIP|PARTIAL|UNVERIFIED, trace_links, estimates/CI, limitations, reviewer, owner_disposition`. A specification or Markdown link check is not test execution. Static G0 success cannot promote G1–G5.
+**Cheating controls that must FAIL.** Each N-arm goes through the same gate as a candidate; if it PASSES, the harness is invalid and the run's results are void.
+
+| N-arm | Injected behaviour | Gate that must trip |
+| --- | --- | --- |
+| `N0 verifier disabled` | Mandatory semantic review skipped | False-completion blocker or §9.3 `missed_defect_rate` |
+| `N1 reserve starved` | Verification/repair reserve set to zero | Success or evidence-coverage non-inferiority |
+| `N2 oracle weakened` | Protected independent test replaced by an implementer-authored one | Independence-class check in Completion Guard |
+| `N3 unknown dropped` | Unresolved UNKNOWN omitted from cost or terminal accounting | §9.1 `retained_exposure` and terminal correctness |
+| `N4 latency censored` | Blocked/timeout runs dropped from percentiles | §9.2 censoring rule |
+
+**Measurement cost is budgeted.** Each experiment declares `run_count = tasks × arms × repeats × ablations`, `budget_per_run`, `total_measurement_budget`, `authorization_ref`, and reports `measured_spend`. Exceeding the declared budget stops the experiment and reports `PARTIAL`. Harness spend is never charged to an arm's cost metric.
+
+### 9.5 Architecture-selection experiment (adversarial; NOT RUN)
+
+Four arms over identical task sets, model/provider versions, budget caps, safety floor, hidden oracles, Host profile and approval policy:
+
+| Arm | Design |
+| --- | --- |
+| **A1** | Unified Kernel + domain adapter (this design) |
+| **A2** | Two independent domain agents, no shared Kernel |
+| **A3** | Generic durable-workflow engine + domain activities, no bespoke Kernel |
+| **A4** | Monolithic domain-aware Kernel (domain branches inside one core) |
+
+Metrics: false completion (must be **0 in every arm**; an arm with any false completion is excluded from comparison rather than ranked lower); terminal correctness under identical fault injection; **marginal cost of adding a domain** = `{shared_core_files_changed, enums/events/states_added, review_effort, cross_domain_regressions, migration_steps}`; P50/P95 (§9.2); tokens/task; safety-critical custom LOC (code implementing admission, fence, UNKNOWN and receipt reconciliation).
+
+Falsifiers. Adding Office, or a fourth domain, by a non-author must need **zero** Kernel diff beyond namespace registration — otherwise A1 fails its own invariant. If A2 matches A1 on reliability and on marginal cost per domain, the unified Kernel is unjustified. If A3 reproduces M1–M6 and R1–R7 with less safety-critical custom code, the bespoke Kernel is over-engineering. If A4 passes every gate with fewer artifacts and equal review effort, the adapter layer is over-engineering. If an arm cannot be built under the same authorization, the experiment is NOT RUN and selects nothing.
+
+### 9.6 Provisional thresholds (hypotheses; NOT measured; ratifiable at DF, evidenced only by PE)
+
+(1) Deterministic safety, fence, UNKNOWN and false-terminal tests: 100% expected outcomes, zero unauthorized or non-idempotent duplicate effects, zero false high-severity Completed. (2) Success point estimates never below the matched control by domain/stratum; one-sided 95% paired lower CI of the success difference at least −1 percentage point after power analysis; Video blinded content quality non-inferior; `incorrect completion` non-inferior on the all-admitted-tasks denominator. (3) At least 10% repeatable median improvement in *either* latency or `exposure_adjusted_cost` (§9.1), with p95 E2E no worse than 1.05× control under the §9.2 method and no unapproved Token or resource regression. (4) All injected cancel/restart/timeout cases reach a terminal or durable owned wait/UNKNOWN disposition with zero blind replays. (5) A CI too wide is **INCONCLUSIVE**, never PASS.
+
+Pilot ≥30 cases per stratum, then size from observed paired variance (200/domain remains a planning estimate). §9.3, §9.4 and §9.5 are prerequisites: a gate missing its shadow audit or cheating controls reports `INCOMPLETE`, not PASS. Preserve raw traces, exclusions, censoring, bills, Host specs, reviewer disagreements and exact commits.
+
+### 9.7 No-branch and record-shape static conformance (DF evidence only)
+
+- No behavioural `domain_id` comparison, domain-name literal in a conditional, domain-specific terminal state or reason, or domain-specific evidence-trust rule anywhere on the Kernel decision path — DES floor F12 and fixture S-1.
+- Shared records carry no domain-shaped field. Domain content appears only through opaque typed references (e.g. `domain_evidence_refs[] = {domain_id, schema_id, version, digest}`), never as a parsed domain verdict ([Data model](../../contracts/kernel-data-model.md) invariant 15).
+- The check is a grep-level scan of the Kernel module plus a record-schema diff. It is necessary and never sufficient: static cleanliness is DF evidence, not PE.
+
+**Results schema:** `gate (DF|SA|PE|VI), fixture, environment, build_sha, arm, task_set_seed, N_runs, N_tasks, N_censored, PASS|FAIL|NOT_RUN|SKIP|PARTIAL|INCOMPLETE|UNVERIFIED, trace_links, estimates/CI, settled_cost, exposure_adjusted_cost, shadow_audit, measurement_spend, limitations, reviewer, owner_disposition`. A specification or Markdown link check is not test execution. DF success cannot promote SA, PE or VI.
