@@ -139,9 +139,18 @@ class Kernel(_Store):
             c.execute("INSERT INTO budget(task_id,ceiling) VALUES (?,?)", (task_id, ceiling_minor))
             c.execute("INSERT INTO journal(kind,ref) VALUES ('TaskCreated',?)", (task_id,))
 
-    def journal_cursor(self) -> int:
+    def progress_fingerprint(self, task_id: str) -> str:
+        """Task-local *derived* progress, not an authority/CAS version or global journal cursor."""
         with self.lock:
-            return self.conn.execute("SELECT COALESCE(MAX(seq),0) FROM journal").fetchone()[0]
+            c=self.conn
+            fragments=[
+                c.execute("SELECT state,control_version,plan_epoch,authority_epoch,workspace_epoch,workspace_digest FROM task WHERE id=?",(task_id,)).fetchall(),
+                c.execute("SELECT id,status,selected_attempt FROM step WHERE task_id=? ORDER BY id",(task_id,)).fetchall(),
+                c.execute("SELECT id,state,candidate_digest,billed FROM attempt WHERE task_id=? ORDER BY id",(task_id,)).fetchall(),
+                c.execute("SELECT id,state,converged FROM invocation WHERE task_id=? ORDER BY id",(task_id,)).fetchall(),
+                c.execute("SELECT criterion_id,plan_epoch,workspace_epoch,receipt_id,verdict FROM evidence WHERE task_id=? ORDER BY criterion_id",(task_id,)).fetchall(),
+            ]
+        return digest(fragments)
 
     def task(self, task_id: str) -> dict:
         with self.lock:
@@ -258,9 +267,14 @@ class Kernel(_Store):
     def host_result(self, command_id: str, *, invocation_id: str, status: str,
                     converged: bool, authenticated: bool):
         def act(c):
-            old = c.execute("SELECT state FROM invocation WHERE id=?", (invocation_id,)).fetchone()
-            if not authenticated or not old or old[0] not in ("DISPATCH_PENDING", "UNKNOWN") or status not in ("UNKNOWN","SUCCEEDED","FAILED"):
+            old = c.execute("SELECT state,converged FROM invocation WHERE id=?", (invocation_id,)).fetchone()
+            if not authenticated or not old or status not in ("UNKNOWN","SUCCEEDED","FAILED"):
                 raise Rejected("untrusted or conflicting Host receipt")
+            if old[0] in ("SUCCEEDED", "FAILED"):
+                if old[0] != status or old[1] or not converged:
+                    raise Rejected("known outcome cannot be changed; only process convergence may advance")
+            elif old[0] not in ("DISPATCH_PENDING", "UNKNOWN"):
+                raise Rejected("invalid Host state transition")
             if status == "UNKNOWN" and converged:
                 raise Rejected("unknown cannot assert convergence")
             c.execute("UPDATE invocation SET state=?,converged=? WHERE id=?", (status,int(converged),invocation_id))
@@ -273,6 +287,8 @@ class Kernel(_Store):
             t=self._active(c,task_id)
             if t[3] != old_epoch or not new_digest:
                 raise Conflict("stale workspace mutation")
+            if not self._no_unresolved_effect(c,task_id):
+                raise Rejected("workspace cutover requires effect reconciliation/fence")
             c.execute("UPDATE task SET workspace_epoch=workspace_epoch+1,workspace_digest=? WHERE id=?", (new_digest,task_id))
             c.execute("INSERT INTO journal(kind,ref) VALUES ('WorkspaceChanged',?)", (task_id,))
             return {"workspace_epoch":old_epoch+1}
@@ -391,7 +407,7 @@ class SingleLoop:
 
     def run(self, task_id: str, policy: Callable[[int], str], *, deadline_monotonic: Optional[float] = None):
         stalled=0
-        cursor=self.kernel.journal_cursor()
+        cursor=self.kernel.progress_fingerprint(task_id)
         for i in range(self.max_decisions):
             if self.kernel.task(task_id)["state"] != "RUNNING":
                 return self.kernel.task(task_id)["state"]
@@ -404,10 +420,10 @@ class SingleLoop:
             if action == "COMPLETE":
                 self.kernel.complete("loop:complete:"+task_id,task_id=task_id,expected_control_version=self.kernel.task(task_id)["control_version"])
                 return "COMPLETED"
-            new_cursor=self.kernel.journal_cursor()
+            new_cursor=self.kernel.progress_fingerprint(task_id)
             if action not in ("PROGRESS", "NO_PROGRESS"):
                 raise Rejected("invalid policy disposition")
-            if action == "PROGRESS" and new_cursor > cursor:
+            if action == "PROGRESS" and new_cursor != cursor:
                 stalled=0
                 cursor=new_cursor
             else:

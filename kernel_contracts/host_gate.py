@@ -48,8 +48,9 @@ class SimulatedHostGate(_Store):
         with self.transaction() as c:
             c.execute("INSERT OR IGNORE INTO gate VALUES (1,?,1,1,0)", (incarnation,))
             existing=c.execute("SELECT incarnation FROM gate WHERE id=1").fetchone()[0]
-            if existing != incarnation:
-                raise Rejected("Host incarnation changed: explicit re-enrollment required")
+        if existing != incarnation:
+            self.close()
+            raise Rejected("Host incarnation changed: explicit re-enrollment required")
 
     def snapshot(self):
         with self.lock:

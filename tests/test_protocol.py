@@ -138,6 +138,7 @@ class ContractTests(unittest.TestCase):
             self.k.admit_tool("risk",**dict(r,invocation_id="tool2",nonce="nonce2",risk="R2"))
         with self.assertRaises(Rejected):
             self.k.admit_tool("r1",**dict(r,invocation_id="tool3",nonce="nonce3",risk="R1"))
+        self.k.host_result("tool1-converged",invocation_id="tool1",status="SUCCEEDED",converged=True,authenticated=True)
         self.k.update_workspace("workspace-change",task_id="t",old_epoch=1,new_digest="source-v2")
         with self.assertRaises(Rejected):
             self.k.admit_tool("stale",**dict(r,invocation_id="tool4",nonce="nonce4"))
@@ -219,6 +220,37 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(loop.run("hang",lambda i:"PROGRESS"),"FAILED") # false progress has no journal change
         self.k.new_task("timed",workspace_digest="s",criteria=("c",),ceiling_minor=0)
         self.assertEqual(loop.run("timed",lambda i:"NO_PROGRESS",deadline_monotonic=time.monotonic()-1),"TIMED_OUT")
+
+    def test_unrelated_task_activity_does_not_reset_stall_limit(self):
+        self.k.new_task("idle",workspace_digest="x",criteria=("c",),ceiling_minor=0)
+        self.k.new_task("busy",workspace_digest="y",criteria=("c",),ceiling_minor=0)
+        def unrelated_write(i):
+            self.k.update_workspace("busy-change-"+str(i),task_id="busy",old_epoch=i+1,new_digest="y"+str(i))
+            return "PROGRESS"
+        loop=SingleLoop(self.k,max_decisions=10,max_no_progress=2)
+        self.assertEqual(loop.run("idle",unrelated_write),"FAILED")
+
+    def test_known_outcome_and_late_process_convergence_are_independent(self):
+        t=self.k.task("t")
+        self.k.admit_tool("tool",task_id="t",invocation_id="i",args_digest="args",nonce="n",
+            plan_epoch=t["plan_epoch"],authority_epoch=t["authority_epoch"],workspace_epoch=t["workspace_epoch"],risk="R0")
+        self.k.host_result("success",invocation_id="i",status="SUCCEEDED",converged=False,authenticated=True)
+        with self.assertRaises(Rejected):
+            self.k.complete("too-early",task_id="t",expected_control_version=0)
+        self.k.host_result("converged",invocation_id="i",status="SUCCEEDED",converged=True,authenticated=True)
+        self.evidence()
+        self.assertEqual(self.k.complete("done",task_id="t",expected_control_version=0)["state"],"COMPLETED")
+        with self.assertRaises(Rejected):
+            self.k.host_result("conflicting",invocation_id="i",status="FAILED",converged=True,authenticated=True)
+
+    def test_workspace_cutover_blocks_pending_tool(self):
+        t=self.k.task("t")
+        self.k.admit_tool("tool",task_id="t",invocation_id="i",args_digest="args",nonce="n",
+            plan_epoch=t["plan_epoch"],authority_epoch=t["authority_epoch"],workspace_epoch=t["workspace_epoch"],risk="R0")
+        with self.assertRaises(Rejected):
+            self.k.update_workspace("unsafe",task_id="t",old_epoch=1,new_digest="v2")
+        self.k.host_result("done",invocation_id="i",status="SUCCEEDED",converged=True,authenticated=True)
+        self.assertEqual(self.k.update_workspace("safe",task_id="t",old_epoch=1,new_digest="v2")["workspace_epoch"],2)
 
     def test_hard_budget_unrelated_task_has_separate_scope(self):
         self.admit(amount=10)
