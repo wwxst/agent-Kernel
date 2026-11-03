@@ -1,91 +1,162 @@
-# Domain Extension Contract v0.1 — implementation candidate
+# Domain Extension Contract v0.2 — construction baseline
 
-> **Status: PROPOSED / G0 OWNER REVIEW OPEN.** This is a new minimal adapter contract, not an approved implementation ABI, deployed plugin system, external authority grant, or D9/Multi-Agent enablement. Its first conformance consumers are Coding and Video; Office is a design-only third consumer. Kernel authority, Host fence, UNKNOWN, billing, and completion obligations remain those of [Core Protocol](core-protocol.md), [Domain Workflow](domain-workflow.md), and [Completion](completion.md).
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); design-only for Office; implementation NOT started; runtime claims UNVERIFIED.**
+>
+> This is a minimal adapter ABI candidate, not a deployed plugin system, external authority grant, or D9/Multi-Agent enablement. Field shapes are owned by [Kernel data model](kernel-data-model.md); per-domain execution policy is owned by [Execution Strategy](execution-strategy.md) (DES); permission facts are owned by [Permissions](../security/permissions.md). Kernel authority, Host fence, UNKNOWN, billing and completion obligations remain those of [Core Protocol](core-protocol.md), [Domain Workflow](domain-workflow.md) and [Completion](completion.md).
 
-## 1. Boundary and excluded abstractions
+## 1. Boundary and neutrality requirement
 
-**Design choice:** one authoritative Kernel + one Task Orchestrator loop per Task + a version-pinned domain adapter. The Kernel never branches on `domain_id` to choose a tool, domain cognitive mode, editorial operation, coding test or Office API. Domain semantics stay in the adapter. A domain adapter can suggest intents, schemas and evidence obligations but **cannot** commit TaskControl, bypass Model Gateway, admit an Invocation, mint a capability, settle a bill, mark a Host process converged, or finish a Task.
+**Design choice:** one authoritative Kernel + one Task Orchestrator loop per Task + a version-pinned domain adapter. Every domain difference enters the Kernel as **data**: the DomainBinding, the bound ExecutionStrategy, the digested ToolDefinition, and typed adapter payloads.
 
-This contract deliberately omits a plugin marketplace, dynamically executed third-party code inside the Kernel authority process, a general distributed workflow engine, a universal semantic model, a domain-specific Kernel state machine, and automatic agent-to-agent delegation. Domain code executes in the Orchestration/adapter boundary under its own approved deployment policy; all effects go through Kernel Admission and Trusted ToolHost.
+An adapter may propose intents, schemas and evidence obligations. It **cannot** commit TaskControl, bypass Model Gateway, admit an Invocation, mint a capability, settle a bill, mark a Host process converged, or finish a Task.
 
-## 2. Versioned manifest and activation
+**Neutrality rule.** No Kernel, Host or Completion-Guard rule names a domain, and none reads `domain_id` for behaviour. Shared obligations are expressed only as generic **evidence classes**, matched by id rather than by domain: `protected_input_view` (the enforced effective input view of a run), `machine_check` (a deterministic check bound to an execution receipt), `output_inspection` (examination of the actual deliverable), `provenance_map` (input→output lineage for the delivered artifact), `external_target_identity` (the external target's own revision/state at the effect boundary) and `human_disposition` (authenticated human judgement). These six identifiers are defined by [Completion §1.1](completion.md), which owns the evidence-class enum; this contract only references them and may not restate or extend the list. A rule mentioning a domain name in Kernel, Host or Guard is a defect, not an extension. A new domain must land with **zero Kernel file, enum, event, error-code or state-machine changes**; only manifest, profile, strategy, tool, artifact and verification-policy additions.
 
-`DomainManifest` (canonical content digest, immutable after activation):
+Excluded by design: plugin marketplace, untrusted in-process plugins inside the Kernel authority process, a general distributed workflow engine, a universal semantic model, a per-domain Kernel state machine, and automatic agent-to-agent delegation. Domain code runs in the adapter boundary; all effects pass Kernel Admission and Trusted ToolHost.
 
-| Required field | Contract |
+## 2. Manifest, profile and activation
+
+`DomainManifest` is canonical (RFC 8785 JCS), content-digested and immutable after activation. It must declare every field the Kernel validates for a DomainBinding ([Data model §3.4](kernel-data-model.md#34-domainbinding-and-workflow-profile)); a manifest that omits or merely implies one is rejected at registration.
+
+| Required manifest field | Contract |
 | --- | --- |
-| `domain_id`, `adapter_api_version`, `manifest_version`, `digest`, `publisher_attestation` | Unique namespace, API compatibility, integrity and provenance; unknown publisher is not trusted |
-| `workflow_profiles[]` | Pinned profile ID/version/digest, goal/step schemas, supported task families and context policy; follows existing DomainBinding rules |
-| `tools[]` | Canonical ToolDefinition ID/version/digest, argument/result schemas, effect class R0/R1/R2, conflict scope, idempotency class, resource dimensions, deadline/cancellation semantics and approval policy |
-| `artifact_types[]`, `evidence_types[]` | Namespaced schema ID/version, digest/lineage and criterion binding policies; payload opaque to Kernel |
-| `verification_policies[]` | Criterion-class evidence requirements, minimum independence/assurance, explicit human gate, permitted evidence carry-forward conditions |
-| `execution_requirements` | Host capabilities, supported enforcement profiles, resource limits, projection freshness rules, privacy/retention declarations |
-| `compatibility` | Supported Kernel contract range, required event schema, migration rule and explicit unsupported capabilities |
+| `domain_id`, `adapter_api_version`, `manifest_version`, `digest`, `publisher`, `adapter_artifact_digest` | Unique namespace, API compatibility, integrity, publisher identity and the digest of the **deployed adapter artifact**. Optional `signature_ref` only; this version imposes no PKI/attestation requirement. |
+| `contract_versions` | Goal/plan/evidence/artifact/tool schema id+version map, copied into the binding verbatim |
+| `workflow_profiles[]` | `profile_id/version/digest`, goal and PlanStep payload schemas, supported task families, context-policy ref, `strategy_refs[]` (exactly one default), `resource_policy_id/version`, `verification_policy_id/version`, `required_host_profiles[]` |
+| `tools[]` | ToolDefinition id/version/digest, argument/result schema ids, `effect_class`, `conflict_scope_rule`, `idempotency_class`, resource dimensions, deadline/cancellation semantics, approval-policy ref |
+| `artifact_types[]`, `evidence_types[]` | Namespaced schema id/version; payload opaque to Kernel |
+| `verification_policies[]` | The **only** owner of required evidence class, independence floor, human gates and evidence carry-forward, keyed by criterion class (§3.1) |
+| `delivery` | Deliverable artifact kinds, publication gate, retention and deletion rules |
+| `cancellation_recovery` | Per-effect-class cancellation disposition, required convergence evidence, reconciliation probe definitions |
+| `compatibility` | Supported Kernel contract range, required event-schema version, minimum API, explicitly unsupported capabilities |
 
-**Registry flow:** Register (untrusted/inactive) → schema+digest+namespace+signature policy validation → capability/effect-risk review → host/profile compatibility proof → explicitly authorized Activate → bind a new Task to exact manifest/profile digest. Activation provides availability **not authority**: at every admission Kernel intersects profile restrictions with current principal/policy/approval/budget and Host capability. Superseded/revoked manifests remain readable historically but cannot authorize new execution. Changing manifests on a live Task requires the existing freeze/reconcile/confirmation PlanRevision cutover, never an in-place binding rewrite.
+**Effect-class authority.** The manifest's `effect_class` is a classification proposal bound into the ToolDefinition digest. At admission the Kernel **re-derives** the effective class from the digest-covered ToolDefinition, the canonical arguments and the resolved target, exactly as for any tool ([Data model §3.7](kernel-data-model.md#37-toolinvocation)). A `DecisionIntent` declaration is a proposal; if it differs from the derived value the admission is rejected with `EffectClassMismatch`, a security event is emitted, and no retry-by-relabelling is possible. R2 can never be introduced by an adapter, and R2 enablement is an operator/owner risk-policy decision — it is **not** a manifest field ([Trusted Host](../security/trusted-host.md)).
 
-**Compatibility:** `adapter_api_version=0.1` is the proposed first-slice target, not a finalized release. Unknown required/safety fields or unsupported major versions fail registration/admission closed. Optional non-authoritative metadata may be ignored; an unknown effect/resource/assurance declaration may not. New domains add new manifest/profile/tool/artifact namespaces without changing the Kernel core state machine. A breaking authority-envelope change requires a new Kernel contract version and separate migration review.
+**Activation.** There is one registry lifecycle, the DomainBinding one: `Draft → Validated → Active → Superseded`, with `RevocationPending`/`Revoked` ([Data model §3.4](kernel-data-model.md#34-domainbinding-and-workflow-profile), [Domain Workflow §3.1](domain-workflow.md)). Registering a manifest creates candidates only. Activation is performed by an `operator` principal holding `profile.activate`; revocation requires `profile.revoke` ([Permissions §3](../security/permissions.md)). Activation advances the monotonic `authority_epoch` for the affected scope and is **availability, not authority**: at every admission the Kernel intersects profile restrictions with current principal, capability, policy, approval, budget and Host capability.
 
-## 3. Port interfaces and envelopes
+Changing any manifest, profile, strategy or adapter-artifact digest on a live Task is a **structural L2 change** — freeze/drain/reconcile/confirmation/atomic activation, never an in-place binding rewrite. Superseded or revoked digests remain readable for provenance and can never authorize new execution. Unknown required/safety/effect/resource/assurance declarations fail registration and admission closed; unknown optional `ext.*` metadata is digest-bound and ignored.
 
-These are **logical ports and data shapes**, not runtime-language signatures or endorsement of a framework.
+## 3. Ports, envelopes and errors
 
-| Domain-facing port | Inputs | Output | Authority |
+Ports are logical, not language signatures. Every call carries the shared envelope; domain payloads are versioned, bounded (≤256 KiB inline) and content-digested.
+
+**Envelope (all ports):** `contract_version, task_id, binding_digest, goal_version, plan_revision_id, strategy_ref, correlation_id, idempotency_id, input_digest, deadline, trace_id`. A proposed mutation additionally carries the exact `read_set`: goal/plan revision, `authority_epoch`, profile digest, workspace generation or project snapshot, budget-scope version, tool digest, step precondition digest.
+
+**Canonical digest.** All payloads, arguments and results are canonicalized per [Data model §2.2](kernel-data-model.md#22-digests-and-canonicalization) (RFC 8785 JCS over UTF-8, NFC, no duplicate keys; digest fields excluded from their own input). `canonical_args_digest` is computed over the JCS form of the argument object validated against the declared argument schema; two encodings of the same arguments must produce one digest.
+
+### 3.1 Port contracts
+
+| Port | Required input | Required output | Idempotency |
 | --- | --- | --- | --- |
-| `interpretGoal` | UserIntent, current Goal candidate, allowed domain profile | `GoalCandidate{schema_ref, payload_digest, criteria[], ambiguity[], risk}` | Advisory: Kernel validates binding/confirmation and accepts |
-| `projectContext` | `ContextRequest{task, purpose, snapshot_refs, evidence_cursor, token_cap}` | `ContextManifest{sources[], digests[], freshness, redactions, token_estimate}` | Read-only projection; no authority |
-| `decideNext` | Bound Goal/Plan, relevant context, current evidence gaps, remaining budgets | `DecisionIntent{decision_id, mode, read_set, items[], need_user?, no_progress_reason?}` | Proposal only; selected ModelStep/Attempt and each Invocation are Kernel-owned |
-| `interpretOutcome` | Authenticated receipts, artifact refs, evidence cursor | `DomainObservation{typed_refs[], affected_criteria[], invalidations[]}` | No Host/process truth rewrite |
-| `verifyCriteria` | `VerificationRequest{criterion_ids, required_evidence, artifact_snapshot, environment}` | `VerificationProposal{criterion_verdicts[], evidence_refs[], assurance_gaps[]}` | Cannot promote missing/untrusted evidence to PASS or commit Completed |
-| `describeRecovery` | Reconciled K/H facts, known/unknown effect scope | `RecoverySuggestion{safe_next?, blocking_scope?, next_probe?}` | Kernel determines legal retry/admission |
+| `interpretGoal` | `user_intent_ref+digest`, `allowed_profile_ref`, `clarification_digests[]` | `GoalCandidate{schema_id/version, payload_digest, criteria[], ambiguity[], risk{class, rationale}}` | Pure. Same `idempotency_id`+`input_digest` returns the identical candidate; never creates a goal version |
+| `projectContext` | `purpose`, `snapshot_refs[]`, `evidence_cursor`, `token_cap` | `ContextManifest{sources[]{source_id, digest, kind, scope}, omissions[], freshness_basis, redactions[], token_estimate, truncated}` | Pure and cacheable; key per DES F9 (source digest + tool/parser version + scope + privacy policy) |
+| `decideNext` | `goal_version`, `plan_revision_id`, `read_set`, `evidence_gaps[]`, `remaining_budget`, `strategy_ref` | `DecisionIntent{decision_id, purpose, items[], need_user?, no_progress_reason?, read_set}` | Pure. A duplicate `idempotency_id` returns the same intent and item digests; it must not mint new invocation identities |
+| `interpretOutcome` | `receipt_refs[]`, `artifact_refs[]`, `evidence_cursor` | `DomainObservation{typed_refs[], affected_criteria[], invalidations[]}` | Idempotent per `event_id`/receipt-digest set; re-delivery yields the same observation |
+| `verifyCriteria` | `criterion_ids[]`, `required_evidence` per criterion class, `artifact_snapshot`, `environment` | `VerificationProposal{criterion_verdicts[]{criterion_id, verdict, evidence_refs[], independence, assurance_gaps[]}, human_disposition_required[]}` | Re-runnable read-only; never mutates artifacts or evidence; a verdict derived under changed digests is invalid, not reused |
+| `describeRecovery` | reconciled K facts, reconciled H facts, `unknown_scope` | `RecoverySuggestion{safe_next?, blocking_scope?, next_probe?}` | Advisory and pure; Kernel alone decides retry/admission |
 
-All ports use a request/response envelope: `contract_version, task_id, domain_binding_digest, goal_version, plan_revision_id, correlation_id, idempotency_id, input_digest, deadline, trace_id`. A proposed mutation additionally includes the *specific* `read_set` of plan/authority/workspace/artifact/budget versions it depends on. Domain-specific payloads are versioned, bounded and content-digested. `DecisionIntent.items` is finite and ordered; each requested ToolInvocation has `tool_definition_digest, canonical_args_digest, effect_class, conflict_scope, dependency_refs, requested_resource_reservation, result_expectations`. None carries a bearer permission. Kernel rejects unknown required fields, mismatched digests, stale bindings and unsupported effect kinds.
+**`DecisionIntent.items[]` (each item):** `item_id`, `kind` (`tool_invocation | ask | wait | stop`), `tool_definition_digest`, `canonical_args_digest`, `target_identity`, `declared_effect_class`, `declared_conflict_scope`, `dependency_refs[]`, `requested_resource_reservation`, `result_expectations[]`, `criterion_refs[]`. Items are finite and ordered. No item carries a bearer permission, path locator or credential.
 
-**Errors:** `UnsupportedProfile`, `InvalidDomainPayload`, `ContextStale`, `EvidenceInsufficient`, `NeedsAuthorization`, `ResourceUnavailable`, `RetryableNoEffect`, `OutcomeUnknown`. An adapter error is data, not a license for Kernel to reinterpret domain semantics. `RetryableNoEffect` requires independent proof that no physical/provider effect was possible. `OutcomeUnknown` retains conflict and budget holds until authoritative reconciliation; deadlines and cancellation never recast UNKNOWN as failure.
+**Criterion-class binding.** Every `criteria[].required_evidence_class[]` entry must resolve, through the bound profile, to exactly one `verification_policies[]` entry carrying the policy `id/version`. A criterion class with no policy, or with two, fails binding validation. There is no policy-free "class".
 
-**Event exchange:** Kernel publishes append-only `TaskControlChanged, ModelStepSelected, InvocationAdmitted/Denied, HostReceiptImported, AuthorityFenceChanged, ArtifactPublished, EvidenceInvalidated, CompletionCommitted, TaskTerminal` with `event_id, aggregate_id, aggregate_version, journal_sequence, correlation_id, payload_schema, digest`. Adapters consume idempotently by `event_id`, rebuild projections after gaps from Kernel snapshots plus the Journal cursor, and never write the Journal directly. A Kernel event is not an assurance that an external side effect occurred unless authenticated Host/provider facts support it.
+### 3.2 Adapter error codes and Kernel disposition
 
-## 4. Runtime scheduling and assurance policy
+Adapter errors are data; they never license Kernel to reinterpret domain semantics. Each maps to exactly one Kernel disposition from [Data model §6](kernel-data-model.md#6-error-and-disposition-catalog).
 
-One orchestrator runs a priority-ordered loop, irrespective of domain: **cancel/authority/deadline → conflicting UNKNOWN/reconcile → user/approval wait → missing mandatory evidence → pending planned work/repair → guarded terminal**. Simple safe tasks may use a single tactical model decision and deterministic checks. A Strategy decision is requested on initial ambiguity or L2 cutover, not mechanically before each tool. A fresh model Verifier is **conditionally invoked** if the accepted criterion's `verification_policy` requires semantic independence, the evidence is disputed/low confidence, a protected input changed, or a risk trigger is met; there is no always-on model Verifier for every tool batch. A deterministic Completion Guard always executes and cannot be optimized out. See [Completion](completion.md).
-
-**Termination:** Completed iff current criteria/evidence/authority/bindings satisfy Completion Guard and no conflicting UNKNOWN or safety hold remains. Failed iff recovery is exhausted or impossible with explicit typed reason; Cancelled iff requested cancellation has reached safe convergence/recorded disposition; deadline expiry yields a **terminal Failed with `reason=DeadlineExceeded`** after the required reconciliation/safe-stop protocol, not a new unapproved Task enum. Inability to prove convergence transitions to bounded `Blocked/Reconciling` with a durable wait reason and next escalation deadline; **never** falsely marks terminal or retries indefinitely. All terminal facts are immutable.
-
-**No-progress bound (proposed operational default):** after 3 consecutive decision cycles with no new authoritative evidence, changed plan/evidence obligations, completed work, or user input, the loop must stop model/tool churn, diagnose once from existing facts and either wait for a named external dependency, request clarification, or commit Failed(`NoProgress`) if safe to do so. Each PlanStep gets at most 2 autonomous repair attempts before an explicitly budgeted L2 decision or Failed(`RepairExhausted`). These are tuning hypotheses requiring G3/G4 evaluation, not measured optimums; local policy may lower them but cannot bypass safety holds.
-
-## 5. Cross-domain composition without authority sharing
-
-A future *thin coordinator* may store a **dependency graph of Task IDs and exact ArtifactRefs**, not combined private memory or shared mutable DomainBinding. The first slice supports explicit sequential handoff as in [Domain Workflow](domain-workflow.md); automatic autonomous fan-out and D9 remain deferred. Proposed dependency record: `handoff_id, producer_task, producer_artifact_id/digest/schema, consumer_task/domain/profile, authorized_purpose, required_schema, scoped_read_grant_ref, dependency_policy`. Allowed `dependency_policy`: `require_success` (otherwise consumer remains Blocked), `allow_partial_with_explicit_criteria`, or `skip_on_failed_dependency`. Failures never propagate as fabricated success. Fan-out requires separate producer/user authorization for every consumer; neither budgets, approvals, OAuth tokens, context nor Host privileges are inherited. A coordinator may only request Task creation/activation through existing Kernel authorization; it cannot commit task status. Revoked/expired ScopedReadGrant prevents new reads; previously delivered bytes are not retroactively erased.
-
-Resource arbitration remains Kernel/Host admission over declared per-Task/per-Host limits; one task's long render must not monopolize unrelated authorized work without a configured fairness/quota policy. Initial scheduler is sequential within one Task, optional bounded independent reads with proven non-conflict, and bounded Host media workers; no speculative distributed scheduler.
-
-## 6. Office third-domain falsification example (design only)
-
-An `office` domain registers `office.basic@0.1`: Goal payload `{document_refs, operation, output_format, criteria}`; typed `office.document.edit` and `office.sheet.batch_update` tools; context projection for document sections/sheet ranges; `office.document.v1` and `office.table.v1` artifact schemas; independent checks for content/format/range and immutable exported bytes.
-
-**Hypothetical / mock-only until owner-approved external-effect profile:** Task O binds Office profile → user authorizes exact external app/account, document ID and edit scope → adapter suggests batched structured edits → Kernel reserves rate quota and checks current OAuth scope/approval → a *mock* Trusted Host/remote API executes an exact request with a simulated credential boundary → immutable simulated revision/etag + authenticated test receipt and exported artifact digest enter evidence → deterministic checks plus any policy-required human review → Completion Guard → delivered ArtifactRef. A simulated timeout after possible mutation yields `OutcomeUnknown`; only authoritative revision/status reconciliation could permit a safe retry. **For a real external provider, an Office edit/write is R2 unless the owner formally approves a narrower risk classification backed by enforceable Host/provider controls; an individual user approval does not override the global R2-disabled default.** Real network egress, OAuth secrets, external edits, delete/send/share/publish and irreversible operations stay **disabled** until the Host risk/TTL/fence policy and provider idempotency/status semantics are explicitly approved and verified. The G5 mock proves interface shape, not real-world external service safety. Concurrent editors cause etag/read-set conflict and refresh; the Kernel loop, TaskControl, Invocation, terminal and ArtifactRef protocols are **unchanged**.
-
-**Falsification gate:** if Office requires an Office-specific branch in Kernel Loop, Task terminal enum, permission state machine, provider-ambiguity rules, or Host side-effect semantics, reject the proposed adapter boundary and reopen G0. A new typed tool/resource dimension and external account principal are normal extensions **only if** the existing admission/Host contracts can enforce them.
-
-## 7. Portability and acceptance fixtures
-
-| Fixture | Initial facts | Expected result |
+| Adapter code | Meaning | Kernel disposition |
 | --- | --- | --- |
-| X1 register Office | Valid manifest/profile but no Kernel domain-id special case | Profile can bind a new Task; same core event/authority machinery |
-| X2 unknown effect or changed digest | Version/manifest/tool schema mismatch | Reject before model/tool admission, preserve audit |
-| X3 Office ambiguous external edit | Provider accepted mutation, response lost | UNKNOWN retained, no blind retry; reconcile by exact revision |
-| X4 cross-domain Coding→Video | Exact ArtifactRef with scoped read grant | Consumer may read exact digest only; no producer grant/context inheritance |
-| X5 delayed Video render | Cancel before Host convergence, partial staging output | Stay Reconciling/UNKNOWN; no output publication or false Completed |
-| X6 cheap Coding path | Evidence suffices deterministically and independent model review not required | No verifier ModelStep; still run all mandatory tests and Completion Guard |
-| X7 high-risk/ambiguous path | Semantic concern or human gate required | Fresh independent review/human approval; no cheap-path bypass |
-| X8 timeout/no progress | Deadline or bounded stall reached | Safe stop, durable typed outcome/wait; zero unbounded requeue |
+| `UnsupportedProfile` | Manifest/API/profile unsupported by this Kernel | Reject binding (`SchemaInvalid`) |
+| `InvalidDomainPayload` | Payload fails its declared schema/digest | Reject (`SchemaInvalid`) |
+| `ContextStale` | Projection older than the bound read-set | Reject, refresh (`StaleBinding`) |
+| `EvidenceInsufficient` | Required criterion evidence missing or untrusted | Block completion; request evidence |
+| `NeedsAuthorization` | Missing/expired capability, approval or OAuth scope | Park as `Approval` WaitRecord or deny (`AuthorityDenied`) |
+| `ResourceUnavailable` | Declared resource/quota unavailable | Queue per strategy or reject |
+| `RetryableNoEffect` | Proven that no physical/provider effect was possible (pre-effect) | Retry permitted with proof |
+| `EffectNotApplied` | Target affirmatively rejected, or Host proves no effect occurred | Admit a **new** Invocation with new arguments; never an automatic replay of the old one |
+| `PreconditionFailed` | Declared revision/etag/hash precondition did not match; no effect applied | `FailedKnown`; require a fresh read/decision, then a new Invocation |
+| `EffectClassMismatch` | Declared class/scope differs from the Kernel-derived value | Reject before admission; security event; no downgrade |
+| `HostCapabilityMissing` | No Host profile can enforce the required isolation/resource dimension | Reject or mark `Unverified` (`UnsupportedEnvironment`) |
+| `OutcomeUnknown` | Effect may have occurred and the outcome is not authoritative | Retain conflict and budget holds; reconcile; no blind retry |
 
-A **contract-level static pass** requires an owner-reviewed schema inventory, every named port's input/output example, stable authorization state/error mapping, cross-document consistency and Office X1–X8 walk-through. **G1/G2/G3/G4/G5 remain NOT RUN** unless evidence is attached to named implementations/environments. Do not infer provider billing, Host enforcement, runtime speed or editing quality from this document.
+`PreconditionFailed` and `EffectNotApplied` are **not** `OutcomeUnknown`: they assert a known no-effect outcome. `RetryableNoEffect` asserts no effect was *possible*. Deadlines and cancellation never recast UNKNOWN as failure.
 
-## 8. Stable / extensible / deliberately deferred
+### 3.3 Event exchange
 
-**Stable for v0.1 proposal:** Task/Goal/Plan/ModelStep/Invocation IDs and legal transition ownership, K-local reservations/intent/journal/outbox, separate K/G/H facts, Host-local launch/fence/receipt, cancellation/UNKNOWN, terminal CAS, ArtifactRef digest/handoff, criterion/evidence binding and Completion Guard.
+Kernel publishes the append-only catalog in [Data model §4](kernel-data-model.md#4-kernel-event-catalog); adapters consume it idempotently by `event_id`, rebuild projections after a gap from a Kernel snapshot plus the Journal cursor, and never write the Journal. A Kernel event is not assurance that an external side effect occurred unless authenticated Host/provider facts support it.
 
-**Extension surface:** profile schemas, domain cognitive policy, context projection, capability/tool catalog, verifier rubric/assurance obligations (never below Kernel minimum), artifact kinds, provider adapter traits with proven limits, resource dimension adapters and Host-supported execution profiles.
+## 4. Loop, assurance ownership and waits
 
-**Deferred:** multi-Host linearizability, arbitrary cross-domain autonomous DAG orchestration, untrusted in-process plugins, agent swarms, Office implementation, external R2 effects, and any performance target without a measured baseline.
+One orchestrator runs the single priority-ordered loop defined in [Core §12](core-protocol.md). That algorithm is the only normative priority order; this contract adds no second ordering. The loop branches on state and policy values only; a Strategy decision is requested on ambiguity or L2 cutover, not before each tool.
+
+**Single assurance owner.** `verification_policies[]` is the only owner of required evidence class, independence floor and human gates. The bound `ExecutionStrategy` may add **additional** review triggers and tighten thresholds; it may never restate, weaken or lower a policy obligation ([DES §2–§3](execution-strategy.md)). A fresh independent Verifier runs when the policy demands it, evidence is disputed or stale, a protected input changed, or a risk trigger is met; the deterministic Completion Guard always runs and cannot be optimized out.
+
+**Waits and termination.** Every persisted non-terminal wait is a Kernel `WaitRecord` with `reason_code, blocking_scope, owner, next_wake_at, max_wait_until, recovery_strategy` ([Data model §3.12](kernel-data-model.md#312-waitrecord)); reason codes include `Approval`, `ExternalJob`, `RateLimit`, `Dependency`, `ProviderReconciliation`, `HostReconciliation`. No adapter-visible intermediate state exists: a task is `Open` with a persisted wait, or terminal.
+
+Terminal disposition uses the existing taxonomy: `Completed` only via Completion Guard; `Cancelled` only with cancellation disposition and proven effect state; `Failed(reason)` with `DeadlineExceeded | NoProgress | BudgetExhausted | UnsafeEnvironment | RepairExhausted | UnresolvedEffect | DependencyFailed | PolicyDenied`. Repair, no-progress and deadline bounds are declared by the strategy within the DES maxima ([DES §4.5](execution-strategy.md)); this contract fixes no numeric value, and every terminal fact is immutable.
+
+## 5. Multi-domain composition
+
+A multi-domain task is an ordered set of **independently authorized Tasks** plus a derived record. It is not a composite Task and creates no new authority.
+
+`CompositePlan` (**derived, read-only projection**; not a Kernel aggregate, no CAS, no terminal state, no event of its own):
+
+```
+{composite_id, principal, intent_ref,
+ steps[]{step_id, task_id, domain, binding_digest,
+         inputs[]{from_step, artifact_ref, schema, purpose, access_mode, grant_ref},
+         failure_policy, deadline, budget_ref},
+ delivery{final_artifact_refs[], report_digests[], composite_criteria[]}}
+```
+
+Rules:
+
+1. **Executor.** The Application layer creates and starts each step under existing task-creation authorization (`task.create`) and records the `CompositePlan` as a projection; it has no capability to admit, approve, spend or terminate.
+2. **Per-step authority.** Each step Task carries its own principal, DomainBinding, profile, approvals, budget, tools and verifier; nothing is inherited — not grants, approvals, context, budget, Host privilege or OAuth scope ([Permissions §3](../security/permissions.md)).
+3. **Inputs.** Every edge requires its own handoff and `ScopedReadGrant` for the exact artifact digest, consumer Task, purpose and access mode ([Domain Workflow §11](domain-workflow.md)). ArtifactRef is an identifier, never a capability.
+4. **Failure policies.** `require_success` — the consumer Task is not created until the producer reaches `Completed` and a current grant exists. `skip_on_failed_dependency` — the consumer is created with the dependent criterion `Fail`/`Unverified`, never `Pass`. `allow_partial_with_explicit_criteria` is **removed**: partial, staging, quarantined, missing or digest-mismatched artifacts are not consumable ([Domain Workflow §11](domain-workflow.md)).
+5. **UNKNOWN.** A producer `OutcomeUnknown` creates no consumer and no fabricated success; the composite stays undelivered for that branch.
+6. **Late failure.** A producer failing after a consumer already completed does not reopen a terminal Task (terminal facts are immutable); the composite delivery reports the failed step and is not "accepted". Remediation, if any, is a separately authorized Task.
+7. **Delivery.** Composite delivery is published by the existing Delivery path only when every contributing step is `Completed` and each report is current; otherwise an explicitly partial record lists which criteria are unmet.
+8. **Deferred.** Fan-out and parallel branches, agent-driven graph expansion, cross-task budget pooling, shared context, inherited approvals, composite re-planning, a durable coordinator service and D9/Multi-Agent remain deferred.
+
+## 6. Office third-domain validation sample (design only)
+
+Scope is deliberately **R0 read + R1 local export**. External in-place document edit is an R2 external effect and stays disabled, so it is neither implemented nor mocked; the sample proves the adapter boundary, not external-service safety.
+
+- **Manifest** `office.basic@0.1`, profile `office.basic`, strategy `office.local_export@0.1` (DES §7.3), one verification policy, artifact types `office.document.v1` and `office.table.v1`.
+- **Tools.** `office.document.read` — R0, `conflict_scope_rule = document:{id}`, `idempotency_class = effect_free`, arguments `{document_ref, ranges[], schema_version}`, result `{sections[], table_facts[], provider_revision, source_digest}`. `office.document.export` — R1, new content-addressed artifact in a Host-isolated output root, `conflict_scope_rule = export:{task}/{target_id}`, `idempotency_class = content_addressed`, arguments `{source_digest, editset_digest, format}`, result `{artifact_ref, bytes_digest, format_report}`; publication of the final artifact remains guarded.
+- **Criteria.** C1 required sections present (deterministic, from the read manifest); C2 exported values equal `table_facts` by digest (independent oracle, not the adapter's self-report); C3 declared-style formatting preserved → `human_disposition_required`; C4 source document unmutated (`provider_revision` unchanged, `external_target_identity` evidence).
+- **UNKNOWN and waits.** Host crash after output write and before publish → Invocation `OutcomeUnknown`, reconciled from the output-root manifest digest plus the publication fence; safe retry only with the same target id. OAuth scope revoked → `NeedsAuthorization`, persisted re-authorization `Approval` WaitRecord. Rate limit → `RateLimit` WaitRecord with bounded wake. Revision/etag conflict → `PreconditionFailed`, then a fresh read.
+- **No new Kernel state.** The task uses existing Goal/Plan/Invocation/budget/UNKNOWN/WaitRecord/Completion machinery; additions are namespaced schemas, two tool definitions, one strategy, one verification policy and one artifact type.
+
+**Falsification gate.** If Office — or any added domain — requires a domain-specific branch in the Kernel loop, terminal enum, permission state machine, provider-ambiguity rule or Host side-effect semantic, the adapter boundary is rejected and the extension decision is reopened. A new typed tool, resource dimension or external account principal is a normal extension **only if** the existing admission/Host contracts can enforce it.
+
+## 7. Conformance fixtures (design; PE NOT RUN)
+
+X1–X8 are **extension-conformance** fixtures, not an Office test suite; Office-specific cases are X1, X3 and X9–X12.
+
+| Fixture | Scope | Initial facts | Expected |
+| --- | --- | --- | --- |
+| X1 register Office | manifest/profile | valid manifest, no Kernel special case | binds a new Task; identical event/authority machinery |
+| X2 unknown effect or changed digest | manifest/tool | version, schema or digest mismatch | reject before model/tool admission; audit preserved |
+| X3 ambiguous external write (design-only simulation; R2 not enabled) | effect semantics | simulated provider accepts a mutation, response lost | UNKNOWN retained, no blind retry, reconcile by exact revision; proves the protocol, enables no real external effect |
+| X4 cross-domain Coding→Video | handoff | exact ArtifactRef + grant | consumer reads exact digest only; no producer grant/context inheritance |
+| X5 delayed Video render | long job | cancel before Host convergence, partial staging | task stays `Open` with an UNKNOWN reconciliation wait; no publication, no false Completed |
+| X6 cheap Coding path | fast path | deterministic evidence suffices | no verifier ModelStep; all mandatory checks and Guard still run |
+| X7 high-risk/ambiguous | assurance | semantic concern or human gate | fresh independent review/human approval; no cheap-path bypass |
+| X8 timeout/no progress | control | deadline or bounded stall | safe stop, typed outcome/WaitRecord, zero unbounded requeue |
+| X9 OAuth scope revoked mid-batch | Office R0/R1 | read succeeds, scope revoked before export | `NeedsAuthorization` WaitRecord; no partial artifact published; no retry loop |
+| X10 revision/etag conflict | Office | edit set built on a stale `provider_revision` | `PreconditionFailed`; re-read and re-decide; never a blind replay |
+| X11 rate limit with batch partial | Office | provider 429 mid-batch over an ordered item list | `RateLimit` WaitRecord with bounded wake; completed items retained as evidence; no duplicate effect |
+| X12 approval expired before dispatch | permission | approval valid at admission, expired at the Host gate | launch denied; no side effect; typed disposition |
+| X13 fourth domain, zero Kernel diff | neutrality | an **independent** author (not the adapter author) adds a domain using only manifest/profile/strategy/tool/policy files | no Kernel file, enum, event or error-code change; `domain_id`-branch static scan clean; existing fixtures unchanged |
+
+A contract-level static pass additionally requires an owner-reviewed schema inventory, an input/output example per port, stable authorization/error mapping and cross-document consistency. PE and VI remain **NOT RUN** unless evidence is attached to named implementations and environments.
+
+## 8. Stable, extensible, deferred
+
+**Stable for v0.2:** Task/Goal/Plan/ModelStep/Invocation identity and transition ownership, K-local reservations/intent/journal/outbox, separate K/G/H facts, Host-local launch/fence/receipt, cancellation/UNKNOWN, terminal CAS, ArtifactRef digest/handoff, criterion/evidence binding, Completion Guard and WaitRecord.
+
+**Extension surface:** profile schemas, criterion classes and verification policies, context projection, tool catalog, strategy values within the DES floor, artifact kinds, resource dimensions and Host-supported execution profiles.
+
+**Deferred:** multi-Host linearizability, arbitrary autonomous cross-domain DAG orchestration, untrusted in-process plugins, agent swarms, Office implementation, external R2 effects, and any performance target without a measured baseline. Multi-Agent/D9 remains deferred and unauthorized.

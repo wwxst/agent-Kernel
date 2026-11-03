@@ -1,6 +1,8 @@
 # Domain Workflow binding contract
 
-> **Status: PROPOSED cross-domain contract.** The one-Kernel/two-domain product direction is approved. This document proposes the deterministic binding contract for domain workflows; schema implementation and runtime enforcement are unverified.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); design-only for Office; implementation NOT started; runtime claims UNVERIFIED.**
+>
+> The one-Kernel/two-domain product direction is approved. This document remains authoritative for Workflow Profile authority, DomainBinding lifecycle, revocation and cross-domain ScopedReadGrant; field shapes are owned by [Kernel data model](kernel-data-model.md) and per-domain execution policy by [Execution Strategy](execution-strategy.md).
 
 ## 1. Purpose
 
@@ -14,22 +16,9 @@ A Workflow Profile is not an Agent, security principal, plugin runtime, or permi
 
 Every Task has exactly one active DomainBinding in the initial platform scope.
 
-Minimum fields:
+Field shapes, enums and identifier semantics are owned by [Kernel data model §3.4](kernel-data-model.md); they are not restated here. A binding carries at minimum: domain and profile identity/version/digest; the contract/schema version map (goal, plan, evidence, artifact, tool); the immutable tool-snapshot digest; `strategy_ref`; `resource_policy_ref`; `verification_policy_ref`; `authority_epoch`; and status/provenance including the activation event.
 
-| Field | Meaning |
-| --- | --- |
-| domain_id | Stable domain identifier, initially coding or video_editing |
-| workflow_profile_id | Stable profile identifier within the domain |
-| workflow_profile_version | Immutable profile version |
-| domain_contract_version | Version of the domain payload and artifact contracts |
-| goal_schema_id/version | Schema used for the typed GoalContract domain payload |
-| plan_schema_id/version | Schema used for typed PlanStep payloads |
-| evidence_schema_set | Domain-specific evidence kinds and schema versions |
-| artifact_schema_set | Domain-specific artifact kinds and schema versions |
-| tool_snapshot_set | Immutable tool-definition snapshot references admitted by the profile |
-| verification_policy_id/version | Criterion evidence and assurance policy |
-| resource_policy_id/version | Hard resource dimensions, limits, and reservation policy |
-| provenance | Profile source, owner/approval reference, digest, and activation event |
+Every one of these must be **declared or referenced by id in the DomainManifest** ([Domain Extension §2](domain-extension.md)); a profile field the manifest neither declares nor references is not bindable, and registration fails closed.
 
 The domain_id is immutable for the lifetime of a Task. Changing from Coding to Video Editing (or vice versa) requires a new Task and an explicit artifact handoff; it is not a profile migration. The DomainBinding/profile version is immutable for an accepted Task/plan version. A same-domain profile change creates a new binding candidate and triggers GoalContract/PlanRevision impact analysis. If it changes scope, capabilities, resource authority, or evidence obligations, it must pass the same user-confirmation and plan-switch rules as any other protected change.
 
@@ -38,39 +27,42 @@ The domain_id is immutable for the lifetime of a Task. Changing from Coding to V
 A profile declares:
 
 - supported domain and contract versions;
+- the bound ExecutionStrategy reference and the Host enforcement profiles the profile requires;
 - domain GoalContract payload schema and criterion vocabulary;
 - domain PlanStep payload kinds and artifact outputs;
 - domain context projections and their freshness/invalidation rules;
 - tool capability manifest and immutable tool snapshot references;
-- each tool's effect class, conflict scope, resource needs, idempotency class, and approval requirements;
+- each tool's effect class, conflict scope, resource needs, idempotency class, and approval requirements — the declared effect class is a **proposal** that Kernel re-derives from the digested tool definition, canonical arguments and target, rejecting any mismatch;
 - hard budget dimensions and verification/repair reserve;
-- criterion-to-evidence requirements and evidence-independence classes;
+- criterion-class-to-evidence requirements and evidence-independence classes, expressed as `verification_policies[]` entries with explicit policy id/version — never a policy-free class;
 - render/build/analysis environment requirements where applicable;
-- delivery artifact kinds and post-delivery retention rules;
+- delivery artifact kinds, publication gate and post-delivery retention rules;
 - cancellation, process convergence, recovery, and UNKNOWN reconciliation rules.
 
-A profile can narrow available tools and capabilities. It cannot expand the user's authorization or override Kernel policy. Kernel combines the profile's declared limits with the current principal, capability, approval, policy, budget, workspace/project, and fencing state at each admission.
+A profile can narrow available tools and capabilities. It cannot expand the user's authorization or override Kernel policy. Kernel combines the profile's declared limits with the current principal, capability, approval, policy, budget, workspace/project, and fencing state at each admission. The profile's `verification_policies[]` is the **sole owner** of required evidence class, independence floor and human gates; the bound strategy may add review triggers and tighten thresholds, never restate, weaken or lower them ([DES §2–§3](execution-strategy.md)).
 
 ### 3.1 Profile lifecycle, current-effective authority, and revocation
 
 A Workflow Profile version is immutable and content-digested. The registry lifecycle is logically Draft → Validated → Active → Superseded, with RevocationPending and Revoked authority states for a withdrawal. Superseded/revoked versions remain addressable for historical provenance but cannot authorize new work. RevocationPending means new Kernel admission/ticket issuance have stopped and Host fences are being installed. A **previously issued** valid ticket may still cross a locally authorized Host gate before HostFenceInstalled, but never offline and never after its local fence installation. Request acceptance alone is not retroactive physical revocation.
 
-Profile activation, supersession, and revocation advance a monotonic AuthorityFenceEpoch for each affected invocation-authority scope. The same epoch advances when any revocable launch prerequisite changes, including principal, capability, policy, approval, or an equivalent grant. The immutable DomainBinding records the exact profile ID/version/digest and is never rewritten by authority changes. A separate current authority record references that binding and carries the current AuthorityFenceEpoch. Each dispatch ticket also binds the exact authority-version vector; workspace/project generation and budget-reservation version remain explicit execution-snapshot fields. A ToolInvocation records the exact binding/profile and epoch under which it was admitted. Completed operations, artifacts, and evidence retain that historical version; they are never rewritten to the latest profile.
+**One activation authority.** Registering a DomainManifest creates candidates only; activation, supersession and revocation are the single registry lifecycle for manifest, profile and strategy, performed by an `operator` principal holding `profile.activate` / `profile.revoke` ([Permissions §3](../security/permissions.md)). There is no adapter-side or second activation path. Changing a manifest, profile, strategy or adapter-artifact digest on a live Task is a structural L2 change under the migration protocol in this section — never an in-place binding rewrite.
+
+Profile activation, supersession, and revocation advance a monotonic `authority_epoch` for each affected invocation-authority scope. The same epoch advances when any revocable launch prerequisite changes, including principal, capability, policy, approval, or an equivalent grant. The immutable DomainBinding records the exact profile ID/version/digest and is never rewritten by authority changes. A separate current authority record references that binding and carries the current `authority_epoch`. Each dispatch ticket also binds the exact authority-version vector; workspace/project generation and budget-reservation version remain explicit execution-snapshot fields. A ToolInvocation records the exact binding/profile and epoch under which it was admitted. Completed operations, artifacts, and evidence retain that historical version; they are never rewritten to the latest profile.
 
 The accepted PlanRevision's profile pin is a provenance and compatibility binding, not perpetual permission to launch tools. Kernel Admission checks the current K authority; **physical Host launch checks the current effective locally installed authority** plus a live, bounded and authenticated grant at the serialized local gate. They do not share an instantaneous cross-system atomic snapshot. The respective checks establish that:
-- the invocation references the effective Active profile version/digest, the respective current **K admission** or **H-installed launch** AuthorityFenceEpoch, and the exact bound authority-version vector;
+- the invocation references the effective Active profile version/digest, the respective current **K admission** or **H-installed launch** `authority_epoch`, and the exact bound authority-version vector;
 - the accepted PlanRevision and DomainBinding still match that profile;
 - current principal, capability, approval, policy, budget-reservation version, workspace/project generation, and fencing checks pass.
 
 A queued or admitted-but-not-launched invocation must be rejected at dispatch if the Host has installed a fence or invalidation after its ticket epoch, if local profile/authority or proven workspace/reservation generation no longer matches, or if no live-bound launch proof is available. K RevocationRequested before H fence is an acknowledged in-flight race rather than proof of a forbidden launch. A stale dispatch authorization cannot be replayed. If current authority cannot be established, Host launch fails closed. An old accepted plan cannot bypass revocation by presenting its historical approval.
 
-A revocation request atomically advances the desired AuthorityFenceEpoch in Kernel and blocks new admission and dispatch-ticket issuance for profile, principal, capability, policy, and approval revocations; physical Host fencing is acknowledged separately. Any concurrent launch is ordered by the Host LaunchGate described in Section 3.2: a launch boundary committed before the authority fence is treated as already in flight; a fence committed first rejects the old ticket without process creation. After the Host-local fence is installed, no queued/admitted invocation under the old epoch may launch on that Host. For operations already across the launch boundary, the predeclared revocation policy determines graceful drain versus cancellation request. A cancellation request is not process convergence; the Host must reconcile descendants and writable handles. An invocation in UNKNOWN blocks migration, replay, and conflicting new side effects until reconciled; changing the profile cannot clear that hold.
+A revocation request atomically advances the desired `authority_epoch` in Kernel and blocks new admission and dispatch-ticket issuance for profile, principal, capability, policy, and approval revocations; physical Host fencing is acknowledged separately. Any concurrent launch is ordered by the Host LaunchGate described in Section 3.2: a launch boundary committed before the authority fence is treated as already in flight; a fence committed first rejects the old ticket without process creation. After the Host-local fence is installed, no queued/admitted invocation under the old epoch may launch on that Host. For operations already across the launch boundary, the predeclared revocation policy determines graceful drain versus cancellation request. A cancellation request is not process convergence; the Host must reconcile descendants and writable handles. An invocation in UNKNOWN blocks migration, replay, and conflicting new side effects until reconciled; changing the profile cannot clear that hold.
 
 A same-domain migration uses freeze → stop admission → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new DomainBinding and accepted PlanRevision activation. No old PlanRevision is silently rebound. New operations begin only after the new binding is current. A Coding ↔ Video change always requires a new Task and explicit artifact handoff.
 
-**Additional G0 risk-policy constraint (OPEN):** revocation of already issued tickets is physically effective only when the Host-local fence is installed, the authenticated launch grant expires at the spawn boundary, or Host launch ability is verifiably disabled. An Owner must choose acceptable bounded request-to-fence exposure and grant lifetime/clock assumptions per effect class. Reversible isolated writes need an approved window; destructive/irreversible/high-impact external effects remain **disabled by default** until an Owner accepts a verified bounded window or separately proves a stronger online launch protocol. Revoke request does not imply ProcessConverged. See [Trusted Host risk policy](../security/trusted-host.md) and [Open decisions](../decisions/open-decisions.md).
+**Additional risk-policy constraint (owner ratification pending; provisional defaults in ARB-01.6):** revocation of already issued tickets is physically effective only when the Host-local fence is installed, the authenticated launch grant expires at the spawn boundary, or Host launch ability is verifiably disabled. An Owner must choose acceptable bounded request-to-fence exposure and grant lifetime/clock assumptions per effect class. Reversible isolated writes need an approved window; destructive/irreversible/high-impact external effects remain **disabled by default** until an Owner accepts a verified bounded window or separately proves a stronger online launch protocol. Revoke request does not imply ProcessConverged. See [Trusted Host risk policy](../security/trusted-host.md) and [Open decisions](../decisions/open-decisions.md).
 
-### 3.2 Dispatch and revocation ordering — single-Host scope (second-round PROPOSED refinement)
+### 3.2 Dispatch and revocation ordering — single-Host scope (construction baseline)
 
 The Host performs **physical** dispatch only on an exact one-use ticket and live, coherent **Host-installed** effective authority. Three separate events apply:
 
@@ -197,7 +189,7 @@ A domain verifier produces criterion-level evidence and a VerificationReport usi
 - No domain-specific tool bypass around Kernel/Host.
 - No implicit cross-domain delegation or Multi-Agent.
 - No automatic profile migration while operations are active.
-- Cross-domain composite workflows remain OPEN / DEFERRED.
+- A multi-domain request is an ordered set of independently authorized Tasks linked by an explicit `CompositePlan` **derived record**; a composite Task, shared execution authority, fan-out and autonomous delegation remain OPEN / DEFERRED.
 
 ## 11. Explicit cross-domain ArtifactRef handoff
 
@@ -222,8 +214,10 @@ The consumer Task has its own principal, DomainBinding, Workflow Profile, GoalCo
 
 Only an artifact in the consumption-eligible state defined by ADP-04 may be handed off; staging, partial, quarantined, Missing, DigestMismatch, or UNKNOWN payloads are not consumable. The exact artifact state machine remains an ADP-04 dependency and is not decided here. Changes to digest, destination, purpose, access mode, or material scope require renewed authorization and consumer validation. Revocation blocks future reads/consumption but cannot recall bytes already copied into the consumer's authorized workspace; those copies follow the declared retention/deletion policy. Handoff lineage is audit metadata, not a Task aggregate or authority transfer.
 
-The initial platform scope rejects a Task with more than one active domain binding. Composite cross-domain autonomous workflows and shared mixed-domain context remain deferred pending a separate decision.
+**Dependency and failure semantics.** A handoff edge used in multi-domain composition declares exactly one of: `require_success` — the consumer Task is not created until the producer reaches `Completed` and a current grant exists; or `skip_on_failed_dependency` — the consumer is created with the dependent criterion `Fail`/`Unverified`, never `Pass`. Partial consumption is **not** offered, because partial payloads are not consumable by this contract. A producer `OutcomeUnknown` creates no consumer; a producer failing after consumer completion does not reopen a terminal Task, and the `CompositePlan` delivery reports the failed step. Sequence, executor and delivery rules are in [Domain Extension §5](domain-extension.md).
 
-## 12. Executable extension-port boundary (G0 candidate, not approved)
+The initial platform scope rejects a Task with more than one active domain binding. Composite cross-domain *task* authority, shared mixed-domain context, budget pooling, fan-out and autonomous delegation remain deferred; sequential composition of independently authorized Tasks is permitted under this section.
 
-The minimal registration, `DomainManifest`, adapter ports, typed `DecisionIntent`, idempotent event exchange, error semantics and Office falsification fixture are specified in [Domain Extension Contract v0.1](domain-extension.md). This document remains authoritative for Workflow Profile authority, DomainBinding, revocation and cross-domain ScopedReadGrant, while the extension document defines how a third domain integrates **without Kernel branching on domain semantics**. A domain adapter is proposal-only: Kernel validates immutable envelope/read-set and retains all admissions, budgets, lifecycle and completion authority. An Office adapter and sequential scoped Task handoff are design-validation cases, **not** authorization to enable D9 or autonomous composite agents.
+## 12. Executable extension-port boundary (construction baseline)
+
+The registration, `DomainManifest`, per-port contracts, typed `DecisionIntent`, canonical digest, idempotent event exchange, adapter error mapping and the Office R0/R1 validation sample are specified in [Domain Extension Contract v0.2](domain-extension.md). This document remains authoritative for Workflow Profile authority, DomainBinding lifecycle, revocation and cross-domain ScopedReadGrant, while the extension document defines how a third domain integrates **without Kernel branching on domain semantics**. A domain adapter is proposal-only: Kernel validates immutable envelope/read-set and retains all admissions, budgets, lifecycle and completion authority. The Office adapter and sequential scoped Task handoff are design-validation cases, **not** authorization to enable D9 or autonomous composite agents.

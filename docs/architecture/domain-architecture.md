@@ -1,6 +1,8 @@
 # Unified domain architecture
 
-> **Status: APPROVED PRODUCT DIRECTION; PROPOSED ARCHITECTURE.** The owner has confirmed one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing, with independent domain intelligence and execution capabilities. This document is the cross-domain architecture proposal, not an implementation specification or runtime authorization.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); design-only for Office; implementation NOT started; runtime claims UNVERIFIED.**
+>
+> The owner has confirmed one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing, with independent domain intelligence and execution capabilities. This document is the cross-domain architecture baseline, not an implementation specification or runtime authorization.
 
 ## 1. Product objective
 
@@ -30,7 +32,7 @@ A logical view:
        Agent Application
               |
        Shared Agent Kernel
-       - Task / Turn / Step
+       - Task / ModelStep / ToolInvocation
        - GoalContract / PlanRevision envelopes
        - Model Gateway / Context Engine
        - Tool Runtime / Permission / Budget
@@ -107,14 +109,17 @@ A Workflow Profile is a configuration/policy snapshot, not an agent process, mic
 A Workflow Profile declares at least:
 
 - domain ID, profile ID/version, and compatible contract/schema versions;
+- the bound ExecutionStrategy reference ([DES](../contracts/execution-strategy.md)) and the Host enforcement profiles it requires;
 - GoalContract domain-payload schema and acceptance-criterion vocabulary;
 - domain PlanStep kinds and expected artifact types;
 - domain context/model projection versions and evidence kinds;
-- allowed tool-definition snapshot references and effect/conflict classifications;
+- allowed tool-definition snapshot references and effect/conflict classifications (a declared class is a proposal; Kernel re-derives it from the tool digest, arguments and target);
 - resource dimensions, hard limits, reservation rules, and verification/repair reserve;
-- criterion-to-evidence mapping and required evidence-independence level;
-- output artifact and delivery requirements;
+- criterion-class-to-evidence mapping through `verification_policies[]` entries with explicit policy id/version — the sole owner of required evidence class, independence floor and human gates;
+- output artifact, publication gate and delivery requirements;
 - cancellation, recovery, and reconciliation requirements for long-running operations.
+
+Every field the Kernel validates on a binding is declared or referenced by id in the DomainManifest ([Domain Extension §2](../contracts/domain-extension.md)); a profile-only field is not bindable. The strategy may add review triggers and tighten thresholds but can never lower a verification-policy obligation.
 
 A Task, accepted GoalContract, PlanRevision, relevant ModelSteps, ToolInvocations, artifacts, and VerificationReport bind the same profile identity/version unless a separately accepted profile migration triggers impact analysis and a safe plan switch.
 
@@ -145,7 +150,7 @@ For the first platform scope:
 2. Each Task is bound to exactly one domain and one Workflow Profile version.
 3. Each domain has its own context projection, planner semantics, tool capability set, and verifier.
 4. The domains share Task/Plan/Tool/Host/Journal/Budget/Recovery/Completion contracts.
-5. A task that requires a Coding task and a Video task is represented as separately authorized Tasks linked by exact immutable typed ArtifactRefs and an auditable handoff record; a composite cross-domain autonomous workflow is **OPEN / DEFERRED** until separately designed.
+5. A task that requires a Coding task and a Video task is represented as separately authorized Tasks linked by exact immutable typed ArtifactRefs and an auditable handoff record; sequential multi-domain composition is a derived `CompositePlan` projection ([Domain Extension §5](../contracts/domain-extension.md)) that adds no Task authority. Fan-out, budget pooling and a composite cross-domain autonomous workflow remain **OPEN / DEFERRED**.
 6. ArtifactRef is a reference, not a capability. The consuming Task receives a separate narrowly scoped authorization and validates exact digest, schema, classification, provenance, and suitability.
 7. The consuming Task has its own principal, DomainBinding, Workflow Profile, GoalContract, PlanRevision, tools, approvals, budget, and verifier. It does not inherit producer permissions, approvals, profile, secrets, workspace/project access, or private context.
 8. Domain-specific artifacts and evidence are not silently interpreted by the other domain.
@@ -177,7 +182,7 @@ The timeline is a canonical engineering artifact that the agent creates and revi
 
 1. One shared Kernel owns authoritative Task/Plan/model/tool admission, budgeting and completion transitions for both domains; physical process facts remain the Trusted ToolHost's authority.
 2. Domain Intelligence owns semantic interpretation and domain plan quality.
-3. Kernel remains domain-neutral and validates typed envelopes, references, authority, and legal transitions deterministically.
+3. Kernel remains domain-neutral and validates typed envelopes, references, authority, and legal transitions deterministically. No Kernel, Host or Completion-Guard rule names a domain or branches on `domain_id`; per-domain behaviour enters only as manifest, profile and strategy **data**.
 4. Each Task has one immutable domain/profile binding at a time.
 5. Domain tools use the same ToolInvocation, budget, permission, Host, receipt, cancellation, and recovery controls.
 6. A successful tool exit is not proof that a domain deliverable is correct.
@@ -202,8 +207,10 @@ The current cross-document consistency findings are recorded in [Cross-domain ar
 - How should RenderJob projection reconcile Kernel ToolInvocation state, Host Ledger physical facts, verification, and artifact publication?
 - Which source-to-output provenance and independent acceptance obligations are required for each Video criterion?
 
-## 11. Third-domain boundary test and composition status (G0 candidate)
+## 11. Third-domain boundary test and composition status
 
-The proposed lightweight [Domain Extension Contract v0.1](../contracts/domain-extension.md) uses immutable version-pinned manifests and typed adapter ports (`interpretGoal/projectContext/decideNext/interpretOutcome/verifyCriteria/describeRecovery`) to register domains without altering the Kernel state machine. Kernel validates envelope/authority/evidence references; the adapter owns interpretation and domain policy. A future Office adapter could map document-section/sheet-range context, batched external edits with exact OAuth scope and etag, immutable exports and per-criterion checks onto the **same** ModelStep, Invocation, K/G/H, budget, UNKNOWN, cancellation and completion machinery.
+The [Domain Extension Contract v0.2](../contracts/domain-extension.md) registers domains through immutable, version-pinned manifests and typed adapter ports (`interpretGoal/projectContext/decideNext/interpretOutcome/verifyCriteria/describeRecovery`) without altering the Kernel state machine. Kernel validates envelope, digest, authority and evidence references; the adapter owns interpretation and domain policy. Per-domain execution policy is data bound through the [Execution Strategy](../contracts/execution-strategy.md), so Coding, Video, Office or a future Browser domain differ in cadence, context budget, concurrency, caching, verification triggers and deadlines **without a Kernel branch**. Shared obligations are expressed as generic evidence classes (`protected_input_view`, `machine_check`, `output_inspection`, `provenance_map`, `external_target_identity`, `human_disposition`), never as domain names.
 
-This test does **not** authorize Office implementation, external destructive effects, a distributed Task graph, D9 or Multi-Agent. First-slice cross-domain cooperation remains an explicitly authorized producer→ArtifactRef→ScopedReadGrant→consumer Task handoff. A thin dependent-task coordinator is a **future proposal** with separate per-task principals, budgets and failure policy, not a new cross-domain authority. If Office demands a new Kernel-specific transition or bypass, reject that adapter contract and reopen G0 rather than expanding Kernel core.
+The Office validation sample is scoped to R0 document read plus R1 local export into a Host-isolated output root, with criteria C1–C4, the `OutcomeUnknown` path for a crash before publish, `NeedsAuthorization`/`RateLimit` WaitRecords and a human disposition for declared-style formatting. External in-place editing is an R2 external effect and stays disabled, so it is neither implemented nor mocked. Conformance fixtures X1–X13 include OAuth scope revocation mid-batch, revision/etag conflict, rate-limit partial batch, approval expiry before dispatch and — critically — **X13**: an independent author (not the adapter author) adds a fourth domain and proves a **zero Kernel file, enum, event or error-code diff**, with a clean static scan for `domain_id` branches.
+
+This test does **not** authorize Office implementation, external destructive effects, a distributed Task graph, D9 or Multi-Agent. Multi-domain cooperation remains an explicitly authorized producer→ArtifactRef→ScopedReadGrant→consumer Task handoff plus a derived sequential `CompositePlan`; there is no composite Task, shared budget, inherited approval or cross-domain authority. If Office — or any later domain — demands a new Kernel-specific transition or bypass, reject that adapter contract and reopen the extension decision rather than expanding Kernel core.
