@@ -118,3 +118,41 @@ Before any implementation planning, review [Architecture subtraction and contrac
 - D9 / Multi-Agent remains deferred until separately reopened and authorized.
 - A full visual Video Editor remains outside the first-phase scope.
 - No legacy code migration without per-asset review and explicit approval.
+
+## Stage 9 — Developer task decomposition and construction acceptance (G0 proposal; no implementation authorization)
+
+**Dependencies are mandatory; the following are future tickets, not completed implementation.** Each handoff includes typed request/result schema and version digest, authority/transaction owner, success/UNKNOWN/failure/cancel path, policy/resource binding, log/receipt events, deterministic fixture, observability fields and unsupported-environment outcome.
+
+| Ticket | Depends on | Deliverable | Blocking acceptance |
+| --- | --- | --- | --- |
+| K-00 Protocol fixture harness | G0 owner architecture review | Event schema, legal/illegal transitions, deterministic K/G/H crash/replay traces | Mock Core, M/R/S fixtures reproducible without claiming physical proof |
+| K-01 Kernel authority | K-00 | Journal/Inbox/Outbox, TaskControl CAS, ModelStep/Invocation/Budget aggregate versions, selective K-local serializable read-sets | Unrelated receipts do not conflict; protected read-set and budget vs completion race are atomic |
+| K-02 Model/Provider | K-01 | Adapter maximum-charge certificate, one-use G SendMayHaveOccurred, candidate/selection, invoices/UNKNOWN | M1–M6, no blind provider resend, bounded unresolved liability |
+| K-03 Trusted Host | K-01 | Single-Host local gate/fence/nonce, sandbox, execution-view attestations, receipts/process convergence | R1–R7/S1–S3/V1–V3 on named OS; unsupported R2 fails closed |
+| K-04 Tool/recovery | K-01,K-02,K-03 | Admission, conflict scopes, idempotent HostResultInbox and reconciliation | Crash before/after K/H/OS, cancel and duplicate side-effect fixtures |
+| K-05 Context/Domain ports | K-01 | Lazy indexed ContextManifest, DomainManifest/adapter interface, ScopedReadGrant/artifact resolver | X1/X2/X4, stale source and prompt injection containment |
+| K-06 Orchestrator/Guard | K-02,K-04,K-05 | Single decision loop, no-progress/deadline wait, optional verifier policy, deterministic Completion Guard | Cheap + high-risk paths, exactly-once terminal, approval/wait/timeout |
+| C-01 Coding intelligence | K-05,K-06 | Repository locator, patches, L0/L1 repair, test impact and source evidence | C-01–C-04,C-08/C-10 with independent oracles |
+| C-02 Coding Host verification | K-03,C-01 | Sealed read-only SourceSnapshot and effective ExecutionViewManifest; isolated test outputs | C-05–C-07,C-09/C-11/C-12; unsupported runner blocks completion |
+| V-01 Video intelligence | K-05,K-06 | Media/project snapshots, progressive modality evidence, NarrativePlan and rational-time timeline compiler | V-01–V-03,V-06/V-10 and source/time oracles |
+| V-02 Video render | K-03,V-01 | Validated RenderPlan, long Host job, one-use staging, cancellation and immutable publish | V-04/V-05/V-09, media resource and process convergence evidence |
+| V-03 Video assurance | V-02,K-06 | Actual final decode, semantic/content assessment, provenance, revision validation | V-01/V-07/V-08, independent blinded human rubrics as declared |
+| X-01 Office proof | K-05,K-06,C-01,V-01 | **Mock/design-only** Office manifest/adapter, external edit UNKNOWN, scoped Coding→Video artifact handoff | X1–X8 without a new Kernel Loop/TaskControl state |
+| E-01 Measured comparison | C-02,V-03,X-01 | Frozen A/B source tasks, raw traces/bills, controlled ablations and failure injector | G1–G5 qualifying evidence and owner-calibrated non-regression thresholds |
+
+### Stage 9.1 Non-collapsible gate ledger
+
+| Gate | Required qualifying evidence | Current status |
+| --- | --- | --- |
+| G0 static decision and independent design review | Owner dispositions on pending ADPs; no major cross-document conflict; accepted resource/R2/revocation/Verifier policy and runtime target | **OPEN / NOT OWNER APPROVED** |
+| G1 protocol | Executed serializability, K/G/H ambiguity, maximum provider budget/candidate selection and recovery fixtures | **NOT RUN** |
+| G2 Host | Actual named OS/Host sealed source, spawn/fence races, sandbox isolation, descendants/handle convergence | **NOT RUN** |
+| G3 Coding | C-01–C-12 end-to-end including hidden tests, A/B speed/Token/false completion | **NOT RUN** |
+| G4 Video | V-01–V-10 real media/render/output and blinded editorial quality/latency | **NOT RUN** |
+| G5 domain reuse | X1–X8 Office adapter and exact cross-domain handoff; no Kernel loop or terminal enum change | **NOT RUN** |
+
+**Static construction walk-through:** Kernel supports accepted Goal → one K-local admission/Outbox → H/Provider independent facts → event-driven wait/reconciliation → Guard/terminal; Coding binds patches/tests to exact sealed source and executed read-only test view; Video binds source→analysis→timeline→render→actual output check; Office binds structured edit/etag and external authorization via the same Invocation/UNKNOWN protocol. These are **paper paths, not executable proofs**.
+
+**Blocking choices to owner:** B0 owner acceptance of G0 proposals/ADP-03–11; B1 provider-specific hard-charge and ambiguous submit support or explicit soft-only capability; B2 approved single-Host grant TTL/revocation exposure/R2 policy; B3 selected OS/Host and sealed-source-capable Coding toolchain; B4 selected K storage semantics for atomic selective read-set; B5 accepted assurance/benchmark thresholds and rights-cleared task sets; B6 separate authorization for runtime, physical fault injection, actual provider billing and media runs. These are **P0/P1 unresolved**; full project readiness is **BLOCKED**, even when static documentation is internally coherent.
+
+**Signoff record required for each gate:** owner, independent reviewer, construction simulator, named environment, fixture IDs and results, raw evidence links, outstanding P0/P1, accepted risks and date. At most two targeted document repair/review iterations per gate; unresolved decision forks escalate to owner. No G0 text can be used to assert G1–G5 PASS.

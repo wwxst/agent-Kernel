@@ -152,3 +152,27 @@ Each domain report should include the shared Kernel metrics for its own runs and
 - Runtime/fault-injection runs: **NOT RUN**.
 - Numeric safety/service thresholds: **OPEN**.
 - Kernel safety and recovery properties: **UNVERIFIED**.
+
+## 9. Construction-level benchmark and regression contract (G0 candidate)
+
+**Measurement design; NOT RUN.** Every `RunRecord` binds `scenario_id, task_set/seed, arm, source_artifact_digests, accepted_criteria, model/pricing/profile/host versions, budget_caps, monotonic_start/end, terminal_status/reason, criterion_verdicts, safety_incidents, spans, resource_samples, reserved_liability, settled_cost, unresolved_exposure, result_artifacts`. Spans carry `kind=context|model|queue|tool|Host|render|verify|recovery`, correlation/parent IDs, start/end, token in/out/reasoning/cache/modalities, wait reason, digest, retry and disposition. E2E is the critical-path wall time, **not the sum of parallel span durations**. Report blocked human wait separately and never turn unknown cost or missing telemetry into zero.
+
+| Metric | Exact computation / treatment |
+| --- | --- |
+| Success | Terminal Completed with all independent required criteria PASS / all admitted benchmark tasks; failures, timeouts and safe refusals remain in denominator and are separately categorized |
+| Incorrect completion | Completed with any stale/missing/failed mandatory criterion / all Completed; also enumerate severity against all tasks |
+| Terminal correctness | Due tasks with exactly one legal terminal disposition or explicit safe UNKNOWN/incident hold / all due tasks; unresolved effects must not be called converged |
+| P50/P95 | End-to-end and separated model, tool queue, Host wait, render, recovery and user wait; pinned monotonic spans |
+| Model and Token cost | Admitted/attempted/selected/UNKNOWN model requests, input/output/reasoning/cache/modal tokens and provider-version settled charge plus retained maximum exposure |
+| Tool efficiency | Distinct versus repeated `tool+arguments+input snapshot+purpose` calls, tool wait and no-progress loops; record beneficial deliberate repeats separately |
+| Resources | CPU/GPU time, peak RSS, disk/output bytes, workers and saturation, orphan descendants and cancellation-to-convergence |
+| Recovery | Restart-to-safe-resume/typed stop, unsafe replay count, duplicate effects, outstanding UNKNOWN age, expired-authority rejection |
+| Context fidelity | Token share by raw/retrieved/summary, cache hit/invalidation, missed required evidence and stale-citation defects |
+
+**Executable matrix:** existing sequential shared fault scenarios (1–44), Core M1–M6, Host R1–R7/S1–S3/V1–V3, [Coding C-01–C-12](../autonomous-coding-agent/evaluation.md), [Video V-01–V-10](../multimedia-domain-architecture/evaluation.md), and [Office/extension X1–X8](../../contracts/domain-extension.md). Include normal/simple, complex, long/recovery, concurrent/resource pressure, cancellation, expired approval, provider ACK loss, duplicate/out-of-order Outboxes, changed source/overlay shadow, process-tree leak and false-completion traps. Fault injector records event interleavings/seeds and an independent outcome oracle. K/G/H mocks establish protocol properties only; real Host enforcement requires named-OS G2 tests.
+
+**Fair controls:** freeze prompt, source digest, accepted criteria, mandatory verification floor, model/provider/pricing, Host isolation, tool snapshot, budgets, hidden oracles and approval policy. Compare A (safe single-controller loop, fixed fresh Verifier, eager context and serial tools) with B (same loop, risk-triggered Verifier, incremental context, bounded isolated reads, event-driven Host progress and L0/L1 fast path). Randomize paired order and isolate each optimization; report all incomplete and failed tasks. Do **not** compare a candidate against a weaker-safety or higher-budget control.
+
+**Proposed thresholds requiring owner G0 calibration (NOT measured):** (1) deterministic safety/fence/UNKNOWN/false-terminal tests: 100% expected outcomes, zero unauthorized/non-idempotent duplicate effects or false high-severity Completed; (2) success point estimates never below matched control by domain/stratum, one-sided 95% paired lower CI of success difference at least -1 percentage point after power analysis, Video blinded content quality non-inferior; (3) at least 10% repeatable median improvement in *either* latency or fully exposure-adjusted cost with p95 E2E no worse than 1.05× control and no unapproved Token/resource regression; (4) all injected cancel/restart/timeout cases reach terminal or durable owned wait/UNKNOWN disposition with zero blind replays; (5) if CIs are too wide, mark **INCONCLUSIVE**, never PASS. Pilot at least 30 cases per stratum where practical, then calculate sample size from observed paired variance (200/domain is a **planning estimate**, not guaranteed power). Preserve raw traces, exclusions, censoring, bills, Host specs, reviewer disagreements and exact commits.
+
+**Results schema:** `gate, fixture, environment, build_sha, arm, N, PASS|FAIL|NOT_RUN|SKIP|PARTIAL|UNVERIFIED, trace_links, estimates/CI, limitations, reviewer, owner_disposition`. A specification or Markdown link check is not test execution. Static G0 success cannot promote G1–G5.
