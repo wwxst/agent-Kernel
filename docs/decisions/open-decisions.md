@@ -140,3 +140,19 @@ For each future decision, record:
 - status and explicit owner approval.
 
 Do not silently turn an experiment result into a permanent decision.
+
+## 10. G0 implementation-readiness decision packet — 2026-11-03
+
+The [Extension Contract](../contracts/domain-extension.md), [Core fast/terminal path](../contracts/core-protocol.md), [conditional assurance](../contracts/completion.md), [performance measurement design](../research/shared-kernel/evaluation.md) and [Stage 9 task graph](../development/roadmap.md) are **PROPOSED**, not owner-approved API/technology decisions.
+
+| Blocker | Choices and architecture recommendation | Validation |
+| --- | --- | --- |
+| B0 / P0 | Approve single-loop + versioned thin domain adapters under current approved product scope, or request narrower alternative; keep D9 deferred | G0 owner + independent reviewer |
+| B1 / P0 | Per-Provider enforceable max-charge certificate and idempotent/status traits; otherwise fail Hard Budget admission and explicitly authorize limited Soft mode | G1 M1–M6 |
+| B2 / P0 | Select acceptable single-Host request-to-fence window, TTL/skew and effect risk policy; **recommend R2 disabled**, R0/R1 only until verified | G2 R1–R7 |
+| B3 / P0 | Choose named Host/OS/test runner that truly enforces sealed read-only Coding SourceSnapshot and disjoint outputs; otherwise mark unsupported | G2 S1–S3 |
+| B4 / P0 | Select and verify K-local serializable/selective multi-aggregate read-set storage semantics; otherwise start more conservatively sequential | G1 K races |
+| B5 / P1 | Approve assurance triggers, genuine independent task oracles, human risk criteria, control arms and provisional noninferiority thresholds | G3/G4 |
+| B6 / P1 | Separately authorize the limited protocol/Host/provider/media tests and their budgets, assets, environments and stop conditions | Before G1–G5 |
+
+**No automatic readiness promotion:** unresolved B0–B6 and missing G1–G5 executable evidence mean **BLOCKED for full Ready for Implementation**; a paper walk-through can only be labeled a G0 candidate. Owner must record the particular option, constraints, decision date, evidence and residual risk for each unresolved blocker rather than treating suggested defaults as accepted.

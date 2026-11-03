@@ -75,3 +75,9 @@ See [Unified domain architecture](docs/architecture/domain-architecture.md) and 
 Read [AGENTS.md](AGENTS.md) before changing project files. Use [Open decisions](docs/decisions/open-decisions.md) and the research documents to distinguish approved direction, proposed contracts, and unknowns.
 
 The current milestone is cross-domain architecture research and contract reconciliation. Implementation starts only after the relevant contracts, experiments, and scope have been explicitly agreed.
+
+## Domain extension and construction readiness — G0 candidate
+
+The long-term product is **a general-purpose Agent Kernel**, not a Kernel that grows a new state machine for each domain. Coding and Video Editing are the initial independent domain strategies; future Office, Browser and Data would add versioned profiles, adapters, typed tools and verification policies, retaining shared permission, budget, ModelStep, Invocation, cancellation, recovery and completion authority. [Domain Extension Contract v0.1](docs/contracts/domain-extension.md) gives a design-only Office test and explicit no-Kernel-branch falsification cases. The proposed fast path uses one primary loop, lazy context and conditional review **without dropping mandatory correctness evidence**.
+
+**Current readiness: BLOCKED for full Ready for Implementation.** G0 owner dispositions (including ADP-03–11, Provider/Host/OS/assurance choices) are OPEN, and G1–G5 executed evidence is NOT RUN. The [Stage 9 roadmap](docs/development/roadmap.md) has a concrete post-approval implementation graph and measurable gates; the current edits are documentation only. Nothing here authorizes Runtime, multi-agent/D9 execution, external high-risk effects or deployment.

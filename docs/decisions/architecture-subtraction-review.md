@@ -101,3 +101,23 @@ The **minimum evidence interface** is `EvidenceRef(id, sourceKind, immutableSour
 | **G5** | Shared Kernel contract reuse for Coding and Video without cross-domain semantic authority | **NOT RUN** |
 
 No thresholds or successful experiments are invented. ADP-03–11 remain OPEN; ADP-01/02 retain their recorded REVISED/APPROVED status. This document does not authorize Runtime work, merge or freeze.
+
+## 8. Role-separated adversarial review and construction simulation — 2026-11-03
+
+**Design passes:** Runtime, performance/Token, Coding, Video, domain extension and security/reliability concerns were assessed against the existing one-loop + K/G/H, immutable SourceSnapshot, Host fence and budget-certificate contracts. Recommend preserving these safety invariants while minimizing mandatory model stages, read-set contention, repeated context and fixed Verifier overhead; add [Extension v0.1](../contracts/domain-extension.md), bounded terminal protocol and [Stage 9](../development/roadmap.md). This is a role-separated analysis of the documentation, **not a claim that separate external reviewers or executable sub-agent workers signed off**.
+
+**Counterexample-driven pass, distinct from design criteria:**
+
+| Counterexample | Required guard; adversarial test |
+| --- | --- |
+| Agent-written test green; semantic bug remains | Independent criterion oracle or required fresh reviewer, never self-report as PASS; C-01/C-03 |
+| Incremental context omitted modified test/config | Protected read-set plus actual sealed source execution view; C-05/C-06 |
+| Bounded parallel reads have different source generation | Same immutable source version or reject/refetch; shared CAS and C-08 |
+| Timeout during live render descendant writes | Separate H process/handle convergence vs Task failure + UNKNOWN hold; V-04 |
+| Provider timeout after possible send | G-local SendMayHaveOccurred, cost hold and no blind retry; M1–M6 |
+| Office provider edit ACK lost or OAuth permission revoked | Exact revision/status reconciliation and reauthorization, no Office-specific Kernel status; X1–X8 |
+| Completing after TaskControl cancellation wins CAS | Guard rereads protected versions under K transaction and loses; terminal race fixture |
+
+**Construction simulation (document-only):** K-00–K-06 have explicit required ports and event/transaction owners; Coding C-01/C-02 bind patch, SourceSnapshot and executed test evidence; Video V-01–V-03 bind exact source, timeline, render staging and inspected output; Office X-01 maps scoped external API edit/etag/UNKNOWN without changing Kernel Loop/TaskControl/Host. These are reviewable paper traces, not implemented unit tests or actual external verification. **B0–B6 remain blocker candidates and G0/G1–G5 status unchanged**.
+
+**Iteration bound:** one focused design repair and one reverse-review/cross-document scan; unresolved owner choices are escalated instead of endlessly redesigning. Benchmark hypotheses remain unverified and no P0/P1 is marked resolved absent its specified proof.
