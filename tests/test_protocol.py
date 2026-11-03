@@ -176,7 +176,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaises(Rejected):
             self.k.commit_terminal("post",task_id="t",expected_control_version=1,
                                    status="FAILED",reason="NoProgress")
-        self.assertEqual(self.k.conn.execute("SELECT COUNT(*) FROM journal WHERE kind='TaskCompleted'").fetchone()[0],1)
+        self.assertEqual(self.k.conn.execute("SELECT COUNT(*) FROM journal WHERE kind='TaskTerminal'").fetchone()[0],1)
 
     def test_workspace_update_invalidates_old_verification(self):
         self.evidence()
