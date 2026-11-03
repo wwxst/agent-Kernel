@@ -212,7 +212,7 @@ Depending on the accepted output profile:
 
 ### 8.3 Perceptual and human assurance
 
-A fresh Video Verifier receives the original UserIntent, accepted GoalContract/PlanRevision, TimelineRevision, current render, sampled frames/audio/transcript evidence, and raw probe/decode results. It must not rely on the editor's self-assessment as evidence.
+The actual final rendered output must receive the required **technical and content** inspection, independently of the editor's self-assessment. When the accepted criterion/assurance policy calls for a fresh Video model Verifier, it receives original UserIntent, accepted GoalContract/PlanRevision, TimelineRevision, current render, sampled frames/audio/transcript evidence, and raw probe/decode results; otherwise independently authored comparisons or authorized human assessment must satisfy the declared content-evidence obligations. Skipping an optional model call never skips actual final-output inspection or a required human gate.
 
 The verifier can report content mismatches, poor pacing, abrupt or confusing cuts, unreadable captions, obvious audio/visual artifacts, and insufficient evidence. Its opinion is a review finding, not a technical test result or criterion Pass.
 

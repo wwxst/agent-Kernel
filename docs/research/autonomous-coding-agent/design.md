@@ -304,7 +304,7 @@ Verification proceeds at multiple levels:
 - **Integration verification:** run relevant cross-package, contract, or integration tests.
 - **System verification:** run the repository's required full suite, build, or end-to-end checks when required by the criteria and feasible within budget.
 - **Acceptance verification:** evaluate every GoalContract criterion against its bound evidence.
-- **Independent review:** use a fresh Verifier ModelStep over the original UserIntent, accepted GoalContract and PlanRevision, criteria, diff, and raw verification evidence. Do not provide the Implementer's summary/self-assessment as evidence. The same model/provider may be used for ordinary-risk review; higher-risk criteria may require a different provider or external reviewer. The Verifier reports findings and evidence gaps, not criterion proof.
+- **Conditional independent review:** apply the accepted criterion-risk/assurance policy in [Completion](../../contracts/completion.md). Invoke a fresh Verifier ModelStep when semantic independence is required, the only oracle is implementation-authored, evidence is disputed or a higher-risk trigger applies; otherwise independent trusted deterministic tests and the non-skippable Completion Guard may suffice for low-risk tasks. If invoked, the Verifier receives original UserIntent, accepted Goal/Plan, diff and raw verification evidence, never Implementer self-assessment as proof. Its findings and evidence gaps are advisory, not criterion PASS.
 
 The verification plan should identify required checks, optional risk-based checks, unavailable checks, and the consequences of each missing result. A skipped or unrun test is not a pass.
 
