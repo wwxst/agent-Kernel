@@ -35,7 +35,7 @@ Minimum RenderPlan fields:
 - verification obligations and expected provenance mapping;
 - idempotency key, invocation identity, and fencing epoch.
 
-The plan digest covers all execution-affecting fields. Any changed source, timeline, compiler, FFmpeg build, filtergraph, profile, path binding, environment, budget, or Host isolation profile makes the plan stale and requires revalidation.
+Deterministic compilation is bound by `plan_digest` (pure inputs: timeline, snapshot, profile, compiler/registry versions, AST, argv). Execution context is bound by `execution_binding_digest` (plan digest + input artifact digests + cwd + environment digest + staging ref + reservation + ticket epoch + idempotency key). A changed source, timeline, compiler, FFmpeg build, filtergraph or profile makes the **plan** stale; a changed path binding, environment, budget reservation or fence makes the **execution binding** stale. Both must be current at admission and at the Host gate; a mismatch is `CompilerDigestMismatch` or `ExecutionBindingMismatch` respectively, and neither may be published.
 
 ## 3. Input protocol and demuxer policy
 

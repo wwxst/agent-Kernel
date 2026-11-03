@@ -135,7 +135,7 @@ The following are **qualitative blocker conditions**, not invented numeric thres
 - any unbounded hard-budget bypass or unaccounted Host consumption;
 - any cancellation marked complete while a process/descendant can still mutate the target.
 
-Numeric service levels are **provisional hypotheses**: §9.6 fixes their *form* now, their *values* are ratifiable only at **DF** after **PE** baselines exist, and none is approved today. Establish the fault-injection fixtures and metric definitions before debating values.
+Numeric service levels are **provisional hypotheses**: §9.6 fixes their *form* now, their *values* are provisional at **DF** and may be calibrated only after **PE** baselines exist; none is approved as a target today. Establish the fault-injection fixtures and metric definitions before debating values.
 
 A runtime or fault-injection baseline requires separate explicit authorization of implementation, Host environment, tools, budgets, and stop conditions. This architecture protocol does not authorize those runs.
 
@@ -257,7 +257,7 @@ Pilot ≥30 cases per stratum, then size from observed paired variance (200/doma
 ### 9.7 No-branch and record-shape static conformance (DF evidence only)
 
 - No behavioural `domain_id` comparison, domain-name literal in a conditional, domain-specific terminal state or reason, or domain-specific evidence-trust rule anywhere on the Kernel decision path — DES floor F12 and fixture S-1.
-- Shared records carry no domain-shaped field. Domain content appears only through opaque typed references (e.g. `domain_evidence_refs[] = {domain_id, schema_id, version, digest}`), never as a parsed domain verdict ([Data model](../../contracts/kernel-data-model.md) invariant 15).
+- Shared records carry no domain-shaped field. Domain content appears only through opaque typed references (`domain_evidence_refs[] = {schema_id, schema_version, digest}`, as owned by [Data model §3.11](../../contracts/kernel-data-model.md)), never as a parsed domain verdict.
 - The check is a grep-level scan of the Kernel module plus a record-schema diff. It is necessary and never sufficient: static cleanliness is DF evidence, not PE.
 
 **Results schema:** `gate (DF|SA|PE|VI), fixture, environment, build_sha, arm, task_set_seed, N_runs, N_tasks, N_censored, PASS|FAIL|NOT_RUN|SKIP|PARTIAL|INCOMPLETE|UNVERIFIED, trace_links, estimates/CI, settled_cost, exposure_adjusted_cost, shadow_audit, measurement_spend, limitations, reviewer, owner_disposition`. A specification or Markdown link check is not test execution. DF success cannot promote SA, PE or VI.

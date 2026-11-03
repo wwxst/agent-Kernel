@@ -1,6 +1,6 @@
 # Architecture overview
 
-> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** This is an **informative** map of the normative contracts. Where it disagrees with an owning contract, that contract wins ([documentation map](../README.md)).
+> **Status: ARCHITECTURE BASELINE (informative; accepted as design context under ARB-01, 2026-11-03); implementation NOT started; runtime claims UNVERIFIED.** This is an informative map of the normative contracts. Where it disagrees with an owning contract, that contract wins ([documentation map](../README.md)).
 
 ## 1. Product objective
 

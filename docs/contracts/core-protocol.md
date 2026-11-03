@@ -54,7 +54,7 @@ These tables define a **minimal projection** of the existing richer contracts; t
 | Aggregate | Minimal states and allowed progress | Owner |
 | --- | --- | --- |
 | TaskControl / Plan | Accepted GoalContract, one active PlanRevision, structural switch/cancellation/terminal facts use TaskControl CAS; Planning/Ready/Running/Verifying/Waiting are **derived display modes**. PlanRevision structural cutover remains atomic. | Kernel |
-| ModelStep selection | Open → CandidateRecorded → Selected/Completed; selection is irreversible; no candidate if response incomplete/stale | Kernel |
+| ModelStep selection | Open → CandidateRecorded → Selected/Completed, or Open/CandidateRecorded → Abandoned when no future candidate can be selected (terminal Task, superseded binding, or strategy abandonment); selection is irreversible; no candidate if response incomplete/stale | Kernel |
 | ModelAttempt execution | AdmittedUnsentKnown → SendMayHaveOccurred → Complete/FailedKnownNotAccepted/**ProviderOutcomeUnknown** (projection); cancellation or lost ACK does not prove non-acceptance. Financial exposure is independent. | G owns physical send facts; K commits logical Attempt and reservation |
 | Budget reservation | Reserved → ProvisionallyAccounted → Settled/Adjusted or HeldUnknown; no release on timeout | Kernel |
 | ToolInvocation | Proposed → Admitted → DispatchPending → Running/Rejected/OutcomeUnknown → reconciled terminal outcome; lifecycle applies only to Invocation, **not to an ActionProposal batch** | Kernel logical admission; Host owns physical truth |
@@ -246,7 +246,7 @@ Each fixture specifies initial durable records, interleaving, injected crash/par
 - Are protected input scope and verification output lineage disjoint and frozen?
 - Is the L0/L1/L2 classifier tied to protected-field comparisons rather than model preference?
 - Have single-Host and multi-Host promises been kept separate?
-- Are ADP-03 through ADP-11 explicitly still OPEN until owner decisions?
+- Are all previously OPEN ADPs either disposed in the Decision Log or listed as external facts in Open decisions?
 
 ## 12. Construction-level main-loop scheduling and terminalization
 

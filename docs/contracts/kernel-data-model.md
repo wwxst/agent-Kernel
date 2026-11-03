@@ -122,15 +122,15 @@ Rules: `criterion_id` is stable across versions; changing the *meaning* of a cri
 | --- | --- | --- | --- |
 | `binding_id`, `binding_digest` | id, digest | yes | Immutable snapshot bound to a Task. |
 | `domain_id` | string | yes | `coding`, `video_editing`, future `office`, … Namespaced, not branched in Kernel. |
+| `tenant_id` | id | yes | Owning tenant; immutable. |
 | `profile_id`, `profile_version`, `profile_digest` | ids/version/digest | yes | Immutable. |
 | `contract_versions` | map | yes | goal/plan/evidence/artifact schema versions. |
 | `tool_snapshot_set_digest` | digest | yes | Exact admitted tool definitions. |
 | `strategy_ref` | `{strategy_id, version, digest}` | yes | See [Execution Strategy](execution-strategy.md). |
 | `resource_policy_ref`, `verification_policy_ref` | refs | yes | — |
-| `authority_epoch` | uint64 | yes | Monotonic across profile/principal/capability/policy/approval changes. |
-| `status` | `Draft \| Validated \| Active \| Superseded \| RevocationPending \| Revoked` | yes | — |
+| `authority_epoch` | uint64 | yes | Epoch at creation; current authority lives in `AuthorityState` (§3.21). |
 
-Invariant: binding fields are immutable; a change creates a new binding candidate and, if protected, a structural L2 cutover. `strategy_ref` may only be replaced by the same L2 protocol.
+Invariant: binding fields are immutable; a change creates a new binding candidate and, if protected, a structural L2 cutover. `strategy_ref` may only be replaced by the same L2 protocol. A binding has **no mutable lifecycle status**; `Draft/Active/Superseded/Revoked` belong to the `AuthorityState` record so the historical pin never changes.
 
 ### 3.5 PlanRevision and PlanStep
 
@@ -153,7 +153,7 @@ Invariant: binding fields are immutable; a change creates a new binding candidat
 
 | Record | Required fields |
 | --- | --- |
-| `ModelStep` | `model_step_id`, `task_id`, `purpose` (`strategic\|tactical\|assurance\|planning\|verification\|summary`), `version`, `state` (`Open \| CandidateRecorded \| Selected \| Completed`), `attempt_ids[]`, `selected_attempt_id`, `binding` (`goal_version`, `plan_revision_id`, `profile_digest`, `context_manifest_digest`), `deadline`, `strategy_ref` |
+| `ModelStep` | `model_step_id`, `task_id`, `purpose` (`strategic\|tactical\|assurance\|planning\|verification\|summary`), `version`, `state` (`Open \| CandidateRecorded \| Selected \| Completed \| Abandoned`), `attempt_ids[]`, `selected_attempt_id`, `binding` (`goal_version`, `plan_revision_id`, `profile_digest`, `context_manifest_digest`), `deadline`, `strategy_ref` |
 | `ModelAttempt` | `attempt_id`, `model_step_id`, `provider`, `model`, `pricing_version`, `request_digest`, `max_charge` (certificate ref + minor amount + currency), `reservation_id`, `budget_scope_id`, `provider_request_key?`, `state` (`AdmittedUnsentKnown \| SendMayHaveOccurred \| Complete \| FailedKnownNotAccepted \| ProviderOutcomeUnknown`), `send_marker_ref?`, `usage_ref?` |
 | `Candidate` | `candidate_id`, `attempt_id`, `response_digest`, `journal_sequence`, `schema_valid`, `selection_eligible`, `ineligibility_reason?` |
 
@@ -171,7 +171,7 @@ Invariants: exactly one `selected_attempt_id` ever; selection is irreversible; a
 | `effect_class` | `R0 \| R1 \| R2` | yes | Effective class from tool + arguments + target, never the model label. |
 | `conflict_scope` | string | yes | Serialization domain (e.g. workspace path set, project, output target). |
 | `target` | `{kind, ref, digest?}` | yes | Exact target identity, not a bare path. |
-| `read_set` | binding vector | yes | `goal_version`, `plan_revision_id`, `authority_epoch`, `profile_digest`, `workspace_generation` or `project_snapshot`, `budget_scope_version`, `tool_digest`, `step_precondition_digest`. |
+| `read_set` | binding vector | yes | `tenant_id`, `principal_id`, `goal_version`, `plan_revision_id`, `authority_epoch`, `profile_digest`, `workspace_generation` or `project_snapshot`, `budget_scope_version`, `tool_digest`, `step_precondition_digest`. |
 | `reservation_id` | id | yes | Budget hold covering the operation. |
 | `approval_ref` | id \| null | conditional | Required when policy demands per-invocation approval. |
 | `state` | `Proposed \| Admitted \| DispatchPending \| Running \| Rejected \| OutcomeUnknown \| Succeeded \| FailedKnown \| Cancelled` | yes | Logical lifecycle. `Succeeded/FailedKnown` require Host evidence, never a model claim. |
@@ -183,13 +183,13 @@ Rules: `Admitted` means the durable intent + reservation + outbox committed **be
 
 ### 3.8 Approval and ScopedReadGrant
 
-`Approval`: `{approval_id, principal_id, task_id, invocation_id?, scope, tool_digest, args_digest, authority_epoch, issued_at, expires_at, nonce, decision, revoked_at?}`. Approval is a **permission fact**, not an Invocation state. It is rechecked at admission and at the Host gate; a stale approval never authorizes launch.
+Approval is two records owned by [Permissions](../security/permissions.md) §4; their field shapes and lifecycle are canonical there and are **not** restated here. Kernel adds one field only: `ApprovalDecision.approval_version` (CAS token) plus `consumed_by_invocation_id`/`consumed_at`, and consumption is committed in the same K transaction as `InvocationAdmitted`. Approval is a permission fact, not an Invocation state; a stale, expired, revoked or consumed approval never authorizes launch.
 
 `ScopedReadGrant`: `{grant_id, version, handoff_id, artifact_id, artifact_digest, consumer_task_id, consumer_binding_digest, purpose, access_mode, authorizing_principal, policy_version, issue_at, expiry, revocation_epoch, resolver_receipts[]}`. Grants are server-side and never appear in model context.
 
 ### 3.9 BudgetScope, Reservation, CostRecord
 
-- `BudgetScope`: `{budget_scope_id, version, limit {amount,currency} or resource vector, hard_mode, enforcement_hold?, overrun_records[]}`.
+- `BudgetScope`: `{budget_scope_id, version, tenant_id, owner_kind, owner_id, limit {amount,currency} or resource vector, hard_mode, protected_verification_repair_reserve, enforcement_hold?, overrun_records[]}`.
 - `Reservation`: `{reservation_id, budget_scope_id, owner_kind: model|host|resource, owner_id, maximum, state: Reserved|ProvisionallyAccounted|Settled|Adjusted|HeldUnknown, created_at, settled_at?}`.
 - `CostRecord`: `{cost_record_id, reservation_id, provider_usage_ref?, host_usage_ref?, settled_amount, basis, late: bool}`. Append-only; late costs never rewrite a selection or a terminal fact.
 
@@ -206,10 +206,10 @@ Trust classes are `T0..T5` as in [Context Engine](../context/context-engine.md#6
 
 ### 3.11 VerificationReport and CompletionRecord
 
-`VerificationReport`: `{report_id, task_id, goal_version, plan_revision_id, binding_digest, strategy_ref, verification_policy_ref, criterion_results[], environment, toolchain, domain_evidence_refs[] {schema_id, schema_version, digest}, artifact_digests[], skipped_checks[], verifier_run {model_or_human, independence, input_manifest_digest, disposition}?, guard_inputs_digest, created_at}`.
+`VerificationReport`: `{report_id, report_version, task_id, goal_version, plan_revision_id, binding_digest, strategy_ref, verification_policy_ref, criterion_results[], environment, toolchain, domain_evidence_refs[] {schema_id, schema_version, digest}, artifact_digests[], skipped_checks[], verifier_run {model_or_human, independence, input_manifest_digest, disposition}?, guard_inputs_digest, created_at}`.
 
 `domain_evidence_refs[]` is the only domain-specific part of the shared report: it carries typed schema ids and digests, never Coding/Video field names. Coding's sealed-view manifest, Video's project/render references and any future domain's evidence live inside their own typed artifacts, resolved by the domain verifier; the Kernel binds identity and digest only.
-`criterion_results[]`: `{criterion_id, verdict: Pass|Fail|NotRun|Skip|Partial|Unverified, evidence_refs[], independence, notes_ref?}`.
+`criterion_results[]`: `{criterion_id, verdict, evidence_refs[], independence, notes_ref?}` where `verdict` uses the enum owned by [Completion](completion.md) §2 (`Pass | Fail | NotRun | Skip | Partial | Unverified`).
 
 `CompletionRecord`: `{completion_id, task_id, task_control_version, report_id, report_digest, guard_policy_version, checks[] {check_id, ok, detail_ref}, outstanding_holds[], decided_at, journal_sequence}`. Committed atomically with the terminal fact.
 
@@ -243,11 +243,37 @@ Kernel validates that every accepted criterion maps to exactly one class, that t
 
 Two durable safety barriers exist. Neither is a Task state; neither rewrites a terminal fact, and neither clears itself on a timer.
 
-`CompletionHold`: `{hold_id, version, task_id, opened_by_event_id, conflicting_fact_ref, blocked_scope, review_state: Open|EvidenceValidated|DefectConfirmed|Inconclusive, owner, resolution_deadline, resolved_at?}`.
+`CompletionHold`: `{hold_id, version, task_id, hold_kind: PreTerminal|PostTerminalEvidenceHold|UnresolvedEffect, opened_by_event_id, conflicting_fact_ref, blocked_scope, review_state: Open|EvidenceValidated|DefectConfirmed|Inconclusive, owner, resolution_deadline, resolved_at?}`.
 
 `UnresolvedEffectHold`: `{hold_id, version, task_id, terminal_fact_ref, invocation_ids[], conflict_scope, reconciliation_owner, next_wake_at, max_reconcile_until, disposition: Pending|Reconciled|Escalated}`. It exists **after** a Task terminalizes with `reason=UnresolvedEffect`; it keeps conflicting targets fenced and records that physical convergence is not claimed.
 
 An event `CompletionHoldOpened/Resolved` covers both record kinds via `hold_kind`; a hold timeout escalates, never auto-clears.
+
+### 3.18 EffectPolicy
+
+`{effect_policy_id, version, tenant_id, risk_class: R0|R1, tool_digests[] | tool_class, target_scope, grant_ttl_ms, clock_uncertainty_ms, fence_ack_target_ms, fail_closed: true, approval_required, allowed_effect_classes[], status: Draft|Active|Revoked, activated_by, activated_at}`.
+
+An effectful R1 launch is admitted only when an `Active` policy **matches** the invocation on tenant, tool digest (or declared tool class), target scope and risk class, and the Host can enforce its TTL/clock/fence values. `tool_class` is a manifest-declared class id; `target_scope` is a namespaced target pattern (for example `workspace:<id>`, `staging:<task>`); an implementation must not invent an alternative taxonomy. No match is `PolicyDenied`, never a silent default. Only an `operator` principal with `profile.activate` may activate or revoke a policy ([Permissions](../security/permissions.md)).
+
+### 3.19 Freeze records and workspace generation
+
+`FreezeRequest`: `{freeze_id, request_id, tenant_id, task_id, workspace_id, workspace_generation, authority_epoch, kernel_challenge, nonce, request_payload_digest, expires_at, state: Requested|InProgress|Completed|Expired|Aborted, created_at}`.
+`FreezeReceipt`: `{receipt_id, freeze_id, tenant_id, workspace_id, workspace_generation, authority_epoch, kernel_challenge, snapshot_id, source_digest, protected_input_scope_version, hash_alg, hash_scope_version, hash_scope_descriptor_digest, convergence {processes, writable_handles, evidence_digests[]}, execution_view_manifest_digest?, host_id, key_id, ledger_sequence, ledger_chain_digest, captured_at}`.
+`FreezeDecisionIntent`: `{decision_id, tenant_id, freeze_id, decision: Commit|Abort, receipt_digest, persisted_at}` persisted **before** sending to the Host; the Host rejects the opposite decision and returns the recorded one.
+
+`AdvanceWorkspaceGeneration` is the only command that increments `workspace_generation`; it requires a committed freeze decision (or a proven non-freezing write path declared by policy) and records the resulting generation. Protocol semantics and recovery are owned by [Workspace Freeze](workspace-freeze.md).
+
+### 3.20 TaskDelivery
+
+`{delivery_id, tenant_id, task_id, terminal_fact_ref, artifact_refs[] {artifact_id, digest, schema}, report_digest, status: Pending|Delivered|Acknowledged|Failed, attempt_count, next_attempt_at, ack_ref?, created_at}`.
+
+Delivery is at-least-once with a stable `delivery_id`; an ACK binds the delivery id, artifact digests and report digest. A missing ACK is retried with bounded backoff and dead-lettered, never used to reopen a terminal Task.
+
+### 3.21 AuthorityState
+
+`{scope_kind: principal|capability|policy|approval|profile, scope_id, tenant_id, authority_epoch, effective_binding_digest, effect_policy_id, status: Active|RevocationPending|Revoked, updated_at}`.
+
+One record per authority scope. `DomainBinding` is the immutable historical pin; `AuthorityState` is the only mutable "current authority" record and is what admission and the Host grant reference. `EffectPolicyId` in [Trusted Host](../security/trusted-host.md) denotes the `effect_policy_id` field of the §3.18 record.
 
 ## 4. Kernel event catalog
 
@@ -261,12 +287,17 @@ Events are append-only Journal records: `{event_id, event_type, aggregate_kind, 
 | `PlanRevisionAccepted` | PlanRevision | deterministic checks pass | `revision_id`, `state=AcceptedPendingCutover` |
 | `PlanSwitchBarrierInstalled` | TaskControl | structural cutover begins | `switch_id`, `old_revision_id` |
 | `PlanRevisionActivated` | TaskControl | atomic activation | `old_revision_id`, `new_revision_id` |
+| `CancelAccepted` | TaskControl | cancellation accepted (not convergence) | `cancel_accepted_journal_sequence`, `reason_code`, `requested_by` |
+| `PlanSwitchRequested` | TaskControl | structural cutover requested | `switch_id`, `old_revision_id`, `reason` |
+| `PlanStepReworkStarted` | PlanRevision | authorized rework of the same objective | `step_id`, `plan_step_version`, `prior_attempt_ref` |
 | `PlanStepStatusChanged` | PlanRevision | derived work/verification change | `step_id`, `work_status?`, `verification_status?`, `cause_event_id` |
 | `ModelStepOpened` | ModelStep | decision starts | `model_step_id`, `purpose`, `binding` |
 | `ModelAttemptAdmitted` | ModelAttempt | K-local admission + reservation | `attempt_id`, `reservation_id`, `request_digest` |
 | `ModelSendMayHaveOccurred` | ModelAttempt | Gateway durable marker (imported fact) | `attempt_id`, `marker_ref` |
+| `AttemptCancelRequested` | ModelAttempt | attempt cancellation requested | `attempt_id`, `command_id` |
 | `ModelCandidateRecorded` | ModelStep | complete valid response | `candidate_id`, `attempt_id`, `response_digest` |
 | `ModelStepSelected` | ModelStep | final selection | `selected_attempt_id`, `delivery_id` |
+| `ModelStepAbandoned` | ModelStep | no candidate can ever be selected | `model_step_id`, `reason` |
 | `ModelAttemptOutcomeUnknown` | ModelAttempt | ambiguity recorded | `attempt_id`, `reason` |
 | `InvocationAdmitted` | ToolInvocation | K-local admission | `invocation_id`, `effect_class`, `read_set_digest`, `reservation_id` |
 | `InvocationDispatched` | ToolInvocation | outbox send | `invocation_id`, `ticket_id` |
@@ -274,8 +305,24 @@ Events are append-only Journal records: `{event_id, event_type, aggregate_kind, 
 | `HostReceiptImported` | ToolInvocation | authenticated receipt | `invocation_id`, `receipt_digest`, `outcome` |
 | `InvocationOutcomeUnknown` | ToolInvocation | unresolved | `invocation_id`, `scope`, `reconciliation_id` |
 | `InvocationReconciled` | ToolInvocation | authoritative resolution | `invocation_id`, `final_state`, `evidence[]` |
-| `AuthorityFenceChanged` | DomainBinding/authority | revocation/fence | `epoch`, `scope`, `state` |
+| `ApprovalRequested` | Approval | approval requested for an exact scope | `approval_request_id`, `tool_digest`, `args_digest`, `approver_class` |
+| `ApprovalDecided` | Approval | granted/denied/expired/revoked | `approval_id`, `decision`, `approver_principal_id`, `expires_at` |
+| `ApprovalConsumed` | Approval | consumed by an admitted invocation | `approval_id`, `invocation_id`, `approval_version` |
+| `AuthorityFenceChanged` | DomainBinding/authority | local/observed fence change | `epoch`, `scope`, `state` |
+| `RevocationRequested` | Authority | Kernel records desired revocation epoch | `scope`, `requested_epoch`, `reason` |
+| `HostFenceInstalled` | Authority | imported Host gate fact | `host_id`, `host_incarnation`, `installed_epoch`, `gate_sequence` |
+| `Revoked` | Authority | all eligible Host gates acknowledged/disabled | `scope`, `epoch`, `host_acks[]` |
+| `DomainBindingValidated` | DomainBinding | strategy/profile/effect policy validation passed | `binding_digest`, `strategy_digest`, `effect_policy_id` |
+| `EffectPolicyActivated` | EffectPolicy | operator activates an effect policy | `effect_policy_id`, `risk_class`, `activated_by` |
+| `ArtifactRecorded` | Artifact | immutable artifact identity recorded | `artifact_id`, `digest`, `state` |
 | `ArtifactPublished` | Artifact | final publication | `artifact_id`, `digest`, `state` |
+| `FreezeRequested` | Workspace | PrepareFreeze dispatched | `freeze_id`, `request_id`, `workspace_generation` |
+| `FreezeReceiptImported` | Workspace | authenticated freeze receipt | `freeze_id`, `receipt_id`, `snapshot_id`, `source_digest` |
+| `FreezeDecisionCommitted` | Workspace | Commit/Abort decided | `freeze_id`, `decision`, `receipt_digest` |
+| `TaskDeliveryPrepared` | TaskDelivery | terminal delivery prepared | `delivery_id`, `terminal_fact_ref`, `artifact_digests[]` |
+| `TaskDeliveryAcknowledged` | TaskDelivery | consumer acknowledged | `delivery_id`, `ack_ref`, `digest` |
+| `EvidenceRecorded` | Evidence | evidence ref/binding recorded | `evidence_id`, `kind`, `digest`, `freshness_basis_digest` |
+| `VerificationReportSubmitted` | VerificationReport | verifier report bound to current plan | `report_id`, `report_version`, `report_digest`, `criterion_results_digest` |
 | `EvidenceInvalidated` | Evidence | freshness broken | `evidence_ids[]`, `cause_digest` |
 | `WaitPersisted` / `WaitResolved` | WaitRecord | parking/resume | `wait_id`, `reason_code`, `max_wait_until` |
 | `CompletionHoldOpened` / `CompletionHoldResolved` | TaskControl | safety hold (either kind) | `hold_id`, `hold_kind`, `reason`, `scope` |
@@ -299,6 +346,12 @@ Event rules: an event never substitutes for a Host fact; `HostLaunchBoundaryReco
 | `ImportHostOutcome` | `invocation_version` | dedup receipt, project outcome |
 | `ReconcileUnknown` | `invocation_version` | typed resolution |
 | `AppendBudgetEvent` | `budget_scope_version` | reserve / settle / hold |
+| `ActivateEffectPolicy` | new + `authority_epoch` | operator activates an effect policy |
+| `PrepareFreeze` / `CommitFreeze` / `AbortFreeze` | `freeze_id` + `workspace_generation` | freeze protocol |
+| `AdvanceWorkspaceGeneration` | `workspace_generation` | only command that increments the generation |
+| `RecordArtifact` / `RecordEvidence` / `SubmitVerificationReport` | `task_id` + artifact/evidence version; `report_version` for reports | immutable evidence ingestion |
+| `PrepareDelivery` / `AcknowledgeDelivery` | `delivery_id` | terminal delivery |
+| `OpenHold` / `ResolveHold` | `hold_id` + `task_control_version` | safety barriers |
 | `PersistWait` / `ResolveWait` | `task_id` + wait id | parking |
 | `BindStrategy` | `task_control_version` | L2 only; new binding candidate |
 
@@ -314,9 +367,18 @@ Command result: `{command_id, payload_digest, disposition: Applied|Rejected|NoOp
 | `VersionConflict` | concurrency | reject with current version; caller re-reads |
 | `AuthorityDenied` | policy | reject; audit security event |
 | `ApprovalMissing` / `ApprovalExpired` | policy | park as `Approval` wait or reject per policy |
+| `ApprovalConsumed` / `ApprovalScopeMismatch` / `SelfApprovalForbidden` / `ApproverClassMismatch` | policy | reject; security event ([Permissions](../security/permissions.md)) |
+| `EffectClassMismatch` | policy | reject; security event; no relabel |
+| `EffectClassDisabled` | policy | reject (R2 default-disabled) |
+| `PreconditionFailed` | state | reject; re-read and re-decide; never blind replay |
+| `EffectNotApplied` | state | record negative result; retry only per policy |
+| `HostCapabilityMissing` | capability | reject admission; mark profile unsupported |
+| `StorageUnavailable` | infrastructure | fail closed; no admission until storage is healthy |
+| `DeliveryStalled` | infrastructure | dead-letter + escalate; never reopen a terminal Task |
+| `IntegrityConflict` | integrity | quarantine; operator escalation |
+| `ExecutionBindingMismatch` | integrity | quarantine; no publication |
 | `BudgetExhausted` | resource | park `BudgetAction` or fail typed; never silently downgrade hard→soft |
 | `ResourceUnavailable` | resource | queue per strategy or reject |
-| `EffectClassDisabled` | policy | reject (R2 default-disabled) |
 | `TargetConflict` | conflict | serialize or reject; never overlap writes |
 | `OutcomeUnknown` | fact | retain hold; reconcile; no replay |
 | `RetryableNoEffect` | fact | retry only with proof no physical/provider effect was possible |
@@ -331,17 +393,18 @@ Error codes are data. An adapter error never licenses Kernel to reinterpret doma
 
 State enums are owned as follows and must not be duplicated or renamed elsewhere:
 
-| Enum | Owning document |
-| --- | --- |
-| Task authority states, terminal reason codes | this document + [Lifecycle](../architecture/lifecycle.md) |
-| GoalContract states | this document + [PlanRevision](plan-revision.md) |
-| PlanRevision / PlanStep states | [PlanRevision](plan-revision.md) |
-| ModelStep / ModelAttempt states | [Model and Budget](model-and-budget.md) + this document |
-| ToolInvocation states | [Core protocol](core-protocol.md) + this document |
-| Verification verdicts and evidence classes | [Completion](completion.md) |
-| Artifact states | this document (+ ADP-04 scope) |
-| Evidence trust classes | [Context Engine](../context/context-engine.md) |
-| Domain effect/risk classes R0/R1/R2 | [Trusted Host](../security/trusted-host.md) |
+| Enum | Owning document (enum values) | Transition/semantic owner |
+| --- | --- | --- |
+| Task authority states, terminal reason codes | this document | [Lifecycle](../architecture/lifecycle.md) |
+| GoalContract states | this document | [PlanRevision](plan-revision.md) |
+| PlanRevision / PlanStep states | this document | [PlanRevision](plan-revision.md) |
+| EffectPolicy / AuthorityState / TaskDelivery / FreezeRequest states | this document | this document |
+| ModelStep / ModelAttempt states | this document | [Model and Budget](model-and-budget.md) |
+| ToolInvocation states | this document | [Core protocol](core-protocol.md) |
+| Verification verdicts and evidence classes | [Completion](completion.md) | [Completion](completion.md) |
+| Artifact states | this document | this document (+ ADP-04 scope) |
+| Evidence trust classes | [Context Engine](../context/context-engine.md) | [Context Engine](../context/context-engine.md) |
+| Domain effect/risk classes R0/R1/R2 | [Trusted Host](../security/trusted-host.md) | [Trusted Host](../security/trusted-host.md) |
 
 ## 8. Cross-record invariants (DM)
 
@@ -353,7 +416,7 @@ State enums are owned as follows and must not be duplicated or renamed elsewhere
 6. `OutcomeUnknown` never transitions directly to `Succeeded`/`FailedKnown` without a `Reconciliation` record referencing trusted evidence.
 7. At most one `selected_attempt_id` per ModelStep; it never changes.
 8. Every `Candidate` references a `Complete` Attempt; no candidate from a partial or UNKNOWN response.
-9. `confirmed_spend + outstanding_reserved_max + proposed_max <= hard_limit` at every funding-scope admission.
+9. `confirmed_spend + outstanding_reserved_max + proposed_max + protected_verification_repair_reserve <= hard_limit` at every funding-scope admission.
 10. A late cost, receipt or evidence record may append but never rewrite a selection, accepted plan, artifact digest or terminal fact.
 11. Every passing criterion has at least one `CriterionEvidenceBinding` whose `freshness_basis` matches the current goal/plan/workspace-or-project/tool versions at Guard time.
 12. At most one `Active` PlanRevision; no admission binds a `Superseded` revision.

@@ -61,11 +61,11 @@ Video Editing is a separate Domain Intelligence and Domain Execution profile ove
 
 The Video Workflow Profile binds the media schemas, tool snapshot set, resource policy, output profile, and verification obligations. Kernel remains unaware of the semantics of a shot, a scene, pacing, or narrative coherence.
 
-### Shared orchestration simplification (Draft PR #1 — PROPOSED)
+### Shared orchestration (construction baseline)
 
 Video remains an **end-to-end autonomous editing Domain**, not a manual clip picker or partial analysis-only tool. The same **single primary Task Orchestrator loop** selects Strategic/Tactical/Assurance *decision purposes* while Video Intelligence independently handles natural-language goal understanding, progressive source analysis, message-conditioned selection, NarrativePlan, TimelineRevision compilation, FFmpeg render, final technical/content/perceptual validation, and instruction-driven revisions. These are **domain capabilities**, not separate Kernel state machines. Preserve the ADP-01/02 REVISED/APPROVED scope unchanged.
 
-Shared ActionProposal is a bounded immutable action-intent envelope; each long-running render retains a unique ToolInvocation and a Domain RenderJob projection over authenticated Host state. Context and evidence may use minimal EvidenceRefs/criterion bindings and optional indexes without losing raw media provenance, source timestamp integrity, coverage or independent output inspection. Sequential launch is the default; independent read-only media probes may run concurrently only if bounded and individually admitted. No new kernel-level Video scheduler or global Artifact/EvidenceGraph state authority is necessary. See [Architecture subtraction review](../../decisions/architecture-subtraction-review.md). G0 OPEN; real render and quality proof NOT RUN.
+Shared ActionProposal is a bounded immutable action-intent envelope; each long-running render retains a unique ToolInvocation and a Domain RenderJob projection over authenticated Host state. Context and evidence may use minimal EvidenceRefs/criterion bindings and optional indexes without losing raw media provenance, source timestamp integrity, coverage or independent output inspection. Sequential launch is the default; independent read-only media probes may run concurrently only if bounded and individually admitted. No new kernel-level Video scheduler or global Artifact/EvidenceGraph state authority is necessary. See the [domain extension contract](../../contracts/domain-extension.md). DF is accepted for the construction baseline; real render and quality proof remain NOT RUN.
 
 ## 3. Video GoalContract
 
@@ -279,7 +279,42 @@ The first phase uses FFmpeg as the named render backend. It does not select the 
 
 The `video_editing` adapter supplies MediaProjectModel, progressive analysis, moment retrieval, NarrativePlan, TimelineRevision compiler, technical/content verification and typed tool snapshots under [Domain Extension](../../contracts/domain-extension.md). It does not extend TaskControl, create its own authoritative RenderJob completion state or bypass Trusted Host.
 
-**Typed capability minimum:** `media.ingest_probe` (R0, exact source IDs/digests), `media.sample_analyze` (R0, bounded modality/interval, policy-controlled privacy), `media.timeline_validate_compile` (R0, typed rational-time timeline → allowlisted RenderPlan), `media.preview_render` (R1, own staging namespace, `media.preview.v1` artifact, never publishable), `media.final_render` (R1, one staging output, bounded Host reservation), `media.output_inspect` (R0, independent technical and content evidence), `media.publish_artifact` (R1 guarded publication). Any public upload/share, uncontrolled decoder/filter or external asset download is R2/unapproved unless separately authorized. All tool snapshots declare effect class, conflict scope, resource dimensions and idempotency class.
+**Typed capability minimum:** `media.ingest_probe` (R0, exact source IDs/digests), `media.sample_analyze` (R0, bounded modality/interval, policy-controlled privacy), `media.timeline_validate_compile` (R0, typed rational-time timeline → allowlisted RenderPlan), `media.preview_render` (R1, own staging namespace, `media.preview.v1` artifact, never publishable), `media.final_render` (R1, one staging output, bounded Host reservation), `media.output_inspect` (R0, independent technical and content evidence), `media.finalize_artifact` (R1 internal content-addressed finalize + guarded delivery pointer; external upload/share is R2 and not part of this phase). Any public upload/share, uncontrolled decoder/filter or external asset download is R2/unapproved unless separately authorized.
+
+**Tool registry (v1).** Every row declares effect class, conflict-scope rule, idempotency, limits and the evidence it can emit; an argument/result not listed is rejected.
+
+| Tool | Arguments | Result | Effect | Conflict scope | Idempotency / limits | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+| `media.ingest_probe@0.1` | `{source_ref, rights_ref, probe_profile}` | `{asset_id, content_digest, streams[], timebases, warnings[], probe_failed?}` | R0 | `asset:ro:<digest>` | pure; ≤64 streams, ≤4 GiB/source | `EV-ASSET-PROBE` |
+| `media.sample_analyze@0.1` | `{asset_id, stream_id, intervals[], modality, analyzer_profile}` | `{analysis_id, coverage_manifest_id, claims[]}` | R0 | `asset:ro:<digest>` | idempotent per input; ≤256 intervals, ≤300 s sampled | `EV-COVERAGE`, `EV-CLAIM` |
+| `media.timeline_validate_compile@0.1` | `{timeline_digest, profile_ref}` | `{plan_digest, execution_binding_digest, ast, argv}` | R0 | `task:ro:<task_id>` | pure; no decode, ≤2 MiB AST | `EV-SRC-RANGE`, `EV-TIMELINE-GRAPH`, `EV-CONCAT-EQUALITY`, `EV-XFADE-BOUNDS`, `EV-FADE-BOUNDS`, `EV-AUDIO-BOUNDS` |
+| `media.preview_render@0.1` | `{plan_digest, preview_profile}` | `{preview_artifact}` | R1 | `staging:preview:<task>` | content-addressed; ≤1 per revision | `EV-PREVIEW` |
+| `media.final_render@0.1` | `{plan_digest, execution_binding_digest, reservation_id}` | `{staged_artifact, receipt}` | R1 | `staging:render:<task>` | unique staging per attempt; 1 concurrent | `EV-RENDER-RECEIPT` |
+| `media.output_inspect@0.1` | `{staged_digest, scan_policy, criterion_ids[]}` | `{technical_report, content_evidence[], provenance_map}` | R0 | `artifact:ro:<digest>` | pure; sampling per policy | `EV-TECH-DECODE`, `EV-CONTENT`, `EV-PROVENANCE` |
+| `media.finalize_artifact@0.1` | `{staged_digest, target_namespace, idempotency_key}` | `{artifact_id, digest, publication_intent}` | R1 (internal finalize only; external upload/share is R2) | `artifact:finalize:<namespace>` | idempotent by digest; ≤1 final per target | `EV-FINALIZE` |
+
+**Evidence catalog (Video).** Each record binds `criterion_id, run_ids[], artifact/asset digests, environment_digest, independence_class, freshness_keys[], verdict`; a model narrative is never evidence.
+
+| ID | Proof |
+| --- | --- |
+| `EV-ASSET-PROBE` | trusted probe of the exact source bytes; full-content digest and stream inventory |
+| `EV-COVERAGE` | gap-accounted CoverageManifest for the declared scope; six statuses |
+| `EV-CLAIM` | typed claim bound to asset/stream/timebase/method config; confidence never proof |
+| `EV-SRC-RANGE` | every clip range within probed stream duration, end-exclusive |
+| `EV-TIMELINE-GRAPH` | gapless track, valid dependencies, exact track duration |
+| `EV-CONCAT-EQUALITY` | post-normalization stream parameters equal for concat participants |
+| `EV-XFADE-BOUNDS` | transition duration within adjacency and half-minimum bounds |
+| `EV-FADE-BOUNDS` | fade inside its clip, no overlap on one clip |
+| `EV-AUDIO-BOUNDS` | gain within range, fades inside clip, required stream present |
+| `EV-PREVIEW` | preview rendered from the exact plan; explicitly non-publishable |
+| `EV-RENDER-RECEIPT` | Host receipt bound to invocation/plan/execution-binding/fence/convergence |
+| `EV-TECH-DECODE` | actual staged output probed/decoded under the declared scan policy |
+| `EV-CONTENT` | actual rendered output inspected against task/editorial criteria |
+| `EV-PROVENANCE` | every output interval maps to source intervals or declared generated ingredients |
+| `EV-FINALIZE` | internal content-addressed finalize + guarded delivery pointer; never an external upload |
+| `EV-HUMAN` | authenticated human disposition for a human-gated criterion |
+
+All tool snapshots declare effect class, conflict scope, resource dimensions and idempotency class.
 
 **PlanStep kinds (v1):** `video.ingest`, `video.analyze`, `video.select`, `video.narrative`, `video.timeline`, `video.render_preview`, `video.render_final`, `video.inspect`, `video.publish`, `video.revise`; each carries the generic PlanStep envelope fields from [Kernel data model §3.5](../../contracts/kernel-data-model.md) plus its typed payload schema/digest.
 
@@ -292,7 +327,7 @@ The `video_editing` adapter supplies MediaProjectModel, progressive analysis, mo
 3. **Editorial decision:** select evidence-backed moments preserving required context and uncertainty; produce a versioned NarrativePlan and typed TimelineRevision with rational timestamps, source-range lineage, operation allowlist, clip/audio alignment, edit acceptance criteria and source references. A mere metadata cut list is not task completion.
 4. **Validate and preview:** deterministic timeline/compiler checks catch out-of-bounds/zero-length intervals, PTS discontinuities, VFR mapping, invalid transitions, audio clipping/sync and illegal FFmpeg paths/filters. Request an appropriately small preview only if uncertainty/accepted review policy requires it; a preview does **not** certify the final render.
 5. **Render:** Kernel admits the RenderPlan against current ProjectSnapshot, plan, resource hold and Host authority; Host executes one-use ticket in sealed sources + isolated staging with bounded CPU/GPU/memory/disk/wall time. Report authenticated progress without LLM polling; cancel/drain/reconcile all descendants and handles before staging seal. RenderJob remains a projection. Final output is never overwritten in place.
-6. **Inspect and publish:** independently probe/decode the actual staged output, verify duration/profile/streams/sync, inspect sampled final frames/audio and task-relevant narrative/context against source evidence, apply policy-required model/human content assurance, and bind source-output interval provenance. A green FFmpeg exit or preview cannot substitute. After current receipt, exact output digest, process convergence and criteria all pass, publish immutable ArtifactRef and Guard-commit Completed.
+6. **Inspect and publish:** independently probe/decode the actual staged output, verify duration/profile/streams/sync, inspect sampled final frames/audio and task-relevant narrative/context against source evidence, apply policy-required model/human content assurance, and bind source-output interval provenance. A green FFmpeg exit or preview cannot substitute. After current receipt, exact output digest, process convergence and criteria all pass, finalize the immutable ArtifactRef and Guard-commit Completed. "Publish" in this document means internal content-addressed finalize plus delivery pointer; external upload/share is R2 and stays disabled.
 7. **Revise:** new user instruction creates versioned EditIntent/NarrativePlan/TimelineRevision; invalidate only affected source/range/criterion evidence under read-set proof and re-render affected deliverable. Retain prior published revision; do not silently reuse stale inspection against changed rendered bytes.
 
 **Recovery cases:** V-02 Host crash before spawn → spent nonce/UNKNOWN until physical proof; V-03 cancel during render → no final publication without convergence; V-04 lost receipt after finalization → idempotent Host receipt/import and exact digest recovery, no second render; V-05 bad codec/VFR → explicit unsupported profile or corrected plan with revalidation; V-06 source asset changed after analysis → invalidate relevant analysis/timeline/output; V-07 visually misleading edit despite valid decode → fail semantic criterion/escalate; V-08 resource exhausted → quarantine output and preserve usage/hold. A partial file is never a final artifact. Asset rights and external distribution remain separately gated.

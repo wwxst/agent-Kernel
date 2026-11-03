@@ -33,7 +33,8 @@ A RenderJob binds at minimum:
 - output profile and expected output artifact kind;
 - resource reservation IDs and hard limits;
 - unique staging identity, final ArtifactRef target, and idempotency key;
-- Host run/job ID, cancellation/fencing epoch, and receipt obligations.
+- Host run/job ID, cancellation/fencing epoch, and receipt obligations;
+- `execution_binding_digest` (inputs, cwd, environment, staging, reservation, ticket epoch, idempotency key) and the bound strategy's `convergence_deadline_ms`.
 
 A changed source, project generation, timeline, RenderPlan, compiler/build, output target, resource policy, authorization, or fencing epoch makes an unstarted proposal stale. Kernel revalidates every invocation at admission.
 
@@ -66,6 +67,8 @@ Derived labels: `Queued` = `k_state=Admitted` and `host_state=NoLaunchIntent`; `
 | Succeeded | Quarantined / Rejected | verification failed or superseded | remain quarantined; new attempt required |
 
 Cancellation is settled only as `Cancelled` + Host `Quiescent` + staging disposition + receipt. A sent kill signal is never convergence.
+
+**Publication authority after cancellation (construction-default rule; an owner may only tighten it).** Cancellation revokes publication authority for the invocation when `cancel_accepted_journal_sequence` precedes the Host's `HostLaunchBoundaryRecorded` for that invocation. When the launch boundary precedes cancellation acceptance, the bytes may be published only if all hold: (a) the accepted plan/revision/binding is still current, (b) the artifact passes current-criterion verification, (c) no conflicting `OutcomeUnknown` remains, and (d) the bound strategy's `terminate.degraded_delivery` permits it. Otherwise record `k_state=Succeeded`, `publication_state=Rejected`, artifact `Quarantined`. A cancel *request* alone is not `CancelAccepted` and decides nothing. This is the only definition of "cancellation did not revoke publication authority"; an implementation may not invent a looser one.
 
 Progress percentage is telemetry, not a state authority. A RenderJob summary must expose all unresolved dimensions rather than flattening them into one "done" flag.
 

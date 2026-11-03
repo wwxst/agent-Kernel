@@ -30,7 +30,16 @@ Every entry records the selection, rationale, alternatives not selected, risks, 
 | ADP-09 | Cross-domain artifact handoff | **ACCEPTED (construction scope)** | 2026-11-03 |
 | ADP-10 | Minimal preview and approval surface | **ACCEPTED (construction scope)** | 2026-11-03 |
 | ADP-11 | Implementation order and gates | **SUPERSEDED by ARB-01 / roadmap** | 2026-11-03 |
+| OWNER-01 | Unified one-Kernel/two-domain product direction | **ACCEPTED** | 2026-11-02 |
 | ARB-01 | Construction baseline v1, document hierarchy, readiness model and architecture selection | **ACCEPTED (construction scope)** | 2026-11-03 |
+
+### 2.1 OWNER-01 — Unified one-Kernel/two-domain product direction
+
+- **Status:** ACCEPTED (product direction), 2026-11-02.
+- **Selection:** one shared Agent Kernel with independent Autonomous Coding and Autonomous Video Editing domain intelligence; separate RepositoryModel and MediaProjectModel; one immutable DomainBinding per Task; Video first phase is natural-language automatic editing, not a full editor.
+- **Alternatives rejected:** two separate agent products (duplicate authority/recovery); a Coding-only Kernel with Video as an external tool (no shared lifecycle/recovery); a universal semantic model (collapses domain cognition).
+- **Authorization boundary:** product direction only. It does not approve Runtime implementation, technology selection, deployment, or Multi-Agent/D9. The detailed construction contract is ARB-01.
+- **Record:** [Unified domain direction](unified-domain-direction.md).
 
 ## 3. ADP-01 — Video first-phase autonomous editing capability and operation boundary
 

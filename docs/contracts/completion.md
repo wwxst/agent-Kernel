@@ -202,7 +202,7 @@ For a non-terminal Task, a conflicting authoritative late fact may open a durabl
 - **DefectConfirmed** — preserve the original evidence and create a separately authorized RemediationTask with a new task ID, workspace ID/generation, plan revision, budget, principal/capabilities/approvals, attempts, receipts, and verification report.
 - **EvidenceInconclusive** — keep the hold active; allow read-only evidence collection and human review only.
 
-For a Task already Completed / Failed / Cancelled, the terminal status is immutable. A late conflict creates an independent post-terminal evidence hold; it does not reopen the Task. Remediation, if authorized, is a separate Task and never overwrites the original receipt, snapshot, attempt, or report.
+For a Task already Completed / Failed / Cancelled, the terminal status is immutable. A late conflict creates an independent `CompletionHold` with `hold_kind=PostTerminalEvidenceHold` ([Data model §3.17](kernel-data-model.md)); it does not reopen the Task. Remediation, if authorized, is a separate Task and never overwrites the original receipt, snapshot, attempt, or report.
 
 Hold ownership, review deadline, escalation, and resolution authority must be explicit. A timeout must not silently clear a safety hold.
 

@@ -8,6 +8,8 @@ Only a ModelStep that has atomically reached Completed with one immutable `selec
 
 The Kernel creates a durable ResponseDeliveryOutbox record in the same local transaction as ModelStep Completed and final response selection.
 
+**Terminal task delivery is a separate record.** `TaskDelivery` ([Kernel data model §3.20](kernel-data-model.md)) is created by `PrepareDelivery` with the terminal fact (or references it), delivered at-least-once with a stable `delivery_id`, and acknowledged by `AcknowledgeDelivery`. A missing ACK is retried with bounded backoff and dead-lettered; it never reopens a terminal Task and never creates a second delivery for the same terminal fact.
+
 ## 2. Stable envelope
 
 A delivery envelope contains at least:

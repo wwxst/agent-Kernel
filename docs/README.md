@@ -23,7 +23,7 @@ This is the self-contained project baseline for `wwxst/agent-Kernel`. The former
 
 ## Construction baseline v1 (DF-frozen)
 
-Status: **ACCEPTED for construction (ARB-01, 2026-11-03)**. Implementation not started; all runtime claims `UNVERIFIED`; all runs `NOT RUN`.
+Status: **ACCEPTED for construction (ARB-01, 2026-11-03)**. Every document in the table below shares that status and its class column; a future change to one document must state its new status explicitly. Implementation not started; all runtime claims `UNVERIFIED`; all runs `NOT RUN`.
 
 | Document | Class | Purpose |
 | --- | --- | --- |
@@ -56,6 +56,19 @@ Status: **ACCEPTED for construction (ARB-01, 2026-11-03)**. Implementation not s
 | [Context Engine](context/context-engine.md) | NORMATIVE | Projections, provenance, token envelope, cache, checkpoints |
 
 The Coding and Video construction documents remain under `research/` because that is where the designs were researched; ARB-01 promotes them to **NORMATIVE (domain)**. Their location is retained to avoid link churn, and this index — not the directory — determines normative ownership. Documents not listed here are drafts and bind nothing.
+
+### Ownership
+
+Every normative document has one accountable owner role; a change requires that owner's review and, where authority or a safety property changes, a Decision Log entry.
+
+| Document group | Owner role |
+| --- | --- |
+| Core protocol, data model, lifecycle, plan revision, domain workflow/extension, execution strategy, roadmap | Kernel architect |
+| Permissions, trusted host, workspace freeze, delivery, completion | Security & reliability owner |
+| Model/budget, context engine | Runtime & performance owner |
+| Coding specification, failure model, evaluation | Coding domain owner |
+| Video design, intelligence, evaluation, media project/timeline, render compiler/security/job | Video domain owner |
+| Shared evaluation protocol, documentation index | Architecture owner |
 
 ## Architecture and product direction
 

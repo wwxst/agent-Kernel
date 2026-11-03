@@ -125,7 +125,9 @@ A CoverageManifest is bound to `(media_asset_id, analysis_generation)` and is im
 
 Manifest fields: `coverage_manifest_id`, `schema_version=media.coverage.v1`, `media_asset_id` + content digest, `analysis_generation`, `project_snapshot_id`, `input_manifest_digest`, `declared_analysis_scope[]`, `segments[]`, `created_at`.
 
-A `declared_analysis_scope` entry is `{modality, stream_id|null, interval_set[{start_pts,end_pts}], coordinate_basis (video PTS+timebase | audio sample+rate), declared_resolution, sampling_policy}`. A modality considered but not requested uses `NotRequested` over its declared scope. A modality whose stream is absent has an empty declared scope plus the probe's stream-inventory fact (line 119). Segments must partition each declared scope exactly; the manifest is never a single project-wide boolean.
+`input_manifest_digest` is `sha256:` over JCS of `{sorted [{artifact_id, content_digest}], tool_snapshot_digest, configuration_digest, declared_analysis_scope[]}`: artifacts sorted by `artifact_id`, duplicates de-duplicated before hashing, and `configuration_digest` covering analyzer/profile parameters. A run whose inputs cannot be reconstructed to that digest is invalid and cannot support a criterion.
+
+A `declared_analysis_scope` entry is `{modality, stream_id|null, interval_set[{start_pts,end_pts}], coordinate_basis (video PTS+timebase | audio sample+rate), declared_resolution, sampling_policy}`. A modality considered but not requested uses `NotRequested` over its declared scope. A modality whose stream is absent has an empty declared scope plus the probe's stream-inventory fact (§3.1 technical baseline). Segments must partition each declared scope exactly; the manifest is never a single project-wide boolean.
 
 Each coverage segment records:
 - asset digest, stream identity, modality/analysis kind, and exact source interval;
@@ -179,6 +181,25 @@ Claim status is not a universal truth value. At minimum distinguish:
 
 A new model or analysis version does not rewrite prior claims. It creates new records and may mark earlier claims Superseded for future selection. Historical claims remain available to explain why an earlier TimelineRevision was created.
 
+### 4.1 Media moment (`media.moment.v1`)
+
+A **moment** is an immutable candidate or selected interval that a NarrativePlan beat may reference. It is not a claim and not a timeline clip; it is the editorial shortlist entry that carries why an interval is usable.
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `moment_id`, `schema_version`, `digest` | id/version/digest | yes |
+| `project_snapshot_id` | ref | yes |
+| `media_asset_id`, `content_digest` | ref/digest | yes |
+| `stream_id`, `stream_identity_digest` | ref/digest | yes |
+| `interval {start,end}`, `timebase` | integer source coordinates + rational | yes (end-exclusive) |
+| `analysis_refs[]`, `claim_refs[]` | refs | yes (≥1 claim or an explicit `unanalyzed` marker) |
+| `status` | `candidate \| selected \| rejected \| superseded` | yes |
+| `rank_dimensions` | map `dimension_id -> rational \| unknown` | no |
+| `selection_rationale` | string ref | yes for `selected`/`rejected` |
+| `created_at`, `created_by_model_step` | timestamp, ref | yes |
+
+Invariants: `selected` moments must be members of the plan's `candidate` set for the same snapshot; a moment may be referenced by several beats; rejected candidates are retained with their rationale; a change to source digest, stream mapping or analyzer config stales the moment. This schema is the identity behind `candidate_moment_ids` / `selected_moment_ids` in §5.1; a bare interval is not a moment.
+
 ## 5. MediaProjectModel projection
 
 MediaProjectModel is a derived read projection for Video Domain Intelligence. Each immutable projection version binds:
@@ -210,11 +231,11 @@ NarrativePlan is a normative immutable Video-domain artifact between the project
 | `ordering`, `beat_edges[]` | `ordered\|partially_ordered`, edges | yes |
 | `alternatives[]`, `assumptions[]`, `unresolved[]` | records | no |
 
-`beat` = `{beat_id (stable across revisions), role, role_label (only for `other`), required, depends_on[], candidate_moment_ids[], selected_moment_ids[], context_before_ticks, context_after_ticks, target_duration {min_ticks,max_ticks}, pacing_intent, transition_requirements[], required_content_refs[], excluded_content_refs[], evidence_refs[]}`.
+`beat` = `{beat_id (stable across revisions), role, role_label (only for `other`), required, depends_on[], criterion_refs[], candidate_moment_ids[], selected_moment_ids[], context_before_ticks, context_after_ticks, target_duration {min_ticks,max_ticks}, pacing_intent, transition_requirements[], required_content_refs[], excluded_content_refs[], evidence_refs[]}`.
 
 `role` is closed in v1: `hook | orientation | premise | demonstration | reaction | complication | resolution | summary | call_to_action | other`. `other` requires `role_label` and rationale. Durations are integer ticks in the timeline timebase.
 
-Invariants: `selected_moment_ids ⊆ candidate_moment_ids`; each criterion maps to ≥1 beat; digest is `sha256:` over JCS excluding `digest`; every revision names its parent and EditIntent and never mutates a prior plan. `intelligence.md` owns the reasoning method; this schema owns the shape.
+Invariants: `selected_moment_ids ⊆ candidate_moment_ids`; every id in `criterion_ids[]` appears in at least one beat's `criterion_refs[]` and at least one beat is non-optional for it; digest is `sha256:` over JCS excluding `digest`; every revision names its parent and EditIntent and never mutates a prior plan. `intelligence.md` owns the reasoning method; this schema owns the shape.
 
 ## 6. Version and lineage rules
 
@@ -236,7 +257,17 @@ The lineage is:
 
 Evidence inheritance is explicit, not implicit.
 
-A new NarrativePlan or TimelineRevision may carry forward evidence from its parent only by recording an EvidenceCarryForward entry with prior claim/evidence ID and artifact digest; target criterion/beat/clip/range; exact source asset digest, stream identity, PTS/sample interval, and timebase; analysis/proxy/mapping/configuration version; freshness check and compatibility result; reason the evidence is unaffected by the new edit; validator and validation sequence.
+A new NarrativePlan or TimelineRevision may carry forward evidence from its parent only by recording an `EvidenceCarryForward` record:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `carry_forward_id`, `schema_version`, `digest` | id/version/digest | yes |
+| `prior_evidence_id`, `prior_digest` | ref/digest | yes |
+| `target {criterion_id, beat_id?, clip_id?, interval}` | refs/interval | yes |
+| `source {media_asset_id, content_digest, stream_id, interval, timebase}` | refs | yes |
+| `analysis_config_digest`, `proxy_mapping_digest?` | digests | yes / conditional |
+| `freshness {result, checked_at, validator}` | enum/timestamp/ref | yes |
+| `rationale`, `validation_sequence` | string, uint64 | yes |
 
 Carry-forward is allowed only when underlying source digest, stream identity, time mapping, analysis scope/configuration, and criterion meaning remain compatible. Parent linkage alone does not prove evidence freshness.
 

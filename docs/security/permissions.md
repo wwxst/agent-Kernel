@@ -42,7 +42,7 @@ An approval is a durable two-party record, not a boolean.
 
 `ApprovalRequest`: `{approval_request_id, tenant_id, task_id, invocation_id?, request_summary, tool_digest, args_digest, effect_class, target, risk_class, requested_by, approver_class, created_at, expires_at, max_uses: 1, status: Requested|Granted|Denied|Expired|Revoked}`
 
-`ApprovalDecision`: `{approval_id, approval_request_id, approver_principal_id, approver_class, tenant_id, decision, scope_digest, args_digest, authority_epoch, decided_at, expires_at, nonce, consumed_by_invocation_id?, consumed_at?, status: Granted|Denied|Expired|Revoked|Consumed}`
+`ApprovalDecision`: `{approval_id, approval_request_id, approval_version, approver_principal_id, approver_class, tenant_id, decision, scope_digest, args_digest, authority_epoch, decided_at, expires_at, nonce, consumed_by_invocation_id?, consumed_at?, status: Granted|Denied|Expired|Revoked|Consumed}`
 
 Rules:
 
@@ -63,7 +63,7 @@ Kernel evaluates in this order and stops at the first failure. The order is norm
 3. Capability grant covers the action's scope and constraints.
 4. Profile/strategy/DomainBinding version current; effect class allowed by policy.
 5. Per-invocation approval, when required, unconsumed and in scope.
-6. Budget reservation admissible (`spent + outstanding_max + proposed_max ≤ limit`).
+6. Budget reservation admissible (`spent + outstanding_max + proposed_max + protected_verification_repair_reserve ≤ limit`), with the reserve term owned by [Model and Budget](../contracts/model-and-budget.md) §4.
 7. Conflict scope free or explicitly serialized per strategy.
 8. Read-set (goal/plan/authority/workspace/project/budget/tool/precondition) current.
 9. Durable intent + outbox committed (the admission transaction).

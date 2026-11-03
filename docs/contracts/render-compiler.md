@@ -50,14 +50,14 @@ Concat and xfade require uniform stream parameters, so the compiler emits a norm
 | `concat` | one video `concat=n=N:v=1:a=0` and one audio `concat=n=N:v=0:a=1` after normalization | segment order = timeline order | parameter mismatch after normalization (§9) |
 | `fade` | `fade=t=in|out:st=S:d=D`; `afade=t=in|out:st=S:d=D` | tick offsets relative to clip start | `D ≤ 0`, `D > clip duration`, overlapping fades on one clip |
 | `xfade` | `xfade=transition=fade:duration=D:offset=d_left−D`; audio per `audio` arg | adjacent clips on one video track | `D ≤ 0`; `D > floor(min(d_left,d_right)/2)`; non-adjacent clips; two transitions on one boundary |
-| `audio` | `volume` from dB; `afade` for fades; mute is `volume=0` | `gain_db` rational in `[-60, +12]`, 0.1 step | missing audio stream when mode is `preserve`; fade outside clip; unsupported mode |
+| `audio` | `volume=<canonical dB>`; `afade` for fades; mute is `volume=0` | `gain_db` rational in `[-60, +12]`, 0.1 step; emitted with the fixed canonical decimal form | missing audio stream when mode is `preserve`; fade outside clip; unsupported mode |
 
 Track duration is `Σ clip_duration − Σ transition_overlap` and must equal the declared track duration exactly; otherwise `CompilerInvalidTimeline`.
 
 ## 6. Audio rules
 
 - Source audio stays aligned to the asset-relative clock; no per-stream zero reset and no implicit offset.
-- `preserve` trims the audio to the interval mapped from the same timeline span as the picture. `mute` emits `volume=0` over the span so A/V timing is unchanged. `gain` is applied only as a linear factor derived from `gain_db`.
+- `preserve` trims the audio to the interval mapped from the same timeline span as the picture. `mute` emits `volume=0` over the span so A/V timing is unchanged. `gain` is emitted as `volume=<dB>` using the **canonical decimal form** of `gain_db` (sign, integer part, at most one fractional digit as fixed by the 0.1 registry step). No floating-point conversion, no linear-factor rewrite and no locale-dependent formatting are permitted; the emitted token is part of the argv digest.
 - Every `xfade` requires an explicit `audio` argument: `cut` (hard cut at the left clip end), `afade` (crossfade duration `D`), or `mute` (silence during overlap). No default is inferred.
 - No channel up/down-mix beyond the profile layout; no `adelay`, `apad` or generated silence in v1 (gapless tracks only).
 
@@ -89,7 +89,10 @@ After normalization, the compiler compares canonical stream-parameter records fo
 
 - **AST:** `{nodes[{id, filter, params{typed}}], edges[{from, to}]}`. Parameter values are integers, rationals or closed enums; no free strings. Labels are `v0…`/`a0…`, assigned deterministically.
 - **Argv:** fixed category order — global flags; one `-i` per distinct source in first-use order; `-filter_complex`; explicit `-map "[vout]"` and `-map "[aout]"`; profile codec/format options; `-f`; staging output reference. No shell string, no user path, no output name.
-- **Digest:** `sha256:` over JCS of `{compiler_version, registry_version, timeline_digest, project_snapshot_digest, profile_digest, ast, argv}` excluding the digest field itself. The same digest must appear in the RenderPlan, RenderJob and Host receipt.
+- **Two digests, two purposes.**
+  - `plan_digest` is the **pure compile output**: `sha256:` over JCS of `{compiler_version, registry_version, timeline_digest, project_snapshot_digest, profile_digest, ast, argv}` excluding the digest field itself. Identical compile inputs must yield one `plan_digest`; it contains no path, host, environment, reservation or time value.
+  - `execution_binding_digest` is **per attempt**: `sha256:` over JCS of `{plan_digest, input_artifact_ids_and_digests[], cwd, environment_digest, staging_output_ref, reservation_id, ticket_epoch, idempotency_key}`. It binds the plan to the exact execution context and may differ between attempts of the same plan.
+  - The RenderPlan carries both. `plan_digest` is what proves deterministic compilation; `execution_binding_digest` is what proves the rendered bytes correspond to the admitted inputs, environment, staging target and fence. A Host receipt binds both; mismatching the plan is `CompilerDigestMismatch`, mismatching the execution binding is `ExecutionBindingMismatch` (quarantine, no publication).
 
 ## 11. Trusted boundary and Host re-validation
 
@@ -106,6 +109,7 @@ The compiler runs inside the trusted domain-execution boundary, never in model c
 | `CompilerRoundingOverflow` | unrepresentable rational/overflow/tolerance breach | reject; no float fallback |
 | `CompilerFilterNotAllowed` | unknown/disallowed node (Host or compiler) | reject before spawn |
 | `CompilerDigestMismatch` | plan/AST/receipt digest inconsistency | quarantine; reconcile |
+| `ExecutionBindingMismatch` | receipt inputs/env/staging/reservation/fence differ from the admitted execution binding | quarantine; no publication; reconcile |
 | `CompilerProfileUnsupported` | profile field unsupported by compiler/Host | reject admission |
 
 ## 13. Non-claims

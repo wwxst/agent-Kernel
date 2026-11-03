@@ -1,6 +1,6 @@
 # Unified domain architecture
 
-> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); design-only for Office; implementation NOT started; runtime claims UNVERIFIED.**
+> **Status: ARCHITECTURE BASELINE (informative; accepted as design context under ARB-01, 2026-11-03); design-only for Office; implementation NOT started; runtime claims UNVERIFIED.**
 >
 > The owner has confirmed one shared Agent Kernel for Autonomous Coding and Autonomous Video Editing, with independent domain intelligence and execution capabilities. This document is the cross-domain architecture baseline, not an implementation specification or runtime authorization.
 
@@ -191,21 +191,11 @@ The timeline is a canonical engineering artifact that the agent creates and revi
 9. No full Video Editor and no Multi-Agent implementation is implied.
 10. The current work remains architecture research and documentation; Runtime development is not authorized.
 
-## 10. Open design questions
+## 10. Resolved design questions and remaining external facts
 
-The current cross-document consistency findings are recorded in [Cross-domain architecture review](../decisions/cross-domain-architecture-review.md). Candidate recommendations for the remaining questions are in [Architecture Decision Proposals](../decisions/architecture-decision-proposals.md); they remain PROPOSED until owner disposition. The following questions remain open:
+The questions that were open during research — envelope split, profile lifecycle/revocation, artifact contract, resource dimensions, cross-domain handoff, Video capability boundary, NarrativePlan and lineage, FFmpeg controls, RenderJob reconciliation, and source-to-output provenance — are now dispositioned in the [Decision Log](../decisions/decision-log.md) and specified by the normative contracts listed in the [documentation map](../README.md). They are no longer open architecture questions.
 
-- Which fields belong in the minimal common GoalContract/PlanRevision envelope versus typed domain payloads?
-- How should a Workflow Profile be versioned, accepted, revoked, and migrated during a long-running Task?
-- Which generic artifact storage and streaming contracts are needed without choosing a storage technology?
-- Which host resource dimensions can be enforced consistently across platforms?
-- How should cross-domain linked tasks exchange artifacts without sharing domain authority?
-- Which Video capabilities belong to the core automatic-editing foundation, enhanced editorial roadmap, and post-production/platform adaptation?
-- How should Video's message-conditioned moment selection, NarrativePlan, pacing, continuity, A/V coordination, and revision loop be specified without forcing semantics into Kernel?
-- How should MediaProject/ProjectSnapshot, MediaAnalysis, MediaProjectModel, and TimelineRevision version/evidence lineage be enforced?
-- Which FFmpeg input/filter/network/filesystem/process controls can each supported Host enforce?
-- How should RenderJob projection reconcile Kernel ToolInvocation state, Host Ledger physical facts, verification, and artifact publication?
-- Which source-to-output provenance and independent acceptance obligations are required for each Video criterion?
+What genuinely remains unresolved is external evidence or a build-time choice: provider billing/idempotency, the named Host/OS and storage, measured performance and quality, and owner ratification of provisional risk values. Those are maintained in one place — [Open decisions](../decisions/open-decisions.md) — with the gate that closes each. A new *design* change is required only under the reopening conditions listed there.
 
 ## 11. Third-domain boundary test and composition status
 

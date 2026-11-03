@@ -53,12 +53,12 @@ A Task loads RepositoryModel or MediaProjectModel according to its immutable Dom
 
 The **authoritative evidence** is raw immutable source/ArtifactRef, trusted Host receipt, verifier or authorized human disposition. A graph database or a separate mutable `EvidenceGraph` aggregate is **not required** to support Coding/Video.
 
-The minimum cross-domain envelope is:
+The minimum cross-domain envelope is below. **Field shapes are owned by [Kernel data model §3.10](../contracts/kernel-data-model.md);** this table states what the context projection requires and must not override or extend that schema.
 
-| Record | Required fields | Status |
+| Record | Required for this projection | Status |
 | --- | --- | --- |
-| `EvidenceRef` | immutable ID, source kind/ref, content digest, domain/task scope, source/capture version, environment or project snapshot, trust/evidence class | **Required** for evidence that may satisfy a criterion |
-| `CriterionEvidenceBinding` | Goal criterion ID/version, evidenceRefs, required independence class, verifier/human disposition and **freshness basis** (the exact versions/artifact digests it depends on) | **Required** for Completion Guard |
+| `EvidenceRef` | immutable ID, source kind/ref, content digest, task scope, capture version, freshness basis, trust class (shape: data model §3.10) | **Required** for evidence that may satisfy a criterion |
+| `CriterionEvidenceBinding` | criterion ID/version, evidence refs, required/observed independence, verifier/human disposition, freshness basis digest (shape: data model §3.10) | **Required** for Completion Guard |
 | `ClaimAnnotation` | optional domain proposition, kind (observed fact/hypothesis/assumption/decision/unknown/contradiction), source refs, confidence caveat | **Optional Domain projection** |
 | `EvidenceLink` | optional supports/refutes/derived-from relation between claim or evidence refs | **Optional derived index** |
 

@@ -1,0 +1,3 @@
+# Keep the documentation baseline byte-stable across platforms so the DF
+# manifest digest can be reproduced from a fresh checkout.
+*.md text eol=lf

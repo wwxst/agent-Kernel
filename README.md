@@ -1,6 +1,6 @@
 # Agent Kernel
 
-> **Project status: CONSTRUCTION BASELINE v1 accepted (ARB-01, 2026-11-03). Ready for Implementation at the documentation/design level (DF passed). No implementation exists; all runtime, performance and quality claims are UNVERIFIED and every fixture is NOT RUN.**
+> **Project status: CONSTRUCTION BASELINE v1 — DF PASS (ARB-01, 2026-11-03). Ready for Implementation at the documentation/design level. No implementation exists; PE (prototype evidence) and VI (verified implementation) are NOT RUN; all runtime, performance and quality claims are UNVERIFIED.**
 
 ## Purpose
 
@@ -57,12 +57,12 @@ Office is **design-only** in this baseline. It registers a manifest, two R0/R1 t
 
 ## Readiness: what is claimed, and what is not
 
-**Claimed:** the construction baseline is frozen; a competent team can build directly from the documents; P0 documentation defects are closed; the work breakdown has dependencies and acceptance conditions.
+**Claimed:** the construction baseline is frozen; a competent team can build directly from the documents; the P0 documentation defects found in review have been repaired; the work breakdown has dependencies and acceptance conditions. The final independent acceptance verdict is recorded in the [readiness review](docs/decisions/construction-readiness-review.md).
 
 **Not claimed:**
 
 - No runtime code exists; no fixture has been executed (`M1–M6`, `R1–R7`, `S1–S3`, `C-01…`, `V-01…`, `X1–X13` are all NOT RUN).
-- No provider, OS, storage, sandbox or media stack is selected.
+- No provider, OS, storage, sandbox or media-analysis stack is selected, and no FFmpeg build is selected; FFmpeg is the named first-phase render backend per ADP-01, not a selected build or package.
 - No performance, token, quality or reliability result is measured.
 - R2/external/destructive effects are disabled by default.
 - Multi-Agent / D9 remains deferred and unauthorized.

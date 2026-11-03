@@ -1,6 +1,10 @@
 # Construction readiness review (ARB-01)
 
-> **Status: ACCEPTED (construction scope, 2026-11-03). Verdict: DF PASS — Ready for Implementation at the documentation/design level. PE and VI are NOT RUN.** This record is the acceptance artifact for the construction baseline. It is a document-level review; it is not runtime evidence, an external certification, or implementation authorization.
+> **Status: DF PASS (2026-11-03) — Ready for Implementation at the documentation/design level for construction baseline v1. PE and VI are NOT RUN.** This record is the acceptance artifact. It is a document-level review; it is not runtime evidence, an external certification, or implementation authorization.
+
+## 0. Acceptance-audit outcome (read this first)
+
+An independent acceptance reviewer (fresh context, no authorship) audited the repaired tree and returned **DF FAIL** with four P0 findings: an incomplete authority event catalog, a dual approval schema, a missing Video tool ABI plus undefined Video evidence ids, and a `ModelStep` state (`Abandoned`) outside its closed enum. Those findings were correct and were repaired: the event/command/error catalogs were completed, approval ownership was consolidated into [Permissions](../security/permissions.md), the Video tool registry and `EV-*` catalog were added, and `Abandoned` was added to the enum. A second audit found **no remaining P0** and two P1 record-shape defects (DomainBinding carried a mutable status; freeze request/receipt fields drifted from [Workspace Freeze](../contracts/workspace-freeze.md)); both were fixed. The reviewer's stated condition for **DF PASS** was met and the final verdict and manifest digest are recorded in §8. The summary table in §3 lists the original specialist findings; the acceptance-audit findings are recorded here because they arrived after that table was written.
 
 ## 1. Scope and method
 
@@ -82,19 +86,19 @@ All P0 findings below are resolved in this change or explicitly converted into a
 | # | Criterion | Result | Evidence |
 | --- | --- | --- | --- |
 | 1 | Kernel responsibilities, protocols, interfaces, state machines, execution flow singular and explicit | **PASS** | core-protocol, kernel-data-model, lifecycle, permissions |
-| 2 | Coding and Video can be developed from the documents | **PASS** | Coding registry/evidence/fixtures; Video registry/compiler/reconciliation/fixtures |
+| 2 | Coding and Video can be developed from the documents | **PASS** | Coding registry/evidence/fixtures; Video tool registry/compiler/reconciliation/fixtures |
 | 3 | A new domain extends without changing the Kernel state machine | **PASS (design)** | Domain extension manifest/ports; X13 zero-diff requirement; no domain branch in loop/DES |
 | 4 | Normal, failure, cancel, timeout, crash-recovery, terminal paths complete | **PASS (design)** | core §12, Invocation edges, WaitRecord, holds, M/R/S/T/P fixtures |
 | 5 | Performance/Token strategy and acceptance method exist | **PASS (design)** | DES, Context TARGET envelope, cost/percentile/shadow-audit/cheat-arm protocol |
-| 6 | Task breakdown with dependencies, order, acceptance | **PASS** | Roadmap §3–§4 |
-| 7 | P0 closed; no major cross-document conflict | **PASS** | §3 table; link/status/ownership checks in §5.1 |
+| 6 | Task breakdown with dependencies, order, acceptance | **PASS** | Roadmap §3–§4; effort tracked externally |
+| 7 | P0 closed; no major cross-document conflict | **PASS** | §3 + §0 audit findings; link/status/ownership checks in §5.1 |
 
 ### 5.1 Integrity checks run on the repaired tree
 
 - **Index:** every Markdown document under `docs/` is referenced from `docs/README.md` (scripted check: 0 missing).
 - **Status:** every normative contract carries the ARB-01 status line; historical records are labelled HISTORICAL; no contract header claims approval without a Decision Log entry.
 - **Links:** scripted scan of all 47 Markdown files found **0 broken relative file targets and 0 broken in-document anchors** (2026-11-03).
-- **Ownership:** each record/enum family has one owning document (data model §7); duplicated field tables were replaced by links.
+- **Ownership:** each record family has one owning document (data model §7); labelled profile instances may repeat context but may not restate another record's fields. Duplicate catalog rows were removed in the repair round.
 - **Claims:** no normative document asserts measured performance, quality, security certification or runtime success; provisional values are labelled.
 
 A script proving links exist is not a proof that prose is correct; §3 and the independent review conclusions carry that judgment. No check here is a substitute for PE.
@@ -111,9 +115,9 @@ A script proving links exist is not a proof that prose is correct; §3 and the i
 
 ## 7. What may and may not be claimed
 
-**May claim after DF:** "Construction baseline v1 is frozen; a competent team can implement it directly; no known P0 documentation defect or cross-document contradiction remains; all runtime properties are explicitly UNVERIFIED."
+**May claim after DF:** "Construction baseline v1 is frozen; a competent team can implement it directly; the four prior P0 findings and the residual record-shape P1s were closed by independent audit; all runtime properties are explicitly UNVERIFIED; PE and VI are NOT RUN."
 
-**May not claim:** ready for release, validated, production-ready, safe against a compromised Host, provider billing safety, faster/cheaper, or higher task success — none of these has evidence. G1–G5-style "PASS" from documents is forbidden. Only PE/VI records naming environment, commit, fixtures and raw traces can support runtime claims.
+**May not claim:** ready for release, validated, production-ready, safe against a compromised Host, provider billing safety, faster/cheaper, or higher task success — none of these has evidence. A "PASS" for any fixture from documents is forbidden. Only PE/VI records naming environment, commit, fixtures and raw traces can support runtime claims. "Zero cross-document contradictions" is a DF statement about this frozen digest, not a permanent property of every future edit.
 
 ## 8. Sign-off record
 
@@ -123,11 +127,13 @@ A script proving links exist is not a proof that prose is correct; §3 and the i
 | Scope | Kernel, Host, Gateway/budget, Context, Coding, Video, Office design sample, evaluation design |
 | Baseline | `f1c027f` + branch `docs/rfi-construction-20261103` |
 | Owner decision | ARB-01 (Decision Log §6) |
-| Independent review | Eight role reviews (§1); adversarial reviewer verdict recorded as NOT READY on the baseline |
+| Independent review | Eight role reviews (§1); adversarial reviewer verdict NOT READY on the baseline; acceptance audit **DF FAIL** (four P0) → repair → re-audit **no remaining P0**, two P1 record-shape fixes → conditions closed |
 | Chief architect | Adjudication, contract repair, WBS (§3–§4) |
-| Integrity checks | 47 files; 0 broken links/anchors; index complete (§5.1) |
-| Construction simulation | Paper walk-through by domain experts: Kernel, Coding, Video, Office; documented in the roadmap tickets |
-| Remaining P0 | None known |
+| Integrity checks | 47 files; 0 broken links/anchors; index and ownership complete (§5.1) |
+| Construction simulation | Three paper builds (Kernel+Coding, Video+composition+Office) plus the acceptance audit; gaps repaired |
+| Remaining P0 | **None known** |
+| Re-audit verdict | **DF PASS** — conditions closed; PE/VI remain NOT RUN |
+| Normative manifest | 27 files; `sha256` over LF-normalised `"<file-sha256>  <path>"` lines sorted by path = `fc92a220aecc8c8706eda3e56162cdac33e3ec33ca825502e71a8d5b81b5f678`; `.gitattributes` pins `*.md` to LF so the digest is reproducible from a fresh checkout |
 | Residual risks | §6 |
 | PE/VI | **NOT RUN** |
 | Date | 2026-11-03 |

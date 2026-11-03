@@ -150,9 +150,9 @@ For Video, the Workflow Profile and RenderJob define render-specific limits. See
 
 The exact cross-platform enforcement mechanisms and accounting precision remain OPEN / UNVERIFIED. This extension does not select cgroups, a GPU scheduler, a storage system, or a process runtime.
 
-## 7. Open implementation questions
+## 7. Build-time choices not fixed by this contract
 
-The following are not decided by this contract:
+The following are build-time or external-fact choices, not open architecture questions; each is tracked in [Open decisions](../decisions/open-decisions.md) with the gate that closes it:
 
 - Provider-specific usage and invoice authority, precision, and delay.
 - Whether provider-side retries can be observed and charged reliably.
@@ -172,4 +172,4 @@ All of these remain **OPEN / UNVERIFIED** until evidence is gathered.
 
 **Cost-performance instrumentation:** for each Task/ModelStep report attempted and selected provider calls; complete/incomplete/UNKNOWN attempts; input, output, reasoning and modality Tokens; cached read/write Tokens; bound maximum, accrued final cost, outstanding liability and settlement age; model queue/network first-token/total latency; provider status-query time and repeated same-digest calls. Track billed/requested Tokens by provider pricing snapshot, not an invented universal token unit. Gate simplified prompting on success, false-completion, recovered-error and terminal-correctness metrics in [Shared evaluation](../research/shared-kernel/evaluation.md), not cost alone.
 
-**Backpressure:** Kernel rejects additional hard-budget model Attempts when `spent + all unresolved maximum reservations + candidate maximum` exceeds any governing scope; optional soft mode requires independent explicit authorization and a visible exposure cap. When reserve cannot fund the required tests/assurance, stop before irreversible work and ask for budget/plan change or fail with a typed disposition. Delayed invoices may remain reserved past successful delivery, provided Completion Guard's other obligations and hold rules are satisfied. Provider capability matrices and true billing/error-bound measurements are PE-1 requirements; they remain OPEN here.
+**Backpressure:** Kernel rejects additional hard-budget model Attempts when `spent + all unresolved maximum reservations + candidate maximum + protected_verification_repair_reserve` exceeds any governing scope; optional soft mode requires independent explicit authorization and a visible exposure cap. When reserve cannot fund the required tests/assurance, stop before irreversible work and ask for budget/plan change or fail with a typed disposition. Delayed invoices may remain reserved past successful delivery, provided Completion Guard's other obligations and hold rules are satisfied. Provider capability matrices and true billing/error-bound measurements are PE-1 requirements; they remain OPEN here.

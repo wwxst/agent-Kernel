@@ -106,7 +106,7 @@ Only these operations are renderable. Anything else is rejected by the compiler 
 | Op | Arguments | Bounds and structure | Rounding | Evidence | Compiler rule |
 | --- | --- | --- | --- | --- | --- |
 | `trim` | `clip_id`, `start_pts:int64`, `end_pts:int64` | end-exclusive; `0 ≤ start < end ≤` probed stream duration; source stream + timebase | `cover` | `EV-SRC-RANGE` | `RC-TRIM` |
-| `place` | `clip_id`, `track_id`, `start_tick:uint64` | v1 tracks are gapless: `start_tick` equals previous clip end; first clip starts at 0 | `nearest_ties_lower` | `EV-TIMELINE-GRAPH` | `RC-PLACE` |
+| `place` | `clip_id`, `track_id`, `start_tick:uint64` | v1 tracks are gapless: `start_tick` equals previous clip end; first clip starts at 0 | `none (exact)` | `EV-TIMELINE-GRAPH` | `RC-PLACE` |
 | `concat` | `left_clip_id`, `right_clip_id` | adjacent clips on one track; parameters equal after normalization | — | `EV-CONCAT-EQUALITY` | `RC-CONCAT` |
 | `fade` | `clip_id`, `kind:in\|out`, `duration_ticks`, `curve:linear` | `0 < d ≤ clip duration`; fade intervals on one clip may not overlap | `cover` | `EV-FADE-BOUNDS` | `RC-FADE` |
 | `xfade` | `left`, `right`, `duration_ticks`, `audio:cut\|afade\|mute` | adjacent same-track clips; `0 < D ≤ floor(min(d_left,d_right)/2)`; one transition per boundary | `cover` | `EV-XFADE-BOUNDS` | `RC-XFADE` |
@@ -161,14 +161,7 @@ Kernel validates schema, references, binding, size limits, and legal lifecycle. 
 
 Evidence is not inherited merely because a new revision names an old parent.
 
-A new NarrativePlan/TimelineRevision may carry forward unaffected evidence only through an explicit EvidenceCarryForward entry that binds:
-
-- prior claim/evidence ID and digest;
-- target beat, clip, criterion, and source interval;
-- exact source asset digest, stream identity, PTS/sample range, and timebase;
-- analysis/proxy/mapping/configuration version;
-- freshness/compatibility result and validation sequence;
-- reason the evidence remains relevant to the new revision.
+A new NarrativePlan/TimelineRevision may carry forward unaffected evidence only through an explicit `EvidenceCarryForward` entry. Its fields, binding rules and invalidation conditions are canonical in [MediaProject §7](media-project.md); this contract requires the entry and does not restate its fields. The rule here is: no carry-forward by parent pointer, and any changed digest/analysis/configuration invalidates the affected entry.
 
 Carry-forward is allowed only if source digest, stream identity, time mapping, analysis scope/configuration, and criterion meaning remain compatible. A change-impact record declares affected beats, clips, source intervals, analysis claims, audio relationships, output profile fields, and verification obligations.
 
@@ -189,7 +182,19 @@ A newer analysis may supersede an older claim for future planning without deleti
 
 ## 7. User-directed revision
 
-Each follow-up instruction is an append-only EditIntent bound to the current accepted GoalContract and TimelineRevision.
+Each follow-up instruction is an append-only `media.edit_intent.v1`:
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `edit_intent_id`, `schema_version`, `digest` | id/version/digest | yes |
+| `media_project_id`, `parent_timeline_revision_id`, `goal_version` | refs | yes |
+| `user_text_ref`, `user_text_digest` | artifact ref/digest | yes |
+| `resolved_scope` | `{criterion_ids[], beat_ids[], clip_ids[], source_ranges[], audio_scope, profile_fields[]}` | yes |
+| `interpretation_alternatives[]`, `ambiguity[]` | records | no |
+| `confirmations[]` | `{field_path, auth_ref, digest}` | conditional |
+| `created_at`, `created_by` | timestamp, principal/model-step ref | yes |
+
+Invariants: an EditIntent never mutates a prior intent or timeline; it produces at most one new revision candidate per accepted interpretation; a protected scope/output/risk change requires a confirmation reference; a later instruction is a new intent, not an edit of this record.
 
 1. Resolve the instruction to affected criteria, beats, clips, tracks, source ranges, audio, and output constraints.
 2. Ask the user when multiple materially different interpretations exist or a protected output/scope/risk field changes.

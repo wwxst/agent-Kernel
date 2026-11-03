@@ -126,6 +126,7 @@ All fields are required unless marked optional. Numeric values are **policy ceil
 | `verify.review_deadline_ms` | int | Bound on the review wait; expiry parks the Task with a typed wait. |
 | `terminate.task_deadline_ms` | int \| null | Wall-clock bound; expiry → safe-stop protocol then typed terminal. |
 | `terminate.step_deadline_ms` | int | Per-Step bound. |
+| `terminate.convergence_deadline_ms` | int | Bound on proving process/handle convergence after cancel/terminate; on expiry the invocation becomes `OutcomeUnknown` with a `HostReconciliation` wait, never a false `Cancelled`. |
 | `terminate.retry_classes` | map error-code -> max attempts | Bounded; `OutcomeUnknown` must map to 0 automatic retries. |
 | `terminate.degraded_delivery` | `forbidden \| explicit_criteria` | A partial result may be delivered only under explicit accepted criteria, never silently. |
 
@@ -138,7 +139,7 @@ All fields are required unless marked optional. Numeric values are **policy ceil
 3. Every referenced enum, tool class, resource dimension and error code is known to this Kernel version.
 4. Floor check F1–F12; any violation is `StrategyRejected` with the failing floor id.
 5. Envelope check: every value ≤ profile limit (concurrency, resource, token ceilings, deadlines) and every assurance value ≥ profile minimum.
-6. Deadline/consistency check: `step_deadline ≤ task_deadline`; `admission_timeout ≤ task_deadline`; `max_wait` values positive; no `0`-timeout loops.
+6. Deadline/consistency check: `step_deadline ≤ task_deadline`; `convergence_deadline ≤ task_deadline`; `admission_timeout ≤ task_deadline`; `max_wait` values positive; no `0`-timeout loops.
 7. Internal consistency: `semantic_review=never` requires no criterion with semantic independence; `deterministic_only` requires no adaptive step; `max_concurrent[R1] > 1` requires non-empty `disjoint_scopes`.
 8. Record `strategy_digest` in the binding and emit `DomainBindingValidated`.
 

@@ -1,6 +1,6 @@
 # Unified Agent Kernel — approved product direction
 
-> **Status: APPROVED PRODUCT DIRECTION (2026-11-02); construction baseline accepted under ARB-01 (2026-11-03).** This record captures the owner's explicit one-Kernel/two-domain decision and the revised first-phase autonomous-editing capability boundary. It does not approve Runtime implementation or a final technology stack.
+> **Status: OWNER PRODUCT DIRECTION (2026-11-02); construction baseline accepted under ARB-01 (2026-11-03).** This record captures the owner's explicit one-Kernel/two-domain decision and the revised first-phase autonomous-editing capability boundary. It does not approve Runtime implementation or a final technology stack.
 
 ## 1. Approved direction
 
@@ -48,7 +48,7 @@ This is not a full video editor. Explicitly excluded are:
 - Multi-Agent / D9;
 - Runtime implementation during the current research stage.
 
-The ADP-01 and ADP-02 decisions are recorded in the [Decision Log](decision-log.md). ADP-03 through ADP-11 remain OPEN. ADP-01 approves the Video capability boundary; ADP-02 approves the progressive-analysis and coverage policy. Neither approves remaining artifact-storage, temporal, output, verification, resource, handoff, interaction, or implementation decisions.
+The ADP-01 and ADP-02 decisions are recorded in the [Decision Log](decision-log.md). ADP-03 through ADP-10 are **ACCEPTED for construction scope** (2026-11-03); ADP-11 is superseded by ARB-01 and the DF/SA/PE/VI gate model. ADP-01 approves the Video capability boundary; ADP-02 approves the progressive-analysis and coverage policy. Neither approves a production technology stack, runtime implementation or deployment.
 
 ## 4. Retained work
 
