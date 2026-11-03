@@ -203,3 +203,46 @@ Each fixture specifies initial durable records, interleaving, injected crash/par
 - Is the L0/L1/L2 classifier tied to protected-field comparisons rather than model preference?
 - Have single-Host and multi-Host promises been kept separate?
 - Are ADP-03 through ADP-11 explicitly still OPEN until owner decisions?
+
+## 12. Construction-level main-loop scheduling and terminalization (G0 candidate)
+
+The following **proposed first-slice algorithm** narrows, rather than replaces, Sections 2–11 and [Domain Extension](domain-extension.md). It is deliberately **one Orchestrator loop per Task**, not a mandatory multi-phase chain or a parallel autonomous verifier.
+
+```text
+OnTaskWake(task_id, cause):
+  load the durable K projections and relevant authority/read-set
+  if TaskControl has a terminal fact: deliver/reconcile pending outboxes; do not run another decision
+  if cancel / authority revoked / deadline reached: stop new admissions; follow convergence/safe-stop path
+  if conflicting Invocation/Provider outcome UNKNOWN: reconcile or park, never repeat the effect
+  if awaiting approval/clarification/external job: persist wait owner, condition and wake-up deadline; return
+  if current accepted criteria and evidence suffice: execute deterministic Completion Guard CAS; on success return
+  if mandatory criterion evidence is missing: choose the minimal authorized domain verification action
+  else if actual L2 protected-field change is required: propose structural replan and cutover
+  else: request at most one bounded model decision for the next needed action
+  validate exact decision/binding; commit each admitted Invocation through K-local transaction
+  dispatch via H gate; event-driven receipts advance progress and reschedule only affected work
+  if no-progress / budget / retry cap reached: diagnose without repeating effects; wait or terminalize safely
+```
+
+The ordering above does not mean a low-risk single-step task needs separate Planner, Implementer, and Verifier model requests. Initial Goal/Plan acceptance still uses required schema/confirmation checks. Model responses may be cached only if **identical binding, normalized request and policy/context digests** prove reuse safe; completion and side-effect admission are never cached. A selected complete candidate ends its ModelStep; incomplete provider streams cannot dispatch actions.
+
+**Scheduler contract:** one write/effectful Invocation per Task by default. Optional parallel R0 observations require the same authorized immutable input, bounded worker/concurrency resources, distinct invocation IDs and no unresolved overlap; optional R1 jobs require proven disjoint target sets and independent Host conflict scopes. R2/external/destructive effects remain disabled by default until separately approved. Two writes that may overlap, unknown conflict scopes, tests using mutable shared caches, Git index/worktree operations and final render publication serialize. Host enforces process/resource limits for both short commands and long RenderJobs; Kernel enforces aggregate reservations and deterministic admission, not a speculative global DAG executor. **Proposed initial tuning caps** (not performance claims): `maxConcurrentR0PerTask=4`, `maxConcurrentWritePerTask=1`, `maxConcurrentRenderPerHost=1`. If a Host cannot prove the corresponding isolation, effective cap is 1 or admission is denied. Fairness is bounded queueing per Task/principal/resource class, not unlimited forked work.
+
+**Event and wait semantics:** every wait has `reason_code, blocking_scope, evidence_ref, owner, created_at, next_wake_at, max_wait_until, recovery_strategy` in an authoritative K record. User approval and missing input may wait for external action but consume no model spins; provide a visible disposition. Render/probe jobs wake from authenticated Host progress/terminal events, not polling through new LLM turns. A delayed receipt or invoice settles through the existing K/G/H Inbox/Outbox protocols, even after the Orchestrator stops. Timer expiry triggers one deterministic safe-stop/reconciliation decision, not another blind side-effect submission.
+
+**Progress proof:** count meaningful newly accepted evidence/artifact/version, resolved blocker, completed criterion or user input; extra summaries, repeated search result hashes, identical model proposals and no-op tool calls do not reset progress. With `maxConsecutiveNoProgress=3` and `maxSameStepRepairs=2` initial configurable hypotheses, diagnose at most once and then require new evidence, user action or a justified L2 plan change; otherwise fail with typed reason. Never silently extend a hard deadline or verification budget. Record decisions that were skipped because deterministic tools already established completion.
+
+**Task final disposition:** `Completed` only via Completion Guard and exact current evidence. `Cancelled` only with appropriate cancellation disposition and proven state of effects; `Failed(reason=DeadlineExceeded|NoProgress|BudgetExhausted|UnsafeEnvironment|RepairExhausted|UnresolvedEffect)` is the proposed explicit terminal reason taxonomy, **not** an additional Task terminal enum. If an effect remains physically UNKNOWN at the deadline, suspend all conflicting admissions, record the unresolved-effect hold, fail the *agent decision task* with `UnresolvedEffect` or `DeadlineExceeded` **without claiming process convergence or rollback**, and continue narrow reconciliation under a separate durable recovery/incident record. A terminal Task does not restart because a receipt arrives; late facts may create a post-terminal evidence hold/remediation Task. If failure disposition itself cannot safely be committed because K persistence is unavailable, recovery must reconstruct it from a persisted intent before accepting new work. There is no unbounded live model loop.
+
+### 12.1 Explicit fast/slow traces and failure contrast
+
+| Scenario | Required causal sequence | Prohibited shortcut |
+| --- | --- | --- |
+| Low-risk Coding inspect | Bind Goal/Profile → scoped read Admission → trusted receipt/context delta → deterministic criterion checks → Completion Guard → one terminal delivery | Mandatory independent model Verifier after evidence suffices |
+| Coding edit/test | Scope & plan → inspect relevant files → edit in disposable workspace → seal final source snapshot → isolated test/build on actual sealed view → criterion evidence → conditional independent review → Completion Guard | Treating edited tests, stale output or command exit alone as proof |
+| Video edit/render | Source digests/probe → progressive analysis → NarrativePlan/TimelineRevision → validated bounded RenderPlan → Host RenderJob/staging → process convergence → technical decode + content inspection → exact lineage → Completion Guard/delivery | Metadata-only completion or publishing a partial render |
+| Cancel while rendering | K CancelRequested → H fence/no new spawn + kill/drain requests → receipts and descendant/handle evidence → safe Cancelled, or explicit Failed with unresolved-effects hold | `kill sent` ≡ `converged`, or automatic rerender |
+| Provider request timed out | G SendMayHaveOccurred → original Attempt UNKNOWN + bounded reservation retained → authenticated status reconciliation / separate funded request only if policy allows | Blind Provider retransmission, charging UNKNOWN as zero |
+| Approval absent | Store exact request/scope/expiry/wake condition → park Task without model spins → resume with fresh K/H authority checks or safely fail by policy | Reuse stale approval after authority/profile change |
+
+These are **design fixtures, NOT runtime PASS**. G1/G2 must test K/G/H crash boundaries and serializability, G3/G4 must test both domain end-to-end paths and quality of skipped reviews, G5 must test Office and handoff reuse.

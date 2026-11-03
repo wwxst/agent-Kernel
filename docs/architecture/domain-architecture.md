@@ -201,3 +201,9 @@ The current cross-document consistency findings are recorded in [Cross-domain ar
 - Which FFmpeg input/filter/network/filesystem/process controls can each supported Host enforce?
 - How should RenderJob projection reconcile Kernel ToolInvocation state, Host Ledger physical facts, verification, and artifact publication?
 - Which source-to-output provenance and independent acceptance obligations are required for each Video criterion?
+
+## 11. Third-domain boundary test and composition status (G0 candidate)
+
+The proposed lightweight [Domain Extension Contract v0.1](../contracts/domain-extension.md) uses immutable version-pinned manifests and typed adapter ports (`interpretGoal/projectContext/decideNext/interpretOutcome/verifyCriteria/describeRecovery`) to register domains without altering the Kernel state machine. Kernel validates envelope/authority/evidence references; the adapter owns interpretation and domain policy. A future Office adapter could map document-section/sheet-range context, batched external edits with exact OAuth scope and etag, immutable exports and per-criterion checks onto the **same** ModelStep, Invocation, K/G/H, budget, UNKNOWN, cancellation and completion machinery.
+
+This test does **not** authorize Office implementation, external destructive effects, a distributed Task graph, D9 or Multi-Agent. First-slice cross-domain cooperation remains an explicitly authorized producer→ArtifactRef→ScopedReadGrant→consumer Task handoff. A thin dependent-task coordinator is a **future proposal** with separate per-task principals, budgets and failure policy, not a new cross-domain authority. If Office demands a new Kernel-specific transition or bypass, reject that adapter contract and reopen G0 rather than expanding Kernel core.
