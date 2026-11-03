@@ -37,20 +37,13 @@ Run the checks required by the accepted GoalContract and plan. Coding examples i
 
 A test authored or modified by the Implementer is useful evidence that the test ran and that the implementation satisfies that particular test. It is not automatically an independent oracle. The evidence record must retain test provenance and whether its oracle was authored/modified by the implementation path, independently authored, hidden, or externally supplied.
 
-### 3.2 Fresh independent review
+### 3.2 Conditional fresh independent review (G0 optimization proposal)
 
-After implementation and machine checks, create a fresh Verifier ModelStep. It must receive the original UserIntent, accepted GoalContract and PlanRevision, acceptance criteria, current diff, and raw verification evidence. It must not rely on the Implementer's summary, self-assessment, private reasoning, or prior conclusion as evidence.
+**No unconditional Verifier ModelStep is required for every task.** The accepted GoalContract's criterion-risk and Workflow Profile's immutable `verification_policy` declare whether fresh independent semantic review is required. Technical/machine evidence and Completion Guard are **always** required as specified; skipping a model review never skips an accepted test, source/execution-view attestation, media output inspection, authorization check, or human gate.
 
-The same model/provider may be used for ordinary-risk tasks if the Verifier receives a fresh context and makes a separate decision. For higher-risk criteria, policy may require a different model/provider, an independent test author, or external review. A different model alone does not make evidence independent.
+A fresh Verifier ModelStep is required when the accepted assurance policy demands it, semantic instruction fulfillment is not fully decidable by trusted deterministic evidence, criterion evidence is disputed, implementation-authored tests are the only oracle for a protected criterion, risk or uncertainty crosses the profile trigger, or the accepted artifact/evidence bindings become stale. For a low-risk Coding task with independent deterministic tests and complete criterion coverage, Completion Guard may commit directly without an additional model call. For Video, actual rendered-output technical **and content** inspection remain mandatory; whether content assurance uses an independent model, independently annotated comparison, or human judgment is bound by the Video criterion policy. Cost-saving preferences cannot lower a previously accepted assurance obligation.
 
-The Verifier emits only review dispositions:
-
-- NoBlockingFinding — no blocking issue found in the inspected evidence;
-- BlockingFinding — a potential defect or criterion mismatch needs resolution;
-- InsufficientEvidence — evidence obligations are not met;
-- HumanReviewRequired — the criterion requires an authorized human decision.
-
-A Verifier disposition is a review artifact, not a trusted test result and not a criterion Pass. It may identify missing tests or request further verification; it cannot manufacture execution evidence.
+If invoked, the Verifier receives original UserIntent, current accepted Goal/Plan, exact artifact/diff, raw trusted receipts and criterion evidence, but not the Implementer's private reasoning or unsupported self-conclusion. Same-model fresh-context review may be used only when policy permits; riskier criteria may require a different reviewer or human. The Verifier outputs `NoBlockingFinding`, `BlockingFinding`, `InsufficientEvidence`, or `HumanReviewRequired`; these are advisory review dispositions, **not** execution proof or a criterion PASS. Review-trigger reason, independence class, call/Token cost, and skipped-review policy reference are auditable so G3/G4 can test false-completion regressions against a fixed-verifier control.
 
 ### 3.3 External assurance
 

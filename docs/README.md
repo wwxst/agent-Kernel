@@ -53,3 +53,8 @@ This documentation is the self-contained, evolving project baseline for agent-Ke
 ## Status rule
 
 The existence of a document does not mean its entire content is final. The one-Kernel/two-domain product direction is approved; detailed architecture and contracts are proposed until reviewed. Runtime behavior remains unverified until implementation and reproducible evidence exist. See AGENTS.md.
+
+
+## Implementation-candidate cross-domain extension
+
+- [Domain Extension Contract v0.1 — PROPOSED](contracts/domain-extension.md) — version-pinned manifest/ports, shared event and error envelopes, Office plug-in falsification, cross-domain handoff, bounded termination and X1–X8 conformance fixtures. It is **not** an approved ABI or implemented plugin system.
