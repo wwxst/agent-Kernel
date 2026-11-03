@@ -149,7 +149,7 @@ Admission-time recheck (cheap, no domain interpretation): current `strategy_ref`
 
 The loop reads only generic strategy fields:
 
-\`\`\`text
+```text
 wake(task):  # consult Core §12.2; this is a summary, not a competing priority order
   if terminal: reconcile_and_deliver(); return Terminal
   if cancellation_or_deadline_or_revocation: return safe_stop_disposition()
@@ -164,7 +164,7 @@ wake(task):  # consult Core §12.2; this is a summary, not a competing priority 
   decision = adapter.decideNext(incremental_context, strategy.fast_path)
   if valid_independent_items(decision): return admit_each_and_dispatch()
   return bounded_internal_continue_or_owned_wait_or_typed_terminal
-\`\`\`
+```
 
 
 `decideNext`, `verifyCriteria`, `interpretOutcome`, `projectContext`, `describeRecovery` come from the domain adapter ([Domain Extension](domain-extension.md)). The loop branches on **state and policy values**, not on `domain_id`. A grep-level conformance check (S-1) forbids `domain_id` string comparisons in the Kernel source tree.
