@@ -69,6 +69,10 @@ The system provides:
 
 It does not claim distributed exactly-once delivery. **Physical transaction ownership** is: Kernel Journal + Kernel admission/Intent + Kernel Dispatch Outbox + Kernel CommandInbox outcome share K-local atomic persistence; Orchestration ResponseDeliveryInbox + sealed projection/CommandPlan/CommandOutbox share O-local atomic persistence; Host DispatchInbox + one-use nonce + LaunchAttempt share H-local atomic persistence. K, O and H are separate transaction domains; OS spawn and external side effects are non-transactional. Outbox send, remote Inbox receive, Host execution/receipt and final ACK remain distinct cross-owner durability barriers. See [Core protocol](core-protocol.md).
 
+### Model-request Outbox is not Provider retransmission
+
+This response-delivery/command Inbox protocol must not be generalized into an **unqualified at-least-once HTTP Provider request**. Kernel may replay its durable `ModelRequestOutbox` to **Model Gateway** with the exact admitted Attempt ID/request digest/reservation. Gateway has its own durable `SendMayHaveOccurred` marker **before** sending Provider bytes, deduplicates K deliveries, and **does not resend to Provider after ambiguous acceptance** unless a qualified server-enforced execution-and-billing idempotency contract permits exact same-Attempt replay. Otherwise ProviderOutcomeUnknown and original cost reservation persist. An independent new submission uses an independent admitted Attempt and budget reservation. See [Model and Budget](model-and-budget.md) and [Core protocol](core-protocol.md). This adds one local send marker, not a distributed transaction coordinator.
+
 ## 7. Recovery cases
 
 - Crash before Kernel Completed transaction: no final selection or outbox is assumed.
