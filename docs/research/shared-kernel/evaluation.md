@@ -88,6 +88,20 @@ At minimum, prepare deterministic scenarios for:
 
 
 
+34. **G1 Provider K-Outbox crash before Gateway receipt:** after K commits ModelAttempt+full reservation+Outbox, lose dispatch/ACK. Replay identical envelope to G; assert one Attempt and one reservation, with **no direct Provider resend** by K.
+35. **G1 Gateway send marker crash before write:** persist G `SendMayHaveOccurred`, crash before any outbound bytes; unless non-send is provable, conservatively retain original ProviderOutcomeUnknown and budget, no unqualified automatic retry.
+36. **G1 Provider accepted / ACK lost:** simulate accepted and billable request with dropped headers/ACK/stream or 429/500/timeout; assert UNKNOWN, no executable candidate, no mistaken FailedKnown/zero-cost release and no blind re-send.
+37. **G1 exact-key dedup qualification:** under a *verified* fake Provider with execution **and invoice dedup**, resend original canonical request/key and prove one execution/charge; with dedup missing/expired/payload mismatch reject same-Attempt retransmission.
+38. **G1 replacement Attempt with old UNKNOWN:** independently reserve old+new maximum; reject replacement when hard funding scope lacks headroom; independent Attempt/Provider request identity required; hosted non-idempotent Provider effects block conflicting replacement.
+39. **G1 late Provider response/usage:** reconcile original UNKNOWN by ID; preserve an already selected candidate, release only provably unused old reservation, append financial corrections; no stale tool call.
+40. **G2 revocation request effective window:** issue old valid ticket, commit K `RevocationRequested`, delay H `HostFenceInstalled`, launch before fence. Assert in-flight old epoch and Pending; later installed-fence rejects old ticket. No retroactive K-time guarantee.
+41. **G2 grant expiry and clock skew:** expire grant or exceed admitted clock uncertainty while queued at Host gate; reject before OS spawn; no silent renewal or offline launch even if request began within validity.
+42. **G2 high-risk operation without approved revocation policy:** reject/disable destructive, external publication, credential export or other R2 request until Owner approves window or stronger proven online protocol; no model-based risk downgrade.
+43. **G2 sealed read-only SourceSnapshot:** run tests/build on authenticated read-only input mount with disjoint writable output/cache; assert execution-view/source identity, generated outputs do not stale inputs, no mandatory full file tracing.
+44. **G2 unsafe overlay/symlink or unsupported toolchain:** attempt to shadow protected script/config or write source via overlay; block or mark evidence Invalid. A toolchain needing in-source writes with no redirect remains Unsupported/Unverified, not Passed.
+
+**Normalized fixture protocol:** For 34–44 use [Core protocol G1/G2 cases M1–M6, R5–R7, S1–S3](../contracts/core-protocol.md). Every run records initial durable K/G/H facts, the injected event boundary, event IDs, exact Provider request count and bill count, original/new reservations, effect/Host process count, eventual projection, and allowed next action. **G1 PASS** requires no duplicate unqualified Provider send, no lost charge exposure and correct reservation/concurrency behavior. **G2 PASS** requires Host fence/expiry/risk ordering and a sealed execution view or correctly rejected Unsupported evidence. A safe blocked outcome is *not* a successful autonomous task completion. Currently **NOT RUN**.
+
 Use analogous domain fixtures where meaningful: a repository build/test process for Coding and an FFmpeg RenderJob for Video. The exact host process, resource dimensions, and artifacts differ, while the admission, receipt, cancellation, UNKNOWN, and recovery invariants remain the same.
 
 ## 5. Experimental controls and reporting
