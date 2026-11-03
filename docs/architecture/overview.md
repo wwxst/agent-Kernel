@@ -45,7 +45,7 @@ The Kernel remains the sole authority for:
 - authoritative TaskControl (accepted goal/plan, cancel/terminal), ModelStep/Attempt selection, ToolInvocation admission and budget transitions; Turn/runtime Step/ActionProposal activity can be derived from committed facts instead of separate authoritative lifecycles;
 - accepted GoalContract/PlanRevision versions, PlanStep work/verification state, and legal transitions;
 - deterministic contract validation, protected-field confirmation references, and plan-switch barriers;
-- model request admission, candidate selection and hard budget reservations/settlement; Model Gateway observes provider facts rather than committing Kernel authority;
+- model request admission, candidate selection and hard budget reservations/settlement; Model Gateway observes provider facts rather than committing Kernel authority. **K model Outbox replay ends at Gateway**; Gateway durably records SendMayHaveOccurred before external Provider send and never blind-retries an ambiguous, potentially billable request;
 - ToolInvocation identity, immutable tool-definition snapshots, policy/capability/approval checks, hard resource reservations, and durable intent;
 - Tool Runtime admission authority and fencing requirements; Tool Runtime schedules and Trusted ToolHost independently owns the physical launch gate and process facts;
 - Kernel Journal/Inbox/Outbox, authenticated import and reconciliation of the **Host-owned** Ledger/receipts, scoped UNKNOWN holds and recovery decisions;
