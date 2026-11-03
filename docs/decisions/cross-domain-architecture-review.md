@@ -144,3 +144,11 @@ The [architecture subtraction review](architecture-subtraction-review.md) preser
 | Domain scope | Autonomous Coding repair/verify and full Video intent→analysis→timeline→render→inspect→revise | PRODUCT TARGET RETAINED; G3–G5 NOT RUN |
 
 **Verdict:** G0 ARCHITECTURE REVIEW **NOT APPROVED**. Historic PASS labels about document consistency remain scoped to those earlier reviews, not a runtime assertion. ADP-01/02 are unchanged; ADP-03–11 still OPEN. No merge/deployment authorization.
+
+## 9. G0 targeted follow-up: ambiguous Provider requests and Host implementation scope
+
+The [Model and Budget](../contracts/model-and-budget.md) revision distinguishes **K→G durable model intent** from **G→Provider potentially chargeable send**. The latter is not idempotent merely because K Outbox or a client retry key exists: Gateway durably records SendMayHaveOccurred, keeps ProviderOutcomeUnknown on ACK loss/crash, and retains original reservations. New Provider execution requires a new admitted Attempt; exact-key same-Attempt resend is reserved for qualified Provider execution **and billing** deduplication. No Provider currently has a recorded PASS in this proposal.
+
+The existing single-Host local Fence remains; K RevocationRequested precedes local installation and cannot promise instant prevention of prior tickets. Owner must decide grant expiry/clock allowance, risk class and high-risk R2 disabling or verified stronger protocol. The first Coding Host should prove **read-only immutable source + disjoint writable outputs**, not implement full file tracing or a distributed transaction system by default. Video retains its independent autonomous edit/render/review contract and Host resource isolation.
+
+**Review disposition: G0 documentation amendment submitted for review, NOT APPROVED.** G1 (Provider/transaction traces) and G2 (Host/Fence/readonly sandbox) **NOT RUN**, as are G3 Coding, G4 Video and G5 dual-domain reuse. ADP-01/02 approved product scope remains unchanged; ADP-03–11 are OPEN.
