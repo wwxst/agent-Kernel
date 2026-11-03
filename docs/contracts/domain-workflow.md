@@ -68,6 +68,8 @@ A revocation request atomically advances the desired AuthorityFenceEpoch in Kern
 
 A same-domain migration uses freeze → stop admission → drain/reconcile → refresh → compatibility/impact validation → required user confirmation → new DomainBinding and accepted PlanRevision activation. No old PlanRevision is silently rebound. New operations begin only after the new binding is current. A Coding ↔ Video change always requires a new Task and explicit artifact handoff.
 
+**Additional G0 risk-policy constraint (OPEN):** revocation of already issued tickets is physically effective only when the Host-local fence is installed, the authenticated launch grant expires at the spawn boundary, or Host launch ability is verifiably disabled. An Owner must choose acceptable bounded request-to-fence exposure and grant lifetime/clock assumptions per effect class. Reversible isolated writes need an approved window; destructive/irreversible/high-impact external effects remain **disabled by default** until an Owner accepts a verified bounded window or separately proves a stronger online launch protocol. Revoke request does not imply ProcessConverged. See [Trusted Host risk policy](../security/trusted-host.md) and [Open decisions](../decisions/open-decisions.md).
+
 ### 3.2 Dispatch and revocation ordering — single-Host scope (second-round PROPOSED refinement)
 
 The Host performs **physical** dispatch only on an exact one-use ticket and live, coherent **Host-installed** effective authority. Three separate events apply:
