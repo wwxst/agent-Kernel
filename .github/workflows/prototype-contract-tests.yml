@@ -1,0 +1,28 @@
+name: Prototype contracts (synthetic only)
+on:
+  push:
+    branches: [prototype/kernel-contracts-g1-20261103]
+  pull_request:
+    paths:
+      - 'kernel_contracts/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - '.github/workflows/prototype-contract-tests.yml'
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Synthetic contract unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Synthetic timing smoke test
+        run: python scripts/bench_contracts.py --iterations 10
