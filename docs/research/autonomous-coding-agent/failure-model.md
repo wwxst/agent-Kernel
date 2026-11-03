@@ -1,6 +1,6 @@
 # Autonomous Coding Agent — Failure Model and Recovery Policy
 
-> **Status: PROPOSED.** This taxonomy is a design input for Orchestration, Kernel, Context Engine, and Trusted ToolHost contracts. It is not a claim that the failure handling is implemented.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03) as part of the Coding domain construction specification; implementation NOT started.** This taxonomy is a design input for Orchestration, Kernel, Context Engine, and Trusted ToolHost contracts. It is not a claim that the failure handling is implemented.
 
 ## 1. Purpose
 
@@ -10,33 +10,37 @@ The response to a failure depends on its class and evidence. Retrying the same a
 
 ## 2. Failure taxonomy
 
-| Class | Typical symptom | Detection evidence | Required response |
-| --- | --- | --- | --- |
-| Goal ambiguity | Two plausible interpretations lead to different behavior | Conflicting requirements, missing acceptance detail | Ask the user or proceed only with a disclosed reversible assumption |
-| Scope drift | Patch changes unrelated files or public behavior | Diff versus accepted PlanRevision and declared write scope | Stop dependent writes, inspect diff, revert or replan with approval |
-| Repository misunderstanding | Wrong layer, stale symbol map, missed convention | Call graph, tests, architecture docs, build output contradict model | Refresh RepositoryModel and revise the plan |
-| Plan omission | Required criterion has no PlanStep or verification | Acceptance matrix coverage gap | Create a new PlanRevision before proceeding |
-| Dependency failure | Work starts before prerequisite or external service is ready | Dependency state and failed precondition | Block the step; wait, inspect, or replan |
-| Implementation defect | Compile error, failing assertion, regression | Reproducible build/test evidence | Use hypothesis-driven debugging and bounded repair |
-| Test defect or weakness | Test passes but does not exercise intended behavior | Test diff, coverage, fixtures, mutation or review evidence | Improve verification; do not claim criterion passed |
-| Flaky or nondeterministic check | Same test alternates across runs | Repeated run evidence and environment binding | Classify flakiness; require stable evidence or human decision |
-| Environment failure | Toolchain missing, service unavailable, permission error | Host receipt, environment digest, command output | Repair environment only within authorization; otherwise block |
-| Tool protocol failure | Truncated call, invalid schema, mismatched identity | Model response and tool snapshot | Reject the call; request a complete valid proposal |
-| Concurrency conflict | Overlapping edits or stale workspace read | Workspace generation, write-set conflict, diff | Serialize, refresh, and re-evaluate affected steps |
-| Cancellation race | Caller cancels while a side effect is running | Kernel intent and Host execution record | Reconcile; do not infer rollback |
-| UNKNOWN side effect | Timeout, disconnect, lost ACK, missing receipt | Host Ledger and target-system evidence incomplete | Preserve UNKNOWN; block unsafe retry; reconcile or escalate |
-| Context loss | Compaction or restart loses a key constraint or failure | Checkpoint/version mismatch, missing evidence references | Restore from authoritative journal and checkpoint; rebuild context |
-| Stale evidence | A file, environment, tool, plan, or workspace changed after a check | Hash/version mismatch | Invalidate dependent claims and rerun required checks |
-| False completion | Model says done while criteria remain unverified | Criterion matrix and Completion Guard | Reject completion; return to verify, execute, or block |
-| Budget exhaustion | Required verification or repair cannot fit remaining budget | Kernel budget ledger | Stop or ask for authorized top-up; do not silently exceed |
-| Security/prompt injection | Retrieved content requests credential disclosure or policy bypass | Provenance/trust labels and policy checks | Treat as data; ignore instruction; deny unauthorized action and record evidence |
+Codes are normative: evidence records, evaluation metrics and terminal dispositions reference `CF-nn`, never free text. This table adds **no terminal state**; the `reason_code` enum it maps into is owned by [Kernel data model §3.2](../../contracts/kernel-data-model.md#32-taskcontrol) (`DeadlineExceeded | NoProgress | BudgetExhausted | UnsafeEnvironment | RepairExhausted | UnresolvedEffect | DependencyFailed | PolicyDenied`).
+
+| ID | Class | Symptom / detection evidence | Allowed recovery | Terminal `reason_code` | Required evidence |
+| --- | --- | --- | --- | --- | --- |
+| CF-01 | Goal ambiguity | Two plausible interpretations change behavior; conflicting requirements, missing acceptance detail | Ask, or proceed on a disclosed reversible assumption | — | Conflicting-requirement record + clarification or assumption digest |
+| CF-02 | Scope drift | Patch touches unrelated files or public behavior; diff vs accepted plan/write scope | Stop dependent writes, inspect diff, revert or L2 | PolicyDenied (only if unauthorized write was attempted) | Diff-vs-plan comparison bound to `base_tree_digest` |
+| CF-03 | Repository misunderstanding | Wrong layer, stale symbol map, missed convention; call graph/tests/build contradict the model | Refresh RepositoryModel, revise plan | — | Contradicting source reference at digest |
+| CF-04 | Plan omission | Required criterion has no PlanStep or verification | New PlanRevision before proceeding | — | Criterion-coverage gap record |
+| CF-05 | Dependency failure | Work starts before a prerequisite or external service is ready | Block, wait, inspect, replan | DependencyFailed | Dependency state + failed precondition |
+| CF-06 | Implementation defect | Compile error, failing assertion, regression | Hypothesis-driven debugging + bounded repair | RepairExhausted | Reproducible build/test evidence |
+| CF-07 | Test defect or weakness | Test passes but does not exercise the criterion | Improve verification; do not claim Pass | — | Test diff, coverage, fixture/mutation evidence |
+| CF-08 | Flaky or nondeterministic check | Same test, same binding, different outcomes across runs | Classify; require stable evidence or human decision | — | ≥2 run records with equal `env_digest` and `argv_digest` |
+| CF-09 | Environment failure | Toolchain missing or unsupported, service unavailable, permission error | Repair only within authorization; else block/mark Unsupported | UnsafeEnvironment | Host receipt, environment digest, command output |
+| CF-10 | Tool protocol failure | Truncated call, invalid schema, mismatched tool/argument identity | Reject the call; request a complete valid proposal | — | Model response + tool snapshot digest |
+| CF-11 | Concurrency conflict | Overlapping edits or stale workspace read-set | Serialize, refresh, re-evaluate affected steps | — | Workspace generation + write-set conflict record |
+| CF-12 | Cancellation race | Cancel while a side effect is running | Reconcile; never infer rollback | — (terminal only after convergence) | Kernel cancel intent + Host execution record |
+| CF-13 | UNKNOWN side effect | Timeout, disconnect, lost ACK, missing receipt | Preserve UNKNOWN; block unsafe retry; reconcile | UnresolvedEffect | Host Ledger + target evidence incomplete |
+| CF-14 | Context loss | Compaction/restart loses a constraint, failure or UNKNOWN | Restore from Journal/checkpoint; rebuild context | — | Checkpoint/version mismatch + missing evidence refs |
+| CF-15 | Stale evidence | File, environment, tool, plan or workspace changed after a check | Invalidate dependent claims; re-run required checks | — | Hash/version mismatch record |
+| CF-16 | False completion | Model claims done while criteria remain unverified | Reject completion; return to verify/execute | NoProgress (only after bounded repeat) | Criterion matrix + Guard rejection record |
+| CF-17 | Budget exhaustion | Required verification or repair cannot fit remaining budget | Stop or ask for authorized top-up; never silently exceed | BudgetExhausted | Kernel budget ledger + reservation state |
+| CF-18 | Security / prompt injection | Retrieved content requests credential disclosure, policy bypass, or a destructive edit | Treat as data; ignore instruction; deny and record | PolicyDenied | Provenance/trust label + denied-invocation record |
+
+**Classification and overlap rules.** Classify by the *first blocking cause with direct evidence*, in this order: `CF-13` → `CF-12` → `CF-18`/`CF-02` → `CF-09` → `CF-10` → `CF-11` → `CF-07`/`CF-08` → `CF-06` → `CF-03`/`CF-04`/`CF-01`. A single failure is never `CF-08` without two bound runs; without that, it is `CF-06` (defect) or `CF-07` (weak test). "The test looks wrong" alone is `CF-07`, not evidence for `CF-06`. `CF-13` may not be reclassified to `CF-06`/`CF-09` without reconciliation evidence. Reclassification is itself an event citing the new evidence, and an unchanged retry after reclassification is `CF-16` no-progress regardless of the earlier label. A class with no terminal code can still end the Task through `CF-16`/`CF-17` when the bound is reached.
 
 ## 3. Hypothesis-driven debugging protocol
 
 Every debugging cycle should contain:
 
 1. **Failure signature** — exact failing command, test, output digest, environment, workspace generation, and relevant source state.
-2. **Failure class** — code, test, environment, dependency, permission, resource, infrastructure, or UNKNOWN.
+2. **Failure class** — exactly one `CF-nn` code from §2, with the evidence its row requires.
 3. **Competing hypotheses** — plausible explanations with evidence for and against each.
 4. **Discriminating experiment** — the smallest safe action whose possible outcomes distinguish the hypotheses.
 5. **Prediction** — what each hypothesis predicts before the experiment runs.
@@ -58,7 +62,7 @@ Orchestration should detect at least these no-progress patterns:
 - exploration produces no new relevant facts and does not reduce uncertainty;
 - the agent repeatedly attempts an action that Kernel or Host has denied.
 
-The exact thresholds are **OPEN** and must be tuned against the evaluation benchmark. Kernel enforces hard attempt and resource limits; Orchestration decides whether a new attempt has a meaningful reason.
+The bounds are not free parameters. `progress.max_same_step_repairs` (default 2) and `progress.max_consecutive_no_progress` (default 3) come from the bound strategy ([Execution Strategy §4.5](../../contracts/execution-strategy.md)); local policy may lower them but may not exceed the profile maximum. Repairs are counted per **(PlanStep, failure signature)** as specified in [Design §6 Phase E](design.md) — a repeated identical action never resets the count, and recovery resumes the persisted count instead of restarting it. Kernel enforces hard attempt and resource limits; Orchestration decides whether a new attempt has a meaningful reason. Tuning is an evaluated strategy change, never an in-run adjustment.
 
 Retry rules:
 
@@ -100,5 +104,5 @@ This preserves the difference between:
 - **FailedKnown** — evidence proves the operation failed;
 - **OutcomeUnknown** — evidence cannot prove whether it happened;
 - **Blocked** — safe progress depends on an external condition;
-- **TaskFailed** — the overall goal cannot be completed under its contract;
+- **`Failed(reason_code)`** — the overall goal cannot be completed under its contract; codes are those of §2, not a new enum ([Data model §3.2](../../contracts/kernel-data-model.md#32-taskcontrol));
 - **TaskCompleted** — the acceptance contract has been proven within its declared scope.

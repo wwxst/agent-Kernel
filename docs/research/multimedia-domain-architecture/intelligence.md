@@ -1,6 +1,6 @@
 # Autonomous Video Editing Intelligence — Second-Round Design
 
-> **Status: MIXED.** The first-phase Video capability boundary is **REVISED/APPROVED under ADP-01 (2026-11-02)**. This document's detailed domain-intelligence architecture remains **PROPOSED**; no model/provider is selected, no Multi-Agent / D9 is introduced, no Runtime behavior is implemented, and no editing quality is claimed as measured.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03) as Video domain design input; normative schemas live in docs/contracts/*; implementation NOT started; media-quality and runtime claims UNVERIFIED.** The first-phase Video capability boundary is **REVISED/APPROVED under ADP-01 (2026-11-02)**. No model/provider is selected, no Multi-Agent / D9 is introduced, no Runtime behavior is implemented, and no editing quality is claimed as measured.
 
 ## 1. Purpose and boundary
 
@@ -89,25 +89,13 @@ For every selected interval, preserve rejected alternatives and a compact ration
 
 ### 2.4 Narrative planning
 
-NarrativePlan is a proposed immutable Video-domain artifact between MediaProjectModel and TimelineRevision. It records the intended message and an ordered or partially ordered beat structure before exact frame-level editing.
+NarrativePlan is a normative immutable Video-domain artifact (`media.narrative_plan.v1`, defined in [MediaProject §5.1](../../contracts/media-project.md)). This section defines the reasoning method; the schema owns the field shape.
 
-A beat may include a hook, orientation/context, premise/question/objective, demonstration/action/explanation, reaction/consequence/contrast, complication/reveal/turning point, resolution, summary, conclusion, or call to action. These are optional editorial patterns, not a universal template. A montage, interview, tutorial, documentary excerpt, event recap, and product demonstration need different structures.
-
-Each beat binds:
-
-- stable beat ID and role;
-- criterion(s) and message element it serves;
-- required/optional status and ordering/dependency constraints;
-- candidate source moments and selected moment(s);
-- supporting analysis claims/evidence;
-- minimum context needed to preserve meaning;
-- estimated duration range and pacing intent;
-- transition/continuity requirements;
-- unresolved ambiguity and alternative sequences.
+The v1 role set is `hook | orientation | premise | demonstration | reaction | complication | resolution | summary | call_to_action | other`; genres choose among them and are not forced into a universal template. A beat's fields — role, required/optional, dependencies, candidate/selected moments, context ticks, target duration range, pacing intent, transition and content references, evidence references — are fixed by that schema.
 
 NarrativePlan preserves factual and semantic context. It must not create a false cause/effect relation, reverse a real-world sequence in a way that changes the claim, remove a qualification needed to interpret a quote, splice a statement to imply a different meaning, or imply that a person witnessed an event when the source does not support that inference. Non-chronological presentation is allowed only when consistent with accepted intent and not distorting factual meaning; chronology and presentation order remain separately represented.
 
-NarrativePlan is not a second autonomous agent. It is a typed artifact produced and revised by the single Video Domain Intelligence control loop.
+NarrativePlan is not a second autonomous agent. It is typed and produced/revised by the single Video Domain Intelligence control loop.
 
 ### 2.5 Pacing and editorial optimization
 
@@ -187,14 +175,14 @@ A single task-level Orchestration coordinator may perform intent analysis, momen
 
 | Capability class | Included capabilities | Status / boundary |
 | --- | --- | --- |
-| **Core automatic-editing foundation** | Ingest/probe user-supplied assets; source fingerprinting; task-conditioned basic video/shot analysis; task-relevant highlight/moment identification and selection; basic NarrativePlan (message, simple beats, context, sequence); simple duration/pacing allocation; trim; reorder; hard cut; concatenate; simple fade/crossfade; preserve/mute/source gain/basic fades; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification, and delivery | Capability scope REVISED/APPROVED under ADP-01 (2026-11-02). Progressive-analysis and coverage policy REVISED/APPROVED under ADP-02 (2026-11-02); provider/model and task-family calibration remain detailed design; typed operation schemas/compiler/evidence contracts remain PROPOSED/OPEN |
+| **Core automatic-editing foundation** | Ingest/probe user-supplied assets; source fingerprinting; task-conditioned basic video/shot analysis; task-relevant highlight/moment identification and selection; basic NarrativePlan (message, simple beats, context, sequence); simple duration/pacing allocation; trim; reorder; hard cut; concatenate; simple fade/crossfade; preserve/mute/source gain/basic fades; immutable timeline; bounded FFmpeg render; actual-output technical/content checks; natural-language revision, re-render, re-verification, and delivery | Capability scope REVISED/APPROVED under ADP-01 (2026-11-02). Progressive-analysis and coverage policy REVISED/APPROVED under ADP-02 (2026-11-02); typed operation schemas, compiler and evidence contracts are accepted for construction in `docs/contracts/*`; provider/model and task-family calibration remain detailed design |
 | **Enhanced editorial intelligence** | Advanced multi-objective/query-conditioned highlight ranking; rich cross-scene narrative planning; advanced semantic continuity; music-aware pacing and beat/phrase alignment; generated captions/titles; music generation/acquisition; multi-track audio mixing/ducking; voice synthesis; advanced loudness mastering; speed ramps; advanced transitions; overlays; automatic reframing; color matching; richer perceptual critique | Product capability roadmap; not implied by the ADP-01 core slice. Each operation needs typed timeline semantics, authorization, compiler mapping, and verification criteria |
 | **Post-production/platform adaptation** | Container/codec/bitrate/resolution; aspect-ratio crop/pad; frame-rate conversion; color/SDR/HDR policy; loudness/channel layout; subtitle mux/sidecar; metadata; thumbnails/covers; platform safe areas and packaging; optional platform-specific delivery/upload | Separate output-adaptation stage and versioned Output Profile. Not story intelligence or a base editing operation. External upload/publication is a separate side effect and remains out of scope unless explicitly authorized |
 | **Professional editor platform** | Manual multitrack UI, free-form effects graph, collaborative editing, plugin marketplace, NLE project compatibility, advanced VFX/compositing/color-grading workstation | Deferred / outside first-phase scope |
 
 The same feature must not appear in multiple phases with conflicting meanings. Output aspect ratio and codec selection belong to post-production adaptation; editorial framing intent may be expressed by the planner, but the output adapter determines profile-specific conversion. Generated captions are enhanced editorial capability; preserving an existing subtitle stream is profile-controlled pass-through, not caption generation.
 
-The core capability boundary in this table is the owner-approved revised ADP-01 decision, and the progressive-analysis/coverage policy is approved under ADP-02. Provider/model selection, task-family evidence calibration, detailed intelligence design, and typed execution contracts remain proposed/open. See the [Decision Log](../../decisions/decision-log.md).
+The core capability boundary in this table is the owner-approved revised ADP-01 decision, and the progressive-analysis/coverage policy is approved under ADP-02. Provider/model selection and task-family evidence calibration remain OPEN; typed v1 schemas and the compiler/evidence contracts are accepted for construction in `docs/contracts/*`. Detailed intelligence design (ranking weights, role choice, pacing heuristics) remains design work, not a fixed algorithm. See the [Decision Log](../../decisions/decision-log.md).
 
 ## 6. Evaluation implications
 

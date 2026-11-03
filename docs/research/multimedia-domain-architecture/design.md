@@ -1,6 +1,6 @@
 # Autonomous Video Editing — Domain Architecture
 
-> **Status: MIXED.** The owner REVISED/APPROVED the ADP-01 first-phase scope on 2026-11-02: a complete natural-language autonomous-editing loop within a bounded core operation set, not a full editor. Detailed domain design/contracts remain PROPOSED; runtime behavior, quality, and implementation choices remain UNVERIFIED/OPEN.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03) as Video domain design input; normative schemas live in docs/contracts/*; implementation NOT started; media-quality and runtime claims UNVERIFIED.** The owner REVISED/APPROVED the ADP-01 first-phase scope on 2026-11-02: a complete natural-language autonomous-editing loop within a bounded core operation set, not a full editor. Remaining unselected technology choices and numeric thresholds stay OPEN.
 
 ## 1. Product goal and scope
 
@@ -43,7 +43,7 @@ Professional VFX/compositing/color-grading workstations, manual multitrack editi
 - Multi-Agent / D9 or distributed specialist agents.
 - Runtime implementation or final language, database, deployment, or media-analysis model selection.
 
-A preview, contact sheet, simple asset list, or approval surface may be useful in a future application layer; none implies a full editor. Output adaptation is a separate stage from story selection and timeline construction. The timeline is a canonical machine-readable artifact, not a GUI editor.
+A preview, contact sheet, simple asset list, or approval surface is a bounded review surface (ADP-10: contact sheet, optional low-resolution preview, approve/revise/reject); it never implies a full editor. Output adaptation is a separate stage from story selection and timeline construction. The timeline is a canonical machine-readable artifact, not a GUI editor.
 
 ## 2. Domain boundary in the unified platform
 
@@ -149,7 +149,7 @@ The common PlanRevision switch barrier applies when the user changes the goal or
 
 ## 6. Timeline as a persistent engineering artifact
 
-The canonical timeline is a non-destructive, immutable, versioned description of the edit. It binds source asset IDs and digests, stream IDs, source PTS ranges, exact time bases, timeline placement, tracks, clips, transitions, overlays, audio treatment, and output profile.
+The canonical timeline is a non-destructive, immutable, versioned description of the edit. It binds source asset IDs and digests, stream IDs, source PTS ranges, exact time bases, timeline placement, tracks, clips, registered transitions/audio operations, and output profile. Operation semantics and out-of-scope parameters are fixed by the closed v1 registry in [Media Timeline §4.1a](../../contracts/media-timeline.md).
 
 Use integer timestamps and rational time bases rather than floating-point seconds as the canonical frame-accurate representation. Preserve variable-frame-rate source PTS. A source clip range is end-exclusive; timeline placement uses integer ticks against an explicit rational timebase.
 
@@ -250,17 +250,17 @@ Ask the user when the instruction has multiple materially different interpretati
 
 ## 11. Open decisions
 
-- Exact typed timeline operation schemas, deterministic compiler mappings, and per-operation evidence obligations for the ADP-01-approved core capability set.
+- Additional timeline operations beyond the v1 registry; the v1 operation set and compiler rules are resolved in [Media Timeline §4.1a](../../contracts/media-timeline.md) and [Render Compiler](../../contracts/render-compiler.md).
 - MediaAnalysis taxonomy, temporal coverage requirements, confidence calibration, and raw-evidence retention/privacy policy.
-- NarrativePlan schema, beat vocabulary flexibility, factual/chronology guardrails, and multi-objective moment-ranking policy.
-- EvidenceCarryForward compatibility rules for changed analysis versions, proxies, and criteria.
+- NarrativePlan role/beat flexibility beyond the v1 role set and factual/chronology guardrails; the schema is resolved as `media.narrative_plan.v1` in [MediaProject §5.1](../../contracts/media-project.md).
+- EvidenceCarryForward/ReuseRecord compatibility rules for changed analysis versions, proxies, and criteria.
 - Output Profile values and supported media/container/stream matrix.
-- Platform-specific Host isolation, enforceable resource dimensions, and FFmpeg build/demuxer/decoder/filter allowlists.
+- Platform-specific Host isolation, enforceable resource dimensions, and the concrete demuxer/decoder matrix and FFmpeg build; the mechanism (profile-pinned allowlists, Host re-validation) is resolved, values remain OPEN.
 - Human-review triggers and independent-evidence classes for narrative, factuality, and perceptual criteria.
 - Benchmark task-set selection, source/media rights, reviewer rubrics, and baseline thresholds.
 - Whether optional content credentials (for example C2PA) are needed for any delivery target.
 
-First-round candidate resolutions remain in [Architecture Decision Proposals](../../decisions/architecture-decision-proposals.md). The second-round additions are tracked in [Second-round architecture revision](../../decisions/second-round-architecture-revision.md). All remain PROPOSED/OPEN and do not select a media-analysis provider or production stack.
+First-round candidate resolutions remain in [Architecture Decision Proposals](../../decisions/architecture-decision-proposals.md). The second-round additions are tracked in [Second-round architecture revision](../../decisions/second-round-architecture-revision.md). The items above remain OPEN for values and additional capability; typed v1 schemas, the operation registry and the compiler contract are accepted for construction in `docs/contracts/*`, and no media-analysis provider or production stack is selected.
 
 No threshold or technology choice is inferred merely from this design draft.
 
@@ -275,11 +275,15 @@ The media execution proposal is grounded in the following official documentation
 
 The first phase uses FFmpeg as the named render backend. It does not select the media-analysis model/provider, storage system, packaging strategy, or host deployment. FFmpeg's own protocol, demuxer, filtergraph, and escaping behavior must be treated as a security surface; see [RenderPlan security contract](../../contracts/render-plan-security.md).
 
-## 13. Video first-slice adapter and execution trace (G0 candidate)
+## 13. Video first-slice adapter and execution trace (construction baseline)
 
 The `video_editing` adapter supplies MediaProjectModel, progressive analysis, moment retrieval, NarrativePlan, TimelineRevision compiler, technical/content verification and typed tool snapshots under [Domain Extension](../../contracts/domain-extension.md). It does not extend TaskControl, create its own authoritative RenderJob completion state or bypass Trusted Host.
 
-**Typed capability minimum:** `media.ingest_probe` (R0 over exact source IDs/digests), `media.sample_analyze` (bounded modality/interval, policy-controlled privacy), `media.timeline_validate_compile` (typed rational-time timeline to allowlisted RenderPlan), `media.preview_render` (budgeted disposable preview), `media.final_render` (one R1 staging output, bounded Host resource reservation), `media.output_inspect` (independent technical and content evidence), `media.publish_artifact` (guarded final digest). Any public upload/share, uncontrolled media decoder/filter or external asset download is R2/unapproved unless separately authorized. All tool snapshots have explicit resource/effect/target-conflict/idempotency declarations.
+**Typed capability minimum:** `media.ingest_probe` (R0, exact source IDs/digests), `media.sample_analyze` (R0, bounded modality/interval, policy-controlled privacy), `media.timeline_validate_compile` (R0, typed rational-time timeline → allowlisted RenderPlan), `media.preview_render` (R1, own staging namespace, `media.preview.v1` artifact, never publishable), `media.final_render` (R1, one staging output, bounded Host reservation), `media.output_inspect` (R0, independent technical and content evidence), `media.publish_artifact` (R1 guarded publication). Any public upload/share, uncontrolled decoder/filter or external asset download is R2/unapproved unless separately authorized. All tool snapshots declare effect class, conflict scope, resource dimensions and idempotency class.
+
+**PlanStep kinds (v1):** `video.ingest`, `video.analyze`, `video.select`, `video.narrative`, `video.timeline`, `video.render_preview`, `video.render_final`, `video.inspect`, `video.publish`, `video.revise`; each carries the generic PlanStep envelope fields from [Kernel data model §3.5](../../contracts/kernel-data-model.md) plus its typed payload schema/digest.
+
+**Resource and cache rule:** analysis (R0) and render (R1) reserve from one Host resource vector; analysis may never consume capacity reserved by a running render and otherwise queues as `ResourceUnavailable` (no silent sharing). Probe/analysis/proxy cache reuse requires a `ReuseRecord` keyed by source digest + analyzer/transform version + privacy/access class + policy digest; a quick fingerprint never keys a cache hit.
 
 **Happy-path trace V-01:**
 

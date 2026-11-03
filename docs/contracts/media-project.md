@@ -1,6 +1,6 @@
 # MediaProject, MediaAnalysis, and MediaProjectModel contract
 
-> **Status: PROPOSED Video-domain data contract.** This document defines logical identity, versioning, projection, and evidence-inheritance rules. It does not select a database, object store, analysis provider, model, or implementation topology. Runtime behavior and freshness enforcement remain UNVERIFIED.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; media-quality and runtime claims UNVERIFIED.** This document defines media identity, ProjectSnapshot canonicalization, the CoverageManifest contract, typed claims, the NarrativePlan schema, and evidence-inheritance rules. Canonical serialization and digest form follow [Kernel data model](kernel-data-model.md) §2.2; execution authority remains with Kernel and Trusted ToolHost. It does not select a database, object store, analysis provider or implementation topology.
 
 ## 1. Purpose and authority
 
@@ -11,7 +11,7 @@ The Video domain needs a persistent project container and a reproducible evidenc
 - **MediaAsset** is an immutable source or derived media artifact.
 - **MediaAnalysis** is an immutable record of one bounded analysis run over exact inputs.
 - **MediaProjectModel** is a versioned Context Engine projection built from an exact ProjectSnapshot and a declared set of analysis/evidence artifacts.
-- **NarrativePlan** is a Video-domain artifact defined in [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md).
+- **NarrativePlan** is an immutable Video-domain artifact; its normative shape is `media.narrative_plan.v1` in §5.1 below. The reasoning method lives in [Video Editing Intelligence](../research/multimedia-domain-architecture/intelligence.md).
 - **TimelineRevision** is an immutable editing artifact bound to the exact project snapshot, model/analysis evidence, NarrativePlan, and accepted task contracts.
 
 None of these objects is execution authority. Kernel Task/Journal state, Workflow Profile, authorization, budgets, ToolInvocation admission, and Host Ledger remain authoritative for their respective responsibilities.
@@ -37,23 +37,47 @@ A Task binds the exact ProjectSnapshot/generation it reads or proposes to extend
 
 ### 2.2 ProjectSnapshot
 
-A ProjectSnapshot records at minimum:
+A ProjectSnapshot records:
 
-- snapshot_id, media_project_id, project_generation;
-- manifest_digest, parent snapshot ID/digest;
-- ordered/typed references to included source and derived artifacts;
-- event/commit sequence that produced this generation;
-- creation provenance and schema version.
+| Field | Rule |
+| --- | --- |
+| `snapshot_id`, `media_project_id`, `project_generation` | Identity; generation increases monotonically. |
+| `schema_version` | `media.snapshot.v1`. |
+| `parent_snapshot_id`, `parent_manifest_digest` | Null only for the first generation. |
+| `artifacts[]` | Typed references `{artifact_id, kind, schema_id/version, digest}` sorted by `(kind, artifact_id)`; no duplicate `artifact_id`. |
+| `event_sequence_ref` | Commit/event range that produced this generation. |
+| `created_at`, `created_by` | Provenance; never used for ordering. |
+| `digest_alg`, `manifest_digest` | `sha256:` over JCS of the snapshot object excluding `manifest_digest`. |
 
-The snapshot is immutable. A new ingest, derived proxy, selected analysis set, timeline, or render record may produce a new snapshot only through an explicit project-manifest commit. A snapshot does not imply that all referenced analysis claims are current for every future GoalContract.
+Canonicalization rule: `manifest_digest` is computed over the canonical JCS bytes (UTF-8, NFC, no duplicate keys) of the field set above with the artifact list sorted. Identical logical artifact sets therefore produce identical digests; a digest computed from a quick fingerprint or from an unsorted/implementation-specific list is invalid. Each artifact's own digest is included, so any member change changes the snapshot digest.
 
-### 2.3 MediaAsset and stream identity
+The snapshot is immutable. A new ingest, derived proxy, selected analysis set, timeline, or render record may produce a new snapshot only through an explicit project-manifest commit. The mutable head is a separate pointer and never changes prior snapshot bytes or digests. A snapshot does not imply that all referenced analysis claims are current for every future GoalContract.
 
-A MediaAsset reference includes stable media_asset_id, immutable content digest, byte size, media type, source/derived classification, parent/ingredient references, ingest method/time, source reference, provenance and declared usage/rights metadata where supplied, immutable payload locator, access/retention class, probe result reference, and warnings.
+### 2.3 MediaAsset, content identity and stream identity
 
-A selected stream is not identified only by a mutable stream index. Bind the stream index together with probed stream identity metadata and source digest: stream type, codec/codec parameters, timebase, start PTS, duration, dimensions or sample properties, channel layout, and relevant metadata digest. A new probe or source digest that changes the stream map requires revalidation.
+Required MediaAsset fields:
 
-The original source is never overwritten. A proxy, thumbnail, waveform, extracted audio track, normalized transcode, or other derived artifact receives its own Artifact ID/digest and a transformation record naming exact parent digest(s), tool/build/config, parameters, and source-to-derived time mapping.
+| Field | Rule |
+| --- | --- |
+| `media_asset_id` | Stable opaque identity; never reused for different bytes. |
+| `schema_version` | `media.asset.v1`. |
+| `digest_alg`, `content_digest` | `sha256:` over **every byte** of the immutable payload (full fingerprint). |
+| `size_bytes`, `media_type` | Byte count and declared media type. |
+| `source_kind` | `source` or `derived`. |
+| `ingest_method`, `ingested_at` | How and when the bytes entered the project. |
+| `payload_locator` | Opaque storage reference; never a path, bearer grant or URL. |
+| `probe_ref` | Exact probe record id/digest and probe tool version. |
+| `classification`, `retention` | Access and retention policy identifiers. |
+| `warnings[]` | Probe/decode warnings; never silent. |
+| `parent_refs[]`, `transformation` | Required for `derived` only: parent digest(s), tool/build/config, parameters, source-to-derived time mapping. |
+
+**Fingerprint rule.** Only the full-content digest may support equality, deduplication, provenance, cache keys, or acceptance. A quick fingerprint (size, mtime, sampled head/tail ranges) is advisory, must be labelled `quick:`, and may never satisfy an equality or provenance check; it must be upgraded by a full digest before any decision, cache hit or report uses it.
+
+**Duplicate-bytes rule.** `content_digest` is the content identity. Ingesting bytes that already exist returns the existing `media_asset_id` and appends a new reference record (project, purpose, ingest event); it never mints a second content identity. Multiple references and projects may point to one payload. Changed bytes are a new asset with new digest and explicit lineage; the prior asset is never updated.
+
+**Stream identity.** A selected stream is never identified only by a mutable index. Bind the index together with probed stream identity metadata, source digest, timebase, start PTS, duration, codec parameters, and a stream-identity digest. A new probe or source digest that changes the stream map requires revalidation.
+
+The original source is never overwritten. A proxy, thumbnail, waveform, extracted audio track, normalized transcode, or other derived artifact receives its own Artifact id/digest and the `transformation` record above.
 
 ## 3. MediaAnalysis run record
 
@@ -95,9 +119,13 @@ Analysis expansion is bounded by the Task's current Workflow Profile, permission
 
 Raw evidence should be retained as immutable, access-controlled artifacts when required for later verification. Privacy, retention, and data-minimization policy governs whether full derived audio/transcript/frame artifacts are stored or only scoped evidence excerpts and digests.
 
-### 3.2 Coverage manifest interval contract
+### 3.2 Coverage manifest identity and interval contract
 
-Every supplied source asset has one immutable CoverageManifest bound to the exact ProjectSnapshot/input manifest and source digest. The manifest enumerates all probed streams and the modalities requested or considered for the task. Coverage is scoped independently by asset, stream, modality, and declared source interval; it is never a single project-wide boolean.
+A CoverageManifest is bound to `(media_asset_id, analysis_generation)` and is immutable. `analysis_generation` is the manifest version for that asset; any rerun that changes coverage produces the next generation. Each MediaAnalysis record references exactly one `coverage_manifest_id` and digest and may reference it but never mutate it. This resolves the per-asset/per-run ambiguity: the manifest belongs to the asset generation, and runs cite it.
+
+Manifest fields: `coverage_manifest_id`, `schema_version=media.coverage.v1`, `media_asset_id` + content digest, `analysis_generation`, `project_snapshot_id`, `input_manifest_digest`, `declared_analysis_scope[]`, `segments[]`, `created_at`.
+
+A `declared_analysis_scope` entry is `{modality, stream_id|null, interval_set[{start_pts,end_pts}], coordinate_basis (video PTS+timebase | audio sample+rate), declared_resolution, sampling_policy}`. A modality considered but not requested uses `NotRequested` over its declared scope. A modality whose stream is absent has an empty declared scope plus the probe's stream-inventory fact (line 119). Segments must partition each declared scope exactly; the manifest is never a single project-wide boolean.
 
 Each coverage segment records:
 - asset digest, stream identity, modality/analysis kind, and exact source interval;
@@ -126,17 +154,19 @@ The coarse temporal navigation index spans the selected source set for content-b
 
 ## 4. Analysis claims and freshness
 
-A claim is a typed assertion such as speech segment, shot-boundary candidate, object/action observation, scene-context hypothesis, silence interval, or candidate highlight. It binds:
+A claim is a typed assertion. Claim kinds are closed per schema version:
 
-- claim ID and schema/version;
-- exact MediaAnalysis ID;
-- source asset digest and stream identity;
-- source interval in integer PTS/sample positions and rational timebase;
-- proxy/derived-media digest and exact source-to-proxy mapping when used;
-- raw evidence reference(s);
-- method/configuration digest;
-- confidence/uncertainty and evidence quality;
-- claim status and invalidation conditions.
+| Schema | Kind-specific required fields (in addition to the common set) |
+| --- | --- |
+| `media.claim.shot.v1` | detector id/version, threshold, boundary kind `cut\|gradual`, boundary interval |
+| `media.claim.transcript.v1` | language tag, text artifact ref + digest, word-timing ref or `unknown`, speaker-turn ref or `unknown`, alignment-quality class, ASR model/config digest |
+| `media.claim.ocr.v1` | text artifact ref, region `{x,y,w,h}` in frame pixels + frame dimensions, script/language or `unknown`, detector config digest |
+| `media.claim.audio_event.v1` | event-class vocabulary id/version, stream/channel, energy-basis method id, interval |
+| `media.claim.visual_observation.v1` | predicate vocabulary id/version, subject refs, scene/shot refs, method/config digest |
+
+Common required fields: `claim_id`, `schema_version`, `analysis_id`, `media_asset_id` + content digest, `stream_id` + stream-identity digest, `interval {start,end}` in integer source coordinates + `timebase`, `method_config_digest`, `raw_evidence_refs[]`, `confidence {value: 0..1 float | "unknown", method_id}`, proxy digest + source-to-proxy mapping when a proxy was used, `status`, `created_at`.
+
+Rules: `confidence` is a producer-reported scalar with a declared method id. It is **never evidence by itself** and never substitutes for coverage, raw evidence or independent verification; `unknown` is valid and must not be coerced to zero. A claim over a proxy without a verified mapping cannot support frame-accurate edits. Absence claims require adequate coverage; `NotSampled`, `NotRequested`, `Unavailable` and `DecodeFailed` never support absence.
 
 Claim status is not a universal truth value. At minimum distinguish:
 
@@ -162,11 +192,33 @@ MediaProjectModel is a derived read projection for Video Domain Intelligence. Ea
 
 It is not the authoritative store for source bytes or the only copy of evidence. It may denormalize or summarize facts for retrieval, but every material claim resolves to its source claim and raw evidence. The projection cannot grant access to media or authorize a tool call.
 
-A projection built from a new ProjectSnapshot is a new version. Unchanged source-bound claims may be referenced if exact digest, stream, timebase, coverage, analysis method, and task criterion remain valid; the projection still records the snapshot against which it was built.
+A projection built from a new ProjectSnapshot is a new version. Unchanged source-bound claims may be referenced only through a §7 `ReuseRecord` when exact digest, stream, timebase, coverage, analysis method, and task criterion remain valid; the projection still records the snapshot against which it was built.
+
+### 5.1 NarrativePlan schema (`media.narrative_plan.v1`)
+
+NarrativePlan is a normative immutable Video-domain artifact between the projection and the timeline. It is not executable and not a second agent.
+
+| Field | Type | Required |
+| --- | --- | --- |
+| `plan_id`, `schema_version`, `digest` | id/version/digest | yes |
+| `media_project_id`, `project_snapshot_id`, `model_projection_id` | refs | yes |
+| `intent_ref`, `goal_id`, `goal_version` | refs | yes |
+| `parent_plan_id`, `revision_number` | id/int | yes (root `null`) |
+| `message`, `message_element_ids[]` | string, ids | yes |
+| `criterion_ids[]` | ids | yes (≥1) |
+| `beats[]` | beat records | yes (≥1) |
+| `ordering`, `beat_edges[]` | `ordered\|partially_ordered`, edges | yes |
+| `alternatives[]`, `assumptions[]`, `unresolved[]` | records | no |
+
+`beat` = `{beat_id (stable across revisions), role, role_label (only for `other`), required, depends_on[], candidate_moment_ids[], selected_moment_ids[], context_before_ticks, context_after_ticks, target_duration {min_ticks,max_ticks}, pacing_intent, transition_requirements[], required_content_refs[], excluded_content_refs[], evidence_refs[]}`.
+
+`role` is closed in v1: `hook | orientation | premise | demonstration | reaction | complication | resolution | summary | call_to_action | other`. `other` requires `role_label` and rationale. Durations are integer ticks in the timeline timebase.
+
+Invariants: `selected_moment_ids ⊆ candidate_moment_ids`; each criterion maps to ≥1 beat; digest is `sha256:` over JCS excluding `digest`; every revision names its parent and EditIntent and never mutates a prior plan. `intelligence.md` owns the reasoning method; this schema owns the shape.
 
 ## 6. Version and lineage rules
 
-The proposed lineage is:
+The lineage is:
 
 **MediaProject → ProjectSnapshot[n] → MediaAsset/MediaAnalysis set → MediaProjectModel[v] → NarrativePlan[v] → TimelineRevision[v] → RenderPlan[v] → RenderJob[attempt] → VerificationReport[v]**
 
@@ -187,6 +239,8 @@ Evidence inheritance is explicit, not implicit.
 A new NarrativePlan or TimelineRevision may carry forward evidence from its parent only by recording an EvidenceCarryForward entry with prior claim/evidence ID and artifact digest; target criterion/beat/clip/range; exact source asset digest, stream identity, PTS/sample interval, and timebase; analysis/proxy/mapping/configuration version; freshness check and compatibility result; reason the evidence is unaffected by the new edit; validator and validation sequence.
 
 Carry-forward is allowed only when underlying source digest, stream identity, time mapping, analysis scope/configuration, and criterion meaning remain compatible. Parent linkage alone does not prove evidence freshness.
+
+**ReuseRecord (cache and cross-task reuse).** Reusing a prior probe, analysis, projection or proxy outside a parent-plan lineage (for example a cache hit) requires `{reuse_id, reuse_kind: probe|analysis|projection|proxy, prior_id + digest, media_asset_id + digest, stream_id/timebase/mapping digest, analyzer/proxy/config digest, privacy/access class, policy_digest, freshness_result, validator, validated_at}`. A cache hit without a ReuseRecord is invalid. Reuse is forbidden across access classes and after retention expiry or authorization revocation; parent linkage alone is never freshness.
 
 | Change | Evidence consequence |
 | --- | --- |

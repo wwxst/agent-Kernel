@@ -1,6 +1,6 @@
 # Autonomous Coding Agent intelligence
 
-> **Status: CODING DOMAIN PROPOSAL — OWNER REVIEW PENDING.** The first- and second-round research is retained as the Coding Domain Intelligence design within the approved unified Agent Kernel direction. It is not the complete platform architecture or an implementation authorization. No runtime code, dependency stack, or production capability is authorized.
+> **Status: RESEARCH INDEX (informative).** The Coding construction specification is [design.md](design.md), with [failure-model.md](failure-model.md) and [evaluation.md](evaluation.md); those are listed as NORMATIVE (domain) in the [documentation map](../../README.md). This is not an implementation authorization; no runtime code, dependency stack or production capability is authorized.
 
 ## 1. Objective
 

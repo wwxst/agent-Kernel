@@ -1,6 +1,6 @@
 # Autonomous Video Editing — Second-Round Evaluation and Experiment Protocol
 
-> **Status: PROPOSED evaluation method.** No Video runtime, real-model benchmark, media processing, baseline, or quality result is reported. This protocol expands domain-quality evaluation while retaining the shared Kernel safety protocol.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03) as the Video evaluation protocol; normative schemas live in docs/contracts/*; no run performed.** No Video runtime, real-model benchmark, media processing, baseline, or quality result is reported. This protocol expands domain-quality evaluation while retaining the shared Kernel safety protocol.
 
 ## 1. Evaluation objective
 
@@ -76,6 +76,12 @@ Compared systems receive the same source media, message, constraints, profile, p
 
 Do not collapse these into one global scalar. Publish a dimension vector and criterion-level failures. A task may be technically valid but semantically wrong; it may be semantically strong but fail a protected exclusion; it may be traceable but not licensed for use.
 
+### 4.1 Decode-scan, tolerance and content-sampling policy
+
+- **Decode-scan policies.** `full` = every packet and frame decoded and any decode error fails. `sampled` = declared scan units (first keyframe, final two seconds, at least one unit per declared GOP interval, and every interval cited by content evidence) are decoded and any error in a scanned unit fails. `none` is invalid for final acceptance. "Complete decode under the declared policy" means every declared scan unit was decoded and checked; it never implies unscanned regions were verified, and a criterion may not cite them.
+- **Tolerance profile.** A versioned object with `duration_delta_ticks`, `frame_count_delta`, `stream_parameter_equality`, `av_offset_ms`, `sample_rate`/`channel_layout` equality, and any loudness tolerance the profile declares. Values are profile data frozen before a run; this document asserts none.
+- **Content-evidence sampling minimum.** At least one frame at every clip start/end and at every transition midpoint, one audio window of at least one second at every clip boundary, and the transcript window for any criterion that references speech. A criterion may require more; evidence from unscanned intervals cannot satisfy it.
+
 ## 5. Human and independent review protocol
 
 For narrative/perceptual criteria, use a blinded review rubric that separates at least:
@@ -103,6 +109,8 @@ For each criterion, declare one or more required classes:
 - **Provenance evidence:** immutable source/derived digests, transformation lineage, output ingredient map, and optional signed provenance credential where required.
 
 A model's own summary, selection score, or aesthetic score cannot stand in for machine evidence or required human disposition. An inconclusive claim remains Inconclusive/UNKNOWN.
+
+**Pass authority.** A criterion verdict `Pass` is written only in the `VerificationReport` produced from the domain verifier's `VerificationProposal` and accepted by the deterministic Completion Guard. The planner/editor that produced the timeline may not write a verdict for a criterion it implemented; a model review yields a disposition (`NoBlockingFinding|BlockingFinding|InsufficientEvidence|HumanReviewRequired`), never a verdict. The proposal carries verdicts plus evidence references, and the Guard independently checks presence, independence class, freshness and human disposition ([Kernel data model](../../contracts/kernel-data-model.md) §3.11, [Completion](../../contracts/completion.md)).
 
 ## 7. Shared Kernel metrics
 
@@ -175,10 +183,10 @@ Architecture-level evaluation may be reviewed before a benchmark baseline exists
 - [TVSum](https://openaccess.thecvf.com/content_cvpr_2015/html/Song_TVSum_Summarizing_Web_2015_CVPR_paper.html) — shot-level importance and summarization.
 - [VideoAgent](https://aclanthology.org/2026.emnlp-main.949/) — EMNLP 2026 research on video understanding/editing; its multi-agent design is not adopted.
 
-## 13. Executable Video first-slice performance and correctness fixtures (G0 candidate)
+## 13. Executable Video first-slice performance and correctness fixtures (design; NOT RUN)
 
-**Pinned fixtures:** `V-01` multi-source short-form edit from natural-language request to rendered artifact; `V-02` progressive analysis with a known low-salience required moment; `V-03` VFR/PTS discontinuity and audio-sync conversion; `V-04` cancelled render with writable descendant; `V-05` crash/lost receipt with complete staging; `V-06` malformed/prohibited FFmpeg filter/input reference; `V-07` technically valid but context-misleading edit; `V-08` local revision invalidating only one beat; `V-09` insufficient GPU/disk budget with partial output; `V-10` different message on identical source footage. Record pinned source digests, rights, reference intervals, requested message, output target, runtime/Host profile and blinded review rubric; all fixture outcomes remain NOT RUN.
+**Pinned fixtures:** `V-01` multi-source short-form edit from natural-language request to rendered artifact; `V-02` progressive analysis with a known low-salience required moment; `V-03` VFR/PTS discontinuity and audio-sync conversion; `V-04` cancelled render with writable descendant; `V-05` crash/lost receipt with complete staging; `V-06` malformed/prohibited FFmpeg filter/input reference; `V-07` technically valid but context-misleading edit; `V-08` local revision invalidating only one beat; `V-09` insufficient GPU/disk budget with partial output; `V-10` different message on identical source footage; `V-11` cached probe reuse after an identical-size source swap; `V-12` parallel analysis against a pinned render reservation; `V-13` preview passes but the final render fails inspection. Record pinned source digests, rights, reference intervals, requested message, output target, runtime/Host profile and blinded review rubric; all fixture outcomes remain NOT RUN.
 
-**Assertions:** V-01 outputs exact signed render/source-to-output provenance, technically validated actual content and expected message/beat criteria; V-02 detects/escalates missing required content (never equates Unsampled with negative finding); V-03 respects declared rounding/audio sample limits; V-04/05 preserve one-use non-idempotent render and no premature publication; V-06 fails before shell/FFmpeg execution; V-07 blocks false semantic completion even with technical PASS; V-08 reuses only independent unchanged evidence; V-09 never exceeds enforceable resource admission and quarantines incomplete output; V-10 changes content selection/narrative according to user message, not a universal template.
+**Assertions:** V-01 outputs exact signed render/source-to-output provenance, technically validated actual content and expected message/beat criteria; V-02 detects/escalates missing required content (never equates Unsampled with negative finding); V-03 respects declared rounding/audio sample limits; V-04/05 preserve one-use non-idempotent render and no premature publication; V-06 fails before shell/FFmpeg execution; V-07 blocks false semantic completion even with technical PASS; V-08 reuses only independent unchanged evidence; V-09 never exceeds enforceable resource admission and quarantines incomplete output; V-10 changes content selection/narrative according to user message, not a universal template; V-11 must miss the cache and mark prior evidence stale after the content digest changes (never reuse a quick fingerprint as equality); V-12 must queue or reject analysis that would exceed the render reservation, with no silent resource sharing; V-13 must fail final acceptance even though the preview passed, and the preview must never be accepted as final-output evidence.
 
 **Controlled comparisons:** (A) exhaustive source processing + mandatory preview + fixed Verifier versus (B) task-conditioned progressive analysis + selective preview + profile-required actual-output inspection; separate ablations for metadata caching, bounded media workers and render reuse. Both share identical sources/rights, criteria, human review panel, Host resources, model/analysis pricing profile and duration budget. Record independent blinded reviewer agreement, temporal source-range precision/recall, story/context errors, actual output decode/profile/sync validity, incorrect completion, p50/p95 including queued render, GPU/CPU time, I/O/output bytes, model/input-output/audio-video Tokens, render retries/UNKNOWN, tool wait and total charge. Report failures and missing evidence, not only successful videos. Use [Shared evaluation §9](../shared-kernel/evaluation.md) safety/noninferiority gates. No empirical result or numeric improvement is claimed here.

@@ -1,6 +1,6 @@
 # FFmpeg RenderPlan security contract
 
-> **Status: PROPOSED security contract.** FFmpeg is the named first-phase render backend, but no FFmpeg build, packaging strategy, sandbox, host OS, or production dependency stack is selected. Requirements below define a fail-closed boundary; enforcement is UNVERIFIED until implemented and tested on each supported Host profile.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; media-quality and runtime claims UNVERIFIED.** FFmpeg is the named first-phase render backend, but no FFmpeg build, packaging strategy, sandbox, host OS, or production dependency stack is selected. Requirements below define a fail-closed boundary; enforcement is UNVERIFIED until implemented and tested on each supported Host profile. The v1 filter allowlist is fixed by the [Render Compiler](render-compiler.md) and is versioned with the compiler and pinned build.
 
 ## 1. Purpose and threat model
 
@@ -13,7 +13,7 @@ Threats include path traversal, symlink/hardlink escape, time-of-check/time-of-u
 ## 2. Authority and RenderPlan binding
 
 - Video Domain Intelligence proposes a TimelineRevision and desired render behavior.
-- A deterministic compiler validates the timeline operation registry and emits a canonical RenderPlan.
+- The trusted [Render Compiler](render-compiler.md) validates the timeline operation registry and emits a canonical RenderPlan; the Host independently re-validates the emitted AST before spawn.
 - Kernel validates the exact artifact, profile, authorization, budget, output target, and invocation binding at admission.
 - Tool Runtime dispatches only the admitted invocation.
 - Trusted ToolHost establishes the physical filesystem/network/process/resource boundary and records execution facts.
@@ -62,7 +62,7 @@ Apply protocol policy per input, including nested protocols opened by demuxers. 
 - Bound probe/analyze duration, packet/frame count, metadata size, stream count, and decoded dimensions/pixel workload.
 - A successful ffprobe result is metadata evidence, not proof that a full decode is safe or complete.
 
-The exact demuxer/decoder allowlist and probing limits remain OPEN until the supported input matrix and FFmpeg build are reviewed.
+The demuxer/decoder allowlist is a profile value pinned to the FFmpeg build and the supported container matrix; a profile that does not enumerate an input format denies it. The initial profile explicitly denies the concat demuxer, HLS/DASH and other playlist/segment demuxers, and image2. The concrete container/decoder matrix remains a profile decision with a pinned build identity, not an optional check: an unlisted format yields `CompilerProfileUnsupported`, never a fallback probe.
 
 ## 4. Filesystem and path confinement
 
@@ -98,12 +98,14 @@ Use an explicit per-profile filter allowlist, not a denylist alone. The allowlis
 
 By default, exclude filters or source nodes that can open secondary files, streams, devices, or external resources (for example, movie/amovie sources, arbitrary subtitle/ASS file loading, arbitrary textfile/font paths, image-sequence inputs, plugin-backed filters, or command/message-control filters). If a later feature requires one of these capabilities, it must consume a declared staged ArtifactRef through a typed compiler operation and receive a separate threat review.
 
+**v1 allowlist.** The v1 compiler may emit only `trim, atrim, setpts, asetpts, fps, scale, format, aresample, aformat, concat, xfade, fade, afade, volume`. The list is versioned with `compiler_version` and the pinned build; a profile may narrow it, never widen it. Source filters (`movie`, `amovie`, `color`, `testsrc`, `sine`), subtitle/ASS/font/textfile loaders, image-sequence inputs, external-input overlays, command/message filters and plugin-backed filters are denied in v1. The Host parses the emitted AST and rejects any node whose filter, option or parameter is not allowlisted and within bounds, any dangling or duplicate label, any input not bound to the admitted artifact set, and any output that is not the unique staging binding. Host validation is independent of the compiler: a compiler defect must not be able to smuggle a node the profile disallows.
+
 Do not permit user/model-provided filter scripts or arbitrary filter_complex_script paths. If an implementation needs a generated script file for size reasons, the Host creates it inside the isolated invocation directory from the validated AST, pins its digest, and prevents the model from choosing its path or contents.
 
 ### 5.3 Parameter and output constraints
 
 - Numeric parameters have type, unit, minimum/maximum, and canonical rounding rules.
-- Crop/scale/rotation/volume/fade/transition expressions are generated from bounded typed values.
+- Registered `volume`, `fade`, `afade`, `xfade` and profile-raster `scale` expressions are generated from bounded typed values; crop, rotation, overlay and free-form expressions do not exist in v1.
 - Encoder, muxer, pixel format, channel layout, frame rate, color metadata, and metadata-writing operations are selected only from the immutable Output Profile registry.
 - Arbitrary metadata writes, attachment inclusion, data-stream mapping, or container-specific private options are rejected unless explicitly modeled.
 - Output file names/extensions are generated by the trusted compiler/artifact layer, not the model.
@@ -179,4 +181,4 @@ Before any implementation claim, future verification must cover nested playlist/
 - [Linux seccomp filter documentation](https://docs.kernel.org/userspace-api/seccomp_filter.html) — syscall filtering reduces exposed kernel surface but is explicitly not a complete sandbox.
 - [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) — process grouping, resource accounting, termination, and descendant-process caveats.
 
-The exact FFmpeg version/build, demuxer/decoder/filter allowlists, Host OS, sandbox mechanism, and numerical resource limits remain OPEN.
+The exact FFmpeg version/build, container/decoder matrix, Host OS, sandbox mechanism and numerical resource limits remain OPEN profile values; the v1 filter allowlist is fixed above and versioned with the compiler and pinned build.

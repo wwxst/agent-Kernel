@@ -1,8 +1,10 @@
 # Autonomous Coding Agent — Intelligent Execution Architecture
 
-> **Status: CODING DOMAIN INTELLIGENCE PROPOSAL.** This first/second-round design is retained as the Coding domain's cognitive model within the approved unified Agent Kernel direction. It does not define the entire platform and does not authorize Runtime implementation. No runtime, language, package topology, provider, database, or sandbox product is selected by this document.
->
-> The proposal is deliberately expressed as cognitive responsibilities, state contracts, and execution invariants. It is not a module list to translate directly into code.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03) as the Coding domain construction specification; implementation NOT started; runtime/quality claims UNVERIFIED.**
+
+The design is expressed as cognitive responsibilities, state contracts, and execution invariants — not a module list to translate directly into code. Record shapes, identifiers, enums and events are fixed in the [Kernel data model](../../contracts/kernel-data-model.md); execution-policy bounds are fixed in the [Domain Execution Strategy](../../contracts/execution-strategy.md). No runtime, language, package topology, provider, database, or sandbox product is selected by this document.
+
+Sections, clauses or values that earlier revisions labelled PROPOSED are construction requirements under the same decision; only the items listed in §13 remain OPEN, and policy values remain tunable solely within the bounds cited here.
 
 ## 1. Design thesis
 
@@ -44,7 +46,7 @@ The agent may finish a turn without finishing a task. It may also finish a PlanS
 
 ### 3.1 One primary autonomous controller
 
-**PROPOSED:** the default execution model is one primary Orchestration controller operating a task from intake through verification. Explorer, Planner, Implementer, Debugger, and Verifier are decision modes or model-step purposes—not a requirement to create separate agent processes.
+**Construction rule:** the default execution model is one primary Orchestration controller operating a task from intake through verification. Explorer, Planner, Implementer, Debugger, and Verifier are decision modes or model-step purposes—not a requirement to create separate agent processes.
 
 This keeps task ownership, context, plan revision, and responsibility coherent. Specialized model calls may use different prompts, model capabilities, or effort settings, but every call remains a Kernel-managed ModelStep.
 
@@ -136,7 +138,11 @@ The RepositoryModel is a versioned, provenance-aware working model of the codeba
 
 The model is not assumed complete. It should answer: what has been inspected, what is inferred, what remains unknown, and which observations may be stale.
 
+Each record keeps a source reference, content digest, capture time and invalidation key; the record envelope, trust classes and freshness basis are fixed in the [Kernel data model](../../contracts/kernel-data-model.md#310-artifact-and-evidenceref) and [Context Engine §6](../../context/context-engine.md#6-provenance-and-trust) and are not restated here. The model is **versioned by source digest**: a rebuilt projection is a new projection, not a new version of the same fact, and a PlanRevision binds the workspace/source snapshot it was derived from rather than a projection digest ([PlanRevision §3](../../contracts/plan-revision.md)). A model-authored claim without a source reference is a hypothesis and cannot satisfy a criterion; a `StaleRead` or digest mismatch invalidates the affected records instead of silently refreshing them.
+
 Repository instruction files such as AGENTS.md or CLAUDE.md may describe project conventions and workflow constraints. They are project data with bounded relevance, not Kernel policy or permission grants. They cannot override user intent, system policy, security rules, or Kernel admission.
+
+**Convention precedence and limits.** Convention sources are read in this order: (1) `AGENTS.md`/`CLAUDE.md` from the repository root down to the edited file's directory — within its own subtree the nearest file wins and ancestors supply defaults; (2) a `CONTRIBUTING` contributor section and CI/lint/build configuration; (3) architecture decision records. Each source is recorded with path, digest and capture time, and a convention claim goes stale when its source digest changes. Conventions constrain style, structure, naming and workflow; they may **never** grant a permission or capability, add a mandatory acceptance check that the accepted GoalContract does not carry, authorize a command or network access, or be edited so that a check passes. A convention that appears to require a scope, criterion or verification change is a GoalContract/plan change, not a convention override.
 
 ### 4.3 Evidence and hypothesis indexing (optional EvidenceGraph)
 
@@ -211,7 +217,7 @@ The assurance loop answers: **Does the current workspace actually satisfy the re
 It uses three layers that must not be conflated:
 
 1. **Machine-verifiable evidence.** Run the required tests, builds, type checks, static analysis, contract checks, hidden tests, or reproducible experiments through Trusted ToolHost. Record actual commands, environment, workspace, receipts, exit status, output digests, and artifacts. A test written by the Implementer can be useful regression evidence, but its authorship is recorded and it is not automatically an independent oracle.
-2. **Independent review.** Start a fresh Verifier ModelStep with a separate context assembled from the original UserIntent, accepted GoalContract and PlanRevision, criterion definitions, current diff, and raw verification evidence. Do not provide the Implementer's summary, self-assessment, private reasoning, or prior verifier conclusion as evidence. The same model/provider may be used for ordinary-risk review if the context and decision are fresh. For higher-risk criteria, policy may require a different model/provider, an independently authored test suite, or an external reviewer.
+2. **Conditional independent review.** A fresh Verifier ModelStep is invoked only when the accepted criterion/assurance policy or [Completion §3.2](../../contracts/completion.md) requires it (see §14.5 for the fast-path predicate); the always-on alternative is explicitly not a construction default. When invoked, its context is assembled from the original UserIntent, accepted GoalContract and PlanRevision, criterion definitions, current diff, and raw verification evidence. Do not provide the Implementer's summary, self-assessment, private reasoning, or prior verifier conclusion as evidence. The same model/provider may be used for ordinary-risk review if the context and decision are fresh. For higher-risk criteria, policy may require a different model/provider, an independently authored test suite, or an external reviewer. Diff text, code comments and test output are untrusted data: they are quoted with provenance and never treated as instructions to the verifier.
 3. **External assurance.** Use human review, security audit, hidden/independently authored tests, staging or real-environment validation when the criterion's risk and nature require it. A model reviewer cannot substitute for a required human or external assurance step.
 
 The Verifier produces review findings: NoBlockingFinding, BlockingFinding, InsufficientEvidence, or HumanReviewRequired. These are review outputs, not criterion proof. A Verifier model judgment never creates a trusted test result and cannot directly mark a criterion Passed.
@@ -254,7 +260,13 @@ Reconnaissance is a deliberate, bounded activity—not indiscriminate file readi
 
 Before a plan is accepted, only the narrowly admitted reconnaissance capabilities may be used. Code writes and other side effects require an accepted plan and normal Kernel admission.
 
-The agent should stop exploring when it has enough evidence to choose a bounded next action. More context is not automatically better.
+**Reconnaissance budget (profile-declared; initial ceilings are tuning hypotheses, not measurements).** `max_read_calls` (40), `max_read_bytes` (1 MiB), `max_commands` (12) and `max_concurrent` (the strategy's R0 value) bound the phase. Exceeding a bound is a typed `ReconGap` recorded with the missing fact — never a silent continuation, never a second unbounded sweep. Read-only parallel calls are admitted separately and must bind the same `tree_digest`.
+
+**Required coverage checklist.** Reconnaissance records its coverage in the RepositoryModel: (1) workspace status, branch and base commit; (2) top-level structure and package/module layout; (3) build, test and lint entry points with their exact commands; (4) the owner and call sites of every file the planned change will touch; (5) applicable convention sources and their precedence (§4.2). The checklist is evidence, not prose.
+
+**Stop predicate.** Stop when (a) the checklist is satisfied, (b) the next action's target file set is identified with source references, and (c) no remaining unknown could change that target set. Otherwise escalate with the typed gap (missing manifest, ambiguous package ownership, unresolved symbol, no trusted entry point) rather than reading broadly. More context is not automatically better.
+
+**Baseline capture (mandatory before the first edit).** Run the affected build/test command set on the unmodified base snapshot and record the result set as baseline evidence bound to `source_snapshot_digest` (§14.3). Without a baseline record, a pre-existing failure cannot be distinguished from a regression and a bug-fix criterion cannot produce `EV-TEST-F2P`; the fix may not start until the record exists or the environment is declared `Unsupported`.
 
 ### Phase C — Problem formulation and plan acceptance
 
@@ -291,7 +303,7 @@ Debugging is a hypothesis-driven experiment loop, not an unbounded retry loop.
 5. Run it in a controlled workspace/environment and record the result.
 6. Update the EvidenceGraph; reject or strengthen hypotheses based on evidence.
 7. Repair the root cause, then run the narrow regression check and relevant broader checks.
-8. If the same failure signature repeats without new evidence, stop the retry path and change strategy, replan, or escalate.
+8. If the same failure signature repeats without new evidence, stop the retry path and change strategy, replan, or escalate. Repair attempts are counted per **(PlanStep, failure signature)** — signature being the digest of failing command + test identity + normalized failure output: a new signature starts a new count, and repeating an identical action never resets it. The bound is `progress.max_same_step_repairs` from the bound strategy ([Execution Strategy §4.5](../../contracts/execution-strategy.md)), whose default is 2 and whose profile maximum cannot be exceeded locally. At the bound the loop must diagnose once from existing facts, then wait, replan (L2 only if a protected field changes), or fail with a typed reason; the count and signature digest are recorded on the PlanStep so recovery resumes the same count rather than restarting it. A repair that changes the failure signature is still a repair against the same PlanStep outcome.
 
 A timeout, disconnected process, missing receipt, or interrupted command may be UNKNOWN. The agent cannot infer failure and blindly repeat a potentially non-idempotent side effect.
 
@@ -311,8 +323,8 @@ The verification plan should identify required checks, optional risk-based check
 ### Phase G — Freeze and completion
 
 - Ensure no required operation, child process, or writable handle remains active.
-- Freeze a trusted, versioned ProtectedInputScope and immutable source snapshot before tests; additionally require a Host-authenticated **ExecutionViewManifest** proving the test process actually resolved source/config/tests from that snapshot (cwd, mount/overlay/symlink resolution, writable roots and effective protected-path digests). Matching immutable snapshot hashes alone cannot prove a valid run. Writable overlay shadowing or unproven input-view changes invalidate verification even if underlying hashes match; isolated cache/coverage outputs remain separate evidence.
-- If tests or final preparation changed in-scope files, invalidate affected evidence and re-run verification.
+- Kernel-issued freeze of a trusted, versioned ProtectedInputScope and immutable source snapshot before tests (§14.7); additionally require a Host-authenticated **ExecutionViewManifest** proving the test process actually resolved source/config/tests from that snapshot (cwd, mount/overlay/symlink resolution, writable roots and effective protected-path digests). Matching immutable snapshot hashes alone cannot prove a valid run. Writable overlay shadowing or unproven input-view changes invalidate verification even if underlying hashes match; isolated cache/coverage outputs remain separate evidence.
+- If tests or final preparation changed in-scope files, the run is invalid rather than merely stale: under the sealed policy that is a Host-enforcement failure. Invalidate the evidence, take a **new** snapshot and re-run; re-hashing the same run is not a repair.
 - Request the trusted immutable final snapshot and authenticated receipt.
 - Submit the VerificationReport, criterion evidence, snapshot binding, and receipts to Kernel.
 - Kernel Completion Guard performs the final state transition.
@@ -363,13 +375,13 @@ A tool definition should declare enough metadata for safe orchestration and Kern
 - approval and capability requirements;
 - implementation identity and version.
 
-Model-visible schemas describe interfaces. They do not grant permission.
+Model-visible schemas describe interfaces. They do not grant permission. This list defines what the metadata *means*; the normative Coding registry, argument/result schemas and limits are §14.2, and the generic admission record is [Kernel data model §3.7](../../contracts/kernel-data-model.md#37-toolinvocation).
 
 ### 7.3 Minimal effect-aware scheduling
 
 **Default to sequential execution in the first vertical slice.** Optional bounded concurrent read-only operations may proceed if they are independent, admitted separately, and bind an appropriate stable snapshot. Parallel writes require **proven enforced isolation/disjoint effect sets**; absent proof, serialize. Git index operations, package managers, workspace-wide builds, generated-code modifications, migration and common output publication serialize by default.
 
-Do not implement a global DAG scheduler for every emitted model command. PlanStep dependencies describe engineering outcomes; the controller chooses the next ready operation. A bounded batch is just a set of individually admitted Invocations; the scheduler does not have its own authoritative lifecycle. Results are correlated by stable Invocation IDs and trusted Host receipts, and an UNKNOWN write blocks only demonstrably conflicting actions. Prove performance benefits and conflict soundness at G1/G3 before introducing speculative scheduling.
+Do not implement a global DAG scheduler for every emitted model command. PlanStep dependencies describe engineering outcomes; the controller chooses the next ready operation. A bounded batch is just a set of individually admitted Invocations; the scheduler does not have its own authoritative lifecycle. Results are correlated by stable Invocation IDs and trusted Host receipts, and an UNKNOWN write blocks only demonstrably conflicting actions. Prove performance benefits and conflict soundness at PE before introducing speculative scheduling.
 
 ### 7.4 Retry policy
 
@@ -468,9 +480,9 @@ Kernel's plan acceptance is deterministic contract validation, not semantic appr
 
 All Planner, Explorer, Implementer, Debugger, and Verifier model calls pass through Model Gateway and Kernel-managed ModelSteps. No cognitive role bypasses Kernel to call a provider or execute a tool.
 
-## 12. Definition of design success
+## 12. Definition of construction readiness
 
-The proposal is ready for implementation planning only when it has:
+The specification is construction-ready because it has:
 
 - coherent GoalContract, RepositoryModel, minimal EvidenceRefs/criterion links, structural PlanRevision/PlanStep, and bounded action-intent envelope; richer EvidenceGraph indexing remains optional;
 - explicit strategic, tactical, debugging, assurance, arbitration, and stopping policies;
@@ -478,11 +490,11 @@ The proposal is ready for implementation planning only when it has:
 - defined plan-switch, long-task checkpoint, and recovery semantics;
 - a threat and failure model;
 - reviewed metric definitions, task families, safety floors, and a staged reproducible evaluation method;
-- explicit unresolved decisions and owner review.
+- explicit unresolved decisions retained as OPEN (§13) rather than silently resolved;
 
 A frozen benchmark task set and measured baseline are later evaluation stages; neither is required to define the architecture-level evaluation method or begin implementation planning. Runtime execution and baseline measurement still require separate explicit authorization.
 
-The proposal is not empirically validated. The evaluation protocol is specified in [evaluation.md](evaluation.md); the current evidence and limitations are recorded in [reference-review.md](reference-review.md).
+This specification is not empirically validated. The evaluation protocol is specified in [evaluation.md](evaluation.md); the current evidence and limitations are recorded in [reference-review.md](reference-review.md).
 
 ## 13. Open design questions
 
@@ -499,13 +511,15 @@ The following remain OPEN for owner review and empirical evaluation:
 - What context retrieval, graph projection, and checkpoint formats are effective at realistic repository scale?
 - Which task classes should be supported in the first controlled vertical slice?
 
-These remain open; this design is still proposed and has not been empirically validated.
+These remain open; accepting the contract does not resolve them, and this design has not been empirically validated.
 
-## 14. Coding first-slice execution port and construction trace (G0 candidate)
+## 14. Coding construction contract (ARB-01 — normative)
 
-This section is a concrete `coding` adapter of the [Domain Extension Contract v0.1](../../contracts/domain-extension.md), not new Kernel behavior. The existing autonomous problem-solving approach and authoritative [Completion](../../contracts/completion.md) controls still apply.
+This section fixes the Coding domain's constructible surfaces as a concrete `coding` adapter of the [Domain Extension Contract v0.2](../../contracts/domain-extension.md). It adds no Kernel behavior and does not restate record fields: shapes, identifiers, enums and events are the [Kernel data model](../../contracts/kernel-data-model.md), policy bounds are the Coding reference strategy in [Execution Strategy §7.1](../../contracts/execution-strategy.md#71-coding), and completion authority remains [Completion](../../contracts/completion.md).
 
-**Adapter capabilities:** `coding.goal@0.1`, `coding.plan-step@0.1`, `coding.repository-snapshot@0.1`, `coding.patch@0.1`, `coding.verification-evidence@0.1`. Tool snapshots declare `repository.discover` and `repository.read_ranges` (R0 scoped/bounded), `workspace.apply_patch` (R1 disposable target, exact source generation), `workspace.freeze_source` (trusted), `host.run_build_test` (R1 isolated outputs with read-only verified source), and `artifact.publish_patch` (guarded publication). These are **contract names**, not an approved tool implementation API or permission grants. Shell commands, Git and network operations still require exact Host/tool capability admission; no unrestricted shell escape.
+### 14.1 Adapter capabilities and trace C-01 (localized bug)
+
+**Adapter capabilities:** `coding.goal@0.1`, `coding.plan-step@0.1`, `coding.repository-snapshot@0.1`, `coding.patch@0.1`, `coding.verification-evidence@0.1` — schema IDs only; Kernel treats payloads as opaque. Shell commands, Git and network operations still require exact Host/tool capability admission; no unrestricted shell escape.
 
 **Happy-path trace C-01 (localized bug):**
 
@@ -513,11 +527,73 @@ This section is a concrete `coding` adapter of the [Domain Extension Contract v0
 2. **Locate:** read repository manifest and target file metadata; perform indexed path/symbol/keyword lookup, then request only narrow source ranges with line/hash provenance. Escalate to dependency graph or wider search only when evidence indicates ambiguity. Cache read-only repository index under exact tree and parser/tool digest; never treat a guessed symbol as a trusted fact.
 3. **Hypothesize and edit:** compare observed behavior with the criterion; propose a bounded patch with `base_tree_digest, affected_paths, patch_digest, expected_effect_scope`. Revalidate current workspace/read-set, then Kernel admits one write; Host stages the change in the authorized disposable workspace. A failed CAS/workspace conflict refreshes affected files and recomputes the patch; do not force overwrite unreviewed user changes.
 4. **Verify:** select tests from accepted criteria, changed path dependency impact, existing baseline failure and compatibility obligations. Fast path means **run the minimum sufficient trusted checks**, not skip required checks. Freeze the final protected source snapshot and execute actual build/test commands against the sealed read-only input with **disjoint writable output/cache/temp paths** and attested `ExecutionViewManifest`. Include unchanged protected test/config/dependency inputs. A test that the agent wrote itself is not automatically an independent oracle.
-5. **Repair:** classify failure as implementation defect, test/environment failure, stale view or missing coverage using authenticated evidence. L0 choose new read/tool, L1 repair the same outcome and invalidate affected verification, L2 only if protected plan/criterion/scope needs changing. The proposed cap is 2 same-step repairs; no progress invokes one diagnosis then user escalation or typed failure. A conflicting UNKNOWN write must reconcile before patch reapplication.
+5. **Repair:** classify failure as implementation defect, test/environment failure, stale view or missing coverage using authenticated evidence. L0 choose new read/tool, L1 repair the same outcome and invalidate affected verification, L2 only if protected plan/criterion/scope needs changing. The cap is `progress.max_same_step_repairs` (default 2), counted per (PlanStep, failure signature) as in §6 Phase E; at the bound, diagnose once then wait, replan or fail with a typed reason — the trace never assumes unlimited retries. A conflicting UNKNOWN write must reconcile before patch reapplication.
 6. **Finish:** criterion-to-evidence report binds exact final snapshot, test command/view/exit/receipts, patch lineage, unresolved limitations and current plan. Policy-triggered fresh semantic review only when required. Kernel Guard commits Completed exactly once and delivers patch/diff plus checks; no mandatory extra model summary call if the delivery template is deterministic. Original user changes and provenance are preserved.
 
 **C-02 read-only explanation** uses permitted scoped reads and deterministic citation completeness; no disposable edit/test needed unless the accepted criterion actually requires it. **C-03 cross-package change** must include dependent build/test contracts and may perform L2 structural decomposition; it must not be mislabeled as a cheap path. **C-04 long debugging** checkpoints at milestones, not every command, and resumes only after Journal/Host reconciliations/current authority and workspace read-set validation.
 
+### 14.2 Tool registry (normative v1)
+
+Six tools are required for construction. Every entry declares `implementation_digest` (absence blocks admission), `evidence_emitted[]`, the approval policy in the final column and `cancellation` semantics; generic admission fields are [Kernel data model §3.7](../../contracts/kernel-data-model.md#37-toolinvocation). `workspace.freeze_source` is **Kernel-issued** and is not a model-proposable adapter tool ([Workspace Freeze §2](../../contracts/workspace-freeze.md)).
+
+| Tool | Input schema (required) | Result schema | Effect | `conflict_scope` | Idempotency | Limits | Evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `repository.discover@0.1` | `tree_digest, query_kind(path\|symbol\|text\|import), query, path_globs[], max_results, cursor` | `tree_digest, index_digest, hits[{path, span, symbol_kind, snippet_digest, rank}], truncated, next_cursor, scanned_files` | R0 | `repo:ro:<tree_digest>` | `pure` — replay returns the original result | ≤200 hits, snippet ≤512 B, ≤50k files, 20 s | `read_set` digest; approval: none |
+| `repository.read_ranges@0.1` | `tree_digest, ranges[{path, start_line, end_line, expected_digest?}]` | `items[{path, range, content_digest, bytes, encoding}], missing[], truncated` | R0 | `repo:ro:<tree_digest>` | `pure`; `expected_digest` mismatch ⇒ typed `StaleRead` (no silent re-read) | ≤32 ranges, ≤256 KiB total, 20 s | `read_set` digest; approval: none |
+| `workspace.apply_patch@0.1` | `base_tree_digest, edits[{path, op(create\|replace\|delete\|rename), base_digest, span, replacement}], patch_digest` | `new_tree_digest, applied[], conflicts[{path, reason}], atomic` | R1 | `ws:write:<workspace_id>` | keyed by `patch_digest` | ≤20 files, ≤1 MiB, 60 s | new tree digest; approval: per policy |
+| `host.run_build_test@0.1` | `source_snapshot_id, command_argv[], cwd, env_digest, output_roots[], timeout_ms` | `run_id, exit\|signal, stdout_digest, stderr_digest, test_report_digest, execution_view_manifest_digest, receipt_id` | R1 | `host:exec:<host_id>` | `non-idempotent` — ambiguity ⇒ `OutcomeUnknown` | wall ≤ `terminate.task_deadline_ms`, resources per strategy | Host receipt + view manifest; approval: per policy |
+| `workspace.freeze_source@0.1` (Kernel-issued) | `workspace_id, protected_input_scope_version` | `snapshot_id, source_digest, receipt_id` | trusted barrier | `ws:freeze:<workspace_id>` | by `requestId` + nonce | one freeze identity per request | freeze receipt + view-manifest basis; approval: Kernel service identity |
+| `artifact.publish_patch@0.1` | `snapshot_id, patch_digest, target_ref` | `artifact_id, digest, receipt_id` | R1 (R2 if external) | `artifact:target:<ref>` | keyed by digest | one artifact per invocation | artifact digest; approval: required |
+
+**Patch formalism.** Encoding is UTF-8 with a declared newline policy (`lf`, `crlf`, `preserve`) that is an input to `patch_digest`; **no lossy transcoding** is permitted, and a file whose encoding is ambiguous, undecodable or BOM-conflicting is a typed rejection rather than a rewrite. Every edit carries `base_digest`; a mismatch is `TargetConflict` and must not be applied by fuzzy or line-number-only matching. Multi-file apply is **all-or-nothing**: either `atomic=true` with the complete new tree, or typed `PartialApply` and Host quarantine of that workspace generation. `rename` is `create`+`delete` inside one atomic patch, and `delete` also requires `base_digest`. Symlinks, hardlinks, submodules, binary files and mode/ownership changes are **rejected in v1** as `Unsupported` rather than approximated. `patch_digest` is the canonical digest over `{base_tree_digest, ordered edits, newline_policy}`.
+
+### 14.3 Test selection, baseline and repeat-test cache
+
+Every verification run records a `TestSelection`: `{selection_id, source_snapshot_digest, changed_paths[], impacted_tests[], excluded_tests[], reason_per_exclusion, impact_map_digest, fallback_used, selected_command_argv[]}`. Every exclusion carries a reason (`unaffected`, `flaky_declared`, `out_of_scope`); an exclusion without one blocks the evidence. **Fallback:** when no trusted impact map exists, run the criterion-mandated check set in full — a silent subset is a protocol violation, not an optimization.
+
+**Repeat-test cache key** is `(test_id, source_snapshot_digest, env_digest, argv_digest, flake_policy_version)`; a change to any bound input invalidates the entry, and a cached pass satisfies evidence only while the key still matches the final snapshot. A test declared flaky requires the policy repeat count; one green run is not a pass. The baseline record from §6 Phase B is the reference set against which new failures are classified.
+
+### 14.4 Coding evidence catalog
+
+Each evidence record carries `run_ids[], source_snapshot_id, execution_view_manifest_digest, env_digest, independence_class, freshness_keys[]` ([Data model §3.10](../../contracts/kernel-data-model.md#310-artifact-and-evidenceref)).
+
+| Kind | Proof rule |
+| --- | --- |
+| `EV-BUILD`, `EV-TYPE`, `EV-LINT` | Trusted run, exit 0, matching toolchain/environment digest |
+| `EV-TEST-F2P` | **Two** runs: fails on the base snapshot and passes on the final snapshot. Mandatory for every bug-fix criterion |
+| `EV-TEST-P2P` | Unchanged protected tests pass before and after |
+| `EV-TEST-HIDDEN` | Passes from a declared read-only `HiddenOracleInput` (independent oracle, separate digest) |
+| `EV-DIFF-SCOPE` | Changed paths ⊆ declared write scope |
+| `EV-CONVENTION` | Ratified convention rule id + source digest + compliance check |
+| `EV-HUMAN` | Authenticated human disposition |
+
+A green test that does not exercise the criterion is not evidence, and a passing unrelated test never substitutes for a fail-to-pass record. A hidden oracle is a **declared read-only input** bound by its own digest, not a file placed in the mutable workspace; its run must state both the oracle digest and the `SourceSnapshot` it ran against, or the criterion stays `Unverified`.
+
+### 14.5 Fast path and conditional review
+
+`fast_path_eligible(task) := criteria ⊆ {EV-BUILD, EV-TYPE, EV-TEST-P2P, EV-DIFF-SCOPE} AND no implementer-authored oracle for a protected criterion AND a trusted impact map exists AND ≤1 write step.`
+
+Eligibility may skip a fresh Verifier ModelStep — never a mandatory check, the Completion Guard, or the fail-to-pass record. Otherwise the conditional-review triggers in [Completion §3.2](../../contracts/completion.md) and `verify.review_triggers[]` apply. Cost preferences cannot lower an accepted assurance obligation ([Execution Strategy §3](../../contracts/execution-strategy.md), floors F4/F5), and "minimum sufficient checks" means the selected set above, not an ad-hoc reduction.
+
+### 14.6 `coding.plan-step@0.1` kinds
+
+Kinds are `Inspect | Implement | Test | Migrate | Compatibility | Diagnose`. Every payload carries `{kind, objective, target_paths[], base_tree_digest, criterion_ids[], evidence_obligations[], expected_artifact_kind, recovery_disposition}`; the kind fixes the evidence and effect envelope, and Kernel validates presence and schema only.
+
+| Kind | Additional obligation |
+| --- | --- |
+| `Inspect` | R0 only; produces cited observations, no write |
+| `Implement` | Write scope + `EV-DIFF-SCOPE`; patch bound to `base_tree_digest` |
+| `Test` | `EV-TEST-*` evidence; selection record required |
+| `Migrate` | Rollback note + preserved-behavior evidence |
+| `Compatibility` | Before/after contract evidence for the public surface |
+| `Diagnose` | Hypothesis + discriminating experiment record; may not write |
+
+### 14.7 Sealed verification, freeze and deliverable
+
+Freeze is a Kernel-issued transition; a model-proposed freeze is not a freeze. Under the sealed policy the source tree is read-only for the run, so **any** in-scope change — including a test or fixture that writes into the source tree — invalidates the run and requires a new snapshot and a new run: there is no "invalidate and re-hash the same run" path (§6 Phase G). If the required toolchain cannot execute against sealed source with disjoint outputs, the criterion stays `Unverified`/`Unsupported`.
+
+**Deliverable identity:** the deliverable is (a) the patch artifact from `artifact.publish_patch`, digest-bound with lineage to the accepted plan, **and** (b) the reference to the sealed final `SourceSnapshot` that verification executed against. The workspace itself is disposable; neither artifact may be reconstructed from the other after task end.
+
 **Failure matrix:** repository branch changed → rebase/revalidate targeted read-set, never silently edit old state; test runner cannot use sealed source → Unsupported/Unverified and no success; command timeout → Host cancel/process convergence or OutcomeUnknown hold; dependency install/network request → distinct declared capability and approval; test failure after patch → evidence-bound L1 repair; high-risk secrets or external deploy → R2 fail closed unless explicitly approved; exhausted model/verification budget → ask or safe Failed, never claim verification from a model. A patch from an unconfirmed source or conflicting UNKNOWN cannot be published.
 
-**Acceptance mapping:** Coding developers implement domain schemas, fast locator, patch builder, test impact policy and EvidenceRef emitters; Kernel/Host developers implement *the same* invocation/budget/fence/receipt/Guard paths Video uses. Required conformance: C-01–C-04, each failure row, plus shared X1/X6/X7/X8. Measure task correctness, hidden tests, false completion, median/p95 duration, model attempts/tokens and duplicate search/tests; do not infer quality from the number of tool calls.
+**Acceptance mapping:** Coding developers implement domain schemas, the tool registry (§14.2), fast locator, patch builder, test-selection/impact policy and evidence emitters (§14.3–§14.4); Kernel/Host developers implement *the same* invocation/budget/fence/receipt/Guard paths Video uses. Required conformance: C-01–C-15 ([Evaluation §11](evaluation.md)), each failure row, plus shared X1/X6/X7/X8. Measure task correctness, hidden tests, false completion, median/p95 duration, model attempts/tokens and duplicate search/tests; do not infer quality from the number of tool calls.

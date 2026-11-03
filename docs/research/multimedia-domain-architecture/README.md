@@ -1,6 +1,6 @@
 # Multimedia Domain Architecture
 
-> **Status: ADP-01 REVISED/APPROVED (2026-11-02); detailed domain architecture PROPOSED.** Video first phase is a complete natural-language autonomous-editing loop within a bounded core operation set, not a full video editor. No Runtime implementation or technology stack is authorized.
+> **Status: RESEARCH INDEX (informative).** ADP-01 scope was approved on 2026-11-02. The normative Video contracts are [media-project](../../contracts/media-project.md), [media-timeline](../../contracts/media-timeline.md), [render-compiler](../../contracts/render-compiler.md), [render-plan-security](../../contracts/render-plan-security.md) and [render-job](../../contracts/render-job.md). No runtime implementation or technology stack is authorized.
 
 ## 1. Objective
 

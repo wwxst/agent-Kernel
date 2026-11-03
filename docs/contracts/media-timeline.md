@@ -1,6 +1,6 @@
 # Media Timeline artifact contract
 
-> **Status: PROPOSED Video-domain contract.** TimelineRevision is an immutable, non-destructive editing artifact. This contract binds it to exact project, analysis, narrative, and task versions. It does not define a GUI editor or authorize Runtime implementation.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; media-quality and runtime claims UNVERIFIED.** TimelineRevision is an immutable, non-destructive editing artifact. This contract binds it to exact project, analysis, narrative, and task versions, fixes the closed v1 operation registry, and links the deterministic compiler in [Render Compiler](render-compiler.md). It does not define a GUI editor or authorize Runtime implementation.
 
 ## 1. Purpose and ownership
 
@@ -11,7 +11,7 @@ A MediaProject is the persistent Video-domain container. A TimelineRevision is t
 - NarrativePlan records message, story beats, candidate/selected moments, ordering constraints, and rationale before frame-level editing.
 - TimelineRevision records exact source ranges and typed edit operations.
 - Kernel records artifact identity, lineage, DomainBinding, GoalContract/PlanRevision binding, and authorized state transitions.
-- Tool Runtime/Trusted ToolHost compile and render only an admitted revision.
+- The trusted domain compiler compiles, and Trusted ToolHost renders, only an admitted revision.
 - TimelineRevision is not permission to render, overwrite, or publish a file.
 
 The canonical timeline remains separate from FFmpeg command/filtergraph syntax. FFmpeg is an execution backend, not the source of truth for the edit.
@@ -28,7 +28,7 @@ A revision binds at minimum:
 - NarrativePlan ID/version/digest and selected beat/moment references;
 - source MediaAsset IDs/content digests, stream identities, source timebase/PTS mappings;
 - timeline timebase and output-profile ID/version;
-- ordered tracks, clips, transitions, overlays, audio decisions, and typed operation versions;
+- ordered tracks, clips, registered transitions/audio operations, and typed operation versions;
 - criterion-to-beat/clip/timeline mapping and edit rationale references;
 - creation sequence, authoring ModelStep/Attempt, user EditIntent and parent/change-set references;
 - EvidenceCarryForward records and validation/invalidation conditions.
@@ -51,7 +51,9 @@ Illustrative values such as a 1/90000 source timebase or 25/1 timeline rate are 
 
 ### 3.1 Canonical coordinates and conversion records
 
-A source timestamp is interpreted only together with the identity of its stream and that stream's time base. PTS is preserved as a signed integer; a time base is a positive rational value with positive denominator and is reduced to canonical numerator/denominator form where representable. The exact wire encoding and integer-width choice remain open.
+A source timestamp is interpreted only together with the identity of its stream and that stream's time base. PTS is preserved as a signed 64-bit integer; a time base is a positive rational with positive denominator, reduced to canonical numerator/denominator form. Timeline ticks are unsigned 64-bit with maximum 2^63−1; rational numerator/denominator are signed/positive 64-bit. Any operation that would overflow or require an unrepresentable denominator fails explicitly (`ArithmeticOverflow`); floating-point seconds are never a fallback.
+
+Conversions compose only by applying the declared per-step rounding policies in order and recording each step; intermediate results are never rounded to seconds or milliseconds, and no conversion is skipped because a later one would mask it. The summed quantization bound must fit the profile tolerance or the timeline is rejected.
 
 For VFR video, preserve each available frame's presentation PTS and duration (or explicitly record duration as unknown). Do not derive per-frame PTS from average/nominal FPS. Decode timestamps such as DTS, when retained for decoder diagnostics, are not substituted for presentation coordinates.
 
@@ -68,6 +70,8 @@ Every conversion among source PTS, rational timeline ticks, output frame timesta
 Rounding is explicit per operation. For an interval whose semantics require preserving all covered source material, the declared policy may round the start down and the end up. A nearest-boundary policy is permitted only when the edit operation explicitly defines that behavior and a deterministic tie rule. No implicit default is inferred from the renderer or host language. Missing/invalid PTS or sample timing remains unknown; an estimated mapping must identify its method and uncertainty and cannot be relabelled as original source timing.
 
 Floating-point seconds and timecode strings are presentation values only. They may be generated for UI display but cannot be the sole basis for source-range identity, cut boundaries, or provenance. The conversion policy/version and resulting mappings are included in the TimelineRevision/RenderPlan digests.
+
+**Canonical timeline digest.** `digest` is `sha256:` over JCS of the timeline object excluding `digest`, with tracks sorted by `track_id`, clips by `(start_tick, clip_id)`, conversions by `step_index`, and operations in registry order. Every order-sensitive array is explicit, so equal edits yield equal digests. The digest binds the timeline timebase, operation-registry version and compiler version.
 
 ### 3.2 Piecewise stream-to-asset presentation mapping
 
@@ -95,6 +99,23 @@ All intermediate arithmetic remains exact rational/integer arithmetic. Overflow 
 
 Each clip references an immutable MediaAsset ID/digest and selected stream identity, not an unbound mutable path. It records source PTS/timebase, verified duration bounds, and proxy/derived-media references when analysis used a proxy. The proxy-to-source mapping and transformation digest are required.
 
+### 4.1a Operation Registry v1 (closed)
+
+Only these operations are renderable. Anything else is rejected by the compiler (`CompilerUnsupportedOp`); the timeline schema must not carry fields for unsupported operations.
+
+| Op | Arguments | Bounds and structure | Rounding | Evidence | Compiler rule |
+| --- | --- | --- | --- | --- | --- |
+| `trim` | `clip_id`, `start_pts:int64`, `end_pts:int64` | end-exclusive; `0 ≤ start < end ≤` probed stream duration; source stream + timebase | `cover` | `EV-SRC-RANGE` | `RC-TRIM` |
+| `place` | `clip_id`, `track_id`, `start_tick:uint64` | v1 tracks are gapless: `start_tick` equals previous clip end; first clip starts at 0 | `nearest_ties_lower` | `EV-TIMELINE-GRAPH` | `RC-PLACE` |
+| `concat` | `left_clip_id`, `right_clip_id` | adjacent clips on one track; parameters equal after normalization | — | `EV-CONCAT-EQUALITY` | `RC-CONCAT` |
+| `fade` | `clip_id`, `kind:in\|out`, `duration_ticks`, `curve:linear` | `0 < d ≤ clip duration`; fade intervals on one clip may not overlap | `cover` | `EV-FADE-BOUNDS` | `RC-FADE` |
+| `xfade` | `left`, `right`, `duration_ticks`, `audio:cut\|afade\|mute` | adjacent same-track clips; `0 < D ≤ floor(min(d_left,d_right)/2)`; one transition per boundary | `cover` | `EV-XFADE-BOUNDS` | `RC-XFADE` |
+| `audio` | `clip_id`, `mode:preserve\|mute`, `gain_db:rational ∈[-60,12]` step 0.1, `fade_in_ticks`, `fade_out_ticks` | fades within clip; source audio stream required unless `mute` | `exact_required` | `EV-AUDIO-BOUNDS` | `RC-AUDIO` |
+
+Not in v1 and rejected if present: crop, scale, position, rotation, playback-rate/speed ramp, overlays, captions/titles, music generation, multi-track mixing/ducking, color operations. These remain enhanced or adaptation capabilities under ADP-01 and are not part of this schema.
+
+Track semantics: a video track is an ordered gapless list of clips; `track_duration = Σ clip_duration − Σ xfade_overlap`; a transition exists only between adjacent clips. Each operation carries its registry version; an unknown version is rejected.
+
 ### 4.2 Narrative and editorial decisions
 
 The timeline retains:
@@ -103,9 +124,9 @@ The timeline retains:
 - selected moment/candidate IDs and source evidence references;
 - clip/track IDs, track kind, order, and compositing/audio-mix semantics;
 - source asset/stream reference and end-exclusive source range;
-- timeline start/duration and playback-rate rational where supported;
-- crop/scale/position/rotation/volume/fade settings as typed parameters;
-- explicit transition/overlap references;
+- timeline start/duration as integer ticks in the timeline timebase;
+- registered operation arguments only (volume/gain/fade per §4.1a); no crop/scale/position/rotation/playback-rate/overlay parameters;
+- explicit transition/overlap references with registry-bounded durations;
 - continuity/audio rationale where a cut is intentionally discontinuous or bridges sound;
 - change-set and affected beat/clip/criterion mapping.
 
@@ -124,14 +145,14 @@ Before a TimelineRevision can be accepted:
 1. Every clip references an existing immutable MediaAsset and valid stream identity.
 2. Every source range is within verified source duration and decodable boundaries.
 3. Source and timeline ranges have valid positive durations and exact timebase bindings.
-4. Track ordering, overlaps, transitions, overlays, and audio mixing are structurally valid.
+4. Track ordering, gaps/overlaps, transitions and audio operations satisfy the §4.1a bounds.
 5. Output duration/profile are compatible with accepted GoalContract.
 6. No source asset is modified in place.
 7. Every proxy/analysis artifact points back to original source digest and transformation/time mapping.
 8. Every required criterion maps to a NarrativePlan beat, selected moment, timeline region, and verification obligation, or to an explicit human-review obligation.
 9. A stale source, stream map, proxy, analysis claim, NarrativePlan, or profile invalidates affected timeline claims and requires revalidation.
 10. Serialization/schema validity does not establish story, pacing, continuity, or factual coherence; those remain Video Domain Intelligence responsibilities.
-11. The RenderPlan compiler accepts only typed operations in the active supported operation registry.
+11. The [RenderPlan compiler](render-compiler.md) accepts only §4.1a operations and rejects unknown or out-of-bound operations before admission.
 12. A candidate timeline is not renderable until the applicable GoalContract/PlanRevision/DomainBinding and policy gates are accepted.
 
 Kernel validates schema, references, binding, size limits, and legal lifecycle. It does not judge the story or pacing.
@@ -189,12 +210,12 @@ The canonical timeline is compiled into a versioned RenderPlan binding:
 - output profile, resource budget, Host isolation profile, and expected artifact;
 - verification plan, idempotency identity, and fencing epoch.
 
-The model does not author or execute arbitrary shell commands. A deterministic compiler maps validated timeline operations to bounded argv/filtergraph structures. Kernel admits the RenderJob and Trusted ToolHost executes it. See [RenderPlan security contract](render-plan-security.md) and [RenderJob contract](render-job.md).
+The model does not author or execute arbitrary shell commands. The deterministic [Render Compiler](render-compiler.md) maps validated timeline operations to a bounded AST and canonical argv; the Trusted ToolHost independently re-validates the AST against the allowlist before spawn. Kernel admits the RenderJob and Trusted ToolHost executes it. See [RenderPlan security contract](render-plan-security.md) and [RenderJob contract](render-job.md).
 
 ## 9. Artifact delivery and traceability
 
 A successful Video Editing Task may deliver the rendered video, accepted TimelineRevision, NarrativePlan, render manifest, criterion-linked VerificationReport, source-to-output provenance map, and optional preview/contact-sheet artifacts.
 
-For every output interval, the provenance map identifies the contributing source asset digest, stream, source PTS/sample interval, timeline clip/transition, transformation operations, and RenderPlan node(s). A transition may map one output interval to multiple source intervals. Generated or externally supplied elements are marked as such and bind their authorized origin/derivation record.
+For every output interval, the provenance map identifies the contributing source asset digest, stream, source PTS/sample interval, timeline clip/transition, transformation operations, and RenderPlan node(s). Granularity is one output interval bounded by the nearest edit boundary; at a transition the interval is split at overlap start/end and each part lists every contributing source interval with weights (a linear curve yields complementary weights summing to 1). A transition may map one output interval to multiple source intervals. Generated, overlay or externally supplied elements are explicit ingredient entries bound to their authorized origin/derivation record; an unmapped output interval is invalid.
 
 The timeline is an inspectable project artifact. Delivering it does not imply a manual timeline editor or full editing UI.

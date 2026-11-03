@@ -1,6 +1,6 @@
 # Long-running RenderJob and media execution contract
 
-> **Status: PROPOSED Video Editing execution contract.** RenderJob maps long-running media rendering onto shared ToolInvocation, budget, Trusted ToolHost, cancellation, recovery, and evidence controls. No renderer implementation or process-control property is verified.
+> **Status: ACCEPTED for construction (ARB-01, 2026-11-03); implementation NOT started; media-quality and runtime claims UNVERIFIED.** RenderJob maps long-running media rendering onto shared ToolInvocation, budget, Trusted ToolHost, cancellation, recovery, and evidence controls. Kernel states are owned by [Kernel data model](kernel-data-model.md) and [Core protocol](core-protocol.md); RenderJob is a projection. No renderer implementation or process-control property is verified.
 
 ## 1. Purpose and authority
 
@@ -21,7 +21,7 @@ Kernel Journal and Host Ledger are separate fact boundaries. No database transac
 A RenderJob binds at minimum:
 
 - RenderJob ID/schema version;
-- Task/Turn/Step/ModelStep/Attempt/ActionProposal/ToolInvocation IDs;
+- Task/ModelStep/Attempt/Decision/ToolInvocation IDs (Turn and Step are derived UI labels, not identities);
 - DomainBinding and Workflow Profile version;
 - accepted GoalContract and active PlanRevision/PlanStep;
 - MediaProject ID, ProjectSnapshot generation/digest;
@@ -37,16 +37,37 @@ A RenderJob binds at minimum:
 
 A changed source, project generation, timeline, RenderPlan, compiler/build, output target, resource policy, authorization, or fencing epoch makes an unstarted proposal stale. Kernel revalidates every invocation at admission.
 
-## 3. State authority: separate state dimensions
+## 3. State projection and reconciliation
 
-RenderJob must not duplicate Kernel or Host state as a competing source of truth. Its displayed status is a projection of four distinct state dimensions:
+RenderJob is a **projection record**, never a state authority. Its fields map to authoritative facts:
 
-1. **Kernel Invocation state:** proposed, admitted, cancellation requested, reconciliation required, and a reconciled terminal outcome such as Succeeded, FailedKnown, Cancelled, or OutcomeUnknown. Kernel owns the authoritative transition.
-2. **Host execution state:** launch intent durable, process observed, running, termination requested, process quiescent, output sealed, receipt issued, or Host evidence unavailable. Host Ledger owns physical facts.
-3. **Verification state:** not started, technical pass/fail, content pass/fail/inconclusive, and human disposition pending/accepted/rejected. The domain verifier and authorized human review own their respective findings.
-4. **Artifact publication state:** unstaged, quarantined, verified-ready, finalized, published, or rejected. Publication is committed only after artifact integrity, current fencing, and required evidence are reconciled.
+| RenderJob field | Source of truth | Values |
+| --- | --- | --- |
+| `k_state` | `ToolInvocation.state` ([Kernel data model](kernel-data-model.md) §3.7) | `Proposed\|Admitted\|DispatchPending\|Running\|Rejected\|OutcomeUnknown\|Succeeded\|FailedKnown\|Cancelled` |
+| `host_state` | Host Ledger | `NoLaunchIntent\|IntentDurable\|Spawning\|LaunchBoundaryRecorded\|ProvenNotLaunched\|Running\|TerminationRequested\|Quiescent\|Sealed\|ReceiptIssued\|EvidenceUnavailable` |
+| `verification_state` | Domain verifier and human review | `NotStarted\|TechnicalPass\|TechnicalFail\|ContentPass\|ContentFail\|Inconclusive\|HumanPending\|HumanAccepted\|HumanRejected` |
+| `publication_state` | Artifact record ([Kernel data model](kernel-data-model.md) §3.10) | `Unstaged\|Staging\|Sealed\|Quarantined\|VerifiedReady\|Finalized\|Published\|Rejected\|DigestMismatch` |
 
-Progress percentage is a telemetry field, not a state authority. A RenderJob summary must expose all unresolved dimensions rather than flattening them into one misleading "done" flag.
+Derived labels: `Queued` = `k_state=Admitted` and `host_state=NoLaunchIntent`; `Dispatching` = `k_state=DispatchPending`; `Running` = `host_state=Running`; `Verifying` = `host_state=Sealed` with non-terminal verification; `PUBLISHED` = `publication_state=Published`. Labels are views and never admission inputs.
+
+### 3.1 Reconciliation table
+
+| `k_state` | `host_state` | Meaning | Disposition |
+| --- | --- | --- | --- |
+| Admitted | NoLaunchIntent | queued, never dispatched | keep `Queued`; dispatch or cancel |
+| Admitted / DispatchPending | IntentDurable | launch may or may not have crossed | do **not** resend; reconcile Host Ledger |
+| Running | Running | executing | telemetry only; wait or cancel |
+| Running | Quiescent + Sealed | process ended, output sealed | import receipt → verify |
+| Cancelled | Running / TerminationRequested | cancel requested, not converged | remain cancellation-pending; no publication |
+| Cancelled | Quiescent + Sealed | process completed before/after cancel | record execution fact; publish only if plan/revision is current and cancellation did not revoke publication authority; otherwise `k_state=Succeeded`, `publication_state=Rejected`, artifact `Quarantined` |
+| OutcomeUnknown | any | physical facts ambiguous | reconcile only; never publish or replay |
+| FailedKnown | Quiescent + partial | failed with partial output | quarantine; no publication |
+| Succeeded | Sealed | receipt + stable digest | independent verification |
+| Succeeded | Quarantined / Rejected | verification failed or superseded | remain quarantined; new attempt required |
+
+Cancellation is settled only as `Cancelled` + Host `Quiescent` + staging disposition + receipt. A sent kill signal is never convergence.
+
+Progress percentage is telemetry, not a state authority. A RenderJob summary must expose all unresolved dimensions rather than flattening them into one "done" flag.
 
 ## 4. Admission and Host launch protocol
 
@@ -71,6 +92,8 @@ Admission checks source/project identity, current TimelineRevision/RenderPlan, o
 
 A Host reports enforceable versus advisory dimensions. If a required hard limit cannot be enforced, admission fails closed. Numeric caps remain OPEN pending supported Host profiles and measurements.
 
+Analysis (`R0`) and render (`R1`) draw from the same declared Host resource vector (`cpu_ms`, `gpu_ms`, `gpu_mem_bytes`, `disk_bytes`, `wall_ms`). Parallel analysis may never consume capacity reserved by a running or admitted render: every invocation reserves against the pool, and if the reservation cannot be met it queues as `ResourceUnavailable` instead of degrading or sharing silently. GPU is available only where the profile enforces and accounts for the device boundary; otherwise GPU-dependent work is unsupported. Concurrency comes from the bound [Execution Strategy](execution-strategy.md) (`R0 ≤ 4`, `R1 ≤ 1` per Host) and may be lowered, never raised, by the profile.
+
 ## 6. Progress and physical execution evidence
 
 - Renderer receives canonical argv and validated filtergraph, never a model-composed shell string.
@@ -91,6 +114,10 @@ A progress=end record, zero exit code, or complete progress stream does not prov
 5. Host records whether the staging output is complete, partial, absent, or unknown and seals/quarantines it where safe.
 6. Host issues a receipt with process convergence and output facts.
 7. Kernel reconciles the receipt and commits Cancelled only when the declared cancellation conditions are met.
+
+**Convergence predicate.** `ProcessConverged` is true only when all of: (a) no live descendant remains in the Host job/process group; (b) no writable handle is open on the staging file or its directory; (c) the staging file is sealed read-only with recorded size/digest and a digest stable across two reads; (d) an authenticated receipt binds job, invocation, plan and fencing epoch. Each sub-check and its evidence is recorded by the Host; an unproven sub-check means not converged.
+
+**Bound and escalation.** The invocation declares `convergence_deadline_ms` from the bound strategy. On expiry the outcome becomes `OutcomeUnknown` with a `HostReconciliation` `WaitRecord`; the Task may terminate `UnresolvedEffect` while a separate recovery record keeps reconciling. A timeout never authorizes publication, replay or a false `Cancelled`.
 
 A kill signal, timeout, disconnected client, missing progress event, or parent-process exit is not proof that the render stopped. If a descendant may still write, the invocation remains OutcomeUnknown/Reconciling and conflicting publication is blocked.
 
@@ -127,6 +154,8 @@ After Host proves process/handle convergence:
 6. The artifact is finalized under a new immutable Artifact ID/digest; only then is a final delivery reference committed.
 7. Completion Guard evaluates the exact final artifact and VerificationReport bindings.
 
+**Idempotent publication.** `artifact_id` is content-addressed by `(kind, digest)`; identical bytes yield the same artifact id regardless of attempt. A durable `publication_intent {job_id, plan_digest, fence_epoch, artifact_id, digest, target_ref}` is committed before the delivery pointer update, and replaying the same intent returns the same result. Recovery scans: `Sealed` without verification → verify; `Finalized` without a pointer → adopt or quarantine by policy; `Published` with a digest that differs from the current pointer → integrity hold; stale `Staging` orphans → quarantine. No step overwrites a prior artifact or deliverable, and a conflicting second publication is rejected.
+
 A cancelled, superseded, partial, UNKNOWN, stale, or unverified output remains quarantined evidence and cannot replace the current deliverable. If an object is finalized but Kernel commit is interrupted, recovery reconciles the immutable artifact and idempotent publication intent; it must not create a conflicting second publication.
 
 ## 10. Delivery and non-claims
@@ -137,8 +166,8 @@ This contract does not claim arbitrary FFmpeg jobs are checkpoint-resumable; a p
 
 All runtime process control, progress recovery, resource accounting, output publication, and media verification remain **UNVERIFIED** until implemented and fault-injection tested on named Host environments.
 
-## 11. Render resource queue and verification economy (G0 candidate)
+## 11. Render resource queue and verification economy (construction candidate)
 
-A RenderJob's expensive media work is asynchronous **physical Host execution**, not an autonomous LLM polling loop. Tool Runtime queues by admitted identity/resource and exposes `Queued/Running/Progress/Receipt/Unknown` as derived projections. Trusted Host reports byte/progress/physical facts through authenticated Outbox; Kernel imports idempotently. Proposed first-slice limit: one effectful final render per Host resource pool unless independence and memory/GPU/disk isolation are proven. Priority/fairness must preserve Cancellation/Fence and avoid starving short read-only tasks; queue wait is measured separately from actual render latency.
+A RenderJob's expensive media work is asynchronous **physical Host execution**, not an autonomous LLM polling loop. Tool Runtime queues by admitted identity/resource and exposes `Queued/Dispatching/Running/Verifying/Receipt/Unknown` as derived projections (§3). Trusted Host reports byte/progress/physical facts through authenticated Outbox; Kernel imports idempotently. Proposed first-slice limit: one effectful final render per Host resource pool unless independence and memory/GPU/disk isolation are proven. Priority/fairness must preserve Cancellation/Fence and avoid starving short read-only tasks; queue wait is measured separately from actual render latency.
 
-A preview is a distinct bounded Invocation and immutable nonfinal artifact; it neither authorizes a final render nor satisfies final-output inspection. Cache metadata/proxies/analysis only by exact source, transform, tool and policy digests; any reuse of previously rendered segments requires compiler-proven unchanged interval provenance and unchanged output/codec/audio context, otherwise perform a full guarded render. This is a **candidate optimization**, not a promised incremental FFmpeg guarantee. Staging is unique per invocation. UNKNOWN and cancellation keep all conflicting outputs quarantined and never permit blind rerender. Completion accepts final source/project/timeline/render/output evidence only after actual process/writable-handle convergence and criterion verification. Compare queue p50/p95, CPU/GPU time, peak memory, bytes processed, retries and semantic/technical quality under controlled G4 benchmarks.
+A preview is a distinct bounded `R1` Invocation writing to its own staging namespace, with artifact schema `media.preview.v1` (source snapshot, timeline digest, profile, coverage, digest) and a publication state that is never `Published`. It neither authorizes a final render nor satisfies final-output inspection. Cache probe/analysis/proxy entries only under a `ReuseRecord` ([MediaProject](media-project.md) §7) keyed by source digest + parser/analyzer/proxy version + transformation + privacy/access class + policy digest ([Execution Strategy](execution-strategy.md) F9); reuse of previously rendered segments additionally requires compiler-proven unchanged interval provenance and unchanged output/codec/audio context, otherwise perform a full guarded render. This is a **candidate optimization**, not a promised incremental FFmpeg guarantee. Staging is unique per invocation. UNKNOWN and cancellation keep all conflicting outputs quarantined and never permit blind rerender. Completion accepts final source/project/timeline/render/output evidence only after actual process/writable-handle convergence and criterion verification. Compare queue p50/p95, CPU/GPU time, peak memory, bytes processed, retries and semantic/technical quality under controlled Video evaluation (V-series) benchmarks.
