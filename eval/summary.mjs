@@ -26,10 +26,22 @@ try {
 }
 
 const runs = [];
+let invalidRounds = 0;
 for (const file of files) {
   const record = JSON.parse(await readFile(path.join(resultsDir, file), "utf8"));
   // 只统计完整跑：任务数对得上，说明不是 --only 过滤出来的。
-  if (record.total === taskCount) runs.push(record);
+  if (record.total !== taskCount) continue;
+  // infraErrors 非空 = 这一轮不可信（后台 rejection 等）：即使任务全过也不能算有效样本，
+  // 否则会把 100% 通过率写进中位数、把异常成本混进汇总。
+  if ((record.infraErrors ?? []).length > 0) {
+    invalidRounds += 1;
+    continue;
+  }
+  runs.push(record);
+}
+
+if (invalidRounds > 0) {
+  console.log(`已跳过 ${invalidRounds} 轮基础设施无效记录（infraErrors 非空）`);
 }
 
 if (runs.length === 0) {
