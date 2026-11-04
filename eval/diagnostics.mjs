@@ -11,6 +11,7 @@ import path from "node:path";
 import { ChatResponseError, describeError } from "../src/errors.ts";
 
 const MAX_TRACKED_FILES = 2_000;
+const MAX_TRACKED_ENTRIES = 5_000;
 const MAX_HASH_BYTES_PER_FILE = 1_000_000;
 const MAX_TOTAL_HASH_BYTES = 20_000_000;
 const SKIP_DIRECTORIES = new Set([".git", "node_modules"]);
@@ -71,6 +72,7 @@ async function snapshotFiles(root) {
   const files = {};
   const warnings = [];
   let visitedFiles = 0;
+  let visitedEntries = 0;
   let hashedBytes = 0;
   let complete = true;
 
@@ -87,11 +89,17 @@ async function snapshotFiles(root) {
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
       if (entry.isDirectory() && SKIP_DIRECTORIES.has(entry.name)) continue;
-      if (visitedFiles >= MAX_TRACKED_FILES) {
+      if (visitedEntries >= MAX_TRACKED_ENTRIES) {
+        complete = false;
+        warnings.push("entry limit reached (" + MAX_TRACKED_ENTRIES + ")");
+        return;
+      }
+      if (!entry.isDirectory() && visitedFiles >= MAX_TRACKED_FILES) {
         complete = false;
         warnings.push("file limit reached (" + MAX_TRACKED_FILES + ")");
         return;
       }
+      visitedEntries += 1;
 
       const relative = relativeDirectory ? relativeDirectory + "/" + entry.name : entry.name;
       const absolute = path.join(directory, entry.name);
@@ -142,6 +150,7 @@ async function snapshotFiles(root) {
     coverage: {
       complete,
       visitedFiles,
+      visitedEntries,
       hashedBytes,
       warnings,
     },
