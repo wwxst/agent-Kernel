@@ -124,13 +124,14 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-65 个用例，分四层，都不需要 API Key、不联网（其中 1 条验证「读不了的文件要报出来」，只在 POSIX 上跑）：
+72 个用例，分五层，都不需要 API Key、不联网（其中 1 条验证「读不了的文件要报出来」，只在 POSIX 上跑）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、步数上限、错误回灌 |
 | `test/tool-registry.test.mjs` | `ToolRegistry.execute`：未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 路径越界、截断、exit code、`edit` 唯一命中、`glob` 模式、`grep` 命中格式 |
+| `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错（不能变成空成功） |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状 |
 
 ## 刻意没做的事
