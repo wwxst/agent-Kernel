@@ -135,7 +135,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-135 个用例，分七层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+138 个用例，分八层，都不需要 API Key、不联网（Linux：137 通过、1 条 Windows 专用用例跳过；Windows：136 通过、2 条平台用例跳过）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -146,6 +146,7 @@ npm run check       # typecheck + 全部测试
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
+| `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
 
 ## 评测
 
@@ -155,6 +156,8 @@ npm run check       # typecheck + 全部测试
 npm run eval            # 需要 .env，会真的调用模型、真的花钱
 npm run eval -- rename  # 只跑名字里带 rename 的
 npm run eval:check      # 自检：不调用模型，验证每个任务的初始状态确实会断言失败
+npm run eval -- --trace --keep 13-callback-to-promise  # 可选诊断：保留单个任务并记录请求/工具轨迹
+npm run eval:cross-day   # 在不同自然日各运行 3 轮，固定使用 4edd0e4 基线
 ```
 
 基线（2026-11-04，`hy3`，连续 6 轮，4 并发）：
@@ -164,6 +167,8 @@ npm run eval:check      # 自检：不调用模型，验证每个任务的初始
 | **119/120（5/6 轮 20/20）** | 101.5 | 99 | 139,040（130,012 + 8,738.5） | 79.0s |
 
 6 轮里 5 轮满分；第 4 轮 `10-delete-dead-code` 因模型返回空最终答复失败，内核把它判为失败并保留 usage，没有伪装成功，第 5、6 轮恢复正常。轮间总 token 118k–168k（约 1.42×）。逐任务波动见 [eval/baseline.md](./eval/baseline.md)：稳定任务在 1.1× 以内，`13-callback-to-promise` 5.27×、`20-fix-email-regex` 5.05×、`08-extract-duplication` 3.87×、`11-fix-slice-boundary` 3.72×——波动来自模型自己的重试路径，成本要按中位数加余量估，不能按最好一轮算。第一阶段验收基线是 DeepSeek-V4.1-Flash：20/20、178 请求、200 工具调用、389,074 tokens、66.5s。
+
+跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。
 
 关于耗时与成本：`hy3` 单任务中位数约 13.3 秒、5.1 次模型请求，其中**请求与请求之间的等待几乎全是模型往返**，工具执行加内核开销占比很小。省时间主要靠任务之间并发（默认 `--jobs 4`，20 个任务墙钟约 79 秒）；省钱主要靠选模型（输入 token 占 93.5%，成本来自反复重发完整对话历史）和收紧 `MAX_TOTAL_TOKENS` / `MAX_OUTPUT_TOKENS`。上下文压缩这一阶段刻意不做，先用多轮评测判断它是不是真的瓶颈。
 
