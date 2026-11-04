@@ -8,6 +8,8 @@
 - 当前基线（追加）：commit `9e52e5c`，同一套任务，`hy3`，单轮 20/20
 - CI：[run 41792841368](https://github.com/wwxst/agent-Kernel/actions/runs/41792841368)（Linux + Windows 全绿）
 
+> 后续复核提出的 4 项补充、多轮评测与评测任务修正，见 [第二轮复核跟进报告](./2026-11-04-review-followup.md)。本报告保留为第一阶段验收时的快照。
+
 ## 1. 修复前后架构对比
 
 架构没有变：仍然是 `CLI → Agent + ChatClient + ToolRegistry + Workspace`，一个类、一个循环、七个工具、运行时零依赖。变的是每个模块对自己那件事的**执行边界**：
