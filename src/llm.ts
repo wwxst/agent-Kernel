@@ -109,12 +109,14 @@ function readMessage(payload: unknown): Message {
     throw invalid(`choices[0].message.role must be "assistant", got ${JSON.stringify(candidate.role)}`);
   }
 
+  // content 是协议的必填字段：缺失和 null 不是一回事 —— null 表示「这一轮只有工具调用」，
+  // 而字段整个消失说明服务端吐了个半截响应，得当成错误，不能悄悄补成空串。
   const content = candidate.content;
-  if (content !== undefined && content !== null && typeof content !== "string") {
+  if (content !== null && typeof content !== "string") {
     throw invalid("choices[0].message.content must be a string or null");
   }
 
-  const message: Message = { role: "assistant", content: typeof content === "string" ? content : "" };
+  const message: Message = { role: "assistant", content: content ?? "" };
   if (candidate.tool_calls !== undefined) message.tool_calls = readToolCalls(candidate.tool_calls);
 
   const reasoning = candidate.reasoning_content;
