@@ -20,7 +20,7 @@ const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = path.join(projectRoot, "src", "cli.ts");
 
 /** 启动 mock 服务，按脚本回放模型的响应；请求次数超出脚本时重复最后一条。 */
-async function startMock(script) {
+async function startMock(script, { usage } = {}) {
   const requests = [];
   let turn = 0;
 
@@ -31,14 +31,14 @@ async function startMock(script) {
       requests.push(JSON.parse(body));
       const message = script[Math.min(turn++, script.length - 1)];
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(
-        JSON.stringify({
-          choices: [
-            // finish_reason 必须和 tool_calls 一致：带调用就是 tool_calls，否则是 stop。
-            { index: 0, message, finish_reason: message.tool_calls?.length ? "tool_calls" : "stop" },
-          ],
-        }),
-      );
+      const payload = {
+        choices: [
+          // finish_reason 必须和 tool_calls 一致：带调用就是 tool_calls，否则是 stop。
+          { index: 0, message, finish_reason: message.tool_calls?.length ? "tool_calls" : "stop" },
+        ],
+      };
+      if (usage !== undefined) payload.usage = usage;
+      response.end(JSON.stringify(payload));
     });
   });
 
@@ -147,16 +147,45 @@ test("越界路径：变成 ERROR 回灌，进程正常退出", async () => {
   });
 });
 
-test("步数上限：退出码 1，stderr 说明原因", async () => {
+test("步数上限：退出码 1，stderr 说明原因，失败路径仍输出 usage", async () => {
   await withWorkspace(async (workdir) => {
     // 只有一条脚本，且永远是工具调用：不设上限就会无限循环。
-    const mock = await startMock([callTool("call_loop", "ls", { path: "." })]);
+    const mock = await startMock([callTool("call_loop", "ls", { path: "." })], {
+      usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+    });
 
     try {
       const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir, MAX_STEPS: "2" });
       assert.equal(run.code, 1);
       assert.match(run.stderr, /step limit 2 reached/);
       assert.equal(mock.requests.length, 2, "should stop after exactly MAX_STEPS model calls");
+      // 第 1 次的工具执行了，第 2 次是收尾请求、工具没跑；两次请求的花费都要算。
+      assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1 tokens=220 \(prompt=200 completion=20\)/);
+      assert.match(run.stdout, /task failed/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("失败路径：token 预算超限时也输出 usage 与超预算状态", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([callTool("call_1", "ls", { path: "." })], {
+      usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+    });
+
+    try {
+      const run = await runCli({
+        BASE_URL: mock.url,
+        MODEL: "mock-model",
+        WORKDIR: workdir,
+        MAX_TOTAL_TOKENS: "100",
+      });
+
+      assert.equal(run.code, 1);
+      assert.match(run.stderr, /token budget 100 reached/);
+      assert.match(run.stdout, /\[usage\] requests=1 tool_calls=0 tokens=110/);
+      assert.match(run.stdout, /budget exceeded \(limit=100\) · task failed/);
     } finally {
       await mock.close();
     }
