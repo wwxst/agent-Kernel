@@ -141,3 +141,31 @@ test("chat：缺 finish_reason 也要报错（不能靠猜）", async () => {
     await server.close();
   }
 });
+
+test("chat：取消信号立刻中断请求，不必等 120 秒超时", async () => {
+  // 这个端点永远不回响应：只有 abort 能让请求结束。
+  const server = createServer(() => {});
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+  const controller = new AbortController();
+  const client = new Llm({
+    baseUrl: `http://127.0.0.1:${port}/v1`,
+    apiKey: "test-key",
+    model: "mock-model",
+    timeoutMs: 60_000,
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(new Error("user interrupt")), 50);
+
+  const started = Date.now();
+  try {
+    await assert.rejects(
+      () => client.chat([], []),
+      (error) => error.name === "AbortError" || /abort|interrupt/i.test(error.message),
+    );
+    assert.ok(Date.now() - started < 5_000, "取消应该马上生效");
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

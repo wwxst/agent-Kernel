@@ -16,6 +16,11 @@ export interface LlmOptions {
   temperature?: number;
   /** 单次请求超时，默认 120 秒。网络卡住时不能把整个循环一起卡死。 */
   timeoutMs?: number;
+  /**
+   * 取消信号。外部取消（CLI 收到 SIGINT）时 abort 它，正在飞的 HTTP 请求会立刻被掐断，
+   * 而不是等 120 秒超时。和 timeout 合并成一个 signal 传给 fetch，两者谁先到谁生效。
+   */
+  signal?: AbortSignal;
 }
 
 export class Llm implements ChatClient {
@@ -24,6 +29,7 @@ export class Llm implements ChatClient {
   private readonly model: string;
   private readonly temperature: number;
   private readonly timeoutMs: number;
+  private readonly signal?: AbortSignal;
 
   constructor(options: LlmOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -31,6 +37,7 @@ export class Llm implements ChatClient {
     this.model = options.model;
     this.temperature = options.temperature ?? 0;
     this.timeoutMs = options.timeoutMs ?? 120_000;
+    this.signal = options.signal;
   }
 
   /**
@@ -63,7 +70,8 @@ export class Llm implements ChatClient {
         temperature: this.temperature,
       }),
       // 超时后 fetch 会抛 AbortError，被上层 catch 成一次可见的失败。
-      signal: AbortSignal.timeout(this.timeoutMs),
+      // 外部取消（Ctrl-C）也走 signal：两条路合并，fetch 不用知道是谁按的停止键。
+      signal: this.signal ? AbortSignal.any([AbortSignal.timeout(this.timeoutMs), this.signal]) : AbortSignal.timeout(this.timeoutMs),
     });
 
     if (!response.ok) {

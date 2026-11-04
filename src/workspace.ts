@@ -14,7 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { lstat, mkdir, open, readdir, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, opendir, open, realpath, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "./types.ts";
 
@@ -46,11 +46,15 @@ const MAX_RESULTS = 200;
 /** grep 单行最多展示多少字符。 */
 const MAX_LINE_CHARS = 200;
 
+/** 单行被截断时追加的标记：不标出来，模型会以为那就是整行。 */
+const LINE_TRUNCATED = " …[line truncated]";
+
 /**
- * 一次 glob / grep 最多访问多少个目录项（文件和目录都算）。
+ * 一次 glob / grep / list 最多访问多少个目录项（文件和目录都算）。
  *
  * 限制「返回多少条」不等于限制「扫了多少东西」：在小仓库里搜一个不存在的字符串，
  * 一样会走完整棵树。大仓库里这条预算保证搜索会在有限步内停手，并明确告诉模型结果不完整。
+ * 目录用 opendir 边读边走，所以这条预算是真的「读了多少项」，而不是「readdir 之后切了多少项」。
  */
 const MAX_SCAN_ENTRIES = 20_000;
 
@@ -72,8 +76,15 @@ export interface WorkspaceOptions {
   root: string;
   /** 单条 shell 命令的超时，默认 120 秒。 */
   timeoutMs?: number;
-  /** 单次 glob / grep 的扫描预算（目录项个数），默认 20000。测试会传一个小值。 */
+  /** 单次 glob / grep / list 的扫描预算（目录项个数），默认 20000。测试会传一个小值。 */
   scanLimit?: number;
+  /**
+   * 取消信号。CLI 收到 SIGINT / SIGTERM 时 abort 它，正在跑的 shell 会连同进程树一起被收掉。
+   *
+   * 直接传一个 signal、不新造 CancellationManager：这条链上只有「发起取消」和「响应取消」两件事，
+   * 多一层管理器只会多一个需要同步的地方。
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -89,13 +100,17 @@ export class Workspace {
 
   private readonly scanLimit: number;
 
+  /** 当前任务的取消信号；没有就表示不可取消（测试和库调用常见）。 */
+  private readonly signal?: AbortSignal;
+
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
 
-  constructor({ root, timeoutMs = DEFAULT_TIMEOUT_MS, scanLimit = MAX_SCAN_ENTRIES }: WorkspaceOptions) {
+  constructor({ root, timeoutMs = DEFAULT_TIMEOUT_MS, scanLimit = MAX_SCAN_ENTRIES, signal }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
     this.scanLimit = scanLimit;
+    this.signal = signal;
   }
 
   /**
@@ -177,22 +192,58 @@ export class Workspace {
     return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
 
-  /** 列目录：类型、字节数、名称，按行排好。 */
+  /**
+   * 列目录：类型、字节数、名称，按行排好。
+   *
+   * 用 `opendir` 边读边收，而不是 `readdir` 一次把整个目录读进内存再切：
+   * 一个十万条目的目录，`readdir` 会先分配十万个 Dirent，再让我们丢掉九万九千个 ——
+   * 上限形同虚设。现在最多只读 `scanLimit` 项、最多展示 `MAX_LIST_ENTRIES` 条。
+   *
+   * 扫描提前停手时必须在结果里说明「目录可能没列全」：只给 500 行而不说还有，
+   * 模型会把「没列出来」当成「不存在」。
+   */
   async list(requested: string): Promise<string> {
     const dir = this.resolve(requested);
     await this.assertInsideWorkspace(dir, requested);
-    const entries = await readdir(dir, { withFileTypes: true });
-    // 目录可能有一万个条目：只 stat 前 MAX_LIST_ENTRIES 个，剩下的明说没列。
-    const shown = entries.slice(0, MAX_LIST_ENTRIES);
+
+    const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
+    let scanned = 0;
+    let scanStopped = false;
+    const handle = await opendir(dir);
+    try {
+      for await (const entry of handle) {
+        if (scanned >= this.scanLimit) {
+          scanStopped = true;
+          break;
+        }
+        scanned++;
+        entries.push({ name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() });
+      }
+    } finally {
+      // 提前 break 时 for await 不保证已经关掉句柄；关两次是安全的（第二次是 no-op）。
+      await handle.close().catch(() => {});
+    }
+
+    // 先稳定排序，再截断：目录枚举顺序由文件系统决定，直接切前 500 条
+    // 会让同一次 ls 在不同机器上给出不同的集合。目录排在文件前面，组内按名字排。
+    // 只 stat 真正要展示的那些，而不是扫到多少 stat 多少。
+    entries.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1;
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    });
     const rows = await Promise.all(
-      shown.map(async (entry) => {
-        const size = entry.isFile() ? (await stat(path.join(dir, entry.name))).size : 0;
-        const kind = entry.isDirectory() ? "dir " : "file";
+      entries.slice(0, MAX_LIST_ENTRIES).map(async (entry) => {
+        const size = entry.isFile ? (await stat(path.join(dir, entry.name))).size : 0;
+        const kind = entry.isDirectory ? "dir " : "file";
         return `${kind} ${String(size).padStart(8)}  ${entry.name}`;
       }),
     );
-    const more = entries.length > shown.length ? `\n… (${entries.length - shown.length} more entries not listed)` : "";
-    return this.clip(rows.sort().join("\n") || "(empty directory)", more);
+
+    const hidden = entries.length - MAX_LIST_ENTRIES;
+    const tails =
+      (hidden > 0 ? `\n… (${scanStopped ? "at least " : ""}${hidden} more entries not listed)` : "") +
+      (scanStopped ? `\n… (scan stopped after ${this.scanLimit} entries; listing may be incomplete)` : "");
+    return this.clip(rows.join("\n") || "(empty directory)", tails);
   }
 
   /**
@@ -212,36 +263,47 @@ export class Workspace {
     const matcher = globToRegExp(toPosix(pattern));
     const budget = { remaining: this.scanLimit };
     const matches: string[] = [];
+    let hitLimit = false;
     for await (const file of walkFiles(this.root, budget)) {
       const relative = toPosix(path.relative(this.root, file));
       if (!matcher.test(relative)) continue;
+      // 第 MAX_RESULTS+1 条命中只用来判断「还有更多」，不塞进结果。
+      if (matches.length === MAX_RESULTS) {
+        hitLimit = true;
+        break;
+      }
       matches.push(relative);
-      if (matches.length >= MAX_RESULTS) break;
     }
 
-    const tails =
-      (matches.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") + scanTail(budget, this.scanLimit);
-    if (matches.length === 0) return `(no matches)${tails}`;
+    // 排序的是「已收集到的」命中；提前停手时它只是局部顺序，不代表整棵树的全局顺序 ——
+    // 尾注必须把这一点说清楚，不能让模型以为这就是全部。
     matches.sort();
+    const tails =
+      (hitLimit ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") + scanTail(budget, this.scanLimit);
+    if (matches.length === 0) return `(no matches)${tails}`;
     return this.clip(matches.join("\n"), tails);
   }
 
   /**
-   * 在文本文件里按正则搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
+   * 在文本文件里按**字面字符串**搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
+   *
+   * 为什么是字面而不是正则：模型给的正则可能带灾难性回溯（`(a+)+$`），而匹配跑在主线程上，
+   * 一条这样的模式就能把整个 agent 挂住 —— 没有 worker、没有超时，只能等用户 Ctrl-C。
+   * 第一阶段先把它降级成字面搜索：失去正则能力，换来不可能被输入卡死。
+   * 要恢复正则，得先把匹配放进 worker 并带上可中断的超时，而不是只把 `new RegExp` 加回来。
    *
    * 二进制文件（含 NUL 字节）直接跳过：按 UTF-8 读出来只是乱码。
    * 超过 MAX_GREP_FILE_BYTES 的文件不读，并在结果里说明跳过了几个 ——
    * 否则模型会以为「没搜到」等于「不存在」。
    * 读不了的文件（权限、坏链接）也跳过：一次搜索不该被一个文件打断。
-   *
-   * 已知边界：正则跑在主线程，遇到灾难性回溯会卡住整个 agent，
-   * 目前只靠「单文件 1 MB + 扫描预算」限制输入规模，没有中断能力（要中断得放进 worker）。
    */
-  async grep(pattern: string, requested = "."): Promise<string> {
+  async grep(text: string, requested = "."): Promise<string> {
+    if (text === "") {
+      // 空串是每行的子串：放过去会让「搜一下」变成「列全部内容」。
+      throw new Error("search text must not be empty");
+    }
     const start = this.resolve(requested);
     await this.assertInsideWorkspace(start, requested);
-    // 写错的正则让它抛出去，由 ToolRegistry 折成给模型看的 ERROR 文本。
-    const regex = new RegExp(pattern);
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
@@ -270,11 +332,13 @@ export class Workspace {
 
       const lines = content.split("\n");
       for (let index = 0; index < lines.length; index++) {
-        if (!regex.test(lines[index])) continue;
+        if (!lines[index].includes(text)) continue;
+        const line = lines[index].trim();
         hits.push({
           file: toPosix(path.relative(this.root, file)),
           line: index + 1,
-          text: lines[index].trim().slice(0, MAX_LINE_CHARS),
+          // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
+          text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
         });
         if (hits.length >= MAX_RESULTS) break;
       }
@@ -300,9 +364,18 @@ export class Workspace {
    * 三个现实问题，逐个处理：
    *   - 命令可能永远不结束 → 超时；而且要杀**整棵进程树**，只杀外层 shell 会留下孤儿；
    *   - 输出可能无限增长 → 只保留前 MAX_OUTPUT_CHARS 个字符，后面的丢弃并记下丢了多少；
-   *   - 模型要能区分「失败」和「超时」→ 结果的第一行写清是 exit 还是 timeout。
+   *   - 模型要能区分「失败」「超时」「被取消」→ 结果的第一行写清是哪一种。
+   *
+   * 超时和取消走**同一条清理路径**（stop → terminateTree）。两条路径各写一份杀进程的代码，
+   * 迟早会有一条漏掉进程树；共用之后，「为什么停」只影响状态文案，不影响怎么收尾。
    */
   async run(command: string): Promise<string> {
+    const signal = this.signal;
+    if (signal?.aborted) {
+      // 取消之后不再启动新进程：这是「不能在取消后继续启动新工具」的最后一道闸门。
+      throw new Error("cancelled before the command started");
+    }
+
     const { status, output, dropped } = await new Promise<{
       status: string;
       output: string;
@@ -312,13 +385,16 @@ export class Workspace {
         cwd: this.root,
         shell: true,
         windowsHide: true,
-        // POSIX 上开新进程组，超时时能整组杀掉；Windows 走 taskkill /T。
+        // POSIX 上开新进程组，超时/取消时能整组杀掉；Windows 走 taskkill /T。
         detached: process.platform !== "win32",
       });
 
       let collected = "";
       let dropped = 0;
-      let timedOut = false;
+      // 第一次「为什么停」获胜：超时和取消同时发生时，不能把状态改来改去。
+      let stopped: string | undefined;
+      let cleanup: Promise<void> | undefined;
+      let settled = false;
 
       const absorb = (chunk: Buffer) => {
         collected += chunk.toString();
@@ -328,26 +404,44 @@ export class Workspace {
         }
       };
 
-      const timer = setTimeout(() => {
-        timedOut = true;
-        killTree(child);
-      }, this.timeoutMs);
+      const stop = (reason: string) => {
+        if (stopped !== undefined) return;
+        stopped = reason;
+        cleanup = terminateTree(child);
+      };
+
+      const timer = setTimeout(() => stop(`timeout after ${this.timeoutMs}ms`), this.timeoutMs);
+      const onAbort = () => stop("cancelled by signal");
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      const finish = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
+      };
 
       child.stdout.on("data", absorb);
       child.stderr.on("data", absorb);
 
       child.on("error", (error) => {
-        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        finish();
         reject(error);
       });
 
       child.on("close", (code) => {
-        clearTimeout(timer);
-        resolve({
-          status: timedOut ? `timeout after ${this.timeoutMs}ms` : `exit ${code}`,
-          output: collected,
-          dropped,
-        });
+        if (settled) return;
+        settled = true;
+        finish();
+        // 等进程树真的被杀掉再返回：先 resolve 的话，调用方会以为任务结束了，
+        // 而孙进程可能还在写文件 —— 那不叫「取消成功」。
+        void (cleanup ?? Promise.resolve()).then(() =>
+          resolve({
+            status: stopped ?? `exit ${code}`,
+            output: collected,
+            dropped,
+          }),
+        );
       });
     });
 
@@ -441,47 +535,90 @@ export class Workspace {
  *
  * 用文件句柄读，而不是 `stat` + `readFile`：`stat` 和 `readFile` 之间文件可能被写大，
  * 真正的上限必须落在「读了多少字节」上。buffer 由调用方传入，方便一次 grep 里反复复用。
+ *
+ * **必须循环读**：一次 `handle.read()` 允许只返回一部分字节（POSIX 的 read 本来就是这个语义，
+ * 网络盘、被信号打断的读都会这样）。只读一次就当成整个文件，会让 `read` 悄悄少一段内容，
+ * 更糟的是让 `edit` 拿着半截内容去覆盖 —— 文件尾部直接丢失。循环到 EOF 或读满 limit+1 字节为止，
+ * 「没截断」就必然意味着「读到了 EOF」。
  */
 async function readTextUpTo(
   file: string,
   limit: number,
   buffer: Buffer,
-): Promise<{ text: string; truncated: boolean }> {
+): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
   const handle = await open(file, "r");
   try {
-    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, limit + 1), 0);
-    return {
-      text: buffer.subarray(0, Math.min(bytesRead, limit)).toString("utf8"),
-      truncated: bytesRead > limit,
-    };
+    const bytesRead = await fillBuffer(
+      (target, offset, length, position) => handle.read(target, offset, length, position),
+      buffer,
+    );
+    const truncated = bytesRead > limit;
+    // 截断点可能正好切在一个多字节字符中间：stream 模式把不完整的那截留在解码器里，
+    // 不吐一个 U+FFFD 出来冒充「文件里真的有这个字符」。
+    const text = new TextDecoder("utf-8").decode(buffer.subarray(0, Math.min(bytesRead, limit)), {
+      stream: truncated,
+    });
+    return { text, truncated, bytesRead };
   } finally {
     await handle.close();
   }
 }
 
 /**
- * 杀掉整棵进程树：Windows 上用 `taskkill /T`，POSIX 上杀进程组。
+ * 把 buffer 尽量读满，返回读到的字节数；只有遇到 EOF 或 buffer 满了才停。
+ *
+ * 单独抽出来是为了能被测试确定性地喂「半截读」—— 普通文件在本地磁盘上很少真的半截返回，
+ * 而这段循环的全部价值恰恰在于处理那种情况。`read` 参数就是 `FileHandle.read` 的四个参数，
+ * 返回 `{ bytesRead }`，和生产代码里的调用形状一致。
+ */
+export async function fillBuffer(
+  read: (
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number,
+  ) => Promise<{ bytesRead: number }>,
+  buffer: Buffer,
+): Promise<number> {
+  let bytesRead = 0;
+  while (bytesRead < buffer.length) {
+    const { bytesRead: justRead } = await read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+    // 0 = EOF。不判它的话，循环会在文件末尾空转。
+    if (justRead === 0) break;
+    bytesRead += justRead;
+  }
+  return bytesRead;
+}
+
+/**
+ * 杀掉整棵进程树，并在**确实清理完之后**才 resolve：Windows 上用 `taskkill /T`，POSIX 上杀进程组。
  * 只杀外层 shell 是不够的 —— Windows 上 `npm test` 这类命令会留下一串孤儿进程。
  *
  * 两条路都可能失败（taskkill 起不来、进程组已经没了），所以都要兜底：
- * 超时那一刻宁可「只杀掉外层 shell」，也不能抛出一个没人接的异常把整个进程带走。
+ * 停下来的那一刻宁可「只杀掉外层 shell」，也不能抛出一个没人接的异常把整个进程带走。
+ * 返回 Promise 而不是 void，是因为调用方必须等它 —— 先 resolve 再清理，等于假取消。
  */
-function killTree(child: ChildProcess): void {
+function terminateTree(child: ChildProcess): Promise<void> {
   const pid = child.pid;
-  if (pid === undefined) return;
+  if (pid === undefined) return Promise.resolve();
 
   if (process.platform === "win32") {
-    // 不监听 'error' 的话，spawn 失败会变成未处理事件；非零退出则说明没杀成。
-    // 两种情况都回落到 child.kill()，至少把外层 shell 收掉。
-    const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-      windowsHide: true,
-      stdio: "ignore",
+    return new Promise((resolve) => {
+      // 不监听 'error' 的话，spawn 失败会变成未处理事件；非零退出则说明没杀成。
+      // 两种情况都回落到 child.kill()，至少把外层 shell 收掉。
+      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      killer.on("error", () => {
+        child.kill();
+        resolve();
+      });
+      killer.on("close", (code) => {
+        if (code !== 0) child.kill();
+        resolve();
+      });
     });
-    killer.on("error", () => child.kill());
-    killer.on("close", (code) => {
-      if (code !== 0) child.kill();
-    });
-    return;
   }
 
   try {
@@ -490,6 +627,7 @@ function killTree(child: ChildProcess): void {
   } catch {
     child.kill("SIGKILL");
   }
+  return Promise.resolve();
 }
 
 /**
@@ -529,7 +667,10 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * 深度遍历目录，产出文件路径（grep 和 glob 共用）。
+ * 深度遍历目录，产出文件路径（grep、glob、list 共用）。
+ *
+ * 用 `opendir` 逐项异步迭代，而不是 `readdir` 一次性把整层目录读进数组：
+ * 预算要限制的是「真的读了多少目录项」，而 readdir 在预算生效之前就已经把目录读完了。
  *
  * 跳过 SKIP_DIRS，也跳过符号链接（`isFile` 对链接返回 false）：
  * 链接可能指向工作区之外，顺着它走就等于把路径守卫绕开了。
@@ -540,23 +681,29 @@ function globToRegExp(pattern: string): RegExp {
 async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGenerator<string> {
   if (budget.remaining <= 0) return;
 
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
-    if (budget.remaining <= 0) return;
-    budget.remaining--;
+  // 子目录递归时父目录还开着：深度通常只有个位数，换来的是一路都不需要先列目录。
+  const handle = await opendir(dir);
+  try {
+    for await (const entry of handle) {
+      if (budget.remaining <= 0) return;
+      budget.remaining--;
 
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (SKIP_DIRS.has(entry.name)) continue;
-      yield* walkFiles(full, budget);
-    } else if (entry.isFile()) {
-      yield full;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        yield* walkFiles(full, budget);
+      } else if (entry.isFile()) {
+        yield full;
+      }
     }
+  } finally {
+    await handle.close().catch(() => {});
   }
 }
 
 /** 扫描预算用尽时的尾注；说清楚「结果可能不完整」，别让模型以为已经搜遍全仓。 */
 function scanTail(budget: { remaining: number }, limit: number): string {
-  return budget.remaining <= 0 ? `\n… (stopped after ${limit} entries scanned)` : "";
+  return budget.remaining <= 0 ? `\n… (scan stopped after ${limit} entries; results may be incomplete)` : "";
 }
 
 /**
@@ -644,20 +791,20 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "grep",
-      // 按正则在文件内容里搜索，返回「路径:行号: 内容」。
+      // 按字面文本在文件内容里搜索，返回「路径:行号: 内容」；不是正则。
       description:
-        "Search file contents with a JavaScript regular expression; returns one file:line: match line per hit.",
+        "Search file contents for a literal string (not a regular expression); returns one file:line: match line per hit.",
       parameters: {
         type: "object",
         properties: {
-          // 要搜索的正则表达式（区分大小写）。
-          pattern: { type: "string", description: "Regular expression to search for (case-sensitive)." },
+          // 要搜索的字面文本（区分大小写）；按普通字符串匹配，不做正则解释。
+          text: { type: "string", description: "Literal text to search for (case-sensitive; not a regular expression)." },
           // 从哪个目录开始搜；默认工作区根目录。
           path: { type: "string", description: "Directory to search, relative to the workspace root. Defaults to the root." },
         },
-        required: ["pattern"],
+        required: ["text"],
       },
-      run: async (args) => workspace.grep(String(args.pattern), String(args.path ?? ".")),
+      run: async (args) => workspace.grep(String(args.text), String(args.path ?? ".")),
     },
     {
       name: "ls",

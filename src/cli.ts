@@ -43,8 +43,13 @@ const usage = [
   "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, TOOL_TIMEOUT_MS",
 ].join("\n");
 
-/** 一次任务的全部工作。写在函数里，是为了让「失败怎么退出」只有一处。 */
-async function runTask(task: string): Promise<void> {
+/**
+ * 一次任务的全部工作。写在函数里，是为了让「失败怎么退出」只有一处。
+ *
+ * signal 是这次任务唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
+ * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
+ */
+async function runTask(task: string, signal: AbortSignal): Promise<void> {
   const apiKey = process.env.API_KEY ?? process.env.OPENAI_API_KEY ?? "";
   if (!apiKey) {
     // 中文对照：缺少 API_KEY（或 OPENAI_API_KEY）；参考 .env.example
@@ -59,7 +64,7 @@ async function runTask(task: string): Promise<void> {
   const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
 
   const tools = new ToolRegistry(
-    createWorkspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
+    createWorkspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs, signal })),
   );
 
   // 中文对照：工作区：… ／ 模型：… ／ 工具：…
@@ -68,9 +73,10 @@ async function runTask(task: string): Promise<void> {
   console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
 
   const agent = new Agent({
-    llm: new Llm({ baseUrl, apiKey, model }),
+    llm: new Llm({ baseUrl, apiKey, model, signal }),
     tools,
     maxSteps,
+    signal,
     // 打印每一步的工具调用，让你能「看见」循环在转。
     onToolResult: (call, result) => {
       const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
@@ -88,13 +94,21 @@ if (!task || task === "--help" || task === "-h") {
   // --help 是用户主动要看帮助，算成功；没给任务算用法错误。
   process.exitCode = task ? 0 : 1;
 } else {
+  // 取消链的起点：Ctrl-C / kill 只做一件事 —— abort 同一个 signal。
+  const controller = new AbortController();
+  for (const name of ["SIGINT", "SIGTERM"] as const) {
+    process.once(name, () => controller.abort(new Error(`received ${name}`)));
+  }
+
   try {
-    await runTask(task);
+    await runTask(task, controller.signal);
   } catch (error) {
-    // 中文对照：[agent] 致命错误：{原因}
-    console.error(`[agent] fatal: ${describeError(error)}`);
+    // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。
+    const cancelled = controller.signal.aborted;
+    // 中文对照：[agent] 已取消：{原因} ／ [agent] 致命错误：{原因}
+    console.error(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${describeError(error)}`);
     // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
     // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
-    process.exitCode = 1;
+    process.exitCode = cancelled ? 130 : 1;
   }
 }

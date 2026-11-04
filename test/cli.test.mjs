@@ -157,3 +157,44 @@ test("缺少 API Key：不联网，直接以退出码 1 结束", async () => {
   assert.equal(run.code, 1);
   assert.match(run.stderr, /missing API_KEY/);
 });
+
+test(
+  "SIGINT：取消正在等待的模型请求，退出码 130",
+  { skip: process.platform === "win32" && "Windows 上 node 不能向另一个进程投递 SIGINT" },
+  async () => {
+    // 这个端点永远不回响应：进程会停在等模型上，正好用来验证取消链。
+    let started;
+    const requested = new Promise((resolve) => {
+      started = resolve;
+    });
+    const server = createServer(() => started());
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+
+    const child = spawn(process.execPath, [cliPath, "do the task"], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        API_KEY: "test-key",
+        OPENAI_API_KEY: "",
+        BASE_URL: `http://127.0.0.1:${port}/v1`,
+        MODEL: "mock-model",
+      },
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+
+    try {
+      await requested;
+      child.kill("SIGINT");
+      const code = await new Promise((resolve) => child.on("close", resolve));
+
+      assert.equal(code, 130);
+      assert.match(stderr, /\[agent\] cancelled: received SIGINT/);
+    } finally {
+      child.kill();
+      server.closeAllConnections?.();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  },
+);
