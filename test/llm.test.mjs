@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
+import { ChatResponseError } from "../src/errors.ts";
 import { Llm } from "../src/llm.ts";
 
 /** 起一个只会回固定 JSON 的假端点。 */
@@ -59,20 +60,24 @@ async function expectReject(message, pattern, finishReason = "stop") {
 }
 
 test("chat：合法响应被归一化，只保留协议字段", async () => {
-  const { message } = await chatWith({
-    role: "assistant",
-    content: null,
-    reasoning_content: "先看文件。",
-    tool_calls: [
-      {
-        id: "c1",
-        type: "function",
-        function: { name: "read", arguments: '{"path":"a"}' },
-        extra: "厂商私有字段",
-      },
-    ],
-    annotations: [{ type: "url_citation", url: "https://example.com" }],
-  });
+  const { message } = await chatWith(
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "先看文件。",
+      tool_calls: [
+        {
+          id: "c1",
+          type: "function",
+          function: { name: "read", arguments: '{"path":"a"}' },
+          extra: "厂商私有字段",
+        },
+      ],
+      annotations: [{ type: "url_citation", url: "https://example.com" }],
+    },
+    // 带工具调用时，finish_reason 必须是 tool_calls；stop 会被一致性校验拒绝。
+    "tool_calls",
+  );
 
   assert.deepEqual(message, {
     role: "assistant",
@@ -139,6 +144,68 @@ test("chat：请求体带上单次输出上限 max_tokens", async () => {
 
 test("chat：message 是空对象时必须报错，不能变成空成功", async () => {
   await expectReject({}, /choices\[0\]\.message\.role must be "assistant"/);
+});
+
+test("chat：finish_reason=stop 却带工具调用必须拒绝", async () => {
+  await expectReject(
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: "{}" } }],
+    },
+    /finish_reason "stop" must not include tool_calls/,
+    "stop",
+  );
+});
+
+test("chat：finish_reason=tool_calls 却没有工具调用必须拒绝", async () => {
+  await expectReject(
+    { role: "assistant", content: "done", tool_calls: [] },
+    /finish_reason "tool_calls" requires a non-empty tool_calls array/,
+    "tool_calls",
+  );
+});
+
+test("chat：同一批工具调用出现重复 id 必须拒绝", async () => {
+  await expectReject(
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "same", type: "function", function: { name: "read", arguments: "{}" } },
+        { id: "same", type: "function", function: { name: "read", arguments: "{}" } },
+      ],
+    },
+    /tool_calls\[1\]\.id duplicates "same"/,
+    "tool_calls",
+  );
+});
+
+test("chat：stop 带空 tool_calls 数组按「没有工具调用」处理", async () => {
+  const { message } = await chatWith({ role: "assistant", content: "ok", tool_calls: [] }, "stop");
+
+  assert.equal(message.tool_calls, undefined);
+});
+
+test("chat：响应形状不合法时，已返回的 usage 随错误带出", async () => {
+  const payload = {
+    choices: [{ index: 0, message: {}, finish_reason: "stop" }],
+    usage: { prompt_tokens: 9, completion_tokens: 1, total_tokens: 10 },
+  };
+  const server = await respondWith(payload);
+  try {
+    await assert.rejects(
+      () => clientFor(server.url).chat([], []),
+      (error) => {
+        assert.ok(error instanceof ChatResponseError);
+        assert.deepEqual(error.usage, { prompt_tokens: 9, completion_tokens: 1, total_tokens: 10 });
+        assert.match(error.message, /choices\[0\]\.message\.role must be "assistant"/);
+        return true;
+      },
+    );
+  } finally {
+    await server.close();
+  }
 });
 
 test("chat：content 类型不对必须报错", async () => {

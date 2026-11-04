@@ -7,6 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
+import { ChatResponseError } from "../src/errors.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 import { callTool, createScriptedChat, echoTool, finalReply } from "./support/harness.mjs";
 
@@ -329,6 +330,7 @@ test("token 统计：累计 prompt / completion / total 与请求数", async () 
     requests: 2,
     toolCalls: 1,
     usage: { promptTokens: 150, completionTokens: 15, totalTokens: 165, reported: 2, unknown: 0 },
+    tokenBudget: { limit: undefined, exceeded: false },
   });
 });
 
@@ -361,7 +363,7 @@ test("token 预算：已知合计达到上限时不再发请求，也不执行�
 
   await assert.rejects(
     () => agent.run("task"),
-    /token budget 100 reached: 100 tokens counted over 1 response\(s\) with usage/,
+    /token budget 100 reached: 100 tokens counted over 1 request\(s\) with usage/,
   );
   assert.equal(chat.requests.length, 1);
   const toolMessage = agent.transcript.filter((message) => message.role === "tool").at(-1);
@@ -380,9 +382,64 @@ test("token 预算：usage 未知时只声称「已统计到多少」", async ()
 
   await assert.rejects(
     () => agent.run("task"),
-    /token budget 100 reached: at least 100 tokens counted over 1 response\(s\) with usage; 1 response\(s\) reported no usage/,
+    /token budget 100 reached: at least 100 tokens counted over 1 request\(s\) with usage; 1 request\(s\) have no usage/,
   );
   assert.equal(agent.stats.usage.unknown, 1);
+  assert.equal(agent.stats.tokenBudget.exceeded, true);
+});
+
+test("token 预算：软预算 —— 最终答复顶穿上限时仍返回成功，但状态可见", async () => {
+  const chat = createScriptedChat([
+    {
+      message: finalReply("done"),
+      usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 },
+    },
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]), maxTotalTokens: 100 });
+
+  const reply = await agent.run("task");
+
+  assert.equal(reply.content, "done");
+  assert.equal(chat.requests.length, 1);
+  assert.deepEqual(agent.stats.tokenBudget, { limit: 100, exceeded: true });
+});
+
+test("token 统计：请求失败但带回 usage 时也要记账", async () => {
+  const llm = {
+    async chat() {
+      throw new ChatResponseError("invalid response", {
+        prompt_tokens: 7,
+        completion_tokens: 3,
+        total_tokens: 10,
+      });
+    },
+  };
+  const agent = new Agent({ llm, tools: new ToolRegistry([]) });
+
+  await assert.rejects(() => agent.run("task"), /invalid response/);
+  assert.equal(agent.stats.requests, 1);
+  assert.deepEqual(agent.stats.usage, {
+    promptTokens: 7,
+    completionTokens: 3,
+    totalTokens: 10,
+    reported: 1,
+    unknown: 0,
+  });
+});
+
+test("token 统计：请求失败且没有 usage 时记为未知，不丢账", async () => {
+  const llm = {
+    async chat() {
+      throw new Error("network down");
+    },
+  };
+  const agent = new Agent({ llm, tools: new ToolRegistry([]) });
+
+  await assert.rejects(() => agent.run("task"), /network down/);
+  assert.equal(agent.stats.requests, 1);
+  assert.equal(agent.stats.usage.reported, 0);
+  assert.equal(agent.stats.usage.unknown, 1);
+  assert.equal(agent.stats.usage.totalTokens, 0);
 });
 
 test("系统提示词：关键歧义可以问，禁止编造验证结果", () => {

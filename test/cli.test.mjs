@@ -31,7 +31,14 @@ async function startMock(script) {
       requests.push(JSON.parse(body));
       const message = script[Math.min(turn++, script.length - 1)];
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ choices: [{ index: 0, message, finish_reason: "stop" }] }));
+      response.end(
+        JSON.stringify({
+          choices: [
+            // finish_reason 必须和 tool_calls 一致：带调用就是 tool_calls，否则是 stop。
+            { index: 0, message, finish_reason: message.tool_calls?.length ? "tool_calls" : "stop" },
+          ],
+        }),
+      );
     });
   });
 
@@ -98,7 +105,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
 
       // mock 不回 usage：成本摘要必须写 at least，不能把「已统计到 0」说成「只花了 0」。
       assert.match(run.stdout, /\[usage\] requests=3 tool_calls=2 tokens=at least 0/);
-      assert.match(run.stdout, /3 response\(s\) without usage/);
+      assert.match(run.stdout, /3 request\(s\) without usage/);
 
       // 第三次请求：assistant 与 tool 严格交替，结果靠 tool_call_id 配对
       const third = mock.requests[2].messages;

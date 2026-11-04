@@ -61,8 +61,12 @@ _Avoid_: deadline, budget, timeout
 _Avoid_: rate limit, quota
 
 **Token usage**:
-端点返回的 `usage`：prompt tokens、completion tokens、total tokens。端点没给就是**未知**（`undefined`），不是 0；未知时累计值只是下限，不能声称「实际 token 已被精确限制」。
+端点返回的 `usage`：prompt tokens、completion tokens、total tokens。端点没给、或者请求中途失败，成本就是**未知**，不是 0；未知时累计值只是下限，不能声称「实际 token 已被精确限制」。
 _Avoid_: cost（成本是 usage 乘以单价，本仓库不猜单价）
+
+**Token budget**:
+一次 Run 的累计 token **软上限**：达到后不再发新请求、不再执行没有后续请求验证的工具。把预算顶穿的那条回复仍然照记；如果它正好是最终答复，Run 可以成功返回，超限状态由 `stats.tokenBudget.exceeded` 暴露，由调用方决定算不算失败。
+_Avoid_: hard cap, quota（它不保证总量不超过上限）
 
 **Chat client**:
 Kernel 向谁要下一条 Message 和这一轮的 Token usage：生产实现 POST 一个 OpenAI 兼容端点，测试实现按脚本回放。
@@ -74,7 +78,7 @@ _Avoid_: LLM, model, provider
 - **Transcript** 是 **Message** 的序列；每个 **Step** 追加一条 assistant **Message**，它可能携带多个 **Tool call**。
 - 每个 **Tool call** 恰好由一条 **Tool result** **Message** 答复，两者靠 id 配对；没有执行的调用也留一条 `not run` 结果，配对不为预算或取消让路。
 - **Tool registry** 持有 N 个 **Tool**，这些 **Tool** 只作用于一个 **Workspace**。
-- **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token usage** 达到预算时 Run 同样停手。
+- **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一次 **Run**；第二次调用直接失败，不复用 **Transcript**。
 
 ## Flagged ambiguities

@@ -108,6 +108,8 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 已知边界：`glob` 只认 `*`、`**`、`?` 三种通配，`{}`、`[]` 按字面匹配（这是刻意的，见下）；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中，单次最多访问 20 000 个目录项，符号链接不跟随；`read` 最多读 32 KB，`grep` 按字节读到 1 MB 为止、超出的文件跳过，`edit` 不接受超过 2 MB 的文件（读不全就拒绝，绝不拿半截内容覆盖），`ls` 最多展示 500 条、扫到 20 000 项就停。目录用 `opendir` 边读边收，预算限制的是真正读了多少项，而不是 `readdir` 之后切了多少项；所有截断、跳过、没搜完的统计都保留在结果末尾，不会被结果自己的长度上限吃掉。扫描提前停手时会明说 `results may be incomplete`，不会声称拿到了全局排序结果。
 
+`glob` / `grep` 达到 200 条命中上限时，返回的是**遍历顺序里先遇到的那 200 条**；排序只保证这 200 条内部有序，不保证是全局字典序的前 200 条。要拿稳定 Top N 就得扫完整棵树，那会牺牲扫描预算，所以第一阶段先保留现状并明确标注不完整。已记录为后续优化项。
+
 `grep` 是**字面字符串**搜索，不是正则。模型给的正则可能带灾难性回溯（`(a+)+$`），而匹配跑在主线程上，一条这样的模式就能把整个 agent 挂住；第一阶段先放弃正则能力，换来不可能被输入卡死。要恢复正则，得先把匹配放进 worker 并带可中断超时，而不是把 `new RegExp` 加回来。这个取舍记在 [ADR-0009](./docs/adr/0009-grep-is-literal.md)。
 
 还有一条更根本的：**`shell` 不受路径守卫约束**——命令里写 `cd ..`、`cat ../x` 照样能出去，进程权限跟启动它的人一样。这套路径守卫是「防模型手滑」的边界，不是安全边界；真隔离得靠容器、独立用户或只读挂载。见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)。
@@ -122,7 +124,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `WORKDIR` | 当前目录 | 文件工具的根目录（不是安全边界） |
 | `MAX_STEPS` | `30` | 最多请求模型多少次 |
 | `MAX_TOOL_CALLS` | `60` | 一次任务最多真正执行多少次工具调用 |
-| `MAX_TOTAL_TOKENS` | `500000` | 任务累计 token 预算；只统计有 `usage` 的部分，`0` 表示不限制 |
+| `MAX_TOTAL_TOKENS` | `500000` | 任务累计 token 预算（软上限：到线后不再发请求，已发生的费用照记）；`0` 表示不限制 |
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应最多生成多少 token |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
 
@@ -133,16 +135,17 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-124 个用例，分六层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+134 个用例，分七层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、生命周期、取消、token 统计 |
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 字面匹配、取消进程树 |
-| `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、usage 保留、`max_tokens`、取消 |
+| `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消 |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
+| `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 
 ## 评测
 
@@ -164,7 +167,7 @@ npm run eval:check      # 自检：不调用模型，验证每个任务的初始
 
 关于耗时与成本：`hy3` 单任务平均约 12.5 秒、4.8 次模型请求，其中**请求与请求之间的等待几乎全是模型往返**，工具执行加内核开销占比很小。省时间主要靠任务之间并发（默认 `--jobs 4`，20 个任务墙钟约 83 秒）；省钱的杠杆是选模型、少一次冗余验证（改提示词，用这个评测集判分）和收紧 `MAX_TOTAL_TOKENS` / `MAX_OUTPUT_TOKENS`。
 
-`eval:check` 现在把三类结果分开：`ok`（预期断言失败）、`BROKEN`（初始状态就通过，任务什么都没测）、`INFRA`（检查器加载失败或抛非断言错误）。**只有 `ok` 才算自检通过** —— 评测最容易错的地方是评测本身。
+`eval:check` 现在把三类结果分开：`ok`（预期断言失败）、`BROKEN`（初始状态就通过，任务什么都没测）、`INFRA`（检查器加载失败或抛非断言错误）。**只有 `ok` 才算自检通过** —— 评测最容易错的地方是评测本身。真实评测也多了一道轮级检查：检查器里没 await 的 promise 如果在结算窗口内变成未处理 rejection，整轮判为基础设施失败，即使任务表全绿。
 
 ```bash
 npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、墙钟的中位数
