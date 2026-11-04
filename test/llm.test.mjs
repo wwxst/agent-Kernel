@@ -1,8 +1,8 @@
 /**
  * Llm 的单元测试：网络响应是外部输入，这里钉死「读不懂的响应必须报错」。
  *
- * 最重要的用例是空 message：以前它会被当成一条正常回复（content 变空串、没有 tool_calls），
- * Agent 以为任务完成了 —— 错误响应被当成成功响应，正是 §11 要治理的那类问题。
+ * 最要紧的两类：空 message（以前会被当成正常回复，CLI 空着退出 0），
+ * 以及 finish_reason = length / content_filter（半截输出被当成了完整答案）。
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -36,103 +36,108 @@ function clientFor(url) {
   return new Llm({ baseUrl: url, apiKey: "test-key", model: "mock-model" });
 }
 
-/** 起服务、跑用例、关服务。 */
-async function withEndpoint(payload, run) {
+/** 用一条 message（外加默认的 finish_reason）跑一次 chat。 */
+async function chatWith(message, finishReason = "stop") {
+  const payload = { choices: [{ index: 0, message, finish_reason: finishReason }] };
   const server = await respondWith(payload);
   try {
-    return await run(server.url);
+    return await clientFor(server.url).chat([], []);
+  } finally {
+    await server.close();
+  }
+}
+
+/** 同上，但期望抛错。 */
+async function expectReject(message, pattern, finishReason = "stop") {
+  const payload = { choices: [{ index: 0, message, finish_reason: finishReason }] };
+  const server = await respondWith(payload);
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), pattern);
   } finally {
     await server.close();
   }
 }
 
 test("chat：合法响应被归一化，只保留协议字段", async () => {
-  const payload = {
-    choices: [
+  const message = await chatWith({
+    role: "assistant",
+    content: null,
+    reasoning_content: "先看文件。",
+    tool_calls: [
       {
-        message: {
-          role: "assistant",
-          content: null,
-          reasoning_content: "先看文件。",
-          tool_calls: [
-            {
-              id: "c1",
-              type: "function",
-              function: { name: "read", arguments: '{"path":"a"}' },
-              extra: "厂商私有字段",
-            },
-          ],
-          annotations: [{ type: "url_citation", url: "https://example.com" }],
-        },
+        id: "c1",
+        type: "function",
+        function: { name: "read", arguments: '{"path":"a"}' },
+        extra: "厂商私有字段",
       },
     ],
-  };
+    annotations: [{ type: "url_citation", url: "https://example.com" }],
+  });
 
-  await withEndpoint(payload, async (url) => {
-    const message = await clientFor(url).chat([], []);
-
-    assert.deepEqual(message, {
-      role: "assistant",
-      content: "",
-      tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }],
-      reasoning_content: "先看文件。",
-    });
+  assert.deepEqual(message, {
+    role: "assistant",
+    content: "",
+    tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }],
+    reasoning_content: "先看文件。",
   });
 });
 
 test("chat：message 是空对象时必须报错，不能变成空成功", async () => {
-  await withEndpoint({ choices: [{ message: {} }] }, async (url) => {
-    await assert.rejects(
-      () => clientFor(url).chat([], []),
-      /LLM response is invalid: choices\[0\]\.message\.role must be "assistant"/,
-    );
-  });
-});
-
-test("chat：choices 缺失必须报错", async () => {
-  await withEndpoint({}, async (url) => {
-    await assert.rejects(() => clientFor(url).chat([], []), /choices must be a non-empty array/);
-  });
+  await expectReject({}, /choices\[0\]\.message\.role must be "assistant"/);
 });
 
 test("chat：content 类型不对必须报错", async () => {
-  await withEndpoint({ choices: [{ message: { role: "assistant", content: 42 } }] }, async (url) => {
-    await assert.rejects(() => clientFor(url).chat([], []), /content must be a string or null/);
-  });
+  await expectReject({ role: "assistant", content: 42 }, /content must be a string or null/);
 });
 
 test("chat：content 字段缺失也必须报错（和 null 不是一回事）", async () => {
-  await withEndpoint({ choices: [{ message: { role: "assistant" } }] }, async (url) => {
-    await assert.rejects(() => clientFor(url).chat([], []), /content must be a string or null/);
-  });
+  await expectReject({ role: "assistant" }, /content must be a string or null/);
 });
 
 test("chat：tool_calls 不是数组必须报错", async () => {
-  await withEndpoint({ choices: [{ message: { role: "assistant", content: "", tool_calls: {} } }] }, async (url) => {
-    await assert.rejects(() => clientFor(url).chat([], []), /tool_calls must be an array/);
-  });
+  await expectReject({ role: "assistant", content: "", tool_calls: {} }, /tool_calls must be an array/);
 });
 
 test("chat：tool_call 结构不完整必须报错", async () => {
-  const payload = {
-    choices: [
-      {
-        message: {
-          role: "assistant",
-          content: null,
-          tool_calls: [{ id: "c1", type: "function", function: { name: "read" } }],
-        },
-      },
-    ],
-  };
-
-  await withEndpoint(payload, async (url) => {
-    await assert.rejects(() => clientFor(url).chat([], []), /tool_calls\[0\]\.function\.arguments must be a string/);
-  });
+  await expectReject(
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "c1", type: "function", function: { name: "read" } }],
+    },
+    /tool_calls\[0\]\.function\.arguments must be a string/,
+  );
 });
 
 test("chat：reasoning_content 不是字符串必须报错", async () => {
-  await withEndpoint({ choices: [{ message: { role: "assistant", content: "", reasoning_content: 1 } }] }, async (url) => {
-    await assert.rejects(() => clientFor(url).chat([], []), /reasoning_content must be a string/);
-  });
+  await expectReject(
+    { role: "assistant", content: "", reasoning_content: 1 },
+    /reasoning_content must be a string/,
+  );
+});
+
+test("chat：finish_reason = length 必须报错（输出被截断）", async () => {
+  await expectReject(
+    { role: "assistant", content: "写了一半" },
+    /finish_reason "length": the response was truncated/,
+    "length",
+  );
+});
+
+test("chat：finish_reason = content_filter 必须报错", async () => {
+  await expectReject(
+    { role: "assistant", content: null },
+    /finish_reason "content_filter": the response was filtered/,
+    "content_filter",
+  );
+});
+
+test("chat：缺 finish_reason 也要报错（不能靠猜）", async () => {
+  const payload = { choices: [{ index: 0, message: { role: "assistant", content: "ok" } }] };
+  const server = await respondWith(payload);
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), /unexpected finish_reason undefined/);
+  } finally {
+    await server.close();
+  }
 });

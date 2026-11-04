@@ -96,13 +96,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * 同时也不原样转发：只挑 role/content/tool_calls/tool_call_id/reasoning_content，
  * 嵌套的 tool_call 也重建一遍，厂商私有字段进不了下一轮请求。
+ *
+ * finish_reason 也要看：`length` 说明这一轮被截断，`content_filter` 说明内容被拦了。
+ * 两种情况都可能带着「看起来正常」的 message，放过去就是拿半截输出当真结果。
  */
 function readMessage(payload: unknown): Message {
   const choices = isRecord(payload) ? payload.choices : undefined;
   if (!Array.isArray(choices) || choices.length === 0) throw invalid("choices must be a non-empty array");
 
   const first = choices[0];
-  const candidate = isRecord(first) ? first.message : undefined;
+  if (!isRecord(first)) throw invalid("choices[0] must be an object");
+  readFinishReason(first.finish_reason);
+
+  const candidate = first.message;
   if (!isRecord(candidate)) throw invalid("choices[0].message must be an object");
 
   if (candidate.role !== "assistant") {
@@ -126,6 +132,16 @@ function readMessage(payload: unknown): Message {
   }
 
   return message;
+}
+
+/** 只有这两种 finish_reason 算「这一轮正常结束」。 */
+function readFinishReason(value: unknown): void {
+  if (value === "stop" || value === "tool_calls") return;
+  // 中文对照：这一轮被截断了（达到输出上限），内容不完整。
+  if (value === "length") throw invalid('finish_reason "length": the response was truncated (max output tokens reached)');
+  // 中文对照：这一轮的内容被安全过滤拦下了。
+  if (value === "content_filter") throw invalid('finish_reason "content_filter": the response was filtered');
+  throw invalid(`unexpected finish_reason ${JSON.stringify(value)}`);
 }
 
 /** 逐个校验 tool_call，并重建一份只含 id / type / function.name / function.arguments 的对象。 */

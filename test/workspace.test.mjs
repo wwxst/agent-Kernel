@@ -384,6 +384,33 @@ test("grep：超大文件直接跳过，并在结果里说明", async () => {
   });
 });
 
+test("grep：扫描预算用尽时说明结果不完整", async () => {
+  await withWorkspace(async (root) => {
+    for (let index = 0; index < 20; index++) {
+      await writeFile(path.join(root, `f${index}.txt`), "nothing\n");
+    }
+    // 预算只够看 5 个目录项：要停下来，并且把「没搜完」说出去。
+    const workspace = new Workspace({ root, scanLimit: 5 });
+
+    const result = await workspace.grep("needle");
+
+    assert.match(result, /stopped after 5 entries scanned/);
+  });
+});
+
+test("glob：扫描预算用尽时同样要说明", async () => {
+  await withWorkspace(async (root) => {
+    for (let index = 0; index < 20; index++) {
+      await writeFile(path.join(root, `f${index}.txt`), "");
+    }
+    const workspace = new Workspace({ root, scanLimit: 5 });
+
+    const result = await workspace.glob("**/*.txt");
+
+    assert.match(result, /stopped after 5 entries scanned/);
+  });
+});
+
 test("edit：重叠的命中也算多处，不能被当成唯一", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
