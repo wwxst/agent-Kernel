@@ -21,9 +21,9 @@ npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 
 | 文件 | 一句话 |
 | --- | --- |
-| `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolSpec`、`ChatClient`。不依赖任何人 |
-| `src/agent.ts` | 内核：循环、消息顺序、步数上限。只认 `ChatClient` 和 `Toolbelt` |
-| `src/toolbelt.ts` | 工具箱：按名字找工具、解析参数、把失败折成 `ERROR` 文本 |
+| `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
+| `src/agent.ts` | 内核：循环、消息顺序、步数上限。只认 `ChatClient` 和 `ToolRegistry` |
+| `src/tool-registry.ts` | 工具注册表：按名字找工具、解析参数、把失败折成 `ERROR` 文本 |
 | `src/workspace.ts` | 工作区：沙箱内的读、写、列目录、跑命令，外加路径守卫与输出截断 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点 |
 | `src/cli.ts` | 组装层：环境变量 → 对象图 → 跑一次任务 |
@@ -33,20 +33,20 @@ npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 
 ## 核心循环
 
-`src/agent.ts` 里的 `Agent.run()`，对应设计稿里的伪代码：
+`src/agent.ts` 里的 `Agent.run()`，对应设计稿里的伪代码。它就是 **agent loop** —— 教科书里那个 `while (true)` 的原型，外加一道步数闸门：
 
 ```ts
 this.messages.push({ role: "user", content: task });
 
 for (let step = 1; step <= this.maxSteps; step++) {
-  const response = await this.llm.chat(this.messages, this.toolbelt.definitions);
+  const response = await this.llm.chat(this.messages, this.tools.definitions);
   this.messages.push(response);
 
   const calls = response.tool_calls ?? [];
   if (calls.length === 0) return response;
 
   for (const call of calls) {
-    const result = await this.toolbelt.dispatch(call);
+    const result = await this.tools.execute(call);
     this.messages.push(createToolResult(call, result));
   }
 }
@@ -67,7 +67,7 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 | 设计稿 | 本实现 |
 | --- | --- |
 | `llm.chat(messages, tools)` | `Llm.chat()`，POST `{BASE_URL}/chat/completions`（OpenAI 兼容） |
-| `executeTool(call)` | `Toolbelt.dispatch(call)`：工具表在对象里，不再是到处传的全局变量 |
+| `executeTool(call)` | `ToolRegistry.execute(call)`：工具表在对象里，不再是到处传的全局变量 |
 | `createToolResult(call, result)` | `{ role: "tool", tool_call_id: call.id, content: result }` |
 | `while (true)` | `for` + `maxSteps` |
 
@@ -75,16 +75,20 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 
 ## 四个工具
 
-| 工具 | 说明 |
-| --- | --- |
-| `read_file` | 读 UTF-8 文本，超过 8k 字符截断 |
-| `write_file` | 创建/覆盖文件，自动建父目录 |
-| `list_dir` | 列目录：类型、字节数、名称 |
-| `run_command` | 在沙箱根目录跑 shell，超时强杀，输出截断 |
+工具名是模型看到的接口，所以用的是 agent 生态里的通用叫法（`read` / `write` / `ls` / `shell`），不是本仓库方法名的直译：
+
+| 工具 | 说明 | 对应工作区方法 |
+| --- | --- | --- |
+| `read` | 读 UTF-8 文本，超过 8k 字符截断 | `Workspace.read` |
+| `write` | 创建/覆盖文件，自动建父目录 | `Workspace.write` |
+| `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
+| `shell` | 在沙箱根目录跑 shell，超时强杀，输出截断 | `Workspace.run` |
+
+叫 `shell` 而不是 `bash`：实现是 `spawn(command, { shell: true })`，真正由哪个 shell 解释取决于平台，叫 `bash` 就是承诺了没做到的事。这个取舍记在 [ADR-0005](./docs/adr/0005-name-tools-after-the-ecosystem.md)。
 
 路径统一过工作区的路径守卫：`../`、绝对路径、跨盘符都会被拒绝，错误变成 `ERROR: path escapes workspace` 回灌给模型。
 
-已知边界：不处理符号链接指向工作区外的情况；`run_command` 超时只杀外层 shell，Windows 上孙进程可能残留。
+已知边界：不处理符号链接指向工作区外的情况；`shell` 超时只杀外层 shell，Windows 上孙进程可能残留。
 
 ## 配置
 
@@ -109,7 +113,7 @@ npm run check       # typecheck + 全部测试
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、步数上限、错误回灌 |
-| `test/toolbelt.test.mjs` | `Toolbelt.dispatch`：未知工具、坏 JSON、工具抛错 |
+| `test/tool-registry.test.mjs` | `ToolRegistry.execute`：未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 路径越界、截断、exit code |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状 |
 

@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
-import { Toolbelt } from "../src/toolbelt.ts";
+import { ToolRegistry } from "../src/tool-registry.ts";
 import { callTool, createScriptedChat, echoTool, finalReply } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */
@@ -20,7 +20,7 @@ test("一轮工具调用：结果在下一轮请求前入栈，且带对了 tool
     callTool("c1", "echo", { value: "a" }),
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, toolbelt: new Toolbelt([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
 
   const reply = await agent.run("do it");
 
@@ -52,7 +52,7 @@ test("一轮多个工具调用：按模型给出的顺序串行执行", async ()
     },
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, toolbelt: new Toolbelt([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
 
   await agent.run("do it");
 
@@ -71,7 +71,7 @@ test("工具失败不会打断循环：ERROR 文本进历史，模型继续收�
     },
   };
   const chat = createScriptedChat([callTool("c1", "boom", {}), finalReply("recovered")]);
-  const agent = new Agent({ llm: chat, toolbelt: new Toolbelt([broken]) });
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([broken]) });
 
   const reply = await agent.run("do it");
 
@@ -82,7 +82,7 @@ test("工具失败不会打断循环：ERROR 文本进历史，模型继续收�
 
 test("步数上限：模型一直要调工具时抛错，且只请求了 maxSteps 次", async () => {
   const chat = createScriptedChat([callTool("loop", "echo", { value: "x" })]);
-  const agent = new Agent({ llm: chat, toolbelt: new Toolbelt([echoTool()]), maxSteps: 2 });
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxSteps: 2 });
 
   await assert.rejects(() => agent.run("never finishes"), /step limit 2 reached/);
   assert.equal(chat.requests.length, 2);
@@ -92,7 +92,7 @@ test("步数上限：模型一直要调工具时抛错，且只请求了 maxStep
 
 test("没有工具调用就立刻收尾，不会多发请求", async () => {
   const chat = createScriptedChat([finalReply("no tools needed")]);
-  const agent = new Agent({ llm: chat, toolbelt: new Toolbelt([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
 
   const reply = await agent.run("just answer");
 
@@ -105,7 +105,7 @@ test("onToolResult 对每条工具结果各回调一次", async () => {
   const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
   const agent = new Agent({
     llm: chat,
-    toolbelt: new Toolbelt([echoTool()]),
+    tools: new ToolRegistry([echoTool()]),
     onToolResult: (call, result) => seen.push([call.id, result]),
   });
 
@@ -116,17 +116,17 @@ test("onToolResult 对每条工具结果各回调一次", async () => {
 
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {
   const defaults = createScriptedChat([finalReply("ok")]);
-  await new Agent({ llm: defaults, toolbelt: new Toolbelt([]) }).run("task");
+  await new Agent({ llm: defaults, tools: new ToolRegistry([]) }).run("task");
   assert.equal(defaults.requests[0].messages[0].content, DEFAULT_SYSTEM_PROMPT);
 
   const custom = createScriptedChat([finalReply("ok")]);
-  await new Agent({ llm: custom, toolbelt: new Toolbelt([]), systemPrompt: "be terse" }).run("task");
+  await new Agent({ llm: custom, tools: new ToolRegistry([]), systemPrompt: "be terse" }).run("task");
   assert.equal(custom.requests[0].messages[0].content, "be terse");
 });
 
 test("发给模型的工具清单只有说明书，没有 run", async () => {
   const chat = createScriptedChat([finalReply("ok")]);
-  await new Agent({ llm: chat, toolbelt: new Toolbelt([echoTool()]) }).run("task");
+  await new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) }).run("task");
 
   const [spec] = chat.requests[0].tools;
   assert.equal(spec.name, "echo");

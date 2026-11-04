@@ -18,7 +18,7 @@ test("write 后 read 能拿回原文，父目录自动创建", async () => {
   });
 });
 
-test("read 不存在的文件抛错（折成 ERROR 是 Toolbelt 的事）", async () => {
+test("read 不存在的文件抛错（折成 ERROR 是 ToolRegistry 的事）", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
 

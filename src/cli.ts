@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 命令行入口：读环境变量 → 组装 Workspace / Toolbelt / Agent → 跑一次任务 → 打印最终回复。
+ * 命令行入口：读环境变量 → 组装 Workspace / ToolRegistry / Agent → 跑一次任务 → 打印最终回复。
  *
  * 用法：
  *   npm run agent -- "给这个仓库加一个 /health 接口并写测试"
@@ -19,8 +19,8 @@
 import * as path from "node:path";
 import { Agent } from "./agent.ts";
 import { Llm } from "./llm.ts";
-import { Toolbelt } from "./toolbelt.ts";
-import { Workspace, workspaceTools } from "./workspace.ts";
+import { ToolRegistry } from "./tool-registry.ts";
+import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
 /** 读一个「正整数」环境变量；写错就立刻报错，别带着 NaN 跑一半才炸。 */
 function positiveIntFromEnv(name: string, fallback: number): number {
@@ -60,17 +60,17 @@ const root = path.resolve(process.env.WORKDIR ?? process.cwd());
 const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
 const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
 
-const toolbelt = new Toolbelt(
-  workspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
+const tools = new ToolRegistry(
+  createWorkspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
 );
 
 console.log(`workspace: ${root}`);
 console.log(`model:     ${model}`);
-console.log(`tools:     ${toolbelt.definitions.map((tool) => tool.name).join(", ")}\n`);
+console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
 
 const agent = new Agent({
   llm: new Llm({ baseUrl, apiKey, model }),
-  toolbelt,
+  tools,
   maxSteps,
   // 打印每一步的工具调用，让你能「看见」循环在转。
   onToolResult: (call, result) => {
