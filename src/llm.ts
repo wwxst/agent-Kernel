@@ -82,8 +82,16 @@ export class Llm implements ChatClient {
       throw new Error("LLM response is missing choices[0].message");
     }
 
-    // 统一把 content 归一成字符串：协议允许 null（纯工具调用时就是 null），
-    // 下游不想每次都判空。
-    return { ...message, content: message.content ?? "" };
+    // 只挑协议认识的字段回填。
+    //
+    // 不能整体展开：响应里可能带着各家厂商的额外字段（refusal、annotations……），
+    // 原样转发到下一轮请求，严格一点的 OpenAI 兼容端点会直接 400。
+    // 反过来也不能只挑 role/content：带 tools 时 DeepSeek 要求把 reasoning_content 原样回传。
+    const normalized: Message = { role: message.role, content: message.content ?? "" };
+    if (message.tool_calls !== undefined) normalized.tool_calls = message.tool_calls;
+    if (message.tool_call_id !== undefined) normalized.tool_call_id = message.tool_call_id;
+    if (message.reasoning_content !== undefined) normalized.reasoning_content = message.reasoning_content;
+
+    return normalized;
   }
 }
