@@ -138,7 +138,7 @@ npm run check       # typecheck + 全部测试
 
 ## 评测
 
-单元测试证明「代码没坏」，评测证明「agent 还能干活」。`eval/` 下放了 10 个真实小任务——修 bug、改名、加路由、抽重复、补文档、删死代码——用真实模型跑一遍，记录成功率、步数和耗时：
+单元测试证明「代码没坏」，评测证明「agent 还能干活」。`eval/` 下放了 20 个真实小任务——修 bug、改名、加路由、抽重复、补文档、删死代码、加校验、回调改 Promise、修正则——用真实模型跑一遍，记录成功率、步数和耗时：
 
 ```bash
 npm run eval            # 需要 .env，会真的调用模型、真的花钱
@@ -146,7 +146,9 @@ npm run eval -- rename  # 只跑名字里带 rename 的
 npm run eval:check      # 自检：不调用模型，验证每个任务的初始状态确实会失败
 ```
 
-首次跑（2026-11-04，DeepSeek-V4.1-Flash）：**9/10 通过，平均 7.7 步，合计约 91 秒**。失败的那条是检查写得太严（只认 `npm run test`，模型写的是 `` `test` ``），属于评测自身的 bug，已放宽；不是 agent 做错了。
+基线（2026-11-04，DeepSeek-V4.1-Flash）：**19/20 通过，平均 8.2 步，合计 205 秒**。唯一失败的是 `13-callback-to-promise`，原因是检查里断言「退出码 1」的写法在 Windows 的 `execFile` 错误对象上不成立——是评测自己的 bug；修好后单独重跑通过。另一条 `09-update-readme` 早先也栽在同一类问题上（只认 `npm run test`，模型写 `npm test`）。
+
+**这两次失败都是检查写错，不是 agent 做错**——这本身就说明：评测的第一批「坏用例」往往是检查器，所以才有 `npm run eval:check`，以及「检查只断言行为、不断言写法」那条规矩。
 
 结果同时写进 `eval/results/`（不进 git）。评测**不进 CI**：它要真实 Key、会花钱、而且本身非确定性——CI 只跑确定性的 `npm run check`。任务怎么写、三条规矩是什么，见 [eval/README.md](./eval/README.md)。
 
