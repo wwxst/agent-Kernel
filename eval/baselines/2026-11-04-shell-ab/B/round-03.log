@@ -1,0 +1,11 @@
+﻿model:  hy3
+commit: e32b766f3dfe4447107531324ef14dcea31d38b2
+prompt: eval/prompts/simple-shell.txt
+shell:  default
+tasks:  3  并发: 3
+
+  PASS  08-extract-duplication         4 req    4 tool    10.2s    5054 tok
+  PASS  20-fix-email-regex             5 req    4 tool    23.6s    6947 tok
+  PASS  13-callback-to-promise        16 req   17 tool    62.8s   36979 tok
+
+3/3 通过 · 25 次模型请求 · 25 次工具调用 · 48980 tokens · 墙钟 62.9s（任务耗时合计 96.6s）

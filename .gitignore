@@ -1,6 +1,8 @@
 node_modules/
 .env
 *.log
+# 实验归档里的运行日志是证据的一部分，显式保留。
+!eval/baselines/**/*.log
 
 # 评测结果：每次跑都会生成，留一份就够了，不进 git
 eval/results/

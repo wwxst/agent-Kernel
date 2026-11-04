@@ -1,0 +1,28 @@
+﻿model:  hy3
+commit: e32b766f3dfe4447107531324ef14dcea31d38b2
+prompt: default
+shell:  default
+tasks:  20  并发: 4
+
+  PASS  04-create-doc                  3 req    4 tool      10s    3680 tok
+  PASS  05-extract-constant            3 req    2 tool    11.2s    3918 tok
+  PASS  01-add-health-route            3 req    2 tool    29.8s    3590 tok
+  PASS  02-fix-failing-test            4 req    4 tool    31.9s    5116 tok
+  PASS  03-rename-function             5 req    8 tool    37.4s    6769 tok
+  PASS  07-add-quiet-flag              4 req    3 tool    11.3s    4648 tok
+  PASS  08-extract-duplication         4 req    4 tool    11.5s    5008 tok
+  PASS  09-update-readme               3 req    3 tool     8.9s    3575 tok
+  PASS  06-guard-missing-file         10 req   10 tool    32.4s   14669 tok
+  PASS  11-fix-slice-boundary          4 req    3 tool    10.9s    4658 tok
+  PASS  12-add-input-validation        4 req    3 tool     9.8s    4601 tok
+  PASS  10-delete-dead-code            7 req   11 tool    21.2s    9651 tok
+  PASS  14-fix-sort-order              4 req    3 tool    11.5s    4578 tok
+  PASS  15-merge-defaults              4 req    3 tool     9.9s    4596 tok
+  PASS  16-handle-bad-json             4 req    3 tool      13s    4673 tok
+  PASS  18-remove-debug-logs           4 req    3 tool     9.2s    4502 tok
+  PASS  17-write-missing-test          4 req    3 tool    10.7s    4999 tok
+  PASS  19-banned-admin-bug            4 req    3 tool    18.3s    5319 tok
+  PASS  20-fix-email-regex             5 req    4 tool      27s    6830 tok
+  PASS  13-callback-to-promise        13 req   14 tool    48.9s   27745 tok
+
+20/20 通过 · 96 次模型请求 · 93 次工具调用 · 133125 tokens · 墙钟 102.5s（任务耗时合计 374.8s）
