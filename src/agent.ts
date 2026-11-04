@@ -15,10 +15,12 @@
  * 换个大模型、换个工具集，这个循环都不用改 —— 这就是「内核」的含义。
  * 它只依赖两样东西：一个能聊天的客户端，一个能执行工具调用的工具注册表。
  *
- * 生命周期：一个实例 = 一次任务。`run()` 每次都往同一条 transcript 里追加，
- * 所以连续调用会继承上一次的上下文（包括上一次的 user 消息）。
- * CLI 每次新建 Agent，因此现在没有实际问题；将来真要多轮复用，
- * 先定清楚「谁负责重置、什么时候重置」，再来改这里，别让它变成隐式行为。
+ * 生命周期：一个实例 = 一次任务。第一次 `run()` 之后实例即作废 ——
+ * 再调用会抛生命周期错误，而不是悄悄继承上一条 transcript 继续跑。
+ *
+ * 理由：这个内核的定位是「一个 Agent 实例执行一个任务」。允许复用就必须回答
+ * 「谁重置 transcript、失败后算不算已消费、并发调用怎么排队」，那是一整套会话管理，
+ * 不在当前范围内。显式拒绝比隐式继承便宜得多。
  */
 import type { ChatClient, Message, ToolCall } from "./types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
@@ -68,6 +70,13 @@ export interface AgentOptions {
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
   maxSteps?: number;
   /**
+   * 一次任务最多执行多少次工具调用。默认 60。
+   *
+   * 为什么和 maxSteps 分开：`maxSteps` 数的是「问了模型几次」，一次模型回复可以要 3 个工具，
+   * 所以 30 步最多能跑 90 次工具。两个预算各管一件事，不能用一个数字假装管住另一个。
+   */
+  maxToolCalls?: number;
+  /**
    * 取消信号。CLI 收到 SIGINT / SIGTERM 时 abort 它：
    * 循环不再发起新的模型请求或工具调用，正在跑的 shell 由 Workspace 收掉进程树。
    */
@@ -80,8 +89,15 @@ export class Agent {
   private readonly llm: ChatClient;
   private readonly tools: ToolRegistry;
   private readonly maxSteps: number;
+  private readonly maxToolCalls: number;
   private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
+
+  /** 已经执行的工具调用数；预算按它算，也用它写「部分执行」的失败报告。 */
+  private executedToolCalls = 0;
+
+  /** 生命周期闸门：第一次 run() 之前是 false，之后永远是 true（失败/取消也算消费）。 */
+  private started = false;
 
   /**
    * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
@@ -94,6 +110,7 @@ export class Agent {
     this.llm = options.llm;
     this.tools = options.tools;
     this.maxSteps = options.maxSteps ?? 30;
+    this.maxToolCalls = options.maxToolCalls ?? 60;
     this.signal = options.signal;
     this.onToolResult = options.onToolResult;
 
@@ -139,13 +156,22 @@ export class Agent {
    *
    * 这就是 **agent loop**：教科书里那个 `while (true)` —— 问模型、执行它要的工具、
    * 把结果塞回去，直到它不再要工具。这里用带计数器的 for 代替 while (true)，
-   * 唯一多出来的东西就是步数上限：模型完全可能陷入「调工具 → 结果不满意 → 再调」，
-   * 没有闸门的话，烧的是真金白银。
+   * 并加了三道闸门：模型请求次数、工具执行次数、取消信号。
    *
-   * 步数用尽时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
-   * 此时 transcript 里保留了全过程，调试时可以直接打印出来看。
+   * 失败时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
+   * 错误文案里带「已经执行了多少」，此时 transcript 里保留了全过程。
+   *
+   * 最后的请求预算留给「收尾」：到第 maxSteps 次请求时，模型只能给最终答复；
+   * 它若还想要工具，那些工具不执行 —— 执行了也没有下一次请求去验证结果，
+   * 等于制造一批「跑过但没人看过」的副作用。
    */
   async run(task: string): Promise<Message> {
+    // 一个实例只跑一次：第二次调用会让两条任务共用一条 transcript，语义无法解释。
+    if (this.started) {
+      throw new Error("agent instance is single-use: run() has already been called");
+    }
+    this.started = true;
+
     // 取消发生在任务开始之前：用户已经按了 Ctrl-C，就不该再花一次模型请求。
     this.stopIfCancelled();
 
@@ -154,6 +180,7 @@ export class Agent {
 
     for (let step = 1; step <= this.maxSteps; step++) {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
+      this.stopIfCancelled();
       const response = await this.llm.chat(this.messages, this.tools.definitions);
 
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：
@@ -172,7 +199,26 @@ export class Agent {
         return response;
       }
 
-      // 5) 有工具调用就逐个执行，并把结果写回对话记录。
+      // 5) 最后一次请求只留给最终答复：要工具也不再执行 —— 没有下一次请求能验证它的结果。
+      //    未执行的调用仍补一条 not run 结果，保证 assistant / tool 配对完整。
+      if (step === this.maxSteps) {
+        this.skipCalls(calls, "no model request left to verify the result");
+        throw new Error(
+          `step limit ${this.maxSteps} reached after executing ${this.executedToolCalls} tool call(s); ` +
+            `the final model response asked for ${calls.length} more, which were not run`,
+        );
+      }
+
+      // 6) 整批先算预算：执行到一半才发现超限，会留下一批「跑了但没回报」的调用。
+      if (this.executedToolCalls + calls.length > this.maxToolCalls) {
+        this.skipCalls(calls, `tool call budget ${this.maxToolCalls} would be exceeded`);
+        throw new Error(
+          `tool call budget ${this.maxToolCalls} exceeded: ${this.executedToolCalls} already executed, ` +
+            `this batch asks for ${calls.length}; none of them were run`,
+        );
+      }
+
+      // 7) 有工具调用就逐个执行，并把结果写回对话记录。
       //    这里刻意串行：简单，且消息顺序与模型给出的顺序一一对应。
       //    （并发执行能更快，但结果回灌顺序会乱，属于优化，不属于内核。）
       for (let index = 0; index < calls.length; index++) {
@@ -180,15 +226,19 @@ export class Agent {
         this.stopIfCancelled(calls.slice(index));
         const call = calls[index];
         const result = await this.tools.execute(call);
+        this.executedToolCalls++;
         this.messages.push(createToolResult(call, result));
         this.onToolResult?.(call, result);
       }
 
-      // 6) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
+      // 8) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
     }
 
-    // 7) 步数用尽。
-    // 中文对照：已达到步数上限 {n} 步。
-    throw new Error(`step limit ${this.maxSteps} reached`);
+    // 理论上走不到这里：最后一步要么返回最终回复，要么抛「最后一步不执行工具」。
+    // 保留它兜住 maxSteps <= 0 这种配置错误，也让这个函数在类型上一定有出口。
+    // 中文对照：已达到步数上限 {n} 步，已执行 {m} 次工具调用。
+    throw new Error(
+      `step limit ${this.maxSteps} reached after executing ${this.executedToolCalls} tool call(s)`,
+    );
   }
 }

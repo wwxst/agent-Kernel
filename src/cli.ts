@@ -12,6 +12,7 @@
  *   MODEL           模型名，默认 gpt-4o-mini
  *   WORKDIR         工具能碰的根目录，默认当前目录
  *   MAX_STEPS       循环上限，默认 30
+ *   MAX_TOOL_CALLS  一次任务最多执行多少次工具调用，默认 60
  *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
  *
  * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
@@ -39,8 +40,8 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 const usage = [
   // 中文对照：用法：node src/cli.ts "<任务>"
   'usage: node src/cli.ts "<task>"',
-  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, TOOL_TIMEOUT_MS",
+  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、TOOL_TIMEOUT_MS
+  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, TOOL_TIMEOUT_MS",
 ].join("\n");
 
 /**
@@ -61,6 +62,7 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
   // 工作区根目录固定成绝对路径，后面所有相对路径都相对它解析。
   const root = path.resolve(process.env.WORKDIR ?? process.cwd());
   const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
+  const maxToolCalls = positiveIntFromEnv("MAX_TOOL_CALLS", 60);
   const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
 
   const tools = new ToolRegistry(
@@ -76,6 +78,7 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
     llm: new Llm({ baseUrl, apiKey, model, signal }),
     tools,
     maxSteps,
+    maxToolCalls,
     signal,
     // 打印每一步的工具调用，让你能「看见」循环在转。
     onToolResult: (call, result) => {
