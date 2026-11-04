@@ -20,7 +20,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`ChatClient` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、步数上限 | `Agent.run(task)`、`transcript` |
 | `src/tool-registry.ts` | 工具查找、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
-| `src/workspace.ts` | 沙箱内的文件与 shell，含路径守卫、截断、超时 | `Workspace.read/write/list/run`、`createWorkspaceTools()` |
+| `src/workspace.ts` | 沙箱内的文件与 shell，含路径守卫、截断、超时 | `Workspace.read/write/edit/list/run`、`createWorkspaceTools()` |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器 | `Llm.chat(messages, tools)` |
 | `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次 | — |
 
@@ -32,7 +32,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、步数上限。
 - `ToolRegistry.execute`：每个失败分支都折成文本。
-- `Workspace` 的四个方法：路径越界、截断、exit code。
+- `Workspace` 的五个方法：路径越界、截断、exit code、`edit` 的唯一命中。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状；循环细节留在单元层。
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。

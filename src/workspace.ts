@@ -30,9 +30,9 @@ export interface WorkspaceOptions {
 }
 
 /**
- * 一套「最小可用」的编码能力：读、写、列目录、跑命令。
+ * 一套「最小可用」的编码能力：读、写、改、列目录、跑命令。
  *
- * 刻意只有四个。工具越多，系统提示词越长、模型选错工具的概率越高；
+ * 刻意只有五个。工具越多，系统提示词越长、模型选错工具的概率越高；
  * 真的需要更多能力时，优先让 shell 工具去组合，而不是继续加方法。
  */
 export class Workspace {
@@ -57,6 +57,36 @@ export class Workspace {
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, content, "utf8");
     return `wrote ${content.length} chars to ${requested}`;
+  }
+
+  /**
+   * 把文件里唯一命中的一段换成另一段，返回长度变化。
+   *
+   * 为什么要求「唯一」：模型很爱给一个到处都有的片段（`return`、`}`、空行）。
+   * 替换错位置比报错贵得多 —— 报错它读一遍文件就能改；改错了可能十几轮都发现不了。
+   *
+   * 换行符做一次归一：Windows 上文件常是 CRLF，而模型吐出来的是 LF。
+   * 不归一，「看起来一模一样」的片段会找不到；归一之后写入仍沿用文件自己的行尾。
+   */
+  async edit(requested: string, oldString: string, newString: string): Promise<string> {
+    const file = this.resolve(requested);
+    if (oldString === "") throw new Error("old_string must not be empty");
+
+    const before = await readFile(file, "utf8");
+    const toStyle = (text: string) =>
+      before.includes("\r\n") ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
+
+    const needle = toStyle(oldString);
+    const occurrences = before.split(needle).length - 1;
+    if (occurrences === 0) throw new Error(`old_string not found in ${requested}`);
+    if (occurrences > 1) {
+      throw new Error(`old_string appears ${occurrences} times in ${requested}; include more surrounding text`);
+    }
+
+    const at = before.indexOf(needle);
+    const after = before.slice(0, at) + toStyle(newString) + before.slice(at + needle.length);
+    await writeFile(file, after, "utf8");
+    return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
 
   /** 列目录：类型、字节数、名称，按行排好。 */
@@ -130,7 +160,7 @@ export class Workspace {
 }
 
 /**
- * 把 Workspace 的四个行为翻译成模型能调用的工具。
+ * 把 Workspace 的五个行为翻译成模型能调用的工具。
  *
  * 这个函数是适配器：它真正的内容不是逻辑，而是写给模型看的文案
  * （name / description / JSON Schema）。文案写得含糊，模型就会传错参数 ——
@@ -155,7 +185,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "write",
-      description: "Create or overwrite a UTF-8 file; parent directories are created automatically.",
+      description:
+        "Create or overwrite a whole UTF-8 file; parent directories are created. Prefer edit for changing part of an existing file.",
       parameters: {
         type: "object",
         properties: {
@@ -165,6 +196,22 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         required: ["path", "content"],
       },
       run: async (args) => workspace.write(String(args.path), String(args.content ?? "")),
+    },
+    {
+      name: "edit",
+      description:
+        "Replace exactly one occurrence of old_string with new_string in an existing file. old_string must appear exactly once; read the file first when unsure.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string", description: "Path relative to the workspace root." },
+          old_string: { type: "string", description: "Exact text to replace; must appear exactly once." },
+          new_string: { type: "string", description: "Replacement text; an empty string deletes the match." },
+        },
+        required: ["path", "old_string", "new_string"],
+      },
+      run: async (args) =>
+        workspace.edit(String(args.path), String(args.old_string ?? ""), String(args.new_string ?? "")),
     },
     {
       name: "ls",
