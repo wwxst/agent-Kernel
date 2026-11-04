@@ -1,13 +1,14 @@
 {
   "name": "agent-kernel",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Minimal coding agent: one Agent class, one tool loop",
   "scripts": {
     "agent": "node --env-file-if-exists=.env src/cli.ts",
-    "test": "node --test test/e2e.mjs",
-    "typecheck": "tsc --noEmit"
+    "test": "node --test test/agent.test.mjs test/toolbelt.test.mjs test/workspace.test.mjs test/cli.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

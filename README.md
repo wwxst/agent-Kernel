@@ -2,7 +2,7 @@
 
 最小 Coding Agent：**一个类、一个循环、四个工具**，运行时零依赖。
 
-> 当前状态：本地草稿，尚未提交到远端。
+> 当前状态：v0.4，个人练习项目。
 
 ## 快速开始
 
@@ -13,24 +13,40 @@ Copy-Item .env.example .env    # 填入 API_KEY；用什么模型由你决定
 npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 ```
 
-`npm install` 只在跑类型检查时需要；`npm run agent` 本身不需要任何依赖。
+`npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
+
+## 代码结构
+
+六个模块，依赖只有一个方向 —— 都指向 `types.ts`：
+
+| 文件 | 一句话 |
+| --- | --- |
+| `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolSpec`、`ChatClient`。不依赖任何人 |
+| `src/agent.ts` | 内核：循环、消息顺序、步数上限。只认 `ChatClient` 和 `Toolbelt` |
+| `src/toolbelt.ts` | 工具箱：按名字找工具、解析参数、把失败折成 `ERROR` 文本 |
+| `src/workspace.ts` | 工作区：沙箱内的读、写、列目录、跑命令，外加路径守卫与输出截断 |
+| `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点 |
+| `src/cli.ts` | 组装层：环境变量 → 对象图 → 跑一次任务 |
+
+`agent.ts` 不认识 `workspace.ts`：循环只管「问模型、执行调用、塞回结果」，工具怎么实现的它不关心。
+这就是为什么换模型、换工具集，循环一行都不用改。
 
 ## 核心循环
 
 `src/agent.ts` 里的 `Agent.run()`，对应设计稿里的伪代码：
 
 ```ts
-this.messages.push({ role: "user", content: userMessage });
+this.messages.push({ role: "user", content: task });
 
 for (let step = 1; step <= this.maxSteps; step++) {
-  const response = await this.llm.chat(this.messages, this.tools);
+  const response = await this.llm.chat(this.messages, this.toolbelt.definitions);
   this.messages.push(response);
 
   const calls = response.tool_calls ?? [];
   if (calls.length === 0) return response;
 
   for (const call of calls) {
-    const result = await executeTool(this.tools, call);
+    const result = await this.toolbelt.dispatch(call);
     this.messages.push(createToolResult(call, result));
   }
 }
@@ -51,11 +67,11 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 | 设计稿 | 本实现 |
 | --- | --- |
 | `llm.chat(messages, tools)` | `Llm.chat()`，POST `{BASE_URL}/chat/completions`（OpenAI 兼容） |
-| `executeTool(call)` | `executeTool(tools, call)`：显式传工具表，不用模块级全局变量 |
+| `executeTool(call)` | `Toolbelt.dispatch(call)`：工具表在对象里，不再是到处传的全局变量 |
 | `createToolResult(call, result)` | `{ role: "tool", tool_call_id: call.id, content: result }` |
 | `while (true)` | `for` + `maxSteps` |
 
-字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。
+字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
 ## 四个工具
 
@@ -66,7 +82,7 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 | `list_dir` | 列目录：类型、字节数、名称 |
 | `run_command` | 在沙箱根目录跑 shell，超时强杀，输出截断 |
 
-路径统一过 `resolveIn()`：`../`、绝对路径、跨盘符都会被拒绝，错误变成 `ERROR: path escapes workspace` 回灌给模型。
+路径统一过工作区的路径守卫：`../`、绝对路径、跨盘符都会被拒绝，错误变成 `ERROR: path escapes workspace` 回灌给模型。
 
 已知边界：不处理符号链接指向工作区外的情况；`run_command` 超时只杀外层 shell，Windows 上孙进程可能残留。
 
@@ -85,11 +101,17 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 
 ```bash
 npm install
-npm test            # 5 个端到端用例，mock 模型，无需 API Key
-npm run typecheck   # tsc --noEmit，strict
+npm run check       # typecheck + 全部测试
 ```
 
-测试覆盖：完整循环与消息顺序、越界路径、坏 JSON 参数、未知工具、步数上限。
+29 个用例，分四层，都不需要 API Key、不联网：
+
+| 文件 | 打在哪个缝上 |
+| --- | --- |
+| `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、步数上限、错误回灌 |
+| `test/toolbelt.test.mjs` | `Toolbelt.dispatch`：未知工具、坏 JSON、工具抛错 |
+| `test/workspace.test.mjs` | 路径越界、截断、exit code |
+| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状 |
 
 ## 刻意没做的事
 
@@ -97,12 +119,6 @@ npm run typecheck   # tsc --noEmit，strict
 
 - 流式输出（`stream: true` 与增量渲染）
 - 多轮 REPL / 会话持久化（现在一次进程只跑一个任务）
-- 工具并发（串行是有意的：结果顺序与模型给出的顺序一致）
+- 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 权限审批（写文件、跑命令目前直接执行，靠 `WORKDIR` 划定边界）
 - token 预算、上下文压缩、自动重试
-
-## 约定
-
-- 源码注释用中文、面向教学；运行时输出与报错用英文；
-- 工具失败不抛异常，一律折成 `ERROR: ...` 文本回灌；
-- 结束前设置 `process.exitCode` 而不是 `process.exit()`：Windows 上 fetch 的 keep-alive 连接未关时强退会触发 libuv 断言。

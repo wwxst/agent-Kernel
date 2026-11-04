@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 命令行入口：读环境变量 → 组装 Agent → 跑一次任务 → 打印最终回复。
+ * 命令行入口：读环境变量 → 组装 Workspace / Toolbelt / Agent → 跑一次任务 → 打印最终回复。
  *
  * 用法：
  *   npm run agent -- "给这个仓库加一个 /health 接口并写测试"
@@ -13,11 +13,14 @@
  *   WORKDIR         工具能碰的根目录，默认当前目录
  *   MAX_STEPS       循环上限，默认 30
  *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
+ *
+ * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
  */
 import * as path from "node:path";
 import { Agent } from "./agent.ts";
 import { Llm } from "./llm.ts";
-import { createWorkspaceTools } from "./tools.ts";
+import { Toolbelt } from "./toolbelt.ts";
+import { Workspace, workspaceTools } from "./workspace.ts";
 
 /** 读一个「正整数」环境变量；写错就立刻报错，别带着 NaN 跑一半才炸。 */
 function positiveIntFromEnv(name: string, fallback: number): number {
@@ -57,13 +60,17 @@ const root = path.resolve(process.env.WORKDIR ?? process.cwd());
 const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
 const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
 
+const toolbelt = new Toolbelt(
+  workspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
+);
+
 console.log(`workspace: ${root}`);
 console.log(`model:     ${model}`);
-console.log(`tools:     read_file, write_file, list_dir, run_command\n`);
+console.log(`tools:     ${toolbelt.definitions.map((tool) => tool.name).join(", ")}\n`);
 
 const agent = new Agent({
   llm: new Llm({ baseUrl, apiKey, model }),
-  tools: createWorkspaceTools({ root, timeoutMs: toolTimeoutMs }),
+  toolbelt,
   maxSteps,
   // 打印每一步的工具调用，让你能「看见」循环在转。
   onToolResult: (call, result) => {
