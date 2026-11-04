@@ -21,6 +21,7 @@
  */
 import * as path from "node:path";
 import { Agent } from "./agent.ts";
+import type { AgentStats } from "./agent.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { ToolRegistry } from "./tool-registry.ts";
@@ -115,19 +116,33 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
     },
   });
 
-  const reply = await agent.run(task);
-  console.log(`\n${reply.content ?? ""}`);
+  try {
+    const reply = await agent.run(task);
+    console.log(`\n${reply.content ?? ""}`);
+    printUsage(agent.stats, { failed: false });
+  } catch (error) {
+    // 失败的任务同样花了 token：账单不能因为异常就消失。
+    // 先打 usage 再把错误抛给最外层，顺序上也更容易读。
+    printUsage(agent.stats, { failed: true });
+    throw error;
+  }
+}
 
-  // 成本摘要：usage 缺失时写 at least，绝不把「已统计到的」说成「实际花的」。
-  const stats = agent.stats;
+/**
+ * 打印成本摘要。成功和失败都打：失败的任务同样花了 token，隐藏它等于丢掉账单。
+ *
+ * usage 缺失时写 at least，绝不把「已统计到的」说成「实际花的」；
+ * 软预算超了也写出来，因为任务可能已经成功返回。
+ */
+function printUsage(stats: AgentStats, { failed }: { failed: boolean }): void {
   const lower = stats.usage.unknown > 0 ? "at least " : "";
   const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} request(s) without usage` : "";
-  // 软预算：任务可能已经成功，但这次 Run 的花费达到了上限，调用方要看得见。
   const overBudget = stats.tokenBudget.exceeded ? ` · budget exceeded (limit=${stats.tokenBudget.limit})` : "";
+  const outcome = failed ? " · task failed" : "";
   console.log(
     `\n[usage] requests=${stats.requests} tool_calls=${stats.toolCalls} ` +
       `tokens=${lower}${stats.usage.totalTokens} (prompt=${lower}${stats.usage.promptTokens} ` +
-      `completion=${lower}${stats.usage.completionTokens})${unknown}${overBudget}`,
+      `completion=${lower}${stats.usage.completionTokens})${unknown}${overBudget}${outcome}`,
   );
 }
 

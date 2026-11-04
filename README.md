@@ -135,7 +135,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-134 个用例，分七层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+135 个用例，分七层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -143,7 +143,7 @@ npm run check       # typecheck + 全部测试
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 字面匹配、取消进程树 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消 |
-| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT |
+| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 
