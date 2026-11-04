@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "eval": "node --env-file-if-exists=.env eval/run.mjs",
-    "eval:check": "node eval/selfcheck.mjs"
+    "eval:check": "node eval/selfcheck.mjs",
+    "eval:summary": "node eval/summary.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

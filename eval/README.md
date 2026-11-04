@@ -10,6 +10,7 @@
 npm run eval                 # 全部任务
 npm run eval -- rename       # 只跑名字里带 rename 的
 npm run eval:check           # 自检：不需要 API Key
+npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
 需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。
