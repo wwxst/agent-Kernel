@@ -31,6 +31,8 @@ npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 `agent.ts` 不认识 `workspace.ts`：循环只管「问模型、执行调用、塞回结果」，工具怎么实现的它不关心。
 这就是为什么换模型、换工具集，循环一行都不用改。
 
+命令、代码地图、测试放哪见 [AGENTS.md](./AGENTS.md)；怎么写代码（注释风格、模块形状、命名、错误处理）见 [CODING_STANDARDS.md](./CODING_STANDARDS.md)。
+
 ## 核心循环
 
 `src/agent.ts` 里的 `Agent.run()`，对应设计稿里的伪代码。它就是 **agent loop** —— 教科书里那个 `while (true)` 的原型，外加一道步数闸门：
@@ -126,3 +128,11 @@ npm run check       # typecheck + 全部测试
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 权限审批（写文件、跑命令目前直接执行，靠 `WORKDIR` 划定边界）
 - token 预算、上下文压缩、自动重试
+
+## 文档与技能
+
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、教学式注释、模块形状、命名、错误处理、测试）。
+- [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、代码地图、测试放哪。
+- [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Kernel、Step、Transcript、ERROR text……）。
+- [docs/adr/](./docs/adr/)：已经定下、别再重新讨论的决定。
+- `.agents/skills/`：装好的 agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。
