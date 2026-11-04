@@ -33,7 +33,7 @@ The runner:
 3. Temporarily checks out the exact baseline SHA, then imports and runs that commit's original eval/run.mjs.
 4. Runs three sequential full rounds, with four tasks concurrently inside each round. It does not retry tasks.
 5. Saves every round immediately and writes a daily summary.
-6. Restores the branch that was checked out before the run.
+6. Restores the branch that was checked out before the run. On SIGINT/SIGTERM it finishes the current round, archives the partial result, restores the branch, and exits with an interruption status.
 
 Output:
 
@@ -61,7 +61,7 @@ Task filters mean only the selected task workspace is retained. Avoid --keep wit
 
 The per-task trace object is saved in the normal eval/results/<timestamp>.json record and contains:
 
-- Per-request prompt/completion/total tokens, reported-usage status, prompt-token delta, message count, and payload-size proxies.
+- Per-request prompt/completion/total tokens, reported-usage status, prompt-token delta (including the prior reported request index), request latency, message count, and payload-size proxies.
 - Tool call order, request index, tool name, bounded/redacted arguments, execution time, result character/byte counts, and error preview when applicable.
 - File additions, modifications, and deletions observed after each tool call and across the whole task.
 - Snapshot coverage and any diagnostic errors.
