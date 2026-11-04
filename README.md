@@ -24,7 +24,7 @@ npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 | `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
 | `src/agent.ts` | 内核：循环、消息顺序、步数上限。只认 `ChatClient` 和 `ToolRegistry` |
 | `src/tool-registry.ts` | 工具注册表：按名字找工具、解析参数、把失败折成 `ERROR` 文本 |
-| `src/workspace.ts` | 工作区：沙箱内的读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫与输出截断 |
+| `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫与输出上限 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点 |
 | `src/cli.ts` | 组装层：环境变量 → 对象图 → 跑一次任务 |
 
@@ -87,7 +87,7 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 | `glob` | 按模式找文件，如 `src/**/*.ts` | `Workspace.glob` |
 | `grep` | 按正则搜文件内容，回 `路径:行号: 内容` | `Workspace.grep` |
 | `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
-| `shell` | 在沙箱根目录跑 shell，超时强杀，输出截断 | `Workspace.run` |
+| `shell` | 在工作区根目录跑 shell；超时杀整棵进程树，输出有上限 | `Workspace.run` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
 
@@ -101,9 +101,9 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 
 路径统一过工作区的路径守卫：`../`、绝对路径、跨盘符都会被拒绝；解析之后还会再比一次**真实路径**，所以符号链接、junction 指向工作区外时同样会被拒绝。错误变成 `ERROR: path escapes workspace` 回灌给模型。
 
-已知边界：`glob` 只认 `*`、`**`、`?` 三种通配，`{}`、`[]` 按字面匹配（这是刻意的，见下）；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中（被截断时会明确标注），符号链接不跟随；`read` 最多读 32 KB，`grep` 跳过超过 1 MB 的文件（都会在结果里说明）。
+已知边界：`glob` 只认 `*`、`**`、`?` 三种通配，`{}`、`[]` 按字面匹配（这是刻意的，见下）；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中，符号链接不跟随；`read` 最多读 32 KB，`grep` 按字节读到 1 MB 为止、超出的文件跳过，`edit` 不接受超过 2 MB 的文件，`ls` 最多列 500 条。所有这些截断、跳过、丢弃的统计都保留在结果末尾，不会被结果自己的长度上限吃掉。
 
-还有一条更根本的：**`shell` 不受路径守卫约束**——命令里写 `cd ..`、`cat ../x` 照样能出去，进程权限跟启动它的人一样。这套沙箱是「防模型手滑」的边界，不是安全边界；真隔离得靠容器、独立用户或只读挂载。见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)。
+还有一条更根本的：**`shell` 不受路径守卫约束**——命令里写 `cd ..`、`cat ../x` 照样能出去，进程权限跟启动它的人一样。这套路径守卫是「防模型手滑」的边界，不是安全边界；真隔离得靠容器、独立用户或只读挂载。见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)。
 
 ## 配置
 
@@ -112,7 +112,7 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 | `BASE_URL` | `https://api.openai.com/v1` | 任意 OpenAI 兼容端点 |
 | `API_KEY` | — | 必填，或改用 `OPENAI_API_KEY` |
 | `MODEL` | `gpt-4o-mini` | 模型名 |
-| `WORKDIR` | 当前目录 | 工具能碰的沙箱根目录 |
+| `WORKDIR` | 当前目录 | 文件工具的根目录（不是安全边界） |
 | `MAX_STEPS` | `30` | 循环上限 |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
 
@@ -123,7 +123,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-60 个用例，分四层，都不需要 API Key、不联网：
+61 个用例，分四层，都不需要 API Key、不联网：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |

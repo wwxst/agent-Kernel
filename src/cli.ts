@@ -52,7 +52,7 @@ async function runTask(task: string): Promise<void> {
 
   const baseUrl = process.env.BASE_URL ?? "https://api.openai.com/v1";
   const model = process.env.MODEL ?? "gpt-4o-mini";
-  // 沙箱根目录固定成绝对路径，后面所有相对路径都相对它解析。
+  // 工作区根目录固定成绝对路径，后面所有相对路径都相对它解析。
   const root = path.resolve(process.env.WORKDIR ?? process.cwd());
   const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
   const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);

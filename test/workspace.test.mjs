@@ -3,6 +3,7 @@
  * 所以它们必须在接口上被验证 —— 不碰私有的 resolve/truncate。
  */
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -194,7 +195,9 @@ test("run 的输出同样受 8000 字符上限约束", async () => {
 
     const output = await workspace.run('node -e "console.log(\'y\'.repeat(9000))"');
 
-    assert.match(output, /\[truncated \d+ chars\]$/);
+    assert.match(output, /\[truncated \d+ chars\]/);
+    // 丢弃统计必须留在最后 —— 它是被二次截断时最容易丢掉的一句。
+    assert.match(output, /\[dropped 1001 chars\]$/);
   });
 });
 
@@ -364,7 +367,7 @@ test("read：大文件只读进上限字节，不把整个文件塞进内存", a
 
     const text = await workspace.read("big.log");
 
-    assert.match(text, /\[truncated 24768 chars\]/);
+    assert.match(text, /\[truncated \d+ chars\]/);
     assert.match(text, /… \[stopped after 32768 bytes\]$/);
   });
 });
@@ -397,5 +400,20 @@ test("run：超时是独立的执行结果，不是普通的退出码", async ()
     const result = await workspace.run('node -e "setTimeout(() => {}, 5000)"');
 
     assert.match(result, /^timeout after 300ms/);
+  });
+});
+
+test("run：超时后整棵进程树都被杀掉，孙进程不会再写文件", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root, timeoutMs: 400 });
+    const marker = path.join(root, "marker.txt");
+
+    // node 是 cmd 的孙进程：只杀外层 shell 的话，它还会在 800ms 后把标记写出来。
+    await workspace.run(
+      `node -e "setTimeout(() => require('node:fs').writeFileSync('marker.txt', 'x'), 800)"`,
+    );
+    await new Promise((done) => setTimeout(done, 1_500));
+
+    assert.equal(existsSync(marker), false, "超时后孙进程仍在运行");
   });
 });

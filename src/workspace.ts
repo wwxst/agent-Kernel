@@ -14,7 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { lstat, mkdir, open, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "./types.ts";
 
@@ -30,6 +30,12 @@ const MAX_READ_BYTES = 32_768;
 
 /** grep 跳过超过这个大小的文件：大概率是日志、锁文件或打包产物，读进来只会拖慢。 */
 const MAX_GREP_FILE_BYTES = 1_000_000;
+
+/** edit 能接受的文件大小上限：整文件读进来做替换，再大就该走 shell 或拆分处理。 */
+const MAX_EDIT_FILE_BYTES = 2_000_000;
+
+/** list 最多 stat / 展示多少个条目：目录可能有一万个，没必要全列。 */
+const MAX_LIST_ENTRIES = 500;
 
 /**
  * glob / grep 最多返回多少条命中。
@@ -54,7 +60,7 @@ function toPosix(relativePath: string): string {
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 export interface WorkspaceOptions {
-  /** 沙箱根目录，必须是绝对路径。工具只能碰它下面的东西。 */
+  /** 工作区根目录，必须是绝对路径。文件工具的相对路径都相对它解析 —— 它不是安全边界（见 ADR-0008）。 */
   root: string;
   /** 单条 shell 命令的超时，默认 120 秒。 */
   timeoutMs?: number;
@@ -89,16 +95,9 @@ export class Workspace {
     const file = this.resolve(requested);
     await this.assertInsideWorkspace(file, requested);
 
-    const handle = await open(file, "r");
-    try {
-      const buffer = Buffer.alloc(MAX_READ_BYTES);
-      const { bytesRead } = await handle.read(buffer, 0, MAX_READ_BYTES, 0);
-      const text = buffer.subarray(0, bytesRead).toString("utf8");
-      const cut = bytesRead === MAX_READ_BYTES ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
-      return this.truncate(text) + cut;
-    } finally {
-      await handle.close();
-    }
+    const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
+    const cut = truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
+    return this.clip(text, cut);
   }
 
   /** 创建或覆盖文件，父目录自动补齐。返回一行给模型看的结果摘要。 */
@@ -127,7 +126,18 @@ export class Workspace {
       throw new Error("old_string must not be empty");
     }
 
-    const before = await readFile(file, "utf8");
+    // 编辑要整文件读进来做替换，所以先划一条上限：
+    // 超过它的文件不该走 edit，让模型改用 shell，或者干脆拆开处理。
+    const { text: before, truncated } = await readTextUpTo(
+      file,
+      MAX_EDIT_FILE_BYTES,
+      Buffer.alloc(MAX_EDIT_FILE_BYTES + 1),
+    );
+    if (truncated) {
+      // 中文对照：文件超过 {n} 字节，太大，不适合整文件编辑；请改用 shell。
+      throw new Error(`file is larger than ${MAX_EDIT_FILE_BYTES} bytes; edit it through shell instead`);
+    }
+
     const toStyle = (text: string) =>
       before.includes("\r\n") ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
 
@@ -159,20 +169,23 @@ export class Workspace {
     const dir = this.resolve(requested);
     await this.assertInsideWorkspace(dir, requested);
     const entries = await readdir(dir, { withFileTypes: true });
+    // 目录可能有一万个条目：只 stat 前 MAX_LIST_ENTRIES 个，剩下的明说没列。
+    const shown = entries.slice(0, MAX_LIST_ENTRIES);
     const rows = await Promise.all(
-      entries.map(async (entry) => {
+      shown.map(async (entry) => {
         const size = entry.isFile() ? (await stat(path.join(dir, entry.name))).size : 0;
         const kind = entry.isDirectory() ? "dir " : "file";
         return `${kind} ${String(size).padStart(8)}  ${entry.name}`;
       }),
     );
-    return this.truncate(rows.sort().join("\n") || "(empty directory)");
+    const more = entries.length > shown.length ? `\n… (${entries.length - shown.length} more entries not listed)` : "";
+    return this.clip(rows.sort().join("\n") || "(empty directory)", more);
   }
 
   /**
    * 按模式找文件，返回相对工作区根目录的路径，一行一个，排好序。
    *
-   * 做法是「在沙箱里走，拿模式去套」，而不是把模式交给 `fs.glob` 去展开。
+   * 做法是「在工作区里走，拿模式去套」，而不是把模式交给 `fs.glob` 去展开。
    * 展开派（`fs.glob`）支持花括号展开（`{../outside,src}` 会变成两条模式）之类的语法，
    * 光靠字符串切分拦不住，能直接跑到工作区外；自己走目录则从结构上走不出去。
    *
@@ -195,7 +208,7 @@ export class Workspace {
     if (matches.length === 0) return "(no matches)";
     matches.sort();
     const note = matches.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
-    return this.truncate(matches.join("\n") + note);
+    return this.clip(matches.join("\n"), note);
   }
 
   /**
@@ -214,16 +227,20 @@ export class Workspace {
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
+    // 一次 grep 只分配一块上限大小的读缓冲，所有文件复用 —— 不按文件数乘内存。
+    const buffer = Buffer.alloc(MAX_GREP_FILE_BYTES + 1);
     for await (const file of walkFiles(start)) {
       if (hits.length >= MAX_RESULTS) break;
 
       let content: string;
       try {
-        if ((await stat(file)).size > MAX_GREP_FILE_BYTES) {
+        // 用句柄读到上限为止：先 stat 再看 readFile 有竞态，真正的上限得落在读了多少字节。
+        const read = await readTextUpTo(file, MAX_GREP_FILE_BYTES, buffer);
+        if (read.truncated) {
           skippedLarge++;
           continue;
         }
-        content = await readFile(file, "utf8");
+        content = read.text;
       } catch {
         continue;
       }
@@ -247,7 +264,7 @@ export class Workspace {
 
     const stopped = hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
     const skipped = skippedLarge > 0 ? `\n… (skipped ${skippedLarge} files over 1 MB)` : "";
-    return this.truncate(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n") + stopped + skipped);
+    return this.clip(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n"), stopped + skipped);
   }
 
   /**
@@ -259,7 +276,11 @@ export class Workspace {
    *   - 模型要能区分「失败」和「超时」→ 结果的第一行写清是 exit 还是 timeout。
    */
   async run(command: string): Promise<string> {
-    const { status, output } = await new Promise<{ status: string; output: string }>((resolve, reject) => {
+    const { status, output, dropped } = await new Promise<{
+      status: string;
+      output: string;
+      dropped: number;
+    }>((resolve, reject) => {
       const child = spawn(command, {
         cwd: this.root,
         shell: true,
@@ -295,15 +316,18 @@ export class Workspace {
 
       child.on("close", (code) => {
         clearTimeout(timer);
-        const note = dropped > 0 ? `\n… [dropped ${dropped} chars]` : "";
         resolve({
           status: timedOut ? `timeout after ${this.timeoutMs}ms` : `exit ${code}`,
-          output: collected + note,
+          output: collected,
+          dropped,
         });
       });
     });
 
-    return this.truncate(`${status}\n${output}`);
+    // 丢弃统计走 tail，不跟正文抢位置：否则「丢了 1000 字符」会被 8000 字符的上限切掉，
+    // 模型看到一段完整输出，其实少了一千个字符。
+    const tail = dropped > 0 ? `\n… [dropped ${dropped} chars]` : "";
+    return this.clip(`${status}\n${output}`, tail);
   }
 
   /**
@@ -370,11 +394,41 @@ export class Workspace {
     return this.rootReal;
   }
 
-  /** 超出上限就截断，并明确告诉模型「后面还有，但你看不到了」。 */
-  private truncate(text: string): string {
-    if (text.length <= MAX_OUTPUT_CHARS) return text;
-    const hidden = text.length - MAX_OUTPUT_CHARS;
-    return `${text.slice(0, MAX_OUTPUT_CHARS)}\n… [truncated ${hidden} chars]`;
+  /**
+   * 截断正文，但把尾注保住。
+   *
+   * 先给尾注（丢弃/截断统计、跳过说明、没列出来的条目数）让出位置，再切正文；
+   * 否则最容易发生的就是：正文刚好占满 8000 字符，一句「丢了 1000 字符」被自己截掉，
+   * 模型看到的是一段完整输出，其实少了一千个字符。
+   */
+  private clip(body: string, tail = ""): string {
+    const room = Math.max(0, MAX_OUTPUT_CHARS - tail.length);
+    if (body.length <= room) return body + tail;
+    const hidden = body.length - room;
+    return `${body.slice(0, room)}\n… [truncated ${hidden} chars]${tail}`;
+  }
+}
+
+/**
+ * 有界读取：最多读 limit 个字节，返回文本和「是否被截断」。
+ *
+ * 用文件句柄读，而不是 `stat` + `readFile`：`stat` 和 `readFile` 之间文件可能被写大，
+ * 真正的上限必须落在「读了多少字节」上。buffer 由调用方传入，方便一次 grep 里反复复用。
+ */
+async function readTextUpTo(
+  file: string,
+  limit: number,
+  buffer: Buffer,
+): Promise<{ text: string; truncated: boolean }> {
+  const handle = await open(file, "r");
+  try {
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, limit + 1), 0);
+    return {
+      text: buffer.subarray(0, Math.min(bytesRead, limit)).toString("utf8"),
+      truncated: bytesRead > limit,
+    };
+  } finally {
+    await handle.close();
   }
 }
 
@@ -439,7 +493,7 @@ function globToRegExp(pattern: string): RegExp {
  * 深度遍历目录，产出文件路径（grep 和 glob 共用）。
  *
  * 跳过 SKIP_DIRS，也跳过符号链接（`isFile` 对链接返回 false）：
- * 链接可能指向工作区之外，顺着它走就等于把沙箱绕开了。
+ * 链接可能指向工作区之外，顺着它走就等于把路径守卫绕开了。
  */
 async function* walkFiles(dir: string): AsyncGenerator<string> {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
