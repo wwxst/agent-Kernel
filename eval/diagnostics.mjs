@@ -251,9 +251,11 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
       const started = performance.now();
       let result;
       let thrown;
+      let didThrow = false;
       try {
         result = await execute(call);
       } catch (error) {
+        didThrow = true;
         thrown = error;
       }
 
@@ -282,7 +284,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
       queue.push(event);
       eventsByCallId.set(call.id, queue);
 
-      if (thrown !== undefined) throw thrown;
+      if (didThrow) throw thrown;
       return result;
     };
   } catch (error) {
