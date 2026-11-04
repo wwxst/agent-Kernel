@@ -13,12 +13,23 @@
  * 两个模块各管一个决定，改的时候不会互相牵动。
  */
 import { spawn } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import type { ChildProcess } from "node:child_process";
+import { lstat, mkdir, open, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "./types.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;
+
+/**
+ * 一次 read 最多读进多少字节。
+ * 8k 字符的内容，UTF-8 下最多也就二十几 KB；留到 32 KB 足以产出完整的截断文本，
+ * 又不会把几百 MB 的日志整个读进内存。
+ */
+const MAX_READ_BYTES = 32_768;
+
+/** grep 跳过超过这个大小的文件：大概率是日志、锁文件或打包产物，读进来只会拖慢。 */
+const MAX_GREP_FILE_BYTES = 1_000_000;
 
 /**
  * glob / grep 最多返回多少条命中。
@@ -68,11 +79,26 @@ export class Workspace {
     this.timeoutMs = timeoutMs;
   }
 
-  /** 读一个 UTF-8 文本文件，超长截断。 */
+  /**
+   * 读一个 UTF-8 文本文件，超过上限就截断。
+   *
+   * 用有界读取：`readFile` 会把整个文件读进内存，模型一句 `read("big.log")`
+   * 就能把进程撑爆。上限必须落在「读进来多少」，而不是「返回多少」。
+   */
   async read(requested: string): Promise<string> {
     const file = this.resolve(requested);
     await this.assertInsideWorkspace(file, requested);
-    return this.truncate(await readFile(file, "utf8"));
+
+    const handle = await open(file, "r");
+    try {
+      const buffer = Buffer.alloc(MAX_READ_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, MAX_READ_BYTES, 0);
+      const text = buffer.subarray(0, bytesRead).toString("utf8");
+      const cut = bytesRead === MAX_READ_BYTES ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
+      return this.truncate(text) + cut;
+    } finally {
+      await handle.close();
+    }
   }
 
   /** 创建或覆盖文件，父目录自动补齐。返回一行给模型看的结果摘要。 */
@@ -106,7 +132,12 @@ export class Workspace {
       before.includes("\r\n") ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
 
     const needle = toStyle(oldString);
-    const occurrences = before.split(needle).length - 1;
+    // 按 1 个字符推进地数：重叠的命中（比如 "aaa" 里的 "aa"）也要算进来，
+    // 否则「唯一命中」的判断会漏掉重叠，替换掉第一个就算成功。
+    let occurrences = 0;
+    for (let at = before.indexOf(needle); at !== -1; at = before.indexOf(needle, at + 1)) {
+      occurrences++;
+    }
     if (occurrences === 0) {
       // 中文对照：在 {文件} 里找不到 old_string。
       throw new Error(`old_string not found in ${requested}`);
@@ -135,7 +166,7 @@ export class Workspace {
         return `${kind} ${String(size).padStart(8)}  ${entry.name}`;
       }),
     );
-    return rows.sort().join("\n") || "(empty directory)";
+    return this.truncate(rows.sort().join("\n") || "(empty directory)");
   }
 
   /**
@@ -171,7 +202,9 @@ export class Workspace {
    * 在文本文件里按正则搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
    *
    * 二进制文件（含 NUL 字节）直接跳过：按 UTF-8 读出来只是乱码。
-   * 读不了的文件（权限、坏链接）也跳过 —— 一次搜索不该被一个文件打断。
+   * 超过 MAX_GREP_FILE_BYTES 的文件不读，并在结果里说明跳过了几个 ——
+   * 否则模型会以为「没搜到」等于「不存在」。
+   * 读不了的文件（权限、坏链接）也跳过：一次搜索不该被一个文件打断。
    */
   async grep(pattern: string, requested = "."): Promise<string> {
     const start = this.resolve(requested);
@@ -180,11 +213,16 @@ export class Workspace {
     const regex = new RegExp(pattern);
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
+    let skippedLarge = 0;
     for await (const file of walkFiles(start)) {
       if (hits.length >= MAX_RESULTS) break;
 
       let content: string;
       try {
+        if ((await stat(file)).size > MAX_GREP_FILE_BYTES) {
+          skippedLarge++;
+          continue;
+        }
         content = await readFile(file, "utf8");
       } catch {
         continue;
@@ -203,29 +241,52 @@ export class Workspace {
       }
     }
 
-    if (hits.length === 0) return "(no matches)";
+    if (hits.length === 0) return skippedLarge > 0 ? `(no matches; skipped ${skippedLarge} files over 1 MB)` : "(no matches)";
     // 先按文件、再按行号排：同一份文件里的命中保持阅读顺序。
     hits.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
 
-    const note = hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
-    return this.truncate(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n") + note);
+    const stopped = hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
+    const skipped = skippedLarge > 0 ? `\n… (skipped ${skippedLarge} files over 1 MB)` : "";
+    return this.truncate(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n") + stopped + skipped);
   }
 
   /**
    * 在工作区根目录执行一条 shell 命令，返回「exit code + stdout/stderr」。
    *
-   * 已知边界：超时杀掉的是外层 shell，Windows 上它派生的子进程可能残留。
-   * 这里接受这个限制 —— 真要彻底清理得用 taskkill /T，会显著增加复杂度。
+   * 三个现实问题，逐个处理：
+   *   - 命令可能永远不结束 → 超时；而且要杀**整棵进程树**，只杀外层 shell 会留下孤儿；
+   *   - 输出可能无限增长 → 只保留前 MAX_OUTPUT_CHARS 个字符，后面的丢弃并记下丢了多少；
+   *   - 模型要能区分「失败」和「超时」→ 结果的第一行写清是 exit 还是 timeout。
    */
   async run(command: string): Promise<string> {
-    const output = await new Promise<string>((resolve, reject) => {
-      const child = spawn(command, { cwd: this.root, shell: true, windowsHide: true });
+    const { status, output } = await new Promise<{ status: string; output: string }>((resolve, reject) => {
+      const child = spawn(command, {
+        cwd: this.root,
+        shell: true,
+        windowsHide: true,
+        // POSIX 上开新进程组，超时时能整组杀掉；Windows 走 taskkill /T。
+        detached: process.platform !== "win32",
+      });
+
       let collected = "";
+      let dropped = 0;
+      let timedOut = false;
 
-      const timer = setTimeout(() => child.kill(), this.timeoutMs);
+      const absorb = (chunk: Buffer) => {
+        collected += chunk.toString();
+        if (collected.length > MAX_OUTPUT_CHARS) {
+          dropped += collected.length - MAX_OUTPUT_CHARS;
+          collected = collected.slice(0, MAX_OUTPUT_CHARS);
+        }
+      };
 
-      child.stdout.on("data", (chunk: Buffer) => (collected += chunk));
-      child.stderr.on("data", (chunk: Buffer) => (collected += chunk));
+      const timer = setTimeout(() => {
+        timedOut = true;
+        killTree(child);
+      }, this.timeoutMs);
+
+      child.stdout.on("data", absorb);
+      child.stderr.on("data", absorb);
 
       child.on("error", (error) => {
         clearTimeout(timer);
@@ -234,11 +295,15 @@ export class Workspace {
 
       child.on("close", (code) => {
         clearTimeout(timer);
-        // exit code 也一起返回：模型需要知道命令是成功还是失败。
-        resolve(`exit ${code}\n${collected}`.trimEnd());
+        const note = dropped > 0 ? `\n… [dropped ${dropped} chars]` : "";
+        resolve({
+          status: timedOut ? `timeout after ${this.timeoutMs}ms` : `exit ${code}`,
+          output: collected + note,
+        });
       });
     });
-    return this.truncate(output);
+
+    return this.truncate(`${status}\n${output}`);
   }
 
   /**
@@ -314,6 +379,27 @@ export class Workspace {
 }
 
 /**
+ * 杀掉整棵进程树：Windows 上用 `taskkill /T`，POSIX 上杀进程组。
+ * 只杀外层 shell 是不够的 —— Windows 上 `npm test` 这类命令会留下一串孤儿进程。
+ */
+function killTree(child: ChildProcess): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+
+  if (process.platform === "win32") {
+    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+    return;
+  }
+
+  try {
+    // detached 起进程组，负号 = 整组。
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    child.kill("SIGKILL");
+  }
+}
+
+/**
  * 把 glob 模式翻译成正则（给「自己走目录再匹配」用）。
  *
  * 只认三种通配：`**` 跨目录、`*` 单层内任意、`?` 单个字符；
@@ -374,7 +460,7 @@ async function* walkFiles(dir: string): AsyncGenerator<string> {
  * （name / description / JSON Schema）。文案写得含糊，模型就会传错参数 ——
  * 所以它和上面的行为放在同一个文件里：改一个上限，顺手就能改对应的说明。
  *
- * 工具名刻意用 agent 生态的通用叫法（read / write / edit / ls / shell），而不是代码里的动词。
+ * 工具名刻意用 agent 生态的通用叫法（read / write / edit / glob / grep / ls / shell），而不是代码里的动词。
  * 方法名和工具名不一致是有意的：前者给读代码的人看，后者给模型看，模型对通用叫法有先验。
  * 其中 `shell` 就是 **bash** 那个工具：跑一条命令、拿回 exit code 和输出，和 Codex、
  * Claude Code 里的 bash 是同一件事；名字不叫 bash，是因为实现不绑定具体 shell（见 ADR-0005）。
@@ -413,7 +499,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         },
         required: ["path", "content"],
       },
-      run: async (args) => workspace.write(String(args.path), String(args.content ?? "")),
+      run: async (args) => workspace.write(String(args.path), String(args.content)),
     },
     {
       name: "edit",
@@ -433,7 +519,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         required: ["path", "old_string", "new_string"],
       },
       run: async (args) =>
-        workspace.edit(String(args.path), String(args.old_string ?? ""), String(args.new_string ?? "")),
+        workspace.edit(String(args.path), String(args.old_string), String(args.new_string)),
     },
     {
       name: "glob",
@@ -448,7 +534,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         },
         required: ["pattern"],
       },
-      run: async (args) => workspace.glob(String(args.pattern ?? "")),
+      run: async (args) => workspace.glob(String(args.pattern)),
     },
     {
       name: "grep",
@@ -465,7 +551,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         },
         required: ["pattern"],
       },
-      run: async (args) => workspace.grep(String(args.pattern ?? ""), String(args.path ?? ".")),
+      run: async (args) => workspace.grep(String(args.pattern), String(args.path ?? ".")),
     },
     {
       name: "ls",

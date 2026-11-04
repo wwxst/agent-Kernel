@@ -106,3 +106,70 @@ test("execute：工具抛非 Error 也能折成文本", async () => {
 
   assert.equal(await registry.execute(call("weird")), "ERROR: 42");
 });
+
+test("execute：缺少必填参数直接报错，不会带着空值去执行工具", async () => {
+  const received = [];
+  const registry = new ToolRegistry([
+    {
+      name: "write",
+      description: "write a file",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" }, content: { type: "string" } },
+        required: ["path", "content"],
+      },
+      run: async (args) => {
+        received.push(args);
+        return "ok";
+      },
+    },
+  ]);
+
+  const result = await registry.execute(call("write", JSON.stringify({ path: "a.txt" })));
+
+  assert.match(result, /^ERROR: invalid arguments: missing required argument "content"/);
+  assert.deepEqual(received, [], "工具不该被调用 —— 少了 content 就等于清空文件");
+});
+
+test("execute：参数类型不对也直接报错", async () => {
+  const registry = new ToolRegistry([
+    {
+      name: "read",
+      description: "read a file",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" } },
+        required: ["path"],
+      },
+      run: async () => "ok",
+    },
+  ]);
+
+  const result = await registry.execute(call("read", JSON.stringify({ path: 42 })));
+
+  assert.match(result, /^ERROR: invalid arguments: argument "path" must be a string/);
+});
+
+test("execute：参数齐全才真的执行", async () => {
+  const received = [];
+  const registry = new ToolRegistry([
+    {
+      name: "write",
+      description: "write a file",
+      parameters: {
+        type: "object",
+        properties: { path: { type: "string" }, content: { type: "string" } },
+        required: ["path", "content"],
+      },
+      run: async (args) => {
+        received.push(args);
+        return "ok";
+      },
+    },
+  ]);
+
+  const result = await registry.execute(call("write", JSON.stringify({ path: "a.txt", content: "" })));
+
+  assert.equal(result, "ok");
+  assert.deepEqual(received, [{ path: "a.txt", content: "" }], "空串是合法内容，缺字段不是");
+});

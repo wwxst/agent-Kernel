@@ -132,3 +132,15 @@ test("发给模型的工具清单只有说明书，没有 run", async () => {
   assert.equal(spec.name, "echo");
   assert.equal("run" in spec, false);
 });
+
+test("transcript 返回的是副本：改它不会改到内部记录", async () => {
+  const chat = createScriptedChat([finalReply("ok")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+
+  await agent.run("task");
+
+  const snapshot = agent.transcript;
+  snapshot.push({ role: "user", content: "spoof" });
+
+  assert.equal(agent.transcript.length, snapshot.length - 1);
+});

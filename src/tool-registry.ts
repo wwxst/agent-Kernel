@@ -16,6 +16,35 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * 按工具自己的 JSON Schema 校验参数（只覆盖工具定义里真正用到的子集）。
+ *
+ * 为什么必须做：模型会漏字段、也会给错类型。漏了 `content` 就直接执行 `write`，
+ * 结果是把文件清空 —— 一次「看起来成功」的静默破坏，比报错危险得多。
+ * 校验放在 execute() 里，和「失败折成文本」同一条路，任何工具都躲不过去。
+ */
+function validateArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
+  const schema = tool.parameters as {
+    required?: unknown;
+    properties?: Record<string, { type?: string }>;
+  };
+
+  const required = Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === "string") : [];
+  for (const key of required) {
+    if (args[key] === undefined) return `missing required argument "${key}"`;
+  }
+
+  for (const [key, value] of Object.entries(args)) {
+    const expected = schema.properties?.[key]?.type;
+    if (expected === undefined) continue; // 没声明的字段不管，交给工具自己判断
+    if (expected === "string" && typeof value !== "string") return `argument "${key}" must be a string`;
+    if (expected === "number" && typeof value !== "number") return `argument "${key}" must be a number`;
+    if (expected === "boolean" && typeof value !== "boolean") return `argument "${key}" must be a boolean`;
+  }
+
+  return undefined;
+}
+
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
 
@@ -56,6 +85,13 @@ export class ToolRegistry {
     } catch (error) {
       // 中文对照：ERROR: 参数不是合法 JSON：{原因}
       return `ERROR: invalid JSON arguments: ${errorMessage(error)}`;
+    }
+
+    // 结构不对就到此为止：让模型自己补参数，别让它「带着空值」去改文件。
+    const problem = validateArguments(tool, args);
+    if (problem !== undefined) {
+      // 中文对照：ERROR: 参数不合法：{原因}
+      return `ERROR: invalid arguments: ${problem}`;
     }
 
     try {

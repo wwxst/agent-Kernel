@@ -22,7 +22,7 @@ import { Llm } from "./llm.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
-/** 读一个「正整数」环境变量；写错就立刻报错，别带着 NaN 跑一半才炸。 */
+/** 读一个「正整数」环境变量；写错就抛错，由最外层的 catch 统一收尾。 */
 function positiveIntFromEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
@@ -30,8 +30,7 @@ function positiveIntFromEnv(name: string, fallback: number): number {
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0) {
     // 中文对照：「{name} 的值 "{raw}" 不合法（需要一个正整数）」
-    console.error(`invalid ${name}: "${raw}" (expected a positive integer)`);
-    process.exit(1);
+    throw new Error(`invalid ${name}: "${raw}" (expected a positive integer)`);
   }
   return value;
 }
@@ -43,54 +42,58 @@ const usage = [
   "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, TOOL_TIMEOUT_MS",
 ].join("\n");
 
+/** 一次任务的全部工作。写在函数里，是为了让「失败怎么退出」只有一处。 */
+async function runTask(task: string): Promise<void> {
+  const apiKey = process.env.API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+  if (!apiKey) {
+    // 中文对照：缺少 API_KEY（或 OPENAI_API_KEY）；参考 .env.example
+    throw new Error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
+  }
+
+  const baseUrl = process.env.BASE_URL ?? "https://api.openai.com/v1";
+  const model = process.env.MODEL ?? "gpt-4o-mini";
+  // 沙箱根目录固定成绝对路径，后面所有相对路径都相对它解析。
+  const root = path.resolve(process.env.WORKDIR ?? process.cwd());
+  const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
+  const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
+
+  const tools = new ToolRegistry(
+    createWorkspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
+  );
+
+  // 中文对照：工作区：… ／ 模型：… ／ 工具：…
+  console.log(`workspace: ${root}`);
+  console.log(`model:     ${model}`);
+  console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
+
+  const agent = new Agent({
+    llm: new Llm({ baseUrl, apiKey, model }),
+    tools,
+    maxSteps,
+    // 打印每一步的工具调用，让你能「看见」循环在转。
+    onToolResult: (call, result) => {
+      const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
+      console.log(`  ↳ ${call.function.name} → ${firstLine}`);
+    },
+  });
+
+  const reply = await agent.run(task);
+  console.log(`\n${reply.content ?? ""}`);
+}
+
 const task = process.argv.slice(2).join(" ").trim();
 if (!task || task === "--help" || task === "-h") {
   console.log(usage);
   // --help 是用户主动要看帮助，算成功；没给任务算用法错误。
-  process.exit(task ? 0 : 1);
-}
-
-const apiKey = process.env.API_KEY ?? process.env.OPENAI_API_KEY ?? "";
-if (!apiKey) {
-  // 中文对照：缺少 API_KEY（或 OPENAI_API_KEY）；参考 .env.example
-  console.error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
-  process.exit(1);
-}
-
-const baseUrl = process.env.BASE_URL ?? "https://api.openai.com/v1";
-const model = process.env.MODEL ?? "gpt-4o-mini";
-// 沙箱根目录固定成绝对路径，后面所有相对路径都相对它解析。
-const root = path.resolve(process.env.WORKDIR ?? process.cwd());
-const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
-const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
-
-const tools = new ToolRegistry(
-  createWorkspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
-);
-
-// 中文对照：工作区：… ／ 模型：… ／ 工具：…
-console.log(`workspace: ${root}`);
-console.log(`model:     ${model}`);
-console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
-
-const agent = new Agent({
-  llm: new Llm({ baseUrl, apiKey, model }),
-  tools,
-  maxSteps,
-  // 打印每一步的工具调用，让你能「看见」循环在转。
-  onToolResult: (call, result) => {
-    const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
-    console.log(`  ↳ ${call.function.name} → ${firstLine}`);
-  },
-});
-
-try {
-  const reply = await agent.run(task);
-  console.log(`\n${reply.content ?? ""}`);
-} catch (error) {
-  // 中文对照：[agent] 致命错误：{原因}
-  console.error(`[agent] fatal: ${error instanceof Error ? error.message : String(error)}`);
-  // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
-  // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
-  process.exitCode = 1;
+  process.exitCode = task ? 0 : 1;
+} else {
+  try {
+    await runTask(task);
+  } catch (error) {
+    // 中文对照：[agent] 致命错误：{原因}
+    console.error(`[agent] fatal: ${error instanceof Error ? error.message : String(error)}`);
+    // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
+    // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
+    process.exitCode = 1;
+  }
 }
