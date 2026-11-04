@@ -80,14 +80,18 @@ test("工具失败不会打断循环：ERROR 文本进历史，模型继续收�
   assert.equal(toolMessage.content, "ERROR: kaboom");
 });
 
-test("步数上限：模型一直要调工具时抛错，且只请求了 maxSteps 次", async () => {
+test("步数上限：模型一直要调工具时抛错，最后一批工具不执行", async () => {
   const chat = createScriptedChat([callTool("loop", "echo", { value: "x" })]);
   const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxSteps: 2 });
 
-  await assert.rejects(() => agent.run("never finishes"), /step limit 2 reached/);
+  await assert.rejects(
+    () => agent.run("never finishes"),
+    /step limit 2 reached after executing 1 tool call\(s\); the final model response asked for 1 more/,
+  );
   assert.equal(chat.requests.length, 2);
-  // 失败也要留下全过程，方便事后调试
+  // 失败也要留下全过程，方便事后调试；最后一条 tool 消息写明「没跑」。
   assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "assistant", "tool"]);
+  assert.equal(agent.transcript.at(-1).content, "ERROR: not run: no model request left to verify the result");
 });
 
 test("没有工具调用就立刻收尾，不会多发请求", async () => {
@@ -201,4 +205,107 @@ test("取消：中途 abort 后不再执行工具，剩下的调用留下 not ru
   assert.deepEqual(toolMessages.map((message) => message.tool_call_id), ["c1", "c2"]);
   assert.equal(toolMessages[0].content, "echo a");
   assert.equal(toolMessages[1].content, "ERROR: not run: task cancelled");
+});
+
+test("工具预算：一批调用会超限时整批都不执行", async () => {
+  const chat = createScriptedChat([
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: ["a", "b", "c"].map((value, index) => ({
+        id: `c${index + 1}`,
+        type: "function",
+        function: { name: "echo", arguments: JSON.stringify({ value }) },
+      })),
+    },
+  ]);
+  const executed = [];
+  const tool = {
+    ...echoTool(),
+    run: async (args) => {
+      executed.push(args.value);
+      return `echo ${String(args.value)}`;
+    },
+  };
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([tool]), maxToolCalls: 2 });
+
+  await assert.rejects(
+    () => agent.run("task"),
+    /tool call budget 2 exceeded: 0 already executed, this batch asks for 3; none of them were run/,
+  );
+  assert.deepEqual(executed, [], "执行到一半才发现超限就太晚了");
+  assert.equal(chat.requests.length, 1);
+
+  const toolMessages = agent.transcript.filter((message) => message.role === "tool");
+  assert.deepEqual(toolMessages.map((message) => message.tool_call_id), ["c1", "c2", "c3"]);
+  assert.ok(toolMessages.every((message) => message.content === "ERROR: not run: tool call budget 2 would be exceeded"));
+});
+
+test("工具预算：跨批次累计，超限后不再启动新批次", async () => {
+  const chat = createScriptedChat([
+    callTool("c1", "echo", { value: "a" }),
+    callTool("c2", "echo", { value: "b" }),
+    finalReply("done"),
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxToolCalls: 1 });
+
+  await assert.rejects(
+    () => agent.run("task"),
+    /tool call budget 1 exceeded: 1 already executed, this batch asks for 1; none of them were run/,
+  );
+  assert.equal(chat.requests.length, 2);
+
+  const toolMessages = agent.transcript.filter((message) => message.role === "tool");
+  assert.deepEqual(toolMessages.map((message) => message.tool_call_id), ["c1", "c2"]);
+  assert.equal(toolMessages[0].content, "echo a");
+  assert.equal(toolMessages[1].content, "ERROR: not run: tool call budget 1 would be exceeded");
+});
+
+test("最后一步：模型仍要工具时不执行无法验证的副作用", async () => {
+  let ran = 0;
+  const tool = {
+    ...echoTool(),
+    run: async () => {
+      ran += 1;
+      return "ran";
+    },
+  };
+  const chat = createScriptedChat([callTool("c1", "echo", { value: "x" }), finalReply("done")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([tool]), maxSteps: 1 });
+
+  await assert.rejects(() => agent.run("task"), /step limit 1 reached after executing 0 tool call\(s\)/);
+  assert.equal(ran, 0, "没有后续请求验证的工具不该执行");
+  assert.equal(chat.requests.length, 1);
+});
+
+test("生命周期：第二次 run() 明确抛错，且不继承上一条 transcript", async () => {
+  const chat = createScriptedChat([finalReply("first")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+
+  await agent.run("first task");
+  const before = agent.transcript.length;
+
+  await assert.rejects(() => agent.run("second task"), /agent instance is single-use: run\(\) has already been called/);
+  assert.equal(chat.requests.length, 1, "第二次调用不能真的发请求");
+  assert.equal(agent.transcript.length, before, "第二次调用不能往 transcript 里塞东西");
+});
+
+test("生命周期：并发 run() 时后一个立刻被拒绝", async () => {
+  const chat = createScriptedChat([finalReply("ok")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+
+  const first = agent.run("first");
+  const second = agent.run("second");
+
+  await assert.rejects(second, /single-use/);
+  await first;
+  assert.equal(chat.requests.length, 1);
+});
+
+test("生命周期：任务失败后实例仍然算已消费", async () => {
+  const chat = createScriptedChat([finalReply("   ")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+
+  await assert.rejects(() => agent.run("fail"), /empty final answer/);
+  await assert.rejects(() => agent.run("retry"), /single-use/);
 });
