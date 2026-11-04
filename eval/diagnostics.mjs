@@ -257,6 +257,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
         thrown = error;
       }
 
+      const executedAt = performance.now();
       let nextSnapshot = previousSnapshot;
       try {
         nextSnapshot = await snapshotFiles(workdir);
@@ -270,7 +271,8 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
         toolCallId: call.id,
         name: call.function.name,
         arguments: sanitizeArguments(call.function.arguments),
-        executionMs: Math.round(performance.now() - started),
+        executionMs: Math.round(executedAt - started),
+        observationMs: Math.round(performance.now() - executedAt),
         fileChanges: diffSnapshots(previousSnapshot, nextSnapshot),
       };
       trace.toolCalls.push(event);
