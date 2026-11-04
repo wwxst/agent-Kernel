@@ -157,10 +157,12 @@ export class Workspace {
 
     // 编辑要整文件读进来做替换，所以先划一条上限：
     // 超过它的文件不该走 edit，让模型改用 shell，或者干脆拆开处理。
+    // preserveBom：edit 会把文本写回，BOM 必须留在文件里；read/grep 只展示，默认剥掉。
     const { text: before, truncated } = await readTextUpTo(
       file,
       MAX_EDIT_FILE_BYTES,
       Buffer.alloc(MAX_EDIT_FILE_BYTES + 1),
+      { preserveBom: true },
     );
     if (truncated) {
       // 中文对照：文件超过 {n} 字节，太大，不适合整文件编辑；请改用 shell。
@@ -547,6 +549,7 @@ async function readTextUpTo(
   file: string,
   limit: number,
   buffer: Buffer,
+  options: { preserveBom?: boolean } = {},
 ): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
   const handle = await open(file, "r");
   try {
@@ -557,9 +560,11 @@ async function readTextUpTo(
     const truncated = bytesRead > limit;
     // 截断点可能正好切在一个多字节字符中间：stream 模式把不完整的那截留在解码器里，
     // 不吐一个 U+FFFD 出来冒充「文件里真的有这个字符」。
-    const text = new TextDecoder("utf-8").decode(buffer.subarray(0, Math.min(bytesRead, limit)), {
-      stream: truncated,
-    });
+    // TextDecoder 默认会把开头的 BOM 吃掉；edit 需要保留它，否则写回时会静默改掉编码标记。
+    const text = new TextDecoder("utf-8", { ignoreBOM: options.preserveBom === true }).decode(
+      buffer.subarray(0, Math.min(bytesRead, limit)),
+      { stream: truncated },
+    );
     return { text, truncated, bytesRead };
   } finally {
     await handle.close();

@@ -655,3 +655,16 @@ test("run：已经取消的工作区不会再启动新进程", async () => {
     await assert.rejects(() => workspace.run("echo should-not-run"), /cancelled before the command started/);
   });
 });
+
+test("edit：写回时保留文件开头的 UTF-8 BOM", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("bom.txt", "\uFEFFhello world\n");
+
+    await workspace.edit("bom.txt", "world", "there");
+
+    const bytes = await readFile(path.join(root, "bom.txt"));
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "BOM 不应该被 edit 吃掉");
+    assert.equal(bytes.toString("utf8"), "\uFEFFhello there\n");
+  });
+});
