@@ -24,7 +24,7 @@ npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 | `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
 | `src/agent.ts` | 内核：循环、消息顺序、步数上限。只认 `ChatClient` 和 `ToolRegistry` |
 | `src/tool-registry.ts` | 工具注册表：按名字找工具、解析参数、把失败折成 `ERROR` 文本 |
-| `src/workspace.ts` | 工作区：沙箱内的读、写、改、列目录、跑命令，外加路径守卫与输出截断 |
+| `src/workspace.ts` | 工作区：沙箱内的读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫与输出截断 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点 |
 | `src/cli.ts` | 组装层：环境变量 → 对象图 → 跑一次任务 |
 
@@ -75,17 +75,21 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 
 字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
-## 五个工具
+## 七个工具
 
-工具名是模型看到的接口，所以用的是 agent 生态里的通用叫法（`read` / `write` / `edit` / `ls` / `shell`），不是本仓库方法名的直译：
+工具名是模型看到的接口，所以用的是 agent 生态里的通用叫法（`read` / `write` / `edit` / `glob` / `grep` / `ls` / `shell`），不是本仓库方法名的直译：
 
 | 工具 | 说明 | 对应工作区方法 |
 | --- | --- | --- |
 | `read` | 读 UTF-8 文本，超过 8k 字符截断 | `Workspace.read` |
 | `write` | 创建/覆盖整个文件，自动建父目录 | `Workspace.write` |
 | `edit` | 把唯一命中的一段换成另一段 | `Workspace.edit` |
+| `glob` | 按模式找文件，如 `src/**/*.ts` | `Workspace.glob` |
+| `grep` | 按正则搜文件内容，回 `路径:行号: 内容` | `Workspace.grep` |
 | `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
 | `shell` | 在沙箱根目录跑 shell，超时强杀，输出截断 | `Workspace.run` |
+
+前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
 
 `write` 和 `edit` 的分工就是名字说的那件事：改几行用 `edit`（省 token，也不会因为「只改三行却重写整个文件」把长文件改坏），新建文件或整体重写才用 `write`。
 
@@ -95,7 +99,7 @@ throw new Error(`step limit ${this.maxSteps} reached`);
 
 路径统一过工作区的路径守卫：`../`、绝对路径、跨盘符都会被拒绝，错误变成 `ERROR: path escapes workspace` 回灌给模型。
 
-已知边界：不处理符号链接指向工作区外的情况；`shell` 超时只杀外层 shell，Windows 上孙进程可能残留。
+已知边界：不处理符号链接指向工作区外的情况；`shell` 超时只杀外层 shell，Windows 上孙进程可能残留；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中，符号链接不跟随。
 
 ## 配置
 
@@ -115,13 +119,13 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-37 个用例，分四层，都不需要 API Key、不联网：
+47 个用例，分四层，都不需要 API Key、不联网：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、步数上限、错误回灌 |
 | `test/tool-registry.test.mjs` | `ToolRegistry.execute`：未知工具、坏 JSON、工具抛错 |
-| `test/workspace.test.mjs` | 路径越界、截断、exit code、`edit` 的唯一命中 |
+| `test/workspace.test.mjs` | 路径越界、截断、exit code、`edit` 唯一命中、`glob` 模式、`grep` 命中格式 |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状 |
 
 ## 刻意没做的事

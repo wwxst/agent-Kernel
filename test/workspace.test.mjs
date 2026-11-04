@@ -189,3 +189,101 @@ test("run 的输出同样受 8000 字符上限约束", async () => {
     assert.match(output, /\[truncated \d+ chars\]$/);
   });
 });
+
+test("glob：按模式找文件，返回排好序的相对路径", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.ts", "");
+    await workspace.write("sub/b.ts", "");
+    await workspace.write("sub/c.md", "");
+
+    assert.equal(await workspace.glob("**/*.ts"), "a.ts\nsub/b.ts");
+  });
+});
+
+test("glob：不带 ** 的模式只匹配根目录", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("root.md", "");
+    await workspace.write("sub/nested.md", "");
+
+    assert.equal(await workspace.glob("*.md"), "root.md");
+  });
+});
+
+test("glob：没有命中时给出明确提示", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.ts", "");
+
+    assert.equal(await workspace.glob("**/*.rs"), "(no matches)");
+  });
+});
+
+test("glob：模式里带 .. 或绝对路径一律拒绝", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+
+    await assert.rejects(() => workspace.glob("../**/*.ts"), /path escapes workspace/);
+    await assert.rejects(() => workspace.glob(path.join(root, "**/*.ts")), /must be relative/);
+  });
+});
+
+test("grep：跨文件搜索，每行带 路径:行号: 内容", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "hello\nworld\n");
+    await workspace.write("sub/b.txt", "world again\n");
+
+    assert.equal(await workspace.grep("world"), "a.txt:2: world\nsub/b.txt:1: world again");
+  });
+});
+
+test("grep：给了 path 就只搜那棵子树", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "world\n");
+    await workspace.write("sub/b.txt", "world again\n");
+
+    assert.equal(await workspace.grep("world", "sub"), "sub/b.txt:1: world again");
+  });
+});
+
+test("grep：没有命中时给出明确提示", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "hello\n");
+
+    assert.equal(await workspace.grep("goodbye"), "(no matches)");
+  });
+});
+
+test("grep：非法正则直接报错（由 ToolRegistry 折成 ERROR 文本）", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "hello\n");
+
+    await assert.rejects(() => workspace.grep("(["), /Invalid regular expression/);
+  });
+});
+
+test("grep：跳过 node_modules 和 .git，并且只看文本文件", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "world\n");
+    await workspace.write("node_modules/pkg/index.js", "world\n");
+    await workspace.write(".git/config", "world\n");
+    await workspace.write("blob.bin", "world\u0000binary\n");
+
+    assert.equal(await workspace.grep("world"), "a.txt:1: world");
+  });
+});
+
+test("grep：越界路径同样被拒绝", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "world\n");
+
+    await assert.rejects(() => workspace.grep("world", ".."), /path escapes workspace/);
+  });
+});

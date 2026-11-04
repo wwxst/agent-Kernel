@@ -13,12 +13,32 @@
  * 两个模块各管一个决定，改的时候不会互相牵动。
  */
 import { spawn } from "node:child_process";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { glob as fsGlob, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "./types.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;
+
+/**
+ * glob / grep 最多返回多少条命中。
+ * 结果再多模型也读不完，只会把上下文挤掉 —— 宁可行数少，也不要「全都有」。
+ */
+const MAX_RESULTS = 200;
+
+/** grep 单行最多展示多少字符。 */
+const MAX_LINE_CHARS = 200;
+
+/** 搜内容时直接跳过的目录：不是代码，搜起来慢，结果全是噪音。 */
+const SKIP_DIRS = new Set([".git", "node_modules"]);
+
+/**
+ * 输出统一用正斜杠（`sub/b.ts` 而不是 `sub\b.ts`）。
+ * 模型和用户都习惯 POSIX 风格，跨平台读起来也稳定；回填给 read/edit 同样能解析。
+ */
+function toPosix(relativePath: string): string {
+  return relativePath.split(path.sep).join("/");
+}
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
@@ -30,9 +50,9 @@ export interface WorkspaceOptions {
 }
 
 /**
- * 一套「最小可用」的编码能力：读、写、改、列目录、跑命令。
+ * 一套「最小可用」的编码能力：读、写、改、找文件、搜内容、列目录、跑命令。
  *
- * 刻意只有五个。工具越多，系统提示词越长、模型选错工具的概率越高；
+ * 刻意只有七个。工具越多，系统提示词越长、模型选错工具的概率越高；
  * 真的需要更多能力时，优先让 shell 工具去组合，而不是继续加方法。
  */
 export class Workspace {
@@ -112,6 +132,71 @@ export class Workspace {
   }
 
   /**
+   * 按模式找文件，返回相对工作区根目录的路径，一行一个，排好序。
+   *
+   * 模式里出现 `..`、或者写成绝对路径，直接拒绝：glob 会在 cwd 之外展开，
+   * 把路径守卫整个绕过去 —— 所以守卫必须放在展开之前，而不是事后过滤结果。
+   */
+  async glob(pattern: string): Promise<string> {
+    if (pattern === "") throw new Error("pattern must not be empty");
+    if (pattern.split(/[\\/]/).includes("..")) throw new Error(`path escapes workspace: ${pattern}`);
+    if (path.isAbsolute(pattern)) throw new Error(`pattern must be relative to the workspace root: ${pattern}`);
+
+    const matches: string[] = [];
+    for await (const match of fsGlob(pattern, { cwd: this.root })) {
+      matches.push(toPosix(match));
+      if (matches.length >= MAX_RESULTS) break;
+    }
+
+    if (matches.length === 0) return "(no matches)";
+    matches.sort();
+    return this.truncate(matches.join("\n"));
+  }
+
+  /**
+   * 在文本文件里按正则搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
+   *
+   * 二进制文件（含 NUL 字节）直接跳过：按 UTF-8 读出来只是乱码。
+   * 读不了的文件（权限、坏链接）也跳过 —— 一次搜索不该被一个文件打断。
+   */
+  async grep(pattern: string, requested = "."): Promise<string> {
+    const start = this.resolve(requested);
+    // 写错的正则让它抛出去，由 ToolRegistry 折成给模型看的 ERROR 文本。
+    const regex = new RegExp(pattern);
+
+    const hits: Array<{ file: string; line: number; text: string }> = [];
+    for await (const file of walkFiles(start)) {
+      if (hits.length >= MAX_RESULTS) break;
+
+      let content: string;
+      try {
+        content = await readFile(file, "utf8");
+      } catch {
+        continue;
+      }
+      if (content.includes("\u0000")) continue;
+
+      const lines = content.split("\n");
+      for (let index = 0; index < lines.length; index++) {
+        if (!regex.test(lines[index])) continue;
+        hits.push({
+          file: toPosix(path.relative(this.root, file)),
+          line: index + 1,
+          text: lines[index].trim().slice(0, MAX_LINE_CHARS),
+        });
+        if (hits.length >= MAX_RESULTS) break;
+      }
+    }
+
+    if (hits.length === 0) return "(no matches)";
+    // 先按文件、再按行号排：同一份文件里的命中保持阅读顺序。
+    hits.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
+
+    const note = hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
+    return this.truncate(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n") + note);
+  }
+
+  /**
    * 在工作区根目录执行一条 shell 命令，返回「exit code + stdout/stderr」。
    *
    * 已知边界：超时杀掉的是外层 shell，Windows 上它派生的子进程可能残留。
@@ -169,7 +254,25 @@ export class Workspace {
 }
 
 /**
- * 把 Workspace 的五个行为翻译成模型能调用的工具。
+ * 深度遍历目录，产出文件路径（给 grep 用）。
+ *
+ * 跳过 SKIP_DIRS，也跳过符号链接（`isFile` 对链接返回 false）：
+ * 链接可能指向工作区之外，顺着它走就等于把沙箱绕开了。
+ */
+async function* walkFiles(dir: string): AsyncGenerator<string> {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      yield* walkFiles(full);
+    } else if (entry.isFile()) {
+      yield full;
+    }
+  }
+}
+
+/**
+ * 把 Workspace 的七个行为翻译成模型能调用的工具。
  *
  * 这个函数是适配器：它真正的内容不是逻辑，而是写给模型看的文案
  * （name / description / JSON Schema）。文案写得含糊，模型就会传错参数 ——
@@ -235,6 +338,38 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       },
       run: async (args) =>
         workspace.edit(String(args.path), String(args.old_string ?? ""), String(args.new_string ?? "")),
+    },
+    {
+      name: "glob",
+      // 按模式找文件（例如 "src/**/*.ts"），返回相对工作区根目录的路径。
+      description:
+        'Find files by glob pattern and return their paths relative to the workspace root. Example: "src/**/*.ts".',
+      parameters: {
+        type: "object",
+        properties: {
+          // 要匹配的模式；** 可以跨目录。
+          pattern: { type: "string", description: 'Glob pattern such as "src/**/*.ts"; ** crosses directories.' },
+        },
+        required: ["pattern"],
+      },
+      run: async (args) => workspace.glob(String(args.pattern ?? "")),
+    },
+    {
+      name: "grep",
+      // 按正则在文件内容里搜索，返回「路径:行号: 内容」。
+      description:
+        "Search file contents with a JavaScript regular expression; returns one file:line: match line per hit.",
+      parameters: {
+        type: "object",
+        properties: {
+          // 要搜索的正则表达式（区分大小写）。
+          pattern: { type: "string", description: "Regular expression to search for (case-sensitive)." },
+          // 从哪个目录开始搜；默认工作区根目录。
+          path: { type: "string", description: "Directory to search, relative to the workspace root. Defaults to the root." },
+        },
+        required: ["pattern"],
+      },
+      run: async (args) => workspace.grep(String(args.pattern ?? ""), String(args.path ?? ".")),
     },
     {
       name: "ls",
