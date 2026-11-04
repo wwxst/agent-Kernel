@@ -466,5 +466,12 @@
     "baseline is the default system prompt on the pinned commit",
     "candidateB only replaces the system prompt through --system-prompt-file; source is unchanged",
     "diagnostics were enabled for every run; --keep was limited to the three filtered tasks"
+  ],
+  "rawSamples": [
+    "diagnostics/baseline-13-run1.json",
+    "diagnostics/baseline-20-run3.json",
+    "diagnostics/baseline-08-run4.json",
+    "diagnostics/candidateB-13-run3.json",
+    "diagnostics/candidateB-20-run3.json"
   ]
 }

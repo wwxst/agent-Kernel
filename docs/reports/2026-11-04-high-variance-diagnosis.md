@@ -5,6 +5,7 @@
 - 方法：`eval/diagnostics.mjs`，只包 `Llm.chat` 和 `Agent.onToolResult`；**没有修改 Agent Loop**
 - 样本：基线 5 轮 + 候选提示词 5 轮，每轮 3 个任务，全部通过（15/15 + 15/15）
 - 原始汇总：[`eval/baselines/2026-11-04-variance-study/summary.json`](../../eval/baselines/2026-11-04-variance-study/summary.json)
+- 原始诊断样本（5 个代表轮次）：[`eval/baselines/2026-11-04-variance-study/diagnostics/`](../../eval/baselines/2026-11-04-variance-study/diagnostics/)
 
 ## 1. 症状
 
