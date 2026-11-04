@@ -14,6 +14,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
+| `node eval/cross-day.mjs --date <YYYY-MM-DD>` | 跨天评测：固定 tag `stability-2026-11-04` 的 worktree 里跑 3 轮，按日期归档；需要 `.env` |
 
 ## 代码地图
 
@@ -31,7 +32,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 ## 测试放哪
 
-六处缝，重构不该让任何用例变红：
+八处缝，重构不该让任何用例变红：
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、生命周期、取消、token 统计。
 - `ToolRegistry`：Schema 注册校验，以及每个失败分支都折成文本。
@@ -39,6 +40,8 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
+- `eval/diagnostics.mjs`：只观察不改行为 —— 请求 usage、工具顺序/参数/结果大小、文件大小与 hash。
+- `eval/cross-day.mjs`：按日聚合多轮记录，保留中位数、逐任务波动和失败类型。
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。
 

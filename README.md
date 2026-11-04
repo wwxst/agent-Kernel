@@ -135,7 +135,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-135 个用例，分七层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+143 个用例，分九层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -145,7 +145,9 @@ npm run check       # typecheck + 全部测试
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消 |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
-| `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
+| `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败；429 归为环境错误 |
+| `test/diagnostics.test.mjs` | 诊断层：逐请求 usage、工具顺序/参数/结果大小、文件大小与 hash 轨迹 |
+| `test/crossday.test.mjs` | 跨天归档：按日聚合、中位数、逐任务波动与失败类型 |
 
 ## 评测
 
@@ -172,6 +174,18 @@ npm run eval:check      # 自检：不调用模型，验证每个任务的初始
 ```bash
 npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、墙钟的中位数
 ```
+
+高方差诊断与跨天验证：
+
+```bash
+npm run eval -- 13 20 08 --diagnostics diagnostics/run-1 --keep
+# ^ 只跑筛选出的任务，额外记录逐请求 usage、工具参数/顺序/结果大小、文件变化轨迹
+
+node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4
+# ^ 在固定 tag stability-2026-11-04 的 worktree 里跑 3 轮，按日期归档
+```
+
+`--keep` 保留的是「被执行的任务」的工作区：跑全量时会留下 20 份，所以诊断时用任务过滤。跨天运行器会校验 tag、复制 `.env` 路径、归档 `round-01..03.json` 和 `day-summary.json`，详见 [跨天验证协议](./docs/reports/2026-11-04-cross-day-protocol.md)。
 
 结果同时写进 `eval/results/`（不进 git）。真实评测**不自动进 CI**：它要真实 Key、会花钱、而且本身非确定性——CI 只跑确定性的 `npm run check` 和不需要 Key 的 `npm run eval:check`。任务怎么写、失败怎么分类，见 [eval/README.md](./eval/README.md)。
 

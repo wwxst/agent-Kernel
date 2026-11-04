@@ -1,0 +1,232 @@
+{
+  "date": "2026-11-04-preflight",
+  "ref": "stability-2026-11-04",
+  "commit": "4edd0e4ab004e184d280a95c17e41690fd58c644",
+  "model": "hy3",
+  "rounds": 1,
+  "aggregate": {
+    "passed": 20,
+    "total": 20
+  },
+  "medians": {
+    "requests": 93,
+    "toolCalls": 94,
+    "tokens": 121427,
+    "elapsed": 70.6
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-04T10:09:59.048Z",
+      "passed": 20,
+      "total": 20,
+      "requests": 93,
+      "toolCalls": 94,
+      "tokens": 121427,
+      "elapsed": 70.6,
+      "failures": []
+    }
+  ],
+  "perTask": [
+    {
+      "name": "01-add-health-route",
+      "tokens": [
+        4852
+      ],
+      "min": 4852,
+      "max": 4852,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "02-fix-failing-test",
+      "tokens": [
+        5318
+      ],
+      "min": 5318,
+      "max": 5318,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "03-rename-function",
+      "tokens": [
+        6774
+      ],
+      "min": 6774,
+      "max": 6774,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "04-create-doc",
+      "tokens": [
+        3692
+      ],
+      "min": 3692,
+      "max": 3692,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "05-extract-constant",
+      "tokens": [
+        5022
+      ],
+      "min": 5022,
+      "max": 5022,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "06-guard-missing-file",
+      "tokens": [
+        5995
+      ],
+      "min": 5995,
+      "max": 5995,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "tokens": [
+        7592
+      ],
+      "min": 7592,
+      "max": 7592,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "08-extract-duplication",
+      "tokens": [
+        6609
+      ],
+      "min": 6609,
+      "max": 6609,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "09-update-readme",
+      "tokens": [
+        3562
+      ],
+      "min": 3562,
+      "max": 3562,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "10-delete-dead-code",
+      "tokens": [
+        8077
+      ],
+      "min": 8077,
+      "max": 8077,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "tokens": [
+        4585
+      ],
+      "min": 4585,
+      "max": 4585,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "12-add-input-validation",
+      "tokens": [
+        4618
+      ],
+      "min": 4618,
+      "max": 4618,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "13-callback-to-promise",
+      "tokens": [
+        11722
+      ],
+      "min": 11722,
+      "max": 11722,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "14-fix-sort-order",
+      "tokens": [
+        4575
+      ],
+      "min": 4575,
+      "max": 4575,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "15-merge-defaults",
+      "tokens": [
+        4613
+      ],
+      "min": 4613,
+      "max": 4613,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "16-handle-bad-json",
+      "tokens": [
+        4669
+      ],
+      "min": 4669,
+      "max": 4669,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "17-write-missing-test",
+      "tokens": [
+        6164
+      ],
+      "min": 6164,
+      "max": 6164,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "tokens": [
+        3489
+      ],
+      "min": 3489,
+      "max": 3489,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "tokens": [
+        5059
+      ],
+      "min": 5059,
+      "max": 5059,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "20-fix-email-regex",
+      "tokens": [
+        14440
+      ],
+      "min": 14440,
+      "max": 14440,
+      "spread": 1,
+      "failures": []
+    }
+  ]
+}

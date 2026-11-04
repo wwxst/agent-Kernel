@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { classifyRunFailure } from "../eval/run.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const fixture = path.join(projectRoot, "test", "support", "eval-floating-check.mjs");
@@ -32,6 +33,15 @@ function runFixture(env = {}) {
     });
   });
 }
+
+test("评测分类：HTTP 429 限流算环境错误，不是 agent 失败", () => {
+  assert.equal(
+    classifyRunFailure(new Error('LLM HTTP 429: {"type":"rate_limit_error","code":429}')),
+    "environment",
+  );
+  assert.equal(classifyRunFailure(new Error("LLM HTTP 400: bad request")), "task");
+  assert.equal(classifyRunFailure(new Error("model returned an empty final answer")), "task");
+});
 
 test("评测：没有未处理 rejection 时，一轮任务全过就算通过", async () => {
   const { code, stderr, result } = await runFixture({ FLOATING: "0" });

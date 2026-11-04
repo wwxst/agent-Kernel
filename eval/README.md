@@ -67,6 +67,18 @@ tasks/01-add-health-route/
 2. **检查不能太松，也不能太紧。** 只断言结果（行为、文件内容、命令输出），不断言实现细节；否则 agent 换一种写法就误判。任务要求新建文件/修掉异常时，检查也要把「文件不存在」「代码抛错」写成断言失败，而不是把底层 `ENOENT` / `SyntaxError` 漏出去——那是任务没做对，不是检查器坏了。
 3. **任务对齐真实工作。** 修 bug、改名、加路由、抽重复、补文档——都是这个内核每天要干的事，不要造玩具题。
 
+## 诊断与跨天
+
+```bash
+npm run eval -- 13 20 08 --diagnostics diagnostics/run-1 --keep
+node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4
+```
+
+- `--diagnostics <dir>`：每个任务额外写一份 JSON —— 逐请求 prompt/completion tokens、工具名/参数/顺序/结果大小、write/edit 的文件大小与 hash 变化。只包 `Llm.chat` 和 `Agent.onToolResult`，不改变内核行为。
+- `--system-prompt-file <file>`：A/B 实验用，只替换系统提示词，其余配置不变。
+- `--keep` 保留的是「被执行的任务」的工作区；跑全量时会留下 20 份，诊断时用任务过滤。
+- `cross-day.mjs`：固定 tag `stability-2026-11-04`（commit `4edd0e4`），在临时 worktree 里跑 3 轮，按 `Asia/Shanghai` 日期归档到 `eval/baselines/cross-day/<date>/`。协议和预演结果见 [跨天验证协议](../docs/reports/2026-11-04-cross-day-protocol.md)。
+
 ## 为什么不在 CI 里跑
 
 真实评测需要 API Key、会花钱、而且是非确定性的（模型输出有波动）。CI 只跑确定性的 `npm run check` 和不调用模型的 `npm run eval:check`；真实评测由人按需触发，或者以后单独立一条定时任务。

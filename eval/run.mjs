@@ -9,6 +9,10 @@
  *   npm run eval                     # 跑全部任务
  *   npm run eval -- rename           # 只跑名字里带 rename 的
  *   node --env-file-if-exists=.env eval/run.mjs --keep   # 保留失败的工作区
+ *   node eval/run.mjs 13 20 08 --diagnostics eval/diagnostics/run-1
+ *                                    # 额外写每个任务的请求 / 工具 / 文件轨迹
+ *   node eval/run.mjs 13 20 08 --system-prompt-file variant.txt
+ *                                    # A/B 用：只替换系统提示词，其余不动
  *
  * 需要真实 API：BASE_URL / API_KEY / MODEL 来自 .env。
  * 结果同时写进 eval/results/<时间戳>.json（不进 git）。
@@ -33,6 +37,7 @@ import { Agent } from "../src/agent.ts";
 import { Llm } from "../src/llm.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "../src/workspace.ts";
+import { DiagnosticRecorder } from "./diagnostics.mjs";
 import { isExpectedFailure } from "./selfcheck.mjs";
 
 const run = promisify(execFile);
@@ -56,12 +61,32 @@ async function cli() {
   const keep = args.includes("--keep");
   const filters = [];
   let jobs = 4;
+  let diagnosticsDir;
+  let systemPromptFile;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--keep") continue;
     if (arg === "--jobs") {
       jobs = Math.max(1, Number(args[(index += 1)]) || jobs);
+      continue;
+    }
+    if (arg === "--diagnostics") {
+      diagnosticsDir = args[(index += 1)];
+      if (diagnosticsDir === undefined) {
+        console.error("--diagnostics needs a directory");
+        process.exitCode = 1;
+        return;
+      }
+      continue;
+    }
+    if (arg === "--system-prompt-file") {
+      systemPromptFile = args[(index += 1)];
+      if (systemPromptFile === undefined) {
+        console.error("--system-prompt-file needs a path");
+        process.exitCode = 1;
+        return;
+      }
       continue;
     }
     if (arg.startsWith("-")) continue;
@@ -94,6 +119,14 @@ async function cli() {
   console.log(`commit: ${commit}`);
   console.log(`tasks:  ${names.length}  并发: ${Math.min(jobs, names.length)}\n`);
 
+  // --keep 保留的是「被执行的任务」的工作区：跑全量时会留下 20 份，提醒用任务过滤。
+  if (keep && names.length > 5) {
+    console.warn(`[warn] --keep 会保留 ${names.length} 个工作区；用任务过滤（如 eval -- 13 20 08 --keep）避免占满临时目录\n`);
+  }
+
+  const systemPrompt =
+    systemPromptFile === undefined ? undefined : (await readFile(path.resolve(systemPromptFile), "utf8")).trim();
+
   const { results, elapsed, infra } = await runRound({
     tasksDir: defaultTasksDir,
     names,
@@ -102,13 +135,15 @@ async function cli() {
     model,
     jobs,
     keep,
+    diagnosticsDir: diagnosticsDir === undefined ? undefined : path.resolve(diagnosticsDir),
+    systemPrompt,
   });
 
   report(summarize({ results, elapsed, model, commit, infra }));
 }
 
 /** 跑一轮：并发执行任务，并在结算窗口内收集检查器留下的未处理 rejection。 */
-export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false }) {
+export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false, diagnosticsDir, systemPrompt }) {
   const infra = [];
   const onUnhandled = (reason) => {
     infra.push(describe(reason));
@@ -119,7 +154,7 @@ export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs =
   const startedAt = Date.now();
   try {
     const results = await runPool(names, jobs, (name) =>
-      runTask(name, { tasksDir, baseUrl, apiKey, model, keep }),
+      runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosticsDir, systemPrompt }),
     );
 
     // 让检查器里没 await 的 promise 浮出来：这段时间内的 rejection 都算本轮基础设施错误。
@@ -172,19 +207,25 @@ async function runPool(items, limit, worker) {
 }
 
 /** 跑一个任务：复制夹具 → 真跑一遍 → 跑检查 → 清理。 */
-async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
+async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosticsDir, systemPrompt }) {
   const taskDir = path.join(tasksDir, name);
   const prompt = (await readFile(path.join(taskDir, "task.md"), "utf8")).trim();
   const workdir = await mkdtemp(path.join(tmpdir(), `agent-eval-${name}-`));
   await cp(path.join(taskDir, "files"), workdir, { recursive: true });
 
-  const agent = new Agent({
-    llm: new Llm({ baseUrl, apiKey, model }),
+  // 诊断层只包在两个现有挂载点上：ChatClient 和 Agent.onToolResult。
+  const recorder = diagnosticsDir === undefined ? undefined : new DiagnosticRecorder({ root: workdir });
+  const client = new Llm({ baseUrl, apiKey, model });
+  const options = {
+    llm: recorder === undefined ? client : recorder.wrap(client),
     tools: new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir }))),
     maxSteps: 30,
     // 兜底：单个任务烧到 20 万 token 还没做完，多半是循环出了问题，不该继续付钱。
     maxTotalTokens: 200_000,
-  });
+  };
+  if (recorder !== undefined) options.onToolResult = (call, result) => recorder.onToolResult(call, result);
+  if (systemPrompt !== undefined) options.systemPrompt = systemPrompt;
+  const agent = new Agent(options);
 
   const started = Date.now();
   let error;
@@ -225,6 +266,20 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
     workdir: keep ? workdir : undefined,
   };
 
+  if (recorder !== undefined) {
+    // 诊断文件按任务命名；同一目录跑多轮会覆盖，调用方应按轮次分目录。
+    await mkdir(diagnosticsDir, { recursive: true });
+    await writeFile(
+      path.join(diagnosticsDir, `${name}.json`),
+      JSON.stringify(
+        { task: name, ok: result.ok, failure: result.failure, stats: agent.stats, ...recorder.toJSON() },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  }
+
   if (!keep) await rm(workdir, { recursive: true, force: true });
 
   const mark = result.ok ? "PASS" : "FAIL";
@@ -244,13 +299,15 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
  * 这是个启发式：只认明确的网络错误码和超时。端点返回 HTTP 4xx/5xx 时不在这里猜，
  * 归到 task —— 记录里保留了原始错误文本，复盘时能看出来。
  */
-function classifyRunFailure(error) {
+export function classifyRunFailure(error) {
   const code = error?.cause?.code ?? error?.code;
   if (
     ["ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)
   ) {
     return "environment";
   }
+  // 限流不是 agent 的失败：端点明确说「稍后重试」，任务本身可能完全正常。
+  if (/LLM HTTP 429|rate_limit_error/i.test(describe(error))) return "environment";
   if (error?.name === "TimeoutError" || error?.name === "AbortError") return "environment";
   return "task";
 }

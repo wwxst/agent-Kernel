@@ -1,0 +1,470 @@
+{
+  "at": "2026-11-04T10:10:25.175Z",
+  "commit": "4edd0e4ab004e184d280a95c17e41690fd58c644",
+  "model": "hy3",
+  "tasks": [
+    "13-callback-to-promise",
+    "20-fix-email-regex",
+    "08-extract-duplication"
+  ],
+  "candidatePromptLine": "Run one shell command per call with simple syntax; do not use | to sequence commands or alternate quoting.",
+  "baseline": {
+    "runs": [
+      {
+        "run": "run-1",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 17,
+            "tokens": 35544,
+            "promptFirst": 1003,
+            "promptLast": 2708,
+            "maxMessageChars": 7351,
+            "tools": 19,
+            "shellCalls": 12,
+            "shellFailures": 4,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 8,
+            "tokens": 12512,
+            "promptFirst": 1032,
+            "promptLast": 1863,
+            "maxMessageChars": 4340,
+            "tools": 7,
+            "shellCalls": 3,
+            "shellFailures": 2,
+            "edits": 2
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 4974,
+            "promptFirst": 1004,
+            "promptLast": 1388,
+            "maxMessageChars": 1957,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-2",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 10,
+            "tokens": 18825,
+            "promptFirst": 1003,
+            "promptLast": 2536,
+            "maxMessageChars": 6215,
+            "tools": 13,
+            "shellCalls": 7,
+            "shellFailures": 5,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 8,
+            "tokens": 12756,
+            "promptFirst": 1032,
+            "promptLast": 1831,
+            "maxMessageChars": 5112,
+            "tools": 7,
+            "shellCalls": 3,
+            "shellFailures": 2,
+            "edits": 2
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 4910,
+            "promptFirst": 1004,
+            "promptLast": 1362,
+            "maxMessageChars": 2007,
+            "tools": 3,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-3",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 8,
+            "tokens": 14661,
+            "promptFirst": 1003,
+            "promptLast": 2409,
+            "maxMessageChars": 5536,
+            "tools": 13,
+            "shellCalls": 7,
+            "shellFailures": 4,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 10,
+            "tokens": 20096,
+            "promptFirst": 1032,
+            "promptLast": 2608,
+            "maxMessageChars": 10808,
+            "tools": 9,
+            "shellCalls": 4,
+            "shellFailures": 2,
+            "edits": 3
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5110,
+            "promptFirst": 1004,
+            "promptLast": 1388,
+            "maxMessageChars": 1957,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-4",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 13,
+            "tokens": 30018,
+            "promptFirst": 1003,
+            "promptLast": 3185,
+            "maxMessageChars": 8819,
+            "tools": 16,
+            "shellCalls": 10,
+            "shellFailures": 7,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 8,
+            "tokens": 12533,
+            "promptFirst": 1032,
+            "promptLast": 1867,
+            "maxMessageChars": 4389,
+            "tools": 7,
+            "shellCalls": 3,
+            "shellFailures": 2,
+            "edits": 2
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 10,
+            "tokens": 17497,
+            "promptFirst": 1004,
+            "promptLast": 2202,
+            "maxMessageChars": 4503,
+            "tools": 10,
+            "shellCalls": 4,
+            "shellFailures": 3,
+            "edits": 3
+          }
+        }
+      },
+      {
+        "run": "run-5",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 11,
+            "tokens": 20176,
+            "promptFirst": 1003,
+            "promptLast": 2518,
+            "maxMessageChars": 5809,
+            "tools": 15,
+            "shellCalls": 9,
+            "shellFailures": 6,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 10,
+            "tokens": 17597,
+            "promptFirst": 1032,
+            "promptLast": 2218,
+            "maxMessageChars": 5972,
+            "tools": 9,
+            "shellCalls": 5,
+            "shellFailures": 3,
+            "edits": 2
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5005,
+            "promptFirst": 1004,
+            "promptLast": 1388,
+            "maxMessageChars": 2057,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      }
+    ],
+    "means": {
+      "requests": 8.6,
+      "tokens": 15480.9,
+      "shellFailures": 2.7,
+      "edits": 1.9
+    }
+  },
+  "candidateB": {
+    "runs": [
+      {
+        "run": "run-1",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 9,
+            "tokens": 15140,
+            "promptFirst": 1024,
+            "promptLast": 1967,
+            "maxMessageChars": 3972,
+            "tools": 11,
+            "shellCalls": 5,
+            "shellFailures": 2,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 5,
+            "tokens": 6747,
+            "promptFirst": 1053,
+            "promptLast": 1427,
+            "maxMessageChars": 2354,
+            "tools": 4,
+            "shellCalls": 1,
+            "shellFailures": 0,
+            "edits": 1
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5119,
+            "promptFirst": 1025,
+            "promptLast": 1409,
+            "maxMessageChars": 2454,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-2",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 11,
+            "tokens": 21308,
+            "promptFirst": 1024,
+            "promptLast": 2673,
+            "maxMessageChars": 7210,
+            "tools": 13,
+            "shellCalls": 6,
+            "shellFailures": 5,
+            "edits": 4
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 6,
+            "tokens": 8434,
+            "promptFirst": 1053,
+            "promptLast": 1527,
+            "maxMessageChars": 3441,
+            "tools": 5,
+            "shellCalls": 2,
+            "shellFailures": 0,
+            "edits": 1
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5035,
+            "promptFirst": 1025,
+            "promptLast": 1406,
+            "maxMessageChars": 2089,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-3",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 13,
+            "tokens": 28626,
+            "promptFirst": 1024,
+            "promptLast": 2966,
+            "maxMessageChars": 9150,
+            "tools": 16,
+            "shellCalls": 9,
+            "shellFailures": 6,
+            "edits": 3
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 9,
+            "tokens": 13990,
+            "promptFirst": 1053,
+            "promptLast": 1831,
+            "maxMessageChars": 3956,
+            "tools": 8,
+            "shellCalls": 4,
+            "shellFailures": 2,
+            "edits": 2
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5120,
+            "promptFirst": 1025,
+            "promptLast": 1409,
+            "maxMessageChars": 2250,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-4",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 11,
+            "tokens": 20425,
+            "promptFirst": 1024,
+            "promptLast": 2367,
+            "maxMessageChars": 5391,
+            "tools": 13,
+            "shellCalls": 6,
+            "shellFailures": 4,
+            "edits": 3
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 5,
+            "tokens": 6779,
+            "promptFirst": 1053,
+            "promptLast": 1365,
+            "maxMessageChars": 3054,
+            "tools": 4,
+            "shellCalls": 1,
+            "shellFailures": 0,
+            "edits": 1
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5188,
+            "promptFirst": 1025,
+            "promptLast": 1409,
+            "maxMessageChars": 2272,
+            "tools": 4,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      },
+      {
+        "run": "run-5",
+        "tasks": {
+          "13-callback-to-promise": {
+            "ok": true,
+            "requests": 10,
+            "tokens": 19170,
+            "promptFirst": 1024,
+            "promptLast": 2311,
+            "maxMessageChars": 6391,
+            "tools": 14,
+            "shellCalls": 7,
+            "shellFailures": 3,
+            "edits": 2
+          },
+          "20-fix-email-regex": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 5682,
+            "promptFirst": 1053,
+            "promptLast": 1254,
+            "maxMessageChars": 3508,
+            "tools": 3,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          },
+          "08-extract-duplication": {
+            "ok": true,
+            "requests": 4,
+            "tokens": 4946,
+            "promptFirst": 1025,
+            "promptLast": 1377,
+            "maxMessageChars": 2046,
+            "tools": 3,
+            "shellCalls": 0,
+            "shellFailures": 0,
+            "edits": 1
+          }
+        }
+      }
+    ],
+    "means": {
+      "requests": 6.9,
+      "tokens": 11447.3,
+      "shellFailures": 1.5,
+      "edits": 1.7
+    }
+  },
+  "candidateA": {
+    "runs": 3,
+    "requests": [
+      21,
+      22,
+      28
+    ],
+    "tokens": [
+      33347,
+      35853,
+      54071
+    ],
+    "allPassed": true,
+    "decision": "rejected: mean tokens only -5% vs 3-run baseline, worst case unchanged"
+  },
+  "fullRoundCandidateB": {
+    "passed": 20,
+    "total": 20,
+    "requests": 89,
+    "toolCalls": 88,
+    "tokens": 119749,
+    "elapsed": 81.1,
+    "note": "one full round; baseline six-round median is 101.5 requests / 139,040 tokens"
+  },
+  "notes": [
+    "baseline is the default system prompt on the pinned commit",
+    "candidateB only replaces the system prompt through --system-prompt-file; source is unchanged",
+    "diagnostics were enabled for every run; --keep was limited to the three filtered tasks"
+  ]
+}
