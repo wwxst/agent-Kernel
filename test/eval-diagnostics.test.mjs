@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { Agent } from "../src/agent.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
@@ -153,8 +154,8 @@ test("eval diagnostics redacts secret-looking arguments and summarizes large str
 
 
 test("cross-day runner help is available without switching commits or contacting the model", () => {
-  const runner = new URL("../eval/cross-day.mjs", import.meta.url);
-  const result = spawnSync(process.execPath, [runner.pathname, "--help"], {
+  const runner = fileURLToPath(new URL("../eval/cross-day.mjs", import.meta.url));
+  const result = spawnSync(process.execPath, [runner, "--help"], {
     cwd: process.cwd(),
     encoding: "utf8",
   });
