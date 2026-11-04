@@ -30,6 +30,10 @@ jobs:
       - name: Run checks
         run: npm run check
 
+      # 评测自检也不调用模型：验证每个任务的初始夹具确实会让检查失败。
+      - name: Self-check the evaluation set
+        run: npm run eval:check
+
   # 和上面的 job 互补，不是重复：
   # Linux 跑 POSIX 权限（chmod）与进程组清理；Windows 跑反斜杠路径语义与 taskkill 进程树。
   check-windows:
@@ -52,3 +56,6 @@ jobs:
 
       - name: Run checks
         run: npm run check
+
+      - name: Self-check the evaluation set
+        run: npm run eval:check

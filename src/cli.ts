@@ -26,6 +26,15 @@ import { Llm } from "./llm.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
+/** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
+function firstNonEmpty(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    const trimmed = value?.trim() ?? "";
+    if (trimmed !== "") return trimmed;
+  }
+  return "";
+}
+
 /** 读一个「正整数」环境变量；写错就抛错，由最外层的 catch 统一收尾。 */
 function positiveIntFromEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -66,7 +75,8 @@ const usage = [
  * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
  */
 async function runTask(task: string, signal: AbortSignal): Promise<void> {
-  const apiKey = process.env.API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+  // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
+  const apiKey = firstNonEmpty(process.env.API_KEY, process.env.OPENAI_API_KEY);
   if (!apiKey) {
     // 中文对照：缺少 API_KEY（或 OPENAI_API_KEY）；参考 .env.example
     throw new Error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
