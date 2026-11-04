@@ -5,8 +5,10 @@
  * 没有 message 的 Error，都不能变成一句 `ERROR: ` 后面什么都没有 ——
  * 模型看到空错误，只能瞎猜，重试也没方向。
  *
- * 放在单独模块里，是为了让 Toolbelt 和 CLI 用同一套兜底：
+ * 放在单独模块里，是为了让 ToolRegistry 和 CLI 用同一套兜底：
  * 错误文案出现两套互相矛盾的处理，比错误本身更难查。
+ *
+ * 模块只依赖 `types` 里的类型（`TokenUsage`），不反向依赖任何运行时模块。
  */
 import type { TokenUsage } from "./types.ts";
 

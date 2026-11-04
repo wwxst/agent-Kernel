@@ -20,14 +20,14 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | 文件 | 职责 | 对外接口 |
 | --- | --- | --- |
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
-| `src/errors.ts` | 错误文案兜底：任何抛出物都变成一行非空文本 | `describeError(error)` |
+| `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`ChatResponseError` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、生命周期 | `Agent.run(task)`、`transcript`、`stats` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage 与 `max_tokens` | `Llm.chat(messages, tools)` |
 | `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次；SIGINT/SIGTERM 取消链的起点 | — |
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` → `types`。`types` 和 `errors` 是叶子，`agent` 不认识 `workspace`。
+依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），不被其他模块反向依赖；`agent` 不认识 `workspace`。
 
 ## 测试放哪
 
