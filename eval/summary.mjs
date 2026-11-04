@@ -48,19 +48,35 @@ const median = (values) => {
 console.log(`最近 ${recent.length} 轮完整评测（共 ${taskCount} 个任务）：`);
 for (const [index, run] of recent.entries()) {
   const seconds = run.elapsed ?? run.results.reduce((total, task) => total + task.seconds, 0);
+  // 老记录只有 steps（当时把「问模型的次数」叫步数）；新记录统一叫 requests。
+  const requests = average(run.results.map((task) => task.requests ?? task.steps));
+  const tokens = run.totals?.tokens;
   console.log(
-    `  第 ${index + 1} 轮  ${run.passed}/${run.total}  ${average(run.results.map((task) => task.steps)).toFixed(1)} 步  ${Math.round(seconds)}s  ${run.at}`,
+    `  第 ${index + 1} 轮  ${run.passed}/${run.total}  ${requests.toFixed(1)} 次请求  ` +
+      `${tokens === undefined ? "" : `${tokens} tokens  `}${Math.round(seconds)}s  ${run.at}`,
   );
 }
 
 const passRates = recent.map((run) => (run.passed / run.total) * 100);
-const averageSteps = recent.map((run) => average(run.results.map((task) => task.steps)));
+const averageRequests = recent.map((run) =>
+  average(run.results.map((task) => task.requests ?? task.steps)),
+);
 // 老记录没有 elapsed（串行跑，任务耗时之和就等于墙钟），新记录优先用墙钟。
 const totalSeconds = recent.map((run) => run.elapsed ?? run.results.reduce((total, task) => total + task.seconds, 0));
 
 console.log(
-  `\n中位数：通过率 ${median(passRates).toFixed(0)}% · 平均 ${median(averageSteps).toFixed(1)} 步 · 合计 ${Math.round(median(totalSeconds))}s`,
+  `\n中位数：通过率 ${median(passRates).toFixed(0)}% · 平均 ${median(averageRequests).toFixed(1)} 次请求 · ` +
+    `合计 ${Math.round(median(totalSeconds))}s`,
 );
+
+// 成本只在有记录时汇总：没有 usage 的轮次混在一起算中位数会骗人。
+const tokenTotals = recent.filter((run) => run.totals?.tokens !== undefined).map((run) => run.totals.tokens);
+if (tokenTotals.length > 0) {
+  const unknown = recent.reduce((total, run) => total + (run.totals?.unknownResponses ?? 0), 0);
+  console.log(
+    `Token：中位数 ${median(tokenTotals)}${unknown > 0 ? `（至少；${unknown} 个响应没有 usage）` : ""}`,
+  );
+}
 
 // 不稳定的任务比失败更值得注意：它说明检查或任务本身有随机性。
 if (recent.length > 1) {

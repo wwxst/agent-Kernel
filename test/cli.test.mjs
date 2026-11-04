@@ -163,6 +163,33 @@ test("缺少 API Key：不联网，直接以退出码 1 结束", async () => {
   assert.match(run.stderr, /missing API_KEY/);
 });
 
+test("API Key：空白值算没填，回退到 OPENAI_API_KEY", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("fallback ok")]);
+    try {
+      const run = await runCli({
+        API_KEY: "   ",
+        OPENAI_API_KEY: "fallback-key",
+        BASE_URL: mock.url,
+        MODEL: "mock-model",
+        WORKDIR: workdir,
+      });
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /fallback ok/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("API Key：只有空白值时按缺失处理", async () => {
+  const run = await runCli({ API_KEY: "   ", OPENAI_API_KEY: "" });
+
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /missing API_KEY/);
+});
+
 test(
   "SIGINT：取消正在等待的模型请求，退出码 130",
   { skip: process.platform === "win32" && "Windows 上 node 不能向另一个进程投递 SIGINT" },
