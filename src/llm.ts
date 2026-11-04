@@ -5,7 +5,7 @@
  * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
-import type { ChatClient, Message, ToolDefinition } from "./types.ts";
+import type { ChatClient, Message, ToolCall, ToolDefinition } from "./types.ts";
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */
@@ -16,11 +16,6 @@ export interface LlmOptions {
   temperature?: number;
   /** 单次请求超时，默认 120 秒。网络卡住时不能把整个循环一起卡死。 */
   timeoutMs?: number;
-}
-
-/** 响应里我们真正用得上的部分；其余字段忽略。 */
-interface ChatCompletionResponse {
-  choices?: Array<{ message?: Message }>;
 }
 
 export class Llm implements ChatClient {
@@ -44,6 +39,9 @@ export class Llm implements ChatClient {
    * 这里只做三件事：拼请求、检查 HTTP 状态、把响应整理成统一的 Message。
    * 任何「模型说错话」的业务问题（比如参数不合法）都不在这里处理 ——
    * 那是 ToolRegistry 用 ERROR 文本回灌的事，网络层只负责如实搬运。
+   *
+   * 但「如实搬运」的前提是响应确实是那个形状：网络响应是外部输入，
+   * `as` 只是编译期断言，所以这里做一次运行时校验（见 readMessage）。
    */
   async chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<Message> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -75,23 +73,75 @@ export class Llm implements ChatClient {
       throw new Error(`LLM HTTP ${response.status}: ${detail}`);
     }
 
-    const payload = (await response.json()) as ChatCompletionResponse;
-    const message = payload.choices?.[0]?.message;
-    if (!message) {
-      // 中文对照：模型响应里缺少 choices[0].message。
-      throw new Error("LLM response is missing choices[0].message");
-    }
-
-    // 只挑协议认识的字段回填。
-    //
-    // 不能整体展开：响应里可能带着各家厂商的额外字段（refusal、annotations……），
-    // 原样转发到下一轮请求，严格一点的 OpenAI 兼容端点会直接 400。
-    // 反过来也不能只挑 role/content：带 tools 时 DeepSeek 要求把 reasoning_content 原样回传。
-    const normalized: Message = { role: message.role, content: message.content ?? "" };
-    if (message.tool_calls !== undefined) normalized.tool_calls = message.tool_calls;
-    if (message.tool_call_id !== undefined) normalized.tool_call_id = message.tool_call_id;
-    if (message.reasoning_content !== undefined) normalized.reasoning_content = message.reasoning_content;
-
-    return normalized;
+    return readMessage(await response.json());
   }
+}
+
+/** 一条消息读不懂时抛出的错误：前缀统一，便于日志里一眼认出来。 */
+function invalid(reason: string): Error {
+  // 中文对照：模型响应不合法：{原因}
+  return new Error(`LLM response is invalid: ${reason}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 运行时校验响应形状，并重建一条只含协议字段的 Message。
+ *
+ * 为什么不能只靠 `as`：服务端返回 `{ choices: [{ message: {} }] }` 时，
+ * 断言会让它一路走到底 —— role 是 undefined、content 变成空串、没有 tool_calls，
+ * 于是 Agent 认为「模型答完了」，CLI 正常退出。**错误响应被当成了成功响应。**
+ *
+ * 同时也不原样转发：只挑 role/content/tool_calls/tool_call_id/reasoning_content，
+ * 嵌套的 tool_call 也重建一遍，厂商私有字段进不了下一轮请求。
+ */
+function readMessage(payload: unknown): Message {
+  const choices = isRecord(payload) ? payload.choices : undefined;
+  if (!Array.isArray(choices) || choices.length === 0) throw invalid("choices must be a non-empty array");
+
+  const first = choices[0];
+  const candidate = isRecord(first) ? first.message : undefined;
+  if (!isRecord(candidate)) throw invalid("choices[0].message must be an object");
+
+  if (candidate.role !== "assistant") {
+    throw invalid(`choices[0].message.role must be "assistant", got ${JSON.stringify(candidate.role)}`);
+  }
+
+  const content = candidate.content;
+  if (content !== undefined && content !== null && typeof content !== "string") {
+    throw invalid("choices[0].message.content must be a string or null");
+  }
+
+  const message: Message = { role: "assistant", content: typeof content === "string" ? content : "" };
+  if (candidate.tool_calls !== undefined) message.tool_calls = readToolCalls(candidate.tool_calls);
+
+  const reasoning = candidate.reasoning_content;
+  if (reasoning !== undefined) {
+    if (typeof reasoning !== "string") throw invalid("choices[0].message.reasoning_content must be a string");
+    message.reasoning_content = reasoning;
+  }
+
+  return message;
+}
+
+/** 逐个校验 tool_call，并重建一份只含 id / type / function.name / function.arguments 的对象。 */
+function readToolCalls(value: unknown): ToolCall[] {
+  if (!Array.isArray(value)) throw invalid("choices[0].message.tool_calls must be an array");
+
+  return value.map((raw, index) => {
+    if (!isRecord(raw)) throw invalid(`tool_calls[${index}] must be an object`);
+    if (typeof raw.id !== "string" || raw.id === "") throw invalid(`tool_calls[${index}].id must be a non-empty string`);
+    if (raw.type !== "function") throw invalid(`tool_calls[${index}].type must be "function"`);
+
+    const fn = raw.function;
+    if (!isRecord(fn)) throw invalid(`tool_calls[${index}].function must be an object`);
+    if (typeof fn.name !== "string" || fn.name === "") {
+      throw invalid(`tool_calls[${index}].function.name must be a non-empty string`);
+    }
+    if (typeof fn.arguments !== "string") throw invalid(`tool_calls[${index}].function.arguments must be a string`);
+
+    return { id: raw.id, type: "function", function: { name: fn.name, arguments: fn.arguments } };
+  });
 }

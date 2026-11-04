@@ -116,7 +116,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 ## 7. 测试
 
-- **打在缝上**：`Agent.run`、`ToolRegistry.execute`、`Workspace` 的七个方法、CLI 进程。四处都有现成用例可参照。
+- **打在缝上**：`Agent.run`、`ToolRegistry.execute`、`Workspace` 的七个方法、`Llm.chat`、CLI 进程。五处都有现成用例可参照。
 - **断言外部行为**，不测私有函数，也不 mock 自己的模块。只有跨缝的外部依赖才用替身：`ChatClient` 的假实现、mock HTTP 服务。
 - **期望值写死字面量**，不要用被测代码算出来（同义反复的测试永远绿，也永远没用）。
 - 一个用例钉一件事；测试名写「什么情况下、发生什么」。
@@ -155,7 +155,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 | 类别 | 要求 | 落在哪 |
 | --- | --- | --- |
-| 输入 | 跨信任边界的输入一律不可信：必填、类型、格式、路径 | `ToolRegistry.execute`（schema 校验）、`Workspace.resolve` + `assertInsideWorkspace` |
+| 输入 | 跨信任边界的输入一律不可信：必填、类型、格式、路径、网络响应 | `ToolRegistry.execute`（参数 schema）、`Workspace.resolve` + `assertInsideWorkspace`、`Llm.chat` → `readMessage` |
 | 异常 | 预期异常有归属；未知异常也有非空兜底文案 | `describeError`、`ToolRegistry.execute`、`cli` |
 | 错误 | 可恢复 / 致命 / 部分成功，三类分开处理 | 见下 |
 | 资源 | 读取、输出、进程、时间都要有上限 | `MAX_*` 常量、`clip`、超时 + 进程树 |
@@ -172,6 +172,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 ### 禁止事项
 
 - 返回空的错误文本（`ERROR: ` 后面什么都没有）。
+- 把类型断言（`as`）当成运行时校验：网络响应、用户输入都必须按字段逐个检查。
 - 无声吞掉异常（`catch { continue }` 必须留下计数，并写进结果）。
 - 用默认空值掩盖必填参数缺失（`String(args.content ?? "")`）。
 - 失败后返回看起来成功的结果。

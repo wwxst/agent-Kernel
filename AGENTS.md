@@ -29,11 +29,12 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 ## 测试放哪
 
-四处缝，重构不该让任何用例变红：
+五处缝，重构不该让任何用例变红：
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、步数上限。
 - `ToolRegistry.execute`：每个失败分支都折成文本。
 - `Workspace` 的七个方法：路径越界、截断、exit code、`edit` 唯一命中、`glob` 模式、`grep` 命中格式。
+- `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状；循环细节留在单元层。
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。
