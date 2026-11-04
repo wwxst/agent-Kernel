@@ -85,9 +85,9 @@ export class Agent {
     });
   }
 
-  /** 到目前为止的完整对话记录（只读快照，调试和断言用）。 */
+  /** 到目前为止的完整对话记录（数组副本，调用方拿不到内部引用）。 */
   get transcript(): readonly Message[] {
-    return this.messages;
+    return [...this.messages];
   }
 
   /**

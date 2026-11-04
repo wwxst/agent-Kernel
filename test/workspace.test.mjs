@@ -116,10 +116,17 @@ test("越界路径一律拒绝，错误里带上原始路径", async () => {
     const outside = path.join(root, "..", "outside.txt");
 
     await assert.rejects(() => workspace.read("../outside.txt"), /path escapes workspace: \.\.\/outside\.txt/);
-    await assert.rejects(() => workspace.read("..\\..\\escaped.txt"), /path escapes workspace/);
     await assert.rejects(() => workspace.read(outside), /path escapes workspace/);
     await assert.rejects(() => workspace.list(".."), /path escapes workspace/);
     await assert.rejects(() => workspace.write("../escape.txt", "nope"), /path escapes workspace/);
+  });
+});
+
+test("Windows 上反斜杠按分隔符处理", { skip: path.sep !== "\\" && "反斜杠只在 Windows 上是分隔符" }, async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+
+    await assert.rejects(() => workspace.read("..\\..\\escaped.txt"), /path escapes workspace/);
   });
 });
 
@@ -347,5 +354,48 @@ test("符号链接指向工作区外：read / write / list / grep 一律拒绝",
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+test("read：大文件只读进上限字节，不把整个文件塞进内存", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "big.log"), "x".repeat(65_536));
+    const workspace = new Workspace({ root });
+
+    const text = await workspace.read("big.log");
+
+    assert.match(text, /\[truncated 24768 chars\]/);
+    assert.match(text, /… \[stopped after 32768 bytes\]$/);
+  });
+});
+
+test("grep：超大文件直接跳过，并在结果里说明", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "big.log"), "match\n" + "x".repeat(1_100_000));
+    const workspace = new Workspace({ root });
+    await workspace.write("small.txt", "nothing\n");
+
+    const result = await workspace.grep("match");
+
+    assert.match(result, /skipped 1 files over 1 MB/);
+  });
+});
+
+test("edit：重叠的命中也算多处，不能被当成唯一", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("f.txt", "aaa\n");
+
+    await assert.rejects(() => workspace.edit("f.txt", "aa", "b"), /appears 2 times/);
+  });
+});
+
+test("run：超时是独立的执行结果，不是普通的退出码", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root, timeoutMs: 300 });
+
+    const result = await workspace.run('node -e "setTimeout(() => {}, 5000)"');
+
+    assert.match(result, /^timeout after 300ms/);
   });
 });
