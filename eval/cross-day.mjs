@@ -61,18 +61,30 @@ function median(values) {
 
 function roundMetrics(record) {
   const results = record.results ?? [];
+  const hasResults = results.length > 0;
+  const sum = (field) => hasResults
+    ? results.reduce((total, result) => total + (result.tokens?.[field] ?? 0), 0)
+    : null;
   return {
     round: record.round,
     at: record.at,
     ok: record.ok === true,
     passed: record.passed ?? results.filter((result) => result.ok).length,
     total: record.total ?? results.length,
-    requests: record.totals?.requests ?? results.reduce((sum, result) => sum + result.requests, 0),
-    toolCalls: record.totals?.toolCalls ?? results.reduce((sum, result) => sum + result.toolCalls, 0),
-    prompt: results.reduce((sum, result) => sum + (result.tokens?.prompt ?? 0), 0),
-    completion: results.reduce((sum, result) => sum + (result.tokens?.completion ?? 0), 0),
-    tokens: record.totals?.tokens ?? results.reduce((sum, result) => sum + (result.tokens?.total ?? 0), 0),
-    unknown: record.totals?.unknownResponses ?? results.reduce((sum, result) => sum + (result.tokens?.unknownResponses ?? 0), 0),
+    requests: Number.isFinite(record.totals?.requests)
+      ? record.totals.requests
+      : hasResults ? results.reduce((total, result) => total + result.requests, 0) : null,
+    toolCalls: Number.isFinite(record.totals?.toolCalls)
+      ? record.totals.toolCalls
+      : hasResults ? results.reduce((total, result) => total + result.toolCalls, 0) : null,
+    prompt: sum("prompt"),
+    completion: sum("completion"),
+    tokens: Number.isFinite(record.totals?.tokens)
+      ? record.totals.tokens
+      : sum("total"),
+    unknown: Number.isFinite(record.totals?.unknownResponses)
+      ? record.totals.unknownResponses
+      : sum("unknownResponses"),
     elapsed: record.elapsed ?? null,
     failures: results.filter((result) => !result.ok).map((result) => ({
       name: result.name,
@@ -80,6 +92,7 @@ function roundMetrics(record) {
       error: result.error ?? "unknown failure",
     })),
     infraErrors: record.infraErrors ?? [],
+    runnerError: record.runnerError,
   };
 }
 
@@ -119,7 +132,9 @@ function buildDailySummary({ date, records, model, baseUrl, taskNames }) {
     command: "npm run eval:cross-day",
     tasks: taskNames.length,
     jobs: JOBS,
-    rounds: ROUNDS,
+    rounds: records.length,
+    plannedRounds: ROUNDS,
+    complete: records.length === ROUNDS,
     generatedAt: new Date().toISOString(),
     environment: {
       node: process.version,
@@ -143,8 +158,12 @@ function buildDailySummary({ date, records, model, baseUrl, taskNames }) {
       elapsed: median(rounds.map((round) => round.elapsed)),
     },
     tokenRange: {
-      min: rounds.length ? Math.min(...rounds.map((round) => round.tokens)) : null,
-      max: rounds.length ? Math.max(...rounds.map((round) => round.tokens)) : null,
+      min: rounds.some((round) => Number.isFinite(round.tokens))
+        ? Math.min(...rounds.map((round) => round.tokens).filter(Number.isFinite))
+        : null,
+      max: rounds.some((round) => Number.isFinite(round.tokens))
+        ? Math.max(...rounds.map((round) => round.tokens).filter(Number.isFinite))
+        : null,
     },
     perRound: rounds,
     perTask,
@@ -230,6 +249,7 @@ async function main() {
     // Import only after checkout: this resolves eval/run.mjs from the pinned baseline commit.
     const baselineModule = await import(pathToFileURL(path.join(evalDir, "run.mjs")).href + "?baseline=" + Date.now());
 
+    let runnerFailed = false;
     for (let round = 1; round <= ROUNDS; round += 1) {
       console.log("\n=== " + options.date + " round " + round + "/" + ROUNDS + " ===");
       let record;
@@ -251,16 +271,18 @@ async function main() {
           infra: result.infra,
         });
       } catch (error) {
+        runnerFailed = true;
         record = {
           at: new Date().toISOString(),
           model,
           commit: BASELINE_SHA,
           ok: false,
           passed: 0,
-          total: TASK_COUNT,
+          total: 0,
           elapsed: null,
-          totals: { requests: 0, toolCalls: 0, tokens: 0, unknownResponses: 0 },
-          infraErrors: ["round runner failed: " + (error instanceof Error ? error.message : String(error))],
+          totals: { requests: null, toolCalls: null, tokens: null, unknownResponses: null },
+          infraErrors: [],
+          runnerError: error instanceof Error ? error.message : String(error),
           results: [],
         };
       }
@@ -274,6 +296,8 @@ async function main() {
         JSON.stringify(record, null, 2),
         "utf8",
       );
+      // A rejected round may have left workers in flight; do not start another round.
+      if (runnerFailed) break;
     }
 
     const summary = buildDailySummary({ date: options.date, records, model, baseUrl, taskNames });
@@ -283,7 +307,7 @@ async function main() {
       " full rounds · median " + summary.medians.tokens + " tokens");
     console.log("archived: eval/baselines/cross-day/" + options.date);
 
-    if (records.some((record) => record.ok !== true)) process.exitCode = 1;
+    if (records.length !== ROUNDS || records.some((record) => record.ok !== true)) process.exitCode = 1;
   } finally {
     if (checkedOutBaseline) {
       if (originalBranch) {
