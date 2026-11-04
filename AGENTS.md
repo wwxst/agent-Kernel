@@ -18,13 +18,14 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | 文件 | 职责 | 对外接口 |
 | --- | --- | --- |
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`ChatClient` |
+| `src/errors.ts` | 错误文案兜底：任何抛出物都变成一行非空文本 | `describeError(error)` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、步数上限 | `Agent.run(task)`、`transcript` |
 | `src/tool-registry.ts` | 工具查找、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、截断、超时 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器 | `Llm.chat(messages, tools)` |
 | `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次 | — |
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` → `types`。`types` 是叶子，`agent` 不认识 `workspace`。
+依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` → `types`。`types` 和 `errors` 是叶子，`agent` 不认识 `workspace`。
 
 ## 测试放哪
 

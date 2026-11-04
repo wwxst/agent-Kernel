@@ -17,11 +17,12 @@ npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 
 ## 代码结构
 
-六个模块，依赖只有一个方向 —— 都指向 `types.ts`：
+七个模块，依赖只有一个方向，叶子是两个不依赖任何人的模块（`types.ts`、`errors.ts`）：
 
 | 文件 | 一句话 |
 | --- | --- |
 | `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
+| `src/errors.ts` | 错误文案兜底：`describeError()` 把任何抛出物变成一行非空文本 |
 | `src/agent.ts` | 内核：循环、消息顺序、步数上限。只认 `ChatClient` 和 `ToolRegistry` |
 | `src/tool-registry.ts` | 工具注册表：按名字找工具、解析参数、把失败折成 `ERROR` 文本 |
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫与输出上限 |
