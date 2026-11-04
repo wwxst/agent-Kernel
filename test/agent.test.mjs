@@ -156,3 +156,49 @@ test("空回复不算完成：模型什么都没说时必须报错", async () =>
 
   await assert.rejects(() => agent.run("task"), /model returned an empty final answer/);
 });
+
+test("取消：信号在任务开始前已 abort 时，一次模型请求都不发", async () => {
+  const controller = new AbortController();
+  controller.abort(new Error("stop now"));
+  const chat = createScriptedChat([finalReply("never")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), signal: controller.signal });
+
+  await assert.rejects(() => agent.run("task"), /cancelled: stop now/);
+  assert.equal(chat.requests.length, 0);
+  assert.deepEqual(roles(agent.transcript), ["system"], "取消发生在 user 消息入栈之前");
+});
+
+test("取消：中途 abort 后不再执行工具，剩下的调用留下 not run 结果", async () => {
+  const controller = new AbortController();
+  const chat = createScriptedChat([
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "c1", type: "function", function: { name: "echo", arguments: JSON.stringify({ value: "a" }) } },
+        { id: "c2", type: "function", function: { name: "echo", arguments: JSON.stringify({ value: "b" }) } },
+      ],
+    },
+  ]);
+  const interruptAfterFirst = {
+    ...echoTool(),
+    run: async (args) => {
+      controller.abort(new Error("user interrupt"));
+      return `echo ${String(args.value)}`;
+    },
+  };
+  const agent = new Agent({
+    llm: chat,
+    tools: new ToolRegistry([interruptAfterFirst]),
+    signal: controller.signal,
+  });
+
+  await assert.rejects(() => agent.run("task"), /cancelled: user interrupt/);
+  assert.equal(chat.requests.length, 1, "取消后不能再发模型请求");
+
+  // 配对必须完整：c2 没跑，但也要有一条 tool 结果说明它没跑。
+  const toolMessages = agent.transcript.filter((message) => message.role === "tool");
+  assert.deepEqual(toolMessages.map((message) => message.tool_call_id), ["c1", "c2"]);
+  assert.equal(toolMessages[0].content, "echo a");
+  assert.equal(toolMessages[1].content, "ERROR: not run: task cancelled");
+});

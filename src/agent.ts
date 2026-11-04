@@ -51,6 +51,13 @@ function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
 
+/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */
+function cancellationError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  const detail = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
+  return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
+}
+
 export interface AgentOptions {
   /** 模型客户端。传接口而不是具体类，测试时才能注入假实现。 */
   llm: ChatClient;
@@ -60,6 +67,11 @@ export interface AgentOptions {
   systemPrompt?: string;
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
   maxSteps?: number;
+  /**
+   * 取消信号。CLI 收到 SIGINT / SIGTERM 时 abort 它：
+   * 循环不再发起新的模型请求或工具调用，正在跑的 shell 由 Workspace 收掉进程树。
+   */
+  signal?: AbortSignal;
   /** 每次工具执行完的回调，用来打印进度；Agent 本身不直接 console.log。 */
   onToolResult?: (call: ToolCall, result: string) => void;
 }
@@ -68,6 +80,7 @@ export class Agent {
   private readonly llm: ChatClient;
   private readonly tools: ToolRegistry;
   private readonly maxSteps: number;
+  private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
 
   /**
@@ -81,6 +94,7 @@ export class Agent {
     this.llm = options.llm;
     this.tools = options.tools;
     this.maxSteps = options.maxSteps ?? 30;
+    this.signal = options.signal;
     this.onToolResult = options.onToolResult;
 
     // 系统提示词只放一次，之后每轮都跟着 messages 一起发出去。
@@ -88,6 +102,26 @@ export class Agent {
       role: "system",
       content: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
     });
+  }
+
+  /**
+   * 取消检查点：每一轮模型请求之前、每一次工具调用之前都要过。
+   *
+   * 光靠 fetch 的 signal 不够 —— 取消可能发生在两次工具调用之间，那里没有网络请求可中断。
+   * pending 是「本来接下来要执行的调用」：给它们补上 not run 的结果，Transcript 的
+   * assistant / tool 配对才不会断（配对断了，事后拿记录去复盘或重放都会被 API 拒绝）。
+   */
+  private stopIfCancelled(pending: readonly ToolCall[] = []): void {
+    if (this.signal?.aborted !== true) return;
+    this.skipCalls(pending, "task cancelled");
+    throw cancellationError(this.signal);
+  }
+
+  /** 没有执行的调用也要留下一条结果：明确写「没跑」，而不是让它们凭空消失。 */
+  private skipCalls(calls: readonly ToolCall[], reason: string): void {
+    for (const call of calls) {
+      this.messages.push(createToolResult(call, `ERROR: not run: ${reason}`));
+    }
   }
 
   /**
@@ -112,6 +146,9 @@ export class Agent {
    * 此时 transcript 里保留了全过程，调试时可以直接打印出来看。
    */
   async run(task: string): Promise<Message> {
+    // 取消发生在任务开始之前：用户已经按了 Ctrl-C，就不该再花一次模型请求。
+    this.stopIfCancelled();
+
     // 1) 用户消息先入栈；之后每次请求模型，都带着从 system 到此刻的完整历史。
     this.messages.push({ role: "user", content: task });
 
@@ -138,7 +175,10 @@ export class Agent {
       // 5) 有工具调用就逐个执行，并把结果写回对话记录。
       //    这里刻意串行：简单，且消息顺序与模型给出的顺序一一对应。
       //    （并发执行能更快，但结果回灌顺序会乱，属于优化，不属于内核。）
-      for (const call of calls) {
+      for (let index = 0; index < calls.length; index++) {
+        // 取消可能正好发生在两次调用之间：剩下的调用不再启动，但每条都要留下结果。
+        this.stopIfCancelled(calls.slice(index));
+        const call = calls[index];
         const result = await this.tools.execute(call);
         this.messages.push(createToolResult(call, result));
         this.onToolResult?.(call, result);
