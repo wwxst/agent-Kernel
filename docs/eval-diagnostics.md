@@ -34,6 +34,7 @@ The runner:
 4. Runs three sequential full rounds, with four tasks concurrently inside each round. It does not retry tasks.
 5. Saves every round immediately and writes a daily summary.
 6. Restores the branch that was checked out before the run. On SIGINT/SIGTERM it finishes the current round, archives the partial result, restores the branch, and exits with an interruption status.
+7. On later dates, compares Node version, OS, architecture, timezone, model, endpoint, task count, concurrency, and baseline SHA with earlier daily summaries; it refuses to continue if they drift.
 
 Output:
 
@@ -46,6 +47,8 @@ eval/baselines/cross-day/YYYY-MM-DD/
 ~~~
 
 Do not use the diagnostic branch's newer evaluator for these baseline measurements. The helper deliberately imports the evaluator only after checking out the pinned SHA. Do not run the command three times on one day and call that cross-day validation.
+
+The original six-round summary did not record Node/OS/timezone metadata, so exact environment equivalence with that first day cannot be machine-verified. Run on the same machine/runtime used for the original six rounds; the new runner then enforces consistency across the three additional days.
 
 ## 2. Investigating high-variance tasks
 
