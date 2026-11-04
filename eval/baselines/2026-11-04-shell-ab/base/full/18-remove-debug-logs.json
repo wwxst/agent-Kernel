@@ -1,0 +1,119 @@
+{
+  "task": "18-remove-debug-logs",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4320,
+      "completionTokens": 182,
+      "totalTokens": 4502,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-18-remove-debug-logs-duUax7",
+  "startedAt": "2026-11-04T13:10:07.580Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2548,
+      "messageCount": 2,
+      "messageChars": 623,
+      "usage": {
+        "prompt_tokens": 988,
+        "completion_tokens": 37,
+        "total_tokens": 1025
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2023,
+      "messageCount": 4,
+      "messageChars": 703,
+      "usage": {
+        "prompt_tokens": 1024,
+        "completion_tokens": 21,
+        "total_tokens": 1045
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2704,
+      "messageCount": 6,
+      "messageChars": 949,
+      "usage": {
+        "prompt_tokens": 1113,
+        "completion_tokens": 91,
+        "total_tokens": 1204
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 1943,
+      "messageCount": 8,
+      "messageChars": 1262,
+      "usage": {
+        "prompt_tokens": 1195,
+        "completion_tokens": 33,
+        "total_tokens": 1228
+      },
+      "toolCalls": 0,
+      "contentChars": 64
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "glob",
+      "args": {
+        "pattern": "**/app.mjs"
+      },
+      "resultChars": 7,
+      "resultLines": 1,
+      "resultHead": "app.mjs",
+      "elapsedMs": 2555
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "app.mjs"
+      },
+      "resultChars": 223,
+      "resultLines": 11,
+      "resultHead": "export function total(items) {\r",
+      "elapsedMs": 4579
+    },
+    {
+      "index": 3,
+      "name": "write",
+      "args": {
+        "path": "app.mjs",
+        "content": "export function total(items) {\n  let sum = 0;\n  for (const item of items) {\n    sum += item.price;\n  }\n  return sum;\n}\n"
+      },
+      "resultChars": 26,
+      "resultLines": 1,
+      "resultHead": "wrote 119 chars to app.mjs",
+      "elapsedMs": 7284,
+      "file": {
+        "path": "app.mjs",
+        "beforeBytes": 223,
+        "afterBytes": 119,
+        "deltaBytes": -104,
+        "beforeSha256": "9fa6188abebf9e9f",
+        "afterSha256": "73f801076002a964"
+      }
+    }
+  ]
+}

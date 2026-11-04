@@ -1,0 +1,95 @@
+{
+  "task": "18-remove-debug-logs",
+  "ok": true,
+  "stats": {
+    "requests": 3,
+    "toolCalls": 2,
+    "usage": {
+      "promptTokens": 3287,
+      "completionTokens": 145,
+      "totalTokens": 3432,
+      "reported": 3,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-18-remove-debug-logs-sQ1yj2",
+  "startedAt": "2026-11-04T13:16:24.911Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2456,
+      "messageCount": 2,
+      "messageChars": 730,
+      "usage": {
+        "prompt_tokens": 1009,
+        "completion_tokens": 32,
+        "total_tokens": 1041
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 3392,
+      "messageCount": 4,
+      "messageChars": 1013,
+      "usage": {
+        "prompt_tokens": 1098,
+        "completion_tokens": 63,
+        "total_tokens": 1161
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2704,
+      "messageCount": 6,
+      "messageChars": 1204,
+      "usage": {
+        "prompt_tokens": 1180,
+        "completion_tokens": 50,
+        "total_tokens": 1230
+      },
+      "toolCalls": 0,
+      "contentChars": 108
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "read",
+      "args": {
+        "path": "app.mjs"
+      },
+      "resultChars": 223,
+      "resultLines": 11,
+      "resultHead": "export function total(items) {\r",
+      "elapsedMs": 2463
+    },
+    {
+      "index": 2,
+      "name": "write",
+      "args": {
+        "path": "app.mjs",
+        "content": "export function total(items) {\n  let sum = 0;\n  for (const item of items) {\n    sum += item.price;\n  }\n  return sum;\n}\n"
+      },
+      "resultChars": 26,
+      "resultLines": 1,
+      "resultHead": "wrote 119 chars to app.mjs",
+      "elapsedMs": 5855,
+      "file": {
+        "path": "app.mjs",
+        "beforeBytes": 223,
+        "afterBytes": 119,
+        "deltaBytes": -104,
+        "beforeSha256": "9fa6188abebf9e9f",
+        "afterSha256": "73f801076002a964"
+      }
+    }
+  ]
+}

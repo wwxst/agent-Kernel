@@ -1,0 +1,275 @@
+{
+  "task": "06-guard-missing-file",
+  "ok": true,
+  "stats": {
+    "requests": 10,
+    "toolCalls": 10,
+    "usage": {
+      "promptTokens": 13704,
+      "completionTokens": 965,
+      "totalTokens": 14669,
+      "reported": 10,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-06-guard-missing-file-kFbi3E",
+  "startedAt": "2026-11-04T13:09:22.674Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2941,
+      "messageCount": 2,
+      "messageChars": 627,
+      "usage": {
+        "prompt_tokens": 994,
+        "completion_tokens": 47,
+        "total_tokens": 1041
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1892,
+      "messageCount": 5,
+      "messageChars": 774,
+      "usage": {
+        "prompt_tokens": 1057,
+        "completion_tokens": 21,
+        "total_tokens": 1078
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2854,
+      "messageCount": 7,
+      "messageChars": 929,
+      "usage": {
+        "prompt_tokens": 1124,
+        "completion_tokens": 93,
+        "total_tokens": 1217
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 2777,
+      "messageCount": 9,
+      "messageChars": 1265,
+      "usage": {
+        "prompt_tokens": 1238,
+        "completion_tokens": 62,
+        "total_tokens": 1300
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 5,
+      "durationMs": 2797,
+      "messageCount": 11,
+      "messageChars": 1484,
+      "usage": {
+        "prompt_tokens": 1274,
+        "completion_tokens": 47,
+        "total_tokens": 1321
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 6,
+      "durationMs": 5775,
+      "messageCount": 13,
+      "messageChars": 1666,
+      "usage": {
+        "prompt_tokens": 1359,
+        "completion_tokens": 256,
+        "total_tokens": 1615
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 7,
+      "durationMs": 3130,
+      "messageCount": 15,
+      "messageChars": 2573,
+      "usage": {
+        "prompt_tokens": 1531,
+        "completion_tokens": 105,
+        "total_tokens": 1636
+      },
+      "toolCalls": 1,
+      "contentChars": 7
+    },
+    {
+      "index": 8,
+      "durationMs": 2941,
+      "messageCount": 17,
+      "messageChars": 2921,
+      "usage": {
+        "prompt_tokens": 1647,
+        "completion_tokens": 92,
+        "total_tokens": 1739
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 9,
+      "durationMs": 3310,
+      "messageCount": 19,
+      "messageChars": 3280,
+      "usage": {
+        "prompt_tokens": 1708,
+        "completion_tokens": 105,
+        "total_tokens": 1813
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 10,
+      "durationMs": 3803,
+      "messageCount": 21,
+      "messageChars": 3623,
+      "usage": {
+        "prompt_tokens": 1772,
+        "completion_tokens": 137,
+        "total_tokens": 1909
+      },
+      "toolCalls": 0,
+      "contentChars": 253
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "load("
+      },
+      "resultChars": 40,
+      "resultLines": 1,
+      "resultHead": "load.mjs:4: export function load(file) {",
+      "elapsedMs": 2944
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "def load"
+      },
+      "resultChars": 12,
+      "resultLines": 1,
+      "resultHead": "(no matches)",
+      "elapsedMs": 2944
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "load.mjs"
+      },
+      "resultChars": 131,
+      "resultLines": 7,
+      "resultHead": "import { readFileSync } from \"node:fs\";\r",
+      "elapsedMs": 4837
+    },
+    {
+      "index": 4,
+      "name": "shell",
+      "args": {
+        "command": "ls && grep -rn \"load\" --include=*.mjs --include=*.js --include=*.test.* . 2>/dev/null | grep -i \"load\\b\\|load(\" | head -50"
+      },
+      "resultChars": 58,
+      "resultLines": 4,
+      "resultHead": "exit 1",
+      "elapsedMs": 7710
+    },
+    {
+      "index": 5,
+      "name": "ls",
+      "args": {
+        "path": "."
+      },
+      "resultChars": 23,
+      "resultLines": 1,
+      "resultHead": "file      147  load.mjs",
+      "elapsedMs": 10488
+    },
+    {
+      "index": 6,
+      "name": "shell",
+      "args": {
+        "command": "cat load.mjs && echo \"---\" && wc -l load.mjs"
+      },
+      "resultChars": 59,
+      "resultLines": 4,
+      "resultHead": "exit 1",
+      "elapsedMs": 13304
+    },
+    {
+      "index": 7,
+      "name": "edit",
+      "args": {
+        "path": "load.mjs",
+        "old_string": "import { readFileSync } from \"node:fs\";\n\n/** 读一个配置文件。 */\nexport function load(file) {\n  return readFileSync(file, \"utf8\");\n}",
+        "new_string": "import { readFileSync } from \"node:fs\";\n\n/** 读一个配置文件。文件不存在时返回 null，其它错误照常抛出。 */\nexport function load(file) {\n  try {\n    return readFileSync(file, \"utf8\");\n  } catch (err) {\n    if (err.code === \"ENOENT\") return null;\n    throw err;\n  }\n}"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited load.mjs (131 → 250 chars)",
+      "elapsedMs": 19080,
+      "file": {
+        "path": "load.mjs",
+        "beforeBytes": 147,
+        "afterBytes": 302,
+        "deltaBytes": 155,
+        "beforeSha256": "da07255c2648f2b5",
+        "afterSha256": "25f32648e53d0f75"
+      }
+    },
+    {
+      "index": 8,
+      "name": "shell",
+      "args": {
+        "command": "node -e \"import('./load.mjs').then(async ({load})=>{console.log('missing:', load('./nope.txt')); const fs=await import('node:fs'); fs.writeFileSync('./ok.txt','hi'); console.log('exists:', load('./ok.txt')); fs.chmodSync('./ok.txt',0o000);})\""
+      },
+      "resultChars": 32,
+      "resultLines": 4,
+      "resultHead": "exit 0",
+      "elapsedMs": 22269
+    },
+    {
+      "index": 9,
+      "name": "shell",
+      "args": {
+        "command": "rm -f ok.txt nope.txt 2>/dev/null; echo done"
+      },
+      "resultChars": 26,
+      "resultLines": 3,
+      "resultHead": "exit 1",
+      "elapsedMs": 25229
+    },
+    {
+      "index": 10,
+      "name": "shell",
+      "args": {
+        "command": "cd /d . && attrib -r ok.txt 2>nul & del /q ok.txt nope.txt 2>nul & echo cleaned"
+      },
+      "resultChars": 16,
+      "resultLines": 3,
+      "resultHead": "exit 0",
+      "elapsedMs": 28565
+    }
+  ]
+}

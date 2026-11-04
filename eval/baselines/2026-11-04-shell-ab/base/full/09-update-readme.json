@@ -1,0 +1,107 @@
+{
+  "task": "09-update-readme",
+  "ok": true,
+  "stats": {
+    "requests": 3,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 3349,
+      "completionTokens": 226,
+      "totalTokens": 3575,
+      "reported": 3,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-09-update-readme-0eJbjo",
+  "startedAt": "2026-11-04T13:09:38.960Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 3174,
+      "messageCount": 2,
+      "messageChars": 654,
+      "usage": {
+        "prompt_tokens": 995,
+        "completion_tokens": 47,
+        "total_tokens": 1042
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 3539,
+      "messageCount": 5,
+      "messageChars": 947,
+      "usage": {
+        "prompt_tokens": 1105,
+        "completion_tokens": 136,
+        "total_tokens": 1241
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2215,
+      "messageCount": 7,
+      "messageChars": 1297,
+      "usage": {
+        "prompt_tokens": 1249,
+        "completion_tokens": 43,
+        "total_tokens": 1292
+      },
+      "toolCalls": 0,
+      "contentChars": 111
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "read",
+      "args": {
+        "path": "README.md"
+      },
+      "resultChars": 26,
+      "resultLines": 4,
+      "resultHead": "# fixture\r",
+      "elapsedMs": 3176
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "package.json"
+      },
+      "resultChars": 159,
+      "resultLines": 10,
+      "resultHead": "{\r",
+      "elapsedMs": 3176
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "README.md",
+        "old_string": "# fixture\n\n一个用来练手的小仓库。",
+        "new_string": "# fixture\n\n一个用来练手的小仓库。\n\n## 命令\n\n| 命令 | 用途 |\n| --- | --- |\n| `npm test` | 运行测试（`node --test`）。 |\n| `npm run lint` | 检查代码语法（`node --check .`）。 |\n| `npm run build` | 构建项目（`node build.mjs`）。 |"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited README.md (26 → 199 chars)",
+      "elapsedMs": 6716,
+      "file": {
+        "path": "README.md",
+        "beforeBytes": 48,
+        "afterBytes": 279,
+        "deltaBytes": 231,
+        "beforeSha256": "8d4ef9fe12c8d3df",
+        "afterSha256": "f92c01ff9c31e441"
+      }
+    }
+  ]
+}

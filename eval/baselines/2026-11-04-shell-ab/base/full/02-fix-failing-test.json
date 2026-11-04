@@ -1,0 +1,131 @@
+{
+  "task": "02-fix-failing-test",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 4,
+    "usage": {
+      "promptTokens": 4892,
+      "completionTokens": 224,
+      "totalTokens": 5116,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-02-fix-failing-test-ECZUIs",
+  "startedAt": "2026-11-04T13:09:01.510Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 24541,
+      "messageCount": 2,
+      "messageChars": 626,
+      "usage": {
+        "prompt_tokens": 989,
+        "completion_tokens": 45,
+        "total_tokens": 1034
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2873,
+      "messageCount": 5,
+      "messageChars": 1179,
+      "usage": {
+        "prompt_tokens": 1193,
+        "completion_tokens": 99,
+        "total_tokens": 1292
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 1981,
+      "messageCount": 7,
+      "messageChars": 1467,
+      "usage": {
+        "prompt_tokens": 1290,
+        "completion_tokens": 25,
+        "total_tokens": 1315
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 2369,
+      "messageCount": 9,
+      "messageChars": 1676,
+      "usage": {
+        "prompt_tokens": 1420,
+        "completion_tokens": 55,
+        "total_tokens": 1475
+      },
+      "toolCalls": 0,
+      "contentChars": 87
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "read",
+      "args": {
+        "path": "sum.mjs"
+      },
+      "resultChars": 183,
+      "resultLines": 9,
+      "resultHead": "/** 求一组数字的和。 */\r",
+      "elapsedMs": 24551
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "sum.test.mjs"
+      },
+      "resultChars": 301,
+      "resultLines": 16,
+      "resultHead": "import assert from \"node:assert/strict\";\r",
+      "elapsedMs": 24551
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "sum.mjs",
+        "old_string": "  for (let index = 1; index < numbers.length; index += 1) {",
+        "new_string": "  for (let index = 0; index < numbers.length; index += 1) {"
+      },
+      "resultChars": 32,
+      "resultLines": 1,
+      "resultHead": "edited sum.mjs (183 → 183 chars)",
+      "elapsedMs": 27426,
+      "file": {
+        "path": "sum.mjs",
+        "beforeBytes": 199,
+        "afterBytes": 199,
+        "deltaBytes": 0,
+        "beforeSha256": "8e8748a55e0e9a1a",
+        "afterSha256": "5e2150cd9ed601b4"
+      }
+    },
+    {
+      "index": 4,
+      "name": "shell",
+      "args": {
+        "command": "node --test sum.test.mjs"
+      },
+      "resultChars": 165,
+      "resultLines": 13,
+      "resultHead": "exit 0",
+      "elapsedMs": 29508
+    }
+  ]
+}

@@ -1,0 +1,144 @@
+{
+  "task": "20-fix-email-regex",
+  "ok": true,
+  "stats": {
+    "requests": 5,
+    "toolCalls": 4,
+    "usage": {
+      "promptTokens": 6071,
+      "completionTokens": 826,
+      "totalTokens": 6897,
+      "reported": 5,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-20-fix-email-regex-9ZKwnK",
+  "startedAt": "2026-11-04T13:14:41.669Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2265,
+      "messageCount": 2,
+      "messageChars": 816,
+      "usage": {
+        "prompt_tokens": 1053,
+        "completion_tokens": 47,
+        "total_tokens": 1100
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2845,
+      "messageCount": 4,
+      "messageChars": 1002,
+      "usage": {
+        "prompt_tokens": 1095,
+        "completion_tokens": 21,
+        "total_tokens": 1116
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 8927,
+      "messageCount": 6,
+      "messageChars": 1121,
+      "usage": {
+        "prompt_tokens": 1157,
+        "completion_tokens": 457,
+        "total_tokens": 1614
+      },
+      "toolCalls": 1,
+      "contentChars": 150
+    },
+    {
+      "index": 4,
+      "durationMs": 3026,
+      "messageCount": 8,
+      "messageChars": 2525,
+      "usage": {
+        "prompt_tokens": 1310,
+        "completion_tokens": 107,
+        "total_tokens": 1417
+      },
+      "toolCalls": 1,
+      "contentChars": 45
+    },
+    {
+      "index": 5,
+      "durationMs": 4117,
+      "messageCount": 10,
+      "messageChars": 2982,
+      "usage": {
+        "prompt_tokens": 1456,
+        "completion_tokens": 194,
+        "total_tokens": 1650
+      },
+      "toolCalls": 0,
+      "contentChars": 385
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "isEmail"
+      },
+      "resultChars": 47,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:2: export function isEmail(text) {",
+      "elapsedMs": 2267
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "validate.mjs"
+      },
+      "resultChars": 91,
+      "resultLines": 5,
+      "resultHead": "/** 简易邮箱校验。 */\r",
+      "elapsedMs": 5113
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "validate.mjs",
+        "old_string": "  return /^\\w+@\\w+\\.\\w+$/.test(text);",
+        "new_string": "  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/.test(text);"
+      },
+      "resultChars": 36,
+      "resultLines": 1,
+      "resultHead": "edited validate.mjs (91 → 125 chars)",
+      "elapsedMs": 14041,
+      "file": {
+        "path": "validate.mjs",
+        "beforeBytes": 105,
+        "afterBytes": 139,
+        "deltaBytes": 34,
+        "beforeSha256": "d80732fc4fcedaa9",
+        "afterSha256": "cd119a1bf54bc59b"
+      }
+    },
+    {
+      "index": 4,
+      "name": "shell",
+      "args": {
+        "command": "node -e \"import('./validate.mjs').then(m=>{const t=m.isEmail;['first.last@example.com','user+tag@my-site.io','example.com','user @x.com','@x.com','a@b'].forEach(e=>console.log(e,'=>',t(e)))})\""
+      },
+      "resultChars": 137,
+      "resultLines": 8,
+      "resultHead": "exit 0",
+      "elapsedMs": 17118
+    }
+  ]
+}

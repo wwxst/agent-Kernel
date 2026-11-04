@@ -1,0 +1,120 @@
+{
+  "task": "20-fix-email-regex",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4559,
+      "completionTokens": 754,
+      "totalTokens": 5313,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-20-fix-email-regex-ynHKby",
+  "startedAt": "2026-11-04T13:11:35.095Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2215,
+      "messageCount": 2,
+      "messageChars": 816,
+      "usage": {
+        "prompt_tokens": 1053,
+        "completion_tokens": 41,
+        "total_tokens": 1094
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 3886,
+      "messageCount": 4,
+      "messageChars": 958,
+      "usage": {
+        "prompt_tokens": 1095,
+        "completion_tokens": 21,
+        "total_tokens": 1116
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 8216,
+      "messageCount": 6,
+      "messageChars": 1077,
+      "usage": {
+        "prompt_tokens": 1157,
+        "completion_tokens": 394,
+        "total_tokens": 1551
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 6469,
+      "messageCount": 8,
+      "messageChars": 2338,
+      "usage": {
+        "prompt_tokens": 1254,
+        "completion_tokens": 298,
+        "total_tokens": 1552
+      },
+      "toolCalls": 0,
+      "contentChars": 285
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "isEmail"
+      },
+      "resultChars": 47,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:2: export function isEmail(text) {",
+      "elapsedMs": 2218
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "validate.mjs"
+      },
+      "resultChars": 91,
+      "resultLines": 5,
+      "resultHead": "/** 简易邮箱校验。 */\r",
+      "elapsedMs": 6105
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "validate.mjs",
+        "old_string": "  return /^\\w+@\\w+\\.\\w+$/.test(text);",
+        "new_string": "  return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(text);"
+      },
+      "resultChars": 36,
+      "resultLines": 1,
+      "resultHead": "edited validate.mjs (91 → 103 chars)",
+      "elapsedMs": 14322,
+      "file": {
+        "path": "validate.mjs",
+        "beforeBytes": 105,
+        "afterBytes": 117,
+        "deltaBytes": 12,
+        "beforeSha256": "d80732fc4fcedaa9",
+        "afterSha256": "71252fbaeb400b16"
+      }
+    }
+  ]
+}

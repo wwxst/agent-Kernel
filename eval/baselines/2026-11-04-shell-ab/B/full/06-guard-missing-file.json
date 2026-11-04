@@ -1,0 +1,155 @@
+{
+  "task": "06-guard-missing-file",
+  "ok": true,
+  "stats": {
+    "requests": 5,
+    "toolCalls": 5,
+    "usage": {
+      "promptTokens": 5916,
+      "completionTokens": 339,
+      "totalTokens": 6255,
+      "reported": 5,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-06-guard-missing-file-rOc5Cp",
+  "startedAt": "2026-11-04T13:15:47.045Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2082,
+      "messageCount": 2,
+      "messageChars": 734,
+      "usage": {
+        "prompt_tokens": 1015,
+        "completion_tokens": 44,
+        "total_tokens": 1059
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1864,
+      "messageCount": 5,
+      "messageChars": 855,
+      "usage": {
+        "prompt_tokens": 1078,
+        "completion_tokens": 21,
+        "total_tokens": 1099
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3139,
+      "messageCount": 7,
+      "messageChars": 1010,
+      "usage": {
+        "prompt_tokens": 1145,
+        "completion_tokens": 130,
+        "total_tokens": 1275
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 3467,
+      "messageCount": 9,
+      "messageChars": 1459,
+      "usage": {
+        "prompt_tokens": 1267,
+        "completion_tokens": 123,
+        "total_tokens": 1390
+      },
+      "toolCalls": 1,
+      "contentChars": 108
+    },
+    {
+      "index": 5,
+      "durationMs": 2269,
+      "messageCount": 11,
+      "messageChars": 1795,
+      "usage": {
+        "prompt_tokens": 1411,
+        "completion_tokens": 21,
+        "total_tokens": 1432
+      },
+      "toolCalls": 0,
+      "contentChars": 35
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "def load"
+      },
+      "resultChars": 12,
+      "resultLines": 1,
+      "resultHead": "(no matches)",
+      "elapsedMs": 2084
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "load("
+      },
+      "resultChars": 40,
+      "resultLines": 1,
+      "resultHead": "load.mjs:4: export function load(file) {",
+      "elapsedMs": 2085
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "load.mjs"
+      },
+      "resultChars": 131,
+      "resultLines": 7,
+      "resultHead": "import { readFileSync } from \"node:fs\";\r",
+      "elapsedMs": 3950
+    },
+    {
+      "index": 4,
+      "name": "edit",
+      "args": {
+        "path": "load.mjs",
+        "old_string": "export function load(file) {\n  return readFileSync(file, \"utf8\");\n}",
+        "new_string": "export function load(file) {\n  try {\n    return readFileSync(file, \"utf8\");\n  } catch (err) {\n    if (err.code === \"ENOENT\") return null;\n    throw err;\n  }\n}"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited load.mjs (131 → 227 chars)",
+      "elapsedMs": 7090,
+      "file": {
+        "path": "load.mjs",
+        "beforeBytes": 147,
+        "afterBytes": 243,
+        "deltaBytes": 96,
+        "beforeSha256": "da07255c2648f2b5",
+        "afterSha256": "eb065e2f351c5865"
+      }
+    },
+    {
+      "index": 5,
+      "name": "shell",
+      "args": {
+        "command": "node -e \"import('./load.mjs').then(async m => { console.log('missing:', m.load('/no/such/file')); console.log('exists:', m.load('./load.mjs') ? 'content' : 'empty'); })\""
+      },
+      "resultChars": 37,
+      "resultLines": 4,
+      "resultHead": "exit 0",
+      "elapsedMs": 10615
+    }
+  ]
+}

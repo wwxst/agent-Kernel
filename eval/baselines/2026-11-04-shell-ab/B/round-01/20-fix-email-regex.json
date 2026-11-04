@@ -1,0 +1,168 @@
+{
+  "task": "20-fix-email-regex",
+  "ok": true,
+  "stats": {
+    "requests": 6,
+    "toolCalls": 5,
+    "usage": {
+      "promptTokens": 7217,
+      "completionTokens": 1156,
+      "totalTokens": 8373,
+      "reported": 6,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-20-fix-email-regex-Cf0eyh",
+  "startedAt": "2026-11-04T13:10:44.065Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2192,
+      "messageCount": 2,
+      "messageChars": 816,
+      "usage": {
+        "prompt_tokens": 1053,
+        "completion_tokens": 45,
+        "total_tokens": 1098
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1809,
+      "messageCount": 4,
+      "messageChars": 979,
+      "usage": {
+        "prompt_tokens": 1095,
+        "completion_tokens": 21,
+        "total_tokens": 1116
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 8747,
+      "messageCount": 6,
+      "messageChars": 1098,
+      "usage": {
+        "prompt_tokens": 1157,
+        "completion_tokens": 478,
+        "total_tokens": 1635
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 6104,
+      "messageCount": 8,
+      "messageChars": 2679,
+      "usage": {
+        "prompt_tokens": 1191,
+        "completion_tokens": 314,
+        "total_tokens": 1505
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 5,
+      "durationMs": 3147,
+      "messageCount": 10,
+      "messageChars": 3612,
+      "usage": {
+        "prompt_tokens": 1303,
+        "completion_tokens": 107,
+        "total_tokens": 1410
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 6,
+      "durationMs": 4877,
+      "messageCount": 12,
+      "messageChars": 3984,
+      "usage": {
+        "prompt_tokens": 1418,
+        "completion_tokens": 191,
+        "total_tokens": 1609
+      },
+      "toolCalls": 0,
+      "contentChars": 353
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "isEmail"
+      },
+      "resultChars": 47,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:2: export function isEmail(text) {",
+      "elapsedMs": 2194
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "validate.mjs"
+      },
+      "resultChars": 91,
+      "resultLines": 5,
+      "resultHead": "/** 简易邮箱校验。 */\r",
+      "elapsedMs": 4003
+    },
+    {
+      "index": 3,
+      "name": "glob",
+      "args": {
+        "pattern": "**/*.test.*"
+      },
+      "resultChars": 12,
+      "resultLines": 1,
+      "resultHead": "(no matches)",
+      "elapsedMs": 12751
+    },
+    {
+      "index": 4,
+      "name": "edit",
+      "args": {
+        "path": "validate.mjs",
+        "old_string": "  return /^\\w+@\\w+\\.\\w+$/.test(text);",
+        "new_string": "  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$/.test(text);"
+      },
+      "resultChars": 36,
+      "resultLines": 1,
+      "resultHead": "edited validate.mjs (91 → 125 chars)",
+      "elapsedMs": 18856,
+      "file": {
+        "path": "validate.mjs",
+        "beforeBytes": 105,
+        "afterBytes": 139,
+        "deltaBytes": 34,
+        "beforeSha256": "d80732fc4fcedaa9",
+        "afterSha256": "cd119a1bf54bc59b"
+      }
+    },
+    {
+      "index": 5,
+      "name": "shell",
+      "args": {
+        "command": "node --input-type=module -e \"import {isEmail} from './validate.mjs'; const ok=['first.last@example.com','user+tag@my-site.io']; const bad=['nope','foo @bar.com','@example.com']; console.log(ok.map(s=>isEmail(s)), bad.map(s=>isEmail(s)));\""
+      },
+      "resultChars": 46,
+      "resultLines": 3,
+      "resultHead": "exit 0",
+      "elapsedMs": 22054
+    }
+  ]
+}

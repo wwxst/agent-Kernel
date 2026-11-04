@@ -1,0 +1,309 @@
+{
+  "task": "08-extract-duplication",
+  "ok": true,
+  "stats": {
+    "requests": 11,
+    "toolCalls": 11,
+    "usage": {
+      "promptTokens": 19507,
+      "completionTokens": 944,
+      "totalTokens": 20451,
+      "reported": 11,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-08-extract-duplication-Og6XWh",
+  "startedAt": "2026-11-04T13:04:03.055Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2217,
+      "messageCount": 2,
+      "messageChars": 661,
+      "usage": {
+        "prompt_tokens": 1004,
+        "completion_tokens": 50,
+        "total_tokens": 1054
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1807,
+      "messageCount": 5,
+      "messageChars": 884,
+      "usage": {
+        "prompt_tokens": 1078,
+        "completion_tokens": 21,
+        "total_tokens": 1099
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3779,
+      "messageCount": 7,
+      "messageChars": 1416,
+      "usage": {
+        "prompt_tokens": 1238,
+        "completion_tokens": 166,
+        "total_tokens": 1404
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 4569,
+      "messageCount": 9,
+      "messageChars": 2087,
+      "usage": {
+        "prompt_tokens": 1388,
+        "completion_tokens": 181,
+        "total_tokens": 1569
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 5,
+      "durationMs": 4225,
+      "messageCount": 11,
+      "messageChars": 2799,
+      "usage": {
+        "prompt_tokens": 1498,
+        "completion_tokens": 165,
+        "total_tokens": 1663
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 6,
+      "durationMs": 3151,
+      "messageCount": 13,
+      "messageChars": 4150,
+      "usage": {
+        "prompt_tokens": 1840,
+        "completion_tokens": 133,
+        "total_tokens": 1973
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 7,
+      "durationMs": 2340,
+      "messageCount": 15,
+      "messageChars": 4657,
+      "usage": {
+        "prompt_tokens": 1970,
+        "completion_tokens": 31,
+        "total_tokens": 2001
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 8,
+      "durationMs": 2383,
+      "messageCount": 17,
+      "messageChars": 5554,
+      "usage": {
+        "prompt_tokens": 2263,
+        "completion_tokens": 51,
+        "total_tokens": 2314
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 9,
+      "durationMs": 2016,
+      "messageCount": 19,
+      "messageChars": 5886,
+      "usage": {
+        "prompt_tokens": 2347,
+        "completion_tokens": 24,
+        "total_tokens": 2371
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 10,
+      "durationMs": 2300,
+      "messageCount": 21,
+      "messageChars": 5985,
+      "usage": {
+        "prompt_tokens": 2422,
+        "completion_tokens": 24,
+        "total_tokens": 2446
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 11,
+      "durationMs": 2964,
+      "messageCount": 23,
+      "messageChars": 6034,
+      "usage": {
+        "prompt_tokens": 2459,
+        "completion_tokens": 98,
+        "total_tokens": 2557
+      },
+      "toolCalls": 0,
+      "contentChars": 252
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "validateName"
+      },
+      "resultChars": 52,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:1: export function validateName(name) {",
+      "elapsedMs": 2220
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "validateTitle"
+      },
+      "resultChars": 54,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:8: export function validateTitle(title) {",
+      "elapsedMs": 2221
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "validate.mjs"
+      },
+      "resultChars": 504,
+      "resultLines": 14,
+      "resultHead": "export function validateName(name) {\r",
+      "elapsedMs": 4029
+    },
+    {
+      "index": 4,
+      "name": "write",
+      "args": {
+        "path": "validate.mjs",
+        "content": "function validateField(label, value) {\n  if (typeof value !== \"string\") return label + \" must be a string\";\n  if (value.trim() === \"\") return label + \" must not be empty\";\n  if (value.length > 40) return label + \" must be at most 40 chars\";\n  return null;\n}\n\nexport function validateName(name) {\n  re…",
+        "contentChars": 418
+      },
+      "resultChars": 31,
+      "resultLines": 1,
+      "resultHead": "wrote 418 chars to validate.mjs",
+      "elapsedMs": 7809,
+      "file": {
+        "path": "validate.mjs",
+        "beforeBytes": 504,
+        "afterBytes": 418,
+        "deltaBytes": -86,
+        "beforeSha256": "141d41f9005068ee",
+        "afterSha256": "0573c43bdf6d1cdb"
+      }
+    },
+    {
+      "index": 5,
+      "name": "shell",
+      "args": {
+        "command": "node --input-type=module -e 'import(\"./validate.mjs\").then(m=>{console.log(m.validateName(123),m.validateName(\"\"),m.validateName(\"x\".repeat(41)),m.validateName(\"ok\"));console.log(m.validateTitle(123),m.validateTitle(\"\"),m.validateTitle(\"x\".repeat(41)),m.validateTitle(\"ok\"));})'"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 12435
+    },
+    {
+      "index": 6,
+      "name": "shell",
+      "args": {
+        "command": "node --input-type=module -e 'import(\"./validate.mjs\").then(m=>{const r=[m.validateName(123),m.validateName(\"\"),m.validateName(\"x\".repeat(41)),m.validateName(\"ok\"),m.validateTitle(123),m.validateTitle(\"\"),m.validateTitle(\"x\".repeat(41)),m.validateTitle(\"ok\")];console.log(JSON.stringify(r));})'"
+      },
+      "resultChars": 770,
+      "resultLines": 17,
+      "resultHead": "exit 1",
+      "elapsedMs": 16715
+    },
+    {
+      "index": 7,
+      "name": "write",
+      "args": {
+        "path": "_validate_test.mjs",
+        "content": "import { validateName, validateTitle } from \"./validate.mjs\";\n\nconst results = [\n  validateName(123),\n  validateName(\"\"),\n  validateName(\"x\".repeat(41)),\n  validateName(\"ok\"),\n  validateTitle(123),\n  validateTitle(\"\"),\n  validateTitle(\"x\".repeat(41)),\n  validateTitle(\"ok\"),\n];\nconsole.log(JSON.strin…",
+        "contentChars": 316
+      },
+      "resultChars": 37,
+      "resultLines": 1,
+      "resultHead": "wrote 316 chars to _validate_test.mjs",
+      "elapsedMs": 19867,
+      "file": {
+        "path": "_validate_test.mjs",
+        "beforeBytes": null,
+        "afterBytes": 316,
+        "deltaBytes": null,
+        "beforeSha256": null,
+        "afterSha256": "8b1fbacf7508c009"
+      }
+    },
+    {
+      "index": 8,
+      "name": "shell",
+      "args": {
+        "command": "node _validate_test.mjs; rm _validate_test.mjs"
+      },
+      "resultChars": 831,
+      "resultLines": 20,
+      "resultHead": "exit 1",
+      "elapsedMs": 22264
+    },
+    {
+      "index": 9,
+      "name": "shell",
+      "args": {
+        "command": "node _validate_test.mjs"
+      },
+      "resultChars": 184,
+      "resultLines": 3,
+      "resultHead": "exit 0",
+      "elapsedMs": 24695
+    },
+    {
+      "index": 10,
+      "name": "shell",
+      "args": {
+        "command": "rm _validate_test.mjs"
+      },
+      "resultChars": 58,
+      "resultLines": 4,
+      "resultHead": "exit 1",
+      "elapsedMs": 26729
+    },
+    {
+      "index": 11,
+      "name": "shell",
+      "args": {
+        "command": "del _validate_test.mjs"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 29047
+    }
+  ]
+}

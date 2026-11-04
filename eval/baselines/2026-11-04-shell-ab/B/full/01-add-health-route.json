@@ -1,0 +1,120 @@
+{
+  "task": "01-add-health-route",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4555,
+      "completionTokens": 211,
+      "totalTokens": 4766,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-01-add-health-route-YrdcAY",
+  "startedAt": "2026-11-04T13:15:36.562Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2219,
+      "messageCount": 2,
+      "messageChars": 744,
+      "usage": {
+        "prompt_tokens": 1016,
+        "completion_tokens": 32,
+        "total_tokens": 1048
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2419,
+      "messageCount": 4,
+      "messageChars": 818,
+      "usage": {
+        "prompt_tokens": 1052,
+        "completion_tokens": 21,
+        "total_tokens": 1073
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3446,
+      "messageCount": 6,
+      "messageChars": 1121,
+      "usage": {
+        "prompt_tokens": 1176,
+        "completion_tokens": 115,
+        "total_tokens": 1291
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 2391,
+      "messageCount": 8,
+      "messageChars": 1447,
+      "usage": {
+        "prompt_tokens": 1311,
+        "completion_tokens": 43,
+        "total_tokens": 1354
+      },
+      "toolCalls": 0,
+      "contentChars": 92
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "glob",
+      "args": {
+        "pattern": "**/server.mjs"
+      },
+      "resultChars": 10,
+      "resultLines": 1,
+      "resultHead": "server.mjs",
+      "elapsedMs": 2221
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "server.mjs"
+      },
+      "resultChars": 277,
+      "resultLines": 7,
+      "resultHead": "/** 一个最小的路由表：把 pathname 映射成响应。 */\r",
+      "elapsedMs": 4641
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "server.mjs",
+        "old_string": "  if (pathname === \"/users\") return { status: 200, body: [{ id: 1 }] };",
+        "new_string": "  if (pathname === \"/users\") return { status: 200, body: [{ id: 1 }] };\n  if (pathname === \"/health\") return { status: 200, body: { status: \"ok\" } };"
+      },
+      "resultChars": 35,
+      "resultLines": 1,
+      "resultHead": "edited server.mjs (277 → 356 chars)",
+      "elapsedMs": 8088,
+      "file": {
+        "path": "server.mjs",
+        "beforeBytes": 309,
+        "afterBytes": 388,
+        "deltaBytes": 79,
+        "beforeSha256": "af2dc4141f818b7c",
+        "afterSha256": "08481e2396cf06e9"
+      }
+    }
+  ]
+}

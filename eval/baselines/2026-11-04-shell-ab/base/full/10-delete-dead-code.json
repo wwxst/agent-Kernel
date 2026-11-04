@@ -1,0 +1,238 @@
+{
+  "task": "10-delete-dead-code",
+  "ok": true,
+  "stats": {
+    "requests": 7,
+    "toolCalls": 11,
+    "usage": {
+      "promptTokens": 9091,
+      "completionTokens": 560,
+      "totalTokens": 9651,
+      "reported": 7,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-10-delete-dead-code-1Lkrel",
+  "startedAt": "2026-11-04T13:09:42.547Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 3018,
+      "messageCount": 2,
+      "messageChars": 620,
+      "usage": {
+        "prompt_tokens": 988,
+        "completion_tokens": 71,
+        "total_tokens": 1059
+      },
+      "toolCalls": 2,
+      "contentChars": 98
+    },
+    {
+      "index": 2,
+      "durationMs": 2802,
+      "messageCount": 5,
+      "messageChars": 918,
+      "usage": {
+        "prompt_tokens": 1072,
+        "completion_tokens": 53,
+        "total_tokens": 1125
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 4414,
+      "messageCount": 8,
+      "messageChars": 1226,
+      "usage": {
+        "prompt_tokens": 1176,
+        "completion_tokens": 174,
+        "total_tokens": 1350
+      },
+      "toolCalls": 2,
+      "contentChars": 211
+    },
+    {
+      "index": 4,
+      "durationMs": 3049,
+      "messageCount": 11,
+      "messageChars": 2011,
+      "usage": {
+        "prompt_tokens": 1317,
+        "completion_tokens": 84,
+        "total_tokens": 1401
+      },
+      "toolCalls": 2,
+      "contentChars": 136
+    },
+    {
+      "index": 5,
+      "durationMs": 3281,
+      "messageCount": 14,
+      "messageChars": 2373,
+      "usage": {
+        "prompt_tokens": 1455,
+        "completion_tokens": 86,
+        "total_tokens": 1541
+      },
+      "toolCalls": 1,
+      "contentChars": 91
+    },
+    {
+      "index": 6,
+      "durationMs": 2106,
+      "messageCount": 16,
+      "messageChars": 2688,
+      "usage": {
+        "prompt_tokens": 1509,
+        "completion_tokens": 33,
+        "total_tokens": 1542
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 7,
+      "durationMs": 2527,
+      "messageCount": 19,
+      "messageChars": 2785,
+      "usage": {
+        "prompt_tokens": 1574,
+        "completion_tokens": 59,
+        "total_tokens": 1633
+      },
+      "toolCalls": 0,
+      "contentChars": 127
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "glob",
+      "args": {
+        "pattern": "**/legacy*"
+      },
+      "resultChars": 10,
+      "resultLines": 1,
+      "resultHead": "legacy.mjs",
+      "elapsedMs": 3029
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "legacy"
+      },
+      "resultChars": 50,
+      "resultLines": 1,
+      "resultHead": "legacy.mjs:2: export function legacyRender(name) {",
+      "elapsedMs": 3030
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "legacy.mjs"
+      },
+      "resultChars": 91,
+      "resultLines": 5,
+      "resultHead": "/** 旧版渲染，已经没人调用了。 */\r",
+      "elapsedMs": 5833
+    },
+    {
+      "index": 4,
+      "name": "read",
+      "args": {
+        "path": "app.mjs"
+      },
+      "resultChars": 113,
+      "resultLines": 6,
+      "resultHead": "import { format } from \"./format.mjs\";\r",
+      "elapsedMs": 5833
+    },
+    {
+      "index": 5,
+      "name": "grep",
+      "args": {
+        "text": "legacy",
+        "path": "."
+      },
+      "resultChars": 50,
+      "resultLines": 1,
+      "resultHead": "legacy.mjs:2: export function legacyRender(name) {",
+      "elapsedMs": 10248
+    },
+    {
+      "index": 6,
+      "name": "ls",
+      "args": {
+        "path": "."
+      },
+      "resultChars": 74,
+      "resultLines": 3,
+      "resultHead": "file      113  app.mjs",
+      "elapsedMs": 10249
+    },
+    {
+      "index": 7,
+      "name": "shell",
+      "args": {
+        "command": "rm legacy.mjs"
+      },
+      "resultChars": 58,
+      "resultLines": 4,
+      "resultHead": "exit 1",
+      "elapsedMs": 13315
+    },
+    {
+      "index": 8,
+      "name": "grep",
+      "args": {
+        "text": "legacy"
+      },
+      "resultChars": 50,
+      "resultLines": 1,
+      "resultHead": "legacy.mjs:2: export function legacyRender(name) {",
+      "elapsedMs": 13316
+    },
+    {
+      "index": 9,
+      "name": "shell",
+      "args": {
+        "command": "del legacy.mjs"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 16615
+    },
+    {
+      "index": 10,
+      "name": "grep",
+      "args": {
+        "text": "legacy"
+      },
+      "resultChars": 12,
+      "resultLines": 1,
+      "resultHead": "(no matches)",
+      "elapsedMs": 18722
+    },
+    {
+      "index": 11,
+      "name": "ls",
+      "args": {
+        "path": "."
+      },
+      "resultChars": 48,
+      "resultLines": 2,
+      "resultHead": "file      113  app.mjs",
+      "elapsedMs": 18723
+    }
+  ]
+}

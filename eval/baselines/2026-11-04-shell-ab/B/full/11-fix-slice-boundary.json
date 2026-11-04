@@ -1,0 +1,120 @@
+{
+  "task": "11-fix-slice-boundary",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4412,
+      "completionTokens": 294,
+      "totalTokens": 4706,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-11-fix-slice-boundary-pFLodK",
+  "startedAt": "2026-11-04T13:16:01.451Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2398,
+      "messageCount": 2,
+      "messageChars": 736,
+      "usage": {
+        "prompt_tokens": 1020,
+        "completion_tokens": 30,
+        "total_tokens": 1050
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2120,
+      "messageCount": 4,
+      "messageChars": 845,
+      "usage": {
+        "prompt_tokens": 1064,
+        "completion_tokens": 21,
+        "total_tokens": 1085
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3194,
+      "messageCount": 6,
+      "messageChars": 959,
+      "usage": {
+        "prompt_tokens": 1125,
+        "completion_tokens": 83,
+        "total_tokens": 1208
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 4451,
+      "messageCount": 8,
+      "messageChars": 1181,
+      "usage": {
+        "prompt_tokens": 1203,
+        "completion_tokens": 160,
+        "total_tokens": 1363
+      },
+      "toolCalls": 0,
+      "contentChars": 184
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "firstN"
+      },
+      "resultChars": 46,
+      "resultLines": 1,
+      "resultHead": "list.mjs:2: export function firstN(items, n) {",
+      "elapsedMs": 2400
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "list.mjs"
+      },
+      "resultChars": 90,
+      "resultLines": 5,
+      "resultHead": "/** 取前 n 个元素。 */\r",
+      "elapsedMs": 4520
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "list.mjs",
+        "old_string": "  return items.slice(0, n - 1);",
+        "new_string": "  return items.slice(0, n);"
+      },
+      "resultChars": 31,
+      "resultLines": 1,
+      "resultHead": "edited list.mjs (90 → 86 chars)",
+      "elapsedMs": 7715,
+      "file": {
+        "path": "list.mjs",
+        "beforeBytes": 102,
+        "afterBytes": 98,
+        "deltaBytes": -4,
+        "beforeSha256": "bc8d5ef10554b53b",
+        "afterSha256": "3a6379f9eb32f0f7"
+      }
+    }
+  ]
+}

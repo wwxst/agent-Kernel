@@ -1,0 +1,127 @@
+{
+  "task": "04-create-doc",
+  "ok": true,
+  "stats": {
+    "requests": 3,
+    "toolCalls": 4,
+    "usage": {
+      "promptTokens": 3431,
+      "completionTokens": 295,
+      "totalTokens": 3726,
+      "reported": 3,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-04-create-doc-i6zU3I",
+  "startedAt": "2026-11-04T13:21:44.145Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2683,
+      "messageCount": 2,
+      "messageChars": 676,
+      "usage": {
+        "prompt_tokens": 1021,
+        "completion_tokens": 60,
+        "total_tokens": 1081
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2754,
+      "messageCount": 5,
+      "messageChars": 999,
+      "usage": {
+        "prompt_tokens": 1121,
+        "completion_tokens": 134,
+        "total_tokens": 1255
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2427,
+      "messageCount": 8,
+      "messageChars": 1343,
+      "usage": {
+        "prompt_tokens": 1289,
+        "completion_tokens": 101,
+        "total_tokens": 1390
+      },
+      "toolCalls": 0,
+      "contentChars": 232
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "read",
+      "args": {
+        "path": "package.json"
+      },
+      "resultChars": 127,
+      "resultLines": 9,
+      "resultHead": "{\r",
+      "elapsedMs": 2685
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "README.md"
+      },
+      "resultChars": 26,
+      "resultLines": 4,
+      "resultHead": "# fixture\r",
+      "elapsedMs": 2685
+    },
+    {
+      "index": 3,
+      "name": "write",
+      "args": {
+        "path": "docs/usage.md",
+        "content": "# 用法\n\n| 命令 | 说明 |\n| --- | --- |\n| `npm test` | 运行测试用例（`node --test`）。 |\n| `npm run lint` | 检查脚本语法（`node --check .`）。 |\n"
+      },
+      "resultChars": 32,
+      "resultLines": 1,
+      "resultHead": "wrote 119 chars to docs/usage.md",
+      "elapsedMs": 5440,
+      "file": {
+        "path": "docs/usage.md",
+        "beforeBytes": null,
+        "afterBytes": 167,
+        "deltaBytes": null,
+        "beforeSha256": null,
+        "afterSha256": "e3486ee803ebfe6a"
+      }
+    },
+    {
+      "index": 4,
+      "name": "edit",
+      "args": {
+        "path": "README.md",
+        "old_string": "一个用来练手的小仓库。",
+        "new_string": "一个用来练手的小仓库。\n\n详见 [用法](docs/usage.md)。"
+      },
+      "resultChars": 32,
+      "resultLines": 1,
+      "resultHead": "edited README.md (26 → 53 chars)",
+      "elapsedMs": 5445,
+      "file": {
+        "path": "README.md",
+        "beforeBytes": 48,
+        "afterBytes": 85,
+        "deltaBytes": 37,
+        "beforeSha256": "8d4ef9fe12c8d3df",
+        "afterSha256": "de72f7854a7fdfe3"
+      }
+    }
+  ]
+}

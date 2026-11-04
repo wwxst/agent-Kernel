@@ -1,0 +1,212 @@
+[
+  {
+    "arm": "base",
+    "spotPass": "15/15",
+    "requestsMedian": 26,
+    "requestsRange": "22–37",
+    "tokensMedian": 48096,
+    "tokensRange": "35346–81167",
+    "worstTokens": 81167,
+    "worstRequests": 37,
+    "shellFailures": 44,
+    "shellCalls": 74,
+    "fullPass": "20/20",
+    "fullRequests": 96,
+    "fullTokens": 133125,
+    "fullSeconds": 102.5,
+    "fullShellFailures": 9,
+    "spot": {
+      "13-callback-to-promise": {
+        "requests": [
+          10,
+          11,
+          11,
+          11,
+          19
+        ],
+        "tokens": [
+          16828,
+          23243,
+          22592,
+          23184,
+          51595
+        ],
+        "failures": 0
+      },
+      "20-fix-email-regex": {
+        "requests": [
+          8,
+          13,
+          11,
+          5,
+          9
+        ],
+        "tokens": [
+          13416,
+          23483,
+          20393,
+          6619,
+          14065
+        ],
+        "failures": 0
+      },
+      "08-extract-duplication": {
+        "requests": [
+          4,
+          11,
+          4,
+          9,
+          9
+        ],
+        "tokens": [
+          5102,
+          20451,
+          5111,
+          15044,
+          15507
+        ],
+        "failures": 0
+      }
+    }
+  },
+  {
+    "arm": "B",
+    "spotPass": "15/15",
+    "requestsMedian": 21,
+    "requestsRange": "19–31",
+    "tokensMedian": 36498,
+    "tokensRange": "29379–61706",
+    "worstTokens": 61706,
+    "worstRequests": 31,
+    "shellFailures": 32,
+    "shellCalls": 60,
+    "fullPass": "20/20",
+    "fullRequests": 94,
+    "fullTokens": 131460,
+    "fullSeconds": 100.5,
+    "fullShellFailures": 8,
+    "spot": {
+      "13-callback-to-promise": {
+        "requests": [
+          9,
+          16,
+          16,
+          12,
+          12
+        ],
+        "tokens": [
+          15936,
+          35924,
+          36979,
+          23788,
+          24537
+        ],
+        "failures": 0
+      },
+      "20-fix-email-regex": {
+        "requests": [
+          6,
+          4,
+          5,
+          5,
+          5
+        ],
+        "tokens": [
+          8373,
+          5313,
+          6947,
+          7251,
+          6897
+        ],
+        "failures": 0
+      },
+      "08-extract-duplication": {
+        "requests": [
+          4,
+          11,
+          4,
+          4,
+          4
+        ],
+        "tokens": [
+          5070,
+          20469,
+          5054,
+          5078,
+          5064
+        ],
+        "failures": 0
+      }
+    }
+  },
+  {
+    "arm": "C",
+    "spotPass": "15/15",
+    "requestsMedian": 21,
+    "requestsRange": "17–37",
+    "tokensMedian": 36114,
+    "tokensRange": "28488–83374",
+    "worstTokens": 83374,
+    "worstRequests": 37,
+    "shellFailures": 30,
+    "shellCalls": 62,
+    "fullPass": "20/20",
+    "fullRequests": 99,
+    "fullTokens": 140773,
+    "fullSeconds": 99.7,
+    "fullShellFailures": 11,
+    "spot": {
+      "13-callback-to-promise": {
+        "requests": [
+          10,
+          8,
+          12,
+          11,
+          12
+        ],
+        "tokens": [
+          18676,
+          16484,
+          23387,
+          22188,
+          24183
+        ],
+        "failures": 0
+      },
+      "20-fix-email-regex": {
+        "requests": [
+          23,
+          5,
+          5,
+          14,
+          5
+        ],
+        "tokens": [
+          59588,
+          6839,
+          6861,
+          27461,
+          6863
+        ],
+        "failures": 0
+      },
+      "08-extract-duplication": {
+        "requests": [
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "tokens": [
+          5110,
+          5165,
+          5023,
+          5168,
+          5068
+        ],
+        "failures": 0
+      }
+    }
+  }
+]

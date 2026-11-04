@@ -1,0 +1,127 @@
+{
+  "task": "04-create-doc",
+  "ok": true,
+  "stats": {
+    "requests": 3,
+    "toolCalls": 4,
+    "usage": {
+      "promptTokens": 3402,
+      "completionTokens": 278,
+      "totalTokens": 3680,
+      "reported": 3,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-04-create-doc-ytPROy",
+  "startedAt": "2026-11-04T13:09:01.484Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2847,
+      "messageCount": 2,
+      "messageChars": 676,
+      "usage": {
+        "prompt_tokens": 1010,
+        "completion_tokens": 51,
+        "total_tokens": 1061
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 4107,
+      "messageCount": 5,
+      "messageChars": 968,
+      "usage": {
+        "prompt_tokens": 1110,
+        "completion_tokens": 156,
+        "total_tokens": 1266
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3046,
+      "messageCount": 8,
+      "messageChars": 1378,
+      "usage": {
+        "prompt_tokens": 1282,
+        "completion_tokens": 71,
+        "total_tokens": 1353
+      },
+      "toolCalls": 0,
+      "contentChars": 150
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "read",
+      "args": {
+        "path": "package.json"
+      },
+      "resultChars": 127,
+      "resultLines": 9,
+      "resultHead": "{\r",
+      "elapsedMs": 2850
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "README.md"
+      },
+      "resultChars": 26,
+      "resultLines": 4,
+      "resultHead": "# fixture\r",
+      "elapsedMs": 2850
+    },
+    {
+      "index": 3,
+      "name": "write",
+      "args": {
+        "path": "docs/usage.md",
+        "content": "# 用法\n\n| 命令 | 说明 |\n| --- | --- |\n| `npm test` | 运行 `node --test` 执行测试。 |\n| `npm run lint` | 运行 `node --check .` 校验文件语法。 |\n"
+      },
+      "resultChars": 32,
+      "resultLines": 1,
+      "resultHead": "wrote 121 chars to docs/usage.md",
+      "elapsedMs": 6959,
+      "file": {
+        "path": "docs/usage.md",
+        "beforeBytes": null,
+        "afterBytes": 165,
+        "deltaBytes": null,
+        "beforeSha256": null,
+        "afterSha256": "eba5844cddaece22"
+      }
+    },
+    {
+      "index": 4,
+      "name": "edit",
+      "args": {
+        "path": "README.md",
+        "old_string": "一个用来练手的小仓库。",
+        "new_string": "一个用来练手的小仓库。\n\n详见 [用法](docs/usage.md)。"
+      },
+      "resultChars": 32,
+      "resultLines": 1,
+      "resultHead": "edited README.md (26 → 53 chars)",
+      "elapsedMs": 6964,
+      "file": {
+        "path": "README.md",
+        "beforeBytes": 48,
+        "afterBytes": 85,
+        "deltaBytes": 37,
+        "beforeSha256": "8d4ef9fe12c8d3df",
+        "afterSha256": "de72f7854a7fdfe3"
+      }
+    }
+  ]
+}

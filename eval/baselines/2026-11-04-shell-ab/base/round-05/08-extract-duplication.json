@@ -1,0 +1,267 @@
+{
+  "task": "08-extract-duplication",
+  "ok": true,
+  "stats": {
+    "requests": 9,
+    "toolCalls": 9,
+    "usage": {
+      "promptTokens": 14654,
+      "completionTokens": 853,
+      "totalTokens": 15507,
+      "reported": 9,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-08-extract-duplication-QgkGB9",
+  "startedAt": "2026-11-04T13:07:22.751Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2523,
+      "messageCount": 2,
+      "messageChars": 661,
+      "usage": {
+        "prompt_tokens": 1004,
+        "completion_tokens": 46,
+        "total_tokens": 1050
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1985,
+      "messageCount": 5,
+      "messageChars": 864,
+      "usage": {
+        "prompt_tokens": 1078,
+        "completion_tokens": 21,
+        "total_tokens": 1099
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3512,
+      "messageCount": 7,
+      "messageChars": 1396,
+      "usage": {
+        "prompt_tokens": 1238,
+        "completion_tokens": 158,
+        "total_tokens": 1396
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 3881,
+      "messageCount": 9,
+      "messageChars": 2013,
+      "usage": {
+        "prompt_tokens": 1388,
+        "completion_tokens": 100,
+        "total_tokens": 1488
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 5,
+      "durationMs": 3636,
+      "messageCount": 11,
+      "messageChars": 3080,
+      "usage": {
+        "prompt_tokens": 1710,
+        "completion_tokens": 159,
+        "total_tokens": 1869
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 6,
+      "durationMs": 3219,
+      "messageCount": 13,
+      "messageChars": 3757,
+      "usage": {
+        "prompt_tokens": 1867,
+        "completion_tokens": 141,
+        "total_tokens": 2008
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 7,
+      "durationMs": 2026,
+      "messageCount": 15,
+      "messageChars": 4333,
+      "usage": {
+        "prompt_tokens": 2018,
+        "completion_tokens": 29,
+        "total_tokens": 2047
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 8,
+      "durationMs": 3100,
+      "messageCount": 17,
+      "messageChars": 4632,
+      "usage": {
+        "prompt_tokens": 2150,
+        "completion_tokens": 67,
+        "total_tokens": 2217
+      },
+      "toolCalls": 1,
+      "contentChars": 30
+    },
+    {
+      "index": 9,
+      "durationMs": 3804,
+      "messageCount": 19,
+      "messageChars": 4850,
+      "usage": {
+        "prompt_tokens": 2201,
+        "completion_tokens": 132,
+        "total_tokens": 2333
+      },
+      "toolCalls": 0,
+      "contentChars": 267
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "validateName"
+      },
+      "resultChars": 52,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:1: export function validateName(name) {",
+      "elapsedMs": 2525
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "validateTitle"
+      },
+      "resultChars": 54,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:8: export function validateTitle(title) {",
+      "elapsedMs": 2526
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "validate.mjs"
+      },
+      "resultChars": 504,
+      "resultLines": 14,
+      "resultHead": "export function validateName(name) {\r",
+      "elapsedMs": 4512
+    },
+    {
+      "index": 4,
+      "name": "write",
+      "args": {
+        "path": "validate.mjs",
+        "content": "function validateField(label, value) {\n  if (typeof value !== \"string\") return `${label} must be a string`;\n  if (value.trim() === \"\") return `${label} must not be empty`;\n  if (value.length > 40) return `${label} must be at most 40 chars`;\n  return null;\n}\n\nexport function validateName(name) {\n  re…",
+        "contentChars": 418
+      },
+      "resultChars": 31,
+      "resultLines": 1,
+      "resultHead": "wrote 418 chars to validate.mjs",
+      "elapsedMs": 8025,
+      "file": {
+        "path": "validate.mjs",
+        "beforeBytes": 504,
+        "afterBytes": 418,
+        "deltaBytes": -86,
+        "beforeSha256": "141d41f9005068ee",
+        "afterSha256": "bfb9ad3ae26546eb"
+      }
+    },
+    {
+      "index": 5,
+      "name": "shell",
+      "args": {
+        "command": "node --input-type=module -e 'import {validateName, validateTitle} from \"./validate.mjs\"; console.log(validateName(5), validateName(\"\"), validateName(\"x\".repeat(41)), validateName(\"ok\")); console.log(validateTitle(5), validateTitle(\"\"), validateTitle(\"x\".repeat(41)), validateTitle(\"ok\"));'"
+      },
+      "resultChars": 722,
+      "resultLines": 17,
+      "resultHead": "exit 1",
+      "elapsedMs": 11963
+    },
+    {
+      "index": 6,
+      "name": "write",
+      "args": {
+        "path": "/tmp/validate_test.mjs",
+        "content": "import { validateName, validateTitle } from \"./validate.mjs\";\nconsole.log(JSON.stringify(validateName(5)));\nconsole.log(JSON.stringify(validateName(\"\")));\nconsole.log(JSON.stringify(validateName(\"x\".repeat(41))));\nconsole.log(JSON.stringify(validateName(\"ok\")));\nconsole.log(JSON.stringify(validateTi…",
+        "contentChars": 468
+      },
+      "resultChars": 53,
+      "resultLines": 1,
+      "resultHead": "ERROR: path escapes workspace: /tmp/validate_test.mjs",
+      "elapsedMs": 15600,
+      "file": {
+        "path": "/tmp/validate_test.mjs",
+        "outsideWorkspace": true
+      }
+    },
+    {
+      "index": 7,
+      "name": "write",
+      "args": {
+        "path": "validate_test.mjs",
+        "content": "import { validateName, validateTitle } from \"./validate.mjs\";\nconsole.log(JSON.stringify(validateName(5)));\nconsole.log(JSON.stringify(validateName(\"\")));\nconsole.log(JSON.stringify(validateName(\"x\".repeat(41))));\nconsole.log(JSON.stringify(validateName(\"ok\")));\nconsole.log(JSON.stringify(validateTi…",
+        "contentChars": 468
+      },
+      "resultChars": 36,
+      "resultLines": 1,
+      "resultHead": "wrote 468 chars to validate_test.mjs",
+      "elapsedMs": 18820,
+      "file": {
+        "path": "validate_test.mjs",
+        "beforeBytes": null,
+        "afterBytes": 468,
+        "deltaBytes": null,
+        "beforeSha256": null,
+        "afterSha256": "cd2e46ff5df19b88"
+      }
+    },
+    {
+      "index": 8,
+      "name": "shell",
+      "args": {
+        "command": "node validate_test.mjs && rm validate_test.mjs"
+      },
+      "resultChars": 233,
+      "resultLines": 12,
+      "resultHead": "exit 1",
+      "elapsedMs": 20905
+    },
+    {
+      "index": 9,
+      "name": "shell",
+      "args": {
+        "command": "del validate_test.mjs"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 24023
+    }
+  ]
+}

@@ -1,0 +1,131 @@
+{
+  "task": "08-extract-duplication",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 4,
+    "usage": {
+      "promptTokens": 4792,
+      "completionTokens": 262,
+      "totalTokens": 5054,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-08-extract-duplication-7VQpCP",
+  "startedAt": "2026-11-04T13:12:56.659Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2190,
+      "messageCount": 2,
+      "messageChars": 768,
+      "usage": {
+        "prompt_tokens": 1025,
+        "completion_tokens": 41,
+        "total_tokens": 1066
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1655,
+      "messageCount": 5,
+      "messageChars": 948,
+      "usage": {
+        "prompt_tokens": 1099,
+        "completion_tokens": 21,
+        "total_tokens": 1120
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3989,
+      "messageCount": 7,
+      "messageChars": 1480,
+      "usage": {
+        "prompt_tokens": 1259,
+        "completion_tokens": 148,
+        "total_tokens": 1407
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 2373,
+      "messageCount": 9,
+      "messageChars": 2058,
+      "usage": {
+        "prompt_tokens": 1409,
+        "completion_tokens": 52,
+        "total_tokens": 1461
+      },
+      "toolCalls": 0,
+      "contentChars": 129
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "validateName"
+      },
+      "resultChars": 52,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:1: export function validateName(name) {",
+      "elapsedMs": 2193
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "validateTitle"
+      },
+      "resultChars": 54,
+      "resultLines": 1,
+      "resultHead": "validate.mjs:8: export function validateTitle(title) {",
+      "elapsedMs": 2194
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "validate.mjs"
+      },
+      "resultChars": 504,
+      "resultLines": 14,
+      "resultHead": "export function validateName(name) {\r",
+      "elapsedMs": 3849
+    },
+    {
+      "index": 4,
+      "name": "write",
+      "args": {
+        "path": "validate.mjs",
+        "content": "function validateField(value, label) {\n  if (typeof value !== \"string\") return `${label} must be a string`;\n  if (value.trim() === \"\") return `${label} must not be empty`;\n  if (value.length > 40) return `${label} must be at most 40 chars`;\n  return null;\n}\n\nexport function validateName(name) {\n  re…",
+        "contentChars": 418
+      },
+      "resultChars": 31,
+      "resultLines": 1,
+      "resultHead": "wrote 418 chars to validate.mjs",
+      "elapsedMs": 7839,
+      "file": {
+        "path": "validate.mjs",
+        "beforeBytes": 504,
+        "afterBytes": 418,
+        "deltaBytes": -86,
+        "beforeSha256": "141d41f9005068ee",
+        "afterSha256": "b8070ce6d282840c"
+      }
+    }
+  ]
+}

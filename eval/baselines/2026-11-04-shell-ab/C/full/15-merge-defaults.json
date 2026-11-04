@@ -1,0 +1,120 @@
+{
+  "task": "15-merge-defaults",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4381,
+      "completionTokens": 208,
+      "totalTokens": 4589,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-15-merge-defaults-CQ8Zt4",
+  "startedAt": "2026-11-04T13:22:19.086Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 1839,
+      "messageCount": 2,
+      "messageChars": 648,
+      "usage": {
+        "prompt_tokens": 1010,
+        "completion_tokens": 30,
+        "total_tokens": 1040
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2015,
+      "messageCount": 4,
+      "messageChars": 757,
+      "usage": {
+        "prompt_tokens": 1052,
+        "completion_tokens": 27,
+        "total_tokens": 1079
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2852,
+      "messageCount": 6,
+      "messageChars": 957,
+      "usage": {
+        "prompt_tokens": 1121,
+        "completion_tokens": 92,
+        "total_tokens": 1213
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 4286,
+      "messageCount": 8,
+      "messageChars": 1267,
+      "usage": {
+        "prompt_tokens": 1198,
+        "completion_tokens": 59,
+        "total_tokens": 1257
+      },
+      "toolCalls": 0,
+      "contentChars": 145
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "createConfig"
+      },
+      "resultChars": 51,
+      "resultLines": 1,
+      "resultHead": "config.mjs:3: export function createConfig(input) {",
+      "elapsedMs": 1840
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "config.mjs"
+      },
+      "resultChars": 153,
+      "resultLines": 6,
+      "resultHead": "const DEFAULTS = { retries: 3, timeoutMs: 1000, verbose: false };\r",
+      "elapsedMs": 3856
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "config.mjs",
+        "old_string": "  return Object.assign(DEFAULTS, input);",
+        "new_string": "  return Object.assign({}, DEFAULTS, input);"
+      },
+      "resultChars": 35,
+      "resultLines": 1,
+      "resultHead": "edited config.mjs (153 → 157 chars)",
+      "elapsedMs": 6709,
+      "file": {
+        "path": "config.mjs",
+        "beforeBytes": 153,
+        "afterBytes": 157,
+        "deltaBytes": 4,
+        "beforeSha256": "73e52729a5828ab8",
+        "afterSha256": "f47858989f4444d9"
+      }
+    }
+  ]
+}

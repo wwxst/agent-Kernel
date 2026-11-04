@@ -1,0 +1,96 @@
+{
+  "task": "01-add-health-route",
+  "ok": true,
+  "stats": {
+    "requests": 3,
+    "toolCalls": 2,
+    "usage": {
+      "promptTokens": 3368,
+      "completionTokens": 222,
+      "totalTokens": 3590,
+      "reported": 3,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-01-add-health-route-XvQcIm",
+  "startedAt": "2026-11-04T13:09:01.501Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 23233,
+      "messageCount": 2,
+      "messageChars": 637,
+      "usage": {
+        "prompt_tokens": 995,
+        "completion_tokens": 32,
+        "total_tokens": 1027
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 3623,
+      "messageCount": 4,
+      "messageChars": 980,
+      "usage": {
+        "prompt_tokens": 1119,
+        "completion_tokens": 145,
+        "total_tokens": 1264
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2899,
+      "messageCount": 6,
+      "messageChars": 1409,
+      "usage": {
+        "prompt_tokens": 1254,
+        "completion_tokens": 45,
+        "total_tokens": 1299
+      },
+      "toolCalls": 0,
+      "contentChars": 95
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "read",
+      "args": {
+        "path": "server.mjs"
+      },
+      "resultChars": 277,
+      "resultLines": 7,
+      "resultHead": "/** 一个最小的路由表：把 pathname 映射成响应。 */\r",
+      "elapsedMs": 23241
+    },
+    {
+      "index": 2,
+      "name": "edit",
+      "args": {
+        "path": "server.mjs",
+        "old_string": "  if (pathname === \"/users\") return { status: 200, body: [{ id: 1 }] };",
+        "new_string": "  if (pathname === \"/users\") return { status: 200, body: [{ id: 1 }] };\n  if (pathname === \"/health\") return { status: 200, body: { status: \"ok\" } };"
+      },
+      "resultChars": 35,
+      "resultLines": 1,
+      "resultHead": "edited server.mjs (277 → 356 chars)",
+      "elapsedMs": 26865,
+      "file": {
+        "path": "server.mjs",
+        "beforeBytes": 309,
+        "afterBytes": 388,
+        "deltaBytes": 79,
+        "beforeSha256": "af2dc4141f818b7c",
+        "afterSha256": "08481e2396cf06e9"
+      }
+    }
+  ]
+}

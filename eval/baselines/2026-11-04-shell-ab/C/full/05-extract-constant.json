@@ -1,0 +1,120 @@
+{
+  "task": "05-extract-constant",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4560,
+      "completionTokens": 244,
+      "totalTokens": 4804,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-05-extract-constant-cyCq6w",
+  "startedAt": "2026-11-04T13:21:52.022Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2104,
+      "messageCount": 2,
+      "messageChars": 603,
+      "usage": {
+        "prompt_tokens": 994,
+        "completion_tokens": 33,
+        "total_tokens": 1027
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1576,
+      "messageCount": 4,
+      "messageChars": 676,
+      "usage": {
+        "prompt_tokens": 1030,
+        "completion_tokens": 21,
+        "total_tokens": 1051
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 2728,
+      "messageCount": 6,
+      "messageChars": 1021,
+      "usage": {
+        "prompt_tokens": 1179,
+        "completion_tokens": 160,
+        "total_tokens": 1339
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 1809,
+      "messageCount": 8,
+      "messageChars": 1461,
+      "usage": {
+        "prompt_tokens": 1357,
+        "completion_tokens": 30,
+        "total_tokens": 1387
+      },
+      "toolCalls": 0,
+      "contentChars": 47
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "glob",
+      "args": {
+        "pattern": "**/calc.mjs"
+      },
+      "resultChars": 8,
+      "resultLines": 1,
+      "resultHead": "calc.mjs",
+      "elapsedMs": 2106
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "calc.mjs"
+      },
+      "resultChars": 321,
+      "resultLines": 15,
+      "resultHead": "/** 含税价。 */\r",
+      "elapsedMs": 3683
+    },
+    {
+      "index": 3,
+      "name": "write",
+      "args": {
+        "path": "calc.mjs",
+        "content": "/** 税率。 */\nconst TAX_RATE = 0.2;\n\n/** 含税价。 */\nexport function withTax(price) {\n  return Math.round(price * (1 + TAX_RATE) * 100) / 100;\n}\n\n/** 只算税额。 */\nexport function taxOf(price) {\n  return Math.round(price * TAX_RATE * 100) / 100;\n}\n\n/** 九折之后再算含税价。 */\nexport function discounted(price) {\n  return …",
+        "contentChars": 356
+      },
+      "resultChars": 27,
+      "resultLines": 1,
+      "resultHead": "wrote 356 chars to calc.mjs",
+      "elapsedMs": 6412,
+      "file": {
+        "path": "calc.mjs",
+        "beforeBytes": 359,
+        "afterBytes": 400,
+        "deltaBytes": 41,
+        "beforeSha256": "358289b5082deec3",
+        "afterSha256": "86882f4c711dabe5"
+      }
+    }
+  ]
+}

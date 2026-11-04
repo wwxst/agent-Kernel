@@ -1,0 +1,342 @@
+{
+  "task": "13-callback-to-promise",
+  "ok": true,
+  "stats": {
+    "requests": 12,
+    "toolCalls": 13,
+    "usage": {
+      "promptTokens": 21973,
+      "completionTokens": 1414,
+      "totalTokens": 23387,
+      "reported": 12,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-13-callback-to-promise-FeNpqs",
+  "startedAt": "2026-11-04T13:19:21.432Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2009,
+      "messageCount": 2,
+      "messageChars": 663,
+      "usage": {
+        "prompt_tokens": 1014,
+        "completion_tokens": 29,
+        "total_tokens": 1043
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2201,
+      "messageCount": 4,
+      "messageChars": 782,
+      "usage": {
+        "prompt_tokens": 1058,
+        "completion_tokens": 37,
+        "total_tokens": 1095
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 4021,
+      "messageCount": 7,
+      "messageChars": 1284,
+      "usage": {
+        "prompt_tokens": 1223,
+        "completion_tokens": 171,
+        "total_tokens": 1394
+      },
+      "toolCalls": 2,
+      "contentChars": 75
+    },
+    {
+      "index": 4,
+      "durationMs": 3315,
+      "messageCount": 10,
+      "messageChars": 1874,
+      "usage": {
+        "prompt_tokens": 1423,
+        "completion_tokens": 102,
+        "total_tokens": 1525
+      },
+      "toolCalls": 1,
+      "contentChars": 62
+    },
+    {
+      "index": 5,
+      "durationMs": 3965,
+      "messageCount": 12,
+      "messageChars": 3016,
+      "usage": {
+        "prompt_tokens": 1729,
+        "completion_tokens": 136,
+        "total_tokens": 1865
+      },
+      "toolCalls": 1,
+      "contentChars": 98
+    },
+    {
+      "index": 6,
+      "durationMs": 4509,
+      "messageCount": 14,
+      "messageChars": 4328,
+      "usage": {
+        "prompt_tokens": 2044,
+        "completion_tokens": 190,
+        "total_tokens": 2234
+      },
+      "toolCalls": 1,
+      "contentChars": 67
+    },
+    {
+      "index": 7,
+      "durationMs": 1860,
+      "messageCount": 16,
+      "messageChars": 5095,
+      "usage": {
+        "prompt_tokens": 2099,
+        "completion_tokens": 29,
+        "total_tokens": 2128
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 8,
+      "durationMs": 6517,
+      "messageCount": 18,
+      "messageChars": 5189,
+      "usage": {
+        "prompt_tokens": 2150,
+        "completion_tokens": 328,
+        "total_tokens": 2478
+      },
+      "toolCalls": 1,
+      "contentChars": 68
+    },
+    {
+      "index": 9,
+      "durationMs": 3321,
+      "messageCount": 20,
+      "messageChars": 6373,
+      "usage": {
+        "prompt_tokens": 2214,
+        "completion_tokens": 88,
+        "total_tokens": 2302
+      },
+      "toolCalls": 1,
+      "contentChars": 88
+    },
+    {
+      "index": 10,
+      "durationMs": 2545,
+      "messageCount": 22,
+      "messageChars": 6680,
+      "usage": {
+        "prompt_tokens": 2290,
+        "completion_tokens": 52,
+        "total_tokens": 2342
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 11,
+      "durationMs": 2310,
+      "messageCount": 24,
+      "messageChars": 6841,
+      "usage": {
+        "prompt_tokens": 2339,
+        "completion_tokens": 36,
+        "total_tokens": 2375
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 12,
+      "durationMs": 4612,
+      "messageCount": 26,
+      "messageChars": 6946,
+      "usage": {
+        "prompt_tokens": 2390,
+        "completion_tokens": 216,
+        "total_tokens": 2606
+      },
+      "toolCalls": 0,
+      "contentChars": 772
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "ls",
+      "args": {
+        "path": "."
+      },
+      "resultChars": 48,
+      "resultLines": 2,
+      "resultHead": "file      234  app.mjs",
+      "elapsedMs": 2011
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "config.mjs"
+      },
+      "resultChars": 219,
+      "resultLines": 9,
+      "resultHead": "import { readFile } from \"node:fs\";\r",
+      "elapsedMs": 4212
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "app.mjs"
+      },
+      "resultChars": 234,
+      "resultLines": 11,
+      "resultHead": "import { readConfig } from \"./config.mjs\";\r",
+      "elapsedMs": 4213
+    },
+    {
+      "index": 4,
+      "name": "write",
+      "args": {
+        "path": "config.mjs",
+        "content": "import { readFile } from \"node:fs/promises\";\n\nexport function readConfig(file) {\n  return readFile(file, \"utf8\").then((text) => JSON.parse(text));\n}\n"
+      },
+      "resultChars": 29,
+      "resultLines": 1,
+      "resultHead": "wrote 149 chars to config.mjs",
+      "elapsedMs": 8235,
+      "file": {
+        "path": "config.mjs",
+        "beforeBytes": 219,
+        "afterBytes": 149,
+        "deltaBytes": -70,
+        "beforeSha256": "a156fb324504c962",
+        "afterSha256": "f250fc9a84546b37"
+      }
+    },
+    {
+      "index": 5,
+      "name": "write",
+      "args": {
+        "path": "app.mjs",
+        "content": "import { readConfig } from \"./config.mjs\";\n\ntry {\n  const config = await readConfig(\"config.json\");\n  console.log(config.name);\n} catch {\n  console.error(\"failed to read config\");\n  process.exitCode = 1;\n}\n"
+      },
+      "resultChars": 26,
+      "resultLines": 1,
+      "resultHead": "wrote 206 chars to app.mjs",
+      "elapsedMs": 8236,
+      "file": {
+        "path": "app.mjs",
+        "beforeBytes": 234,
+        "afterBytes": 206,
+        "deltaBytes": -28,
+        "beforeSha256": "d00507d65cbff3ff",
+        "afterSha256": "a159a0967ef7b40a"
+      }
+    },
+    {
+      "index": 6,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs; echo \"exit=$?\""
+      },
+      "resultChars": 820,
+      "resultLines": 20,
+      "resultHead": "exit 1",
+      "elapsedMs": 11601
+    },
+    {
+      "index": 7,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs\\n echo exit=%errorlevel%"
+      },
+      "resultChars": 821,
+      "resultLines": 20,
+      "resultHead": "exit 1",
+      "elapsedMs": 15612
+    },
+    {
+      "index": 8,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs"
+      },
+      "resultChars": 29,
+      "resultLines": 3,
+      "resultHead": "exit 1",
+      "elapsedMs": 20170
+    },
+    {
+      "index": 9,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs & echo exit=%errorlevel%"
+      },
+      "resultChars": 37,
+      "resultLines": 4,
+      "resultHead": "exit 0",
+      "elapsedMs": 22080
+    },
+    {
+      "index": 10,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs > nul 2>&1\necho exit=%errorlevel%"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 1",
+      "elapsedMs": 28645
+    },
+    {
+      "index": 11,
+      "name": "shell",
+      "args": {
+        "command": "echo {\"name\":\"hello\"} > config.json\nnode app.mjs\necho exit=%errorlevel%\ndel config.json"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 31984
+    },
+    {
+      "index": 12,
+      "name": "shell",
+      "args": {
+        "command": "echo {\"name\":\"hello\"} > config.json\nnode app.mjs\ndel config.json"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 34547
+    },
+    {
+      "index": 13,
+      "name": "shell",
+      "args": {
+        "command": "echo {\"name\":\"hello\"} > config.json & node app.mjs & del config.json"
+      },
+      "resultChars": 13,
+      "resultLines": 3,
+      "resultHead": "exit 0",
+      "elapsedMs": 36908
+    }
+  ]
+}

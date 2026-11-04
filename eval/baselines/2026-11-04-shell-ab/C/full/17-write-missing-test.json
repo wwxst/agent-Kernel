@@ -1,0 +1,144 @@
+{
+  "task": "17-write-missing-test",
+  "ok": true,
+  "stats": {
+    "requests": 5,
+    "toolCalls": 4,
+    "usage": {
+      "promptTokens": 5944,
+      "completionTokens": 326,
+      "totalTokens": 6270,
+      "reported": 5,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-17-write-missing-test-PDMtMa",
+  "startedAt": "2026-11-04T13:22:28.431Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2213,
+      "messageCount": 2,
+      "messageChars": 668,
+      "usage": {
+        "prompt_tokens": 1019,
+        "completion_tokens": 35,
+        "total_tokens": 1054
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2670,
+      "messageCount": 4,
+      "messageChars": 752,
+      "usage": {
+        "prompt_tokens": 1055,
+        "completion_tokens": 21,
+        "total_tokens": 1076
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3313,
+      "messageCount": 6,
+      "messageChars": 951,
+      "usage": {
+        "prompt_tokens": 1143,
+        "completion_tokens": 144,
+        "total_tokens": 1287
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 1776,
+      "messageCount": 8,
+      "messageChars": 1432,
+      "usage": {
+        "prompt_tokens": 1302,
+        "completion_tokens": 25,
+        "total_tokens": 1327
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 5,
+      "durationMs": 2802,
+      "messageCount": 10,
+      "messageChars": 1634,
+      "usage": {
+        "prompt_tokens": 1425,
+        "completion_tokens": 101,
+        "total_tokens": 1526
+      },
+      "toolCalls": 0,
+      "contentChars": 245
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "glob",
+      "args": {
+        "pattern": "**/slug.mjs"
+      },
+      "resultChars": 8,
+      "resultLines": 1,
+      "resultHead": "slug.mjs",
+      "elapsedMs": 2215
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "slug.mjs"
+      },
+      "resultChars": 175,
+      "resultLines": 9,
+      "resultHead": "/** 把一段文本变成 URL slug。 */\r",
+      "elapsedMs": 4886
+    },
+    {
+      "index": 3,
+      "name": "write",
+      "args": {
+        "path": "slug.test.mjs",
+        "content": "import { test } from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { slugify } from \"./slug.mjs\";\n\ntest(\"普通句子\", () => {\n  assert.equal(slugify(\"Hello World! This is a Test.\"), \"hello-world-this-is-a-test\");\n});\n\ntest(\"首尾有空格\", () => {\n  assert.equal(slugify(\"   Trim me   \"), \"trim-me\")…",
+        "contentChars": 365
+      },
+      "resultChars": 32,
+      "resultLines": 1,
+      "resultHead": "wrote 365 chars to slug.test.mjs",
+      "elapsedMs": 8200,
+      "file": {
+        "path": "slug.test.mjs",
+        "beforeBytes": null,
+        "afterBytes": 391,
+        "deltaBytes": null,
+        "beforeSha256": null,
+        "afterSha256": "d00f3c81b7e52c15"
+      }
+    },
+    {
+      "index": 4,
+      "name": "shell",
+      "args": {
+        "command": "node --test slug.test.mjs"
+      },
+      "resultChars": 157,
+      "resultLines": 13,
+      "resultHead": "exit 0",
+      "elapsedMs": 10072
+    }
+  ]
+}

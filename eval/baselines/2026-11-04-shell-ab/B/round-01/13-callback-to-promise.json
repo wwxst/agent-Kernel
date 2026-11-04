@@ -1,0 +1,301 @@
+{
+  "task": "13-callback-to-promise",
+  "ok": true,
+  "stats": {
+    "requests": 9,
+    "toolCalls": 12,
+    "usage": {
+      "promptTokens": 15194,
+      "completionTokens": 742,
+      "totalTokens": 15936,
+      "reported": 9,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-13-callback-to-promise-micOM1",
+  "startedAt": "2026-11-04T13:10:44.069Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 23237,
+      "messageCount": 2,
+      "messageChars": 770,
+      "usage": {
+        "prompt_tokens": 1024,
+        "completion_tokens": 29,
+        "total_tokens": 1053
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 2669,
+      "messageCount": 4,
+      "messageChars": 889,
+      "usage": {
+        "prompt_tokens": 1068,
+        "completion_tokens": 37,
+        "total_tokens": 1105
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 4393,
+      "messageCount": 7,
+      "messageChars": 1391,
+      "usage": {
+        "prompt_tokens": 1233,
+        "completion_tokens": 148,
+        "total_tokens": 1381
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 2764,
+      "messageCount": 10,
+      "messageChars": 1919,
+      "usage": {
+        "prompt_tokens": 1410,
+        "completion_tokens": 71,
+        "total_tokens": 1481
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 5,
+      "durationMs": 3314,
+      "messageCount": 12,
+      "messageChars": 2948,
+      "usage": {
+        "prompt_tokens": 1728,
+        "completion_tokens": 79,
+        "total_tokens": 1807
+      },
+      "toolCalls": 2,
+      "contentChars": 14
+    },
+    {
+      "index": 6,
+      "durationMs": 4571,
+      "messageCount": 15,
+      "messageChars": 4038,
+      "usage": {
+        "prompt_tokens": 2095,
+        "completion_tokens": 197,
+        "total_tokens": 2292
+      },
+      "toolCalls": 1,
+      "contentChars": 43
+    },
+    {
+      "index": 7,
+      "durationMs": 3683,
+      "messageCount": 17,
+      "messageChars": 4770,
+      "usage": {
+        "prompt_tokens": 2166,
+        "completion_tokens": 22,
+        "total_tokens": 2188
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 8,
+      "durationMs": 2369,
+      "messageCount": 19,
+      "messageChars": 4814,
+      "usage": {
+        "prompt_tokens": 2203,
+        "completion_tokens": 38,
+        "total_tokens": 2241
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 9,
+      "durationMs": 3558,
+      "messageCount": 22,
+      "messageChars": 4917,
+      "usage": {
+        "prompt_tokens": 2267,
+        "completion_tokens": 121,
+        "total_tokens": 2388
+      },
+      "toolCalls": 0,
+      "contentChars": 245
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "ls",
+      "args": {
+        "path": "."
+      },
+      "resultChars": 48,
+      "resultLines": 2,
+      "resultHead": "file      234  app.mjs",
+      "elapsedMs": 23239
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "app.mjs"
+      },
+      "resultChars": 234,
+      "resultLines": 11,
+      "resultHead": "import { readConfig } from \"./config.mjs\";\r",
+      "elapsedMs": 25908
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "config.mjs"
+      },
+      "resultChars": 219,
+      "resultLines": 9,
+      "resultHead": "import { readFile } from \"node:fs\";\r",
+      "elapsedMs": 25909
+    },
+    {
+      "index": 4,
+      "name": "write",
+      "args": {
+        "path": "config.mjs",
+        "content": "import { readFile } from \"node:fs/promises\";\n\nexport async function readConfig(file) {\n  const text = await readFile(file, \"utf8\");\n  return JSON.parse(text);\n}\n"
+      },
+      "resultChars": 29,
+      "resultLines": 1,
+      "resultHead": "wrote 161 chars to config.mjs",
+      "elapsedMs": 30302,
+      "file": {
+        "path": "config.mjs",
+        "beforeBytes": 219,
+        "afterBytes": 161,
+        "deltaBytes": -58,
+        "beforeSha256": "a156fb324504c962",
+        "afterSha256": "63b8839ff981e706"
+      }
+    },
+    {
+      "index": 5,
+      "name": "write",
+      "args": {
+        "path": "app.mjs",
+        "content": "import { readConfig } from \"./config.mjs\";\n\ntry {\n  const config = await readConfig(\"config.json\");\n  console.log(config.name);\n} catch {\n  console.error(\"failed to read config\");\n  process.exitCode = 1;\n}\n"
+      },
+      "resultChars": 26,
+      "resultLines": 1,
+      "resultHead": "wrote 206 chars to app.mjs",
+      "elapsedMs": 30304,
+      "file": {
+        "path": "app.mjs",
+        "beforeBytes": 234,
+        "afterBytes": 206,
+        "deltaBytes": -28,
+        "beforeSha256": "d00507d65cbff3ff",
+        "afterSha256": "a159a0967ef7b40a"
+      }
+    },
+    {
+      "index": 6,
+      "name": "shell",
+      "args": {
+        "command": "echo '{\"name\":\"demo\"}' > config.json && node app.mjs; echo \"exit=$?\"; rm -f config.json; node app.mjs; echo \"exit=$?\""
+      },
+      "resultChars": 820,
+      "resultLines": 20,
+      "resultHead": "exit 1",
+      "elapsedMs": 33117
+    },
+    {
+      "index": 7,
+      "name": "shell",
+      "args": {
+        "command": "printf '{\"name\":\"demo\"}' > config.json"
+      },
+      "resultChars": 62,
+      "resultLines": 4,
+      "resultHead": "exit 1",
+      "elapsedMs": 36450
+    },
+    {
+      "index": 8,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs; echo \"exit=$?\""
+      },
+      "resultChars": 820,
+      "resultLines": 20,
+      "resultHead": "exit 1",
+      "elapsedMs": 36496
+    },
+    {
+      "index": 9,
+      "name": "write",
+      "args": {
+        "path": "config.json",
+        "content": "{\"name\":\"demo\"}\n"
+      },
+      "resultChars": 29,
+      "resultLines": 1,
+      "resultHead": "wrote 16 chars to config.json",
+      "elapsedMs": 41068,
+      "file": {
+        "path": "config.json",
+        "beforeBytes": null,
+        "afterBytes": 16,
+        "deltaBytes": null,
+        "beforeSha256": null,
+        "afterSha256": "e55654f16429cee2"
+      }
+    },
+    {
+      "index": 10,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs"
+      },
+      "resultChars": 12,
+      "resultLines": 3,
+      "resultHead": "exit 0",
+      "elapsedMs": 44809
+    },
+    {
+      "index": 11,
+      "name": "shell",
+      "args": {
+        "command": "del config.json"
+      },
+      "resultChars": 7,
+      "resultLines": 2,
+      "resultHead": "exit 0",
+      "elapsedMs": 47197
+    },
+    {
+      "index": 12,
+      "name": "shell",
+      "args": {
+        "command": "node app.mjs"
+      },
+      "resultChars": 29,
+      "resultLines": 3,
+      "resultHead": "exit 1",
+      "elapsedMs": 47244
+    }
+  ]
+}

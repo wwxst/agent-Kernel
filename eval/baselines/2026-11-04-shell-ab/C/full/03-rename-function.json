@@ -1,0 +1,229 @@
+{
+  "task": "03-rename-function",
+  "ok": true,
+  "stats": {
+    "requests": 5,
+    "toolCalls": 9,
+    "usage": {
+      "promptTokens": 6558,
+      "completionTokens": 440,
+      "totalTokens": 6998,
+      "reported": 5,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-03-rename-function-3Zq7UL",
+  "startedAt": "2026-11-04T13:21:44.147Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 2767,
+      "messageCount": 2,
+      "messageChars": 642,
+      "usage": {
+        "prompt_tokens": 1004,
+        "completion_tokens": 64,
+        "total_tokens": 1068
+      },
+      "toolCalls": 1,
+      "contentChars": 46
+    },
+    {
+      "index": 2,
+      "durationMs": 2116,
+      "messageCount": 4,
+      "messageChars": 1082,
+      "usage": {
+        "prompt_tokens": 1117,
+        "completion_tokens": 58,
+        "total_tokens": 1175
+      },
+      "toolCalls": 3,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3708,
+      "messageCount": 8,
+      "messageChars": 1497,
+      "usage": {
+        "prompt_tokens": 1273,
+        "completion_tokens": 226,
+        "total_tokens": 1499
+      },
+      "toolCalls": 4,
+      "contentChars": 31
+    },
+    {
+      "index": 4,
+      "durationMs": 1714,
+      "messageCount": 13,
+      "messageChars": 2227,
+      "usage": {
+        "prompt_tokens": 1561,
+        "completion_tokens": 30,
+        "total_tokens": 1591
+      },
+      "toolCalls": 1,
+      "contentChars": 37
+    },
+    {
+      "index": 5,
+      "durationMs": 2424,
+      "messageCount": 15,
+      "messageChars": 2301,
+      "usage": {
+        "prompt_tokens": 1603,
+        "completion_tokens": 62,
+        "total_tokens": 1665
+      },
+      "toolCalls": 0,
+      "contentChars": 123
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "fetchUser"
+      },
+      "resultChars": 225,
+      "resultLines": 5,
+      "resultHead": "README.md:6: import { fetchUser } from \"./api.mjs\";",
+      "elapsedMs": 2770
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "api.mjs"
+      },
+      "resultChars": 74,
+      "resultLines": 4,
+      "resultHead": "export function fetchUser(id) {\r",
+      "elapsedMs": 4886
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "page.mjs"
+      },
+      "resultChars": 145,
+      "resultLines": 7,
+      "resultHead": "import { fetchUser } from \"./api.mjs\";\r",
+      "elapsedMs": 4887
+    },
+    {
+      "index": 4,
+      "name": "read",
+      "args": {
+        "path": "README.md"
+      },
+      "resultChars": 102,
+      "resultLines": 10,
+      "resultHead": "# demo\r",
+      "elapsedMs": 4887
+    },
+    {
+      "index": 5,
+      "name": "edit",
+      "args": {
+        "path": "api.mjs",
+        "old_string": "export function fetchUser(id) {",
+        "new_string": "export function getUser(id) {"
+      },
+      "resultChars": 30,
+      "resultLines": 1,
+      "resultHead": "edited api.mjs (74 → 72 chars)",
+      "elapsedMs": 8596,
+      "file": {
+        "path": "api.mjs",
+        "beforeBytes": 74,
+        "afterBytes": 72,
+        "deltaBytes": -2,
+        "beforeSha256": "dba906b0b2e20b1b",
+        "afterSha256": "0501cb3282e167d5"
+      }
+    },
+    {
+      "index": 6,
+      "name": "edit",
+      "args": {
+        "path": "page.mjs",
+        "old_string": "import { fetchUser } from \"./api.mjs\";",
+        "new_string": "import { getUser } from \"./api.mjs\";"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited page.mjs (145 → 143 chars)",
+      "elapsedMs": 8598,
+      "file": {
+        "path": "page.mjs",
+        "beforeBytes": 145,
+        "afterBytes": 143,
+        "deltaBytes": -2,
+        "beforeSha256": "8596c9b6f74c1f7c",
+        "afterSha256": "0a5efb1b4b5aee20"
+      }
+    },
+    {
+      "index": 7,
+      "name": "edit",
+      "args": {
+        "path": "page.mjs",
+        "old_string": "  const user = fetchUser(id);",
+        "new_string": "  const user = getUser(id);"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited page.mjs (143 → 141 chars)",
+      "elapsedMs": 8605,
+      "file": {
+        "path": "page.mjs",
+        "beforeBytes": 143,
+        "afterBytes": 141,
+        "deltaBytes": -2,
+        "beforeSha256": "0a5efb1b4b5aee20",
+        "afterSha256": "e221dece71f73fe0"
+      }
+    },
+    {
+      "index": 8,
+      "name": "edit",
+      "args": {
+        "path": "README.md",
+        "old_string": "import { fetchUser } from \"./api.mjs\";\n\nconst user = fetchUser(1);",
+        "new_string": "import { getUser } from \"./api.mjs\";\n\nconst user = getUser(1);"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited README.md (102 → 98 chars)",
+      "elapsedMs": 8606,
+      "file": {
+        "path": "README.md",
+        "beforeBytes": 102,
+        "afterBytes": 98,
+        "deltaBytes": -4,
+        "beforeSha256": "97278d7bab9f5b61",
+        "afterSha256": "965e931ce905195f"
+      }
+    },
+    {
+      "index": 9,
+      "name": "grep",
+      "args": {
+        "text": "fetchUser"
+      },
+      "resultChars": 12,
+      "resultLines": 1,
+      "resultHead": "(no matches)",
+      "elapsedMs": 10322
+    }
+  ]
+}

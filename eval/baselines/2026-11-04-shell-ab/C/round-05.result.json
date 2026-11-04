@@ -1,0 +1,61 @@
+{
+  "at": "2026-11-04T13:21:44.014Z",
+  "model": "hy3",
+  "commit": "e32b766f3dfe4447107531324ef14dcea31d38b2",
+  "variant": {
+    "systemPromptFile": null,
+    "shellDescriptionFile": "eval/prompts/shell-platform.txt"
+  },
+  "ok": true,
+  "passed": 3,
+  "total": 3,
+  "elapsed": 38.2,
+  "totals": {
+    "requests": 21,
+    "toolCalls": 22,
+    "tokens": 36114,
+    "unknownResponses": 0
+  },
+  "infraErrors": [],
+  "results": [
+    {
+      "name": "08-extract-duplication",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 4752,
+        "completion": 316,
+        "total": 5068,
+        "unknownResponses": 0
+      },
+      "seconds": 11.6
+    },
+    {
+      "name": "13-callback-to-promise",
+      "ok": true,
+      "requests": 12,
+      "toolCalls": 14,
+      "tokens": {
+        "prompt": 22949,
+        "completion": 1234,
+        "total": 24183,
+        "unknownResponses": 0
+      },
+      "seconds": 38.2
+    },
+    {
+      "name": "20-fix-email-regex",
+      "ok": true,
+      "requests": 5,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 5891,
+        "completion": 972,
+        "total": 6863,
+        "unknownResponses": 0
+      },
+      "seconds": 21.3
+    }
+  ]
+}
