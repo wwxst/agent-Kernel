@@ -30,6 +30,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { Agent } from "../src/agent.ts";
+import { createEvalDiagnostics } from "./diagnostics.mjs";
 import { Llm } from "../src/llm.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "../src/workspace.ts";
@@ -54,12 +55,13 @@ if (invokedDirectly) {
 async function cli() {
   const args = process.argv.slice(2);
   const keep = args.includes("--keep");
+  const trace = args.includes("--trace");
   const filters = [];
   let jobs = 4;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--keep") continue;
+    if (arg === "--keep" || arg === "--trace") continue;
     if (arg === "--jobs") {
       jobs = Math.max(1, Number(args[(index += 1)]) || jobs);
       continue;
@@ -102,13 +104,14 @@ async function cli() {
     model,
     jobs,
     keep,
+    trace,
   });
 
   report(summarize({ results, elapsed, model, commit, infra }));
 }
 
 /** 跑一轮：并发执行任务，并在结算窗口内收集检查器留下的未处理 rejection。 */
-export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false }) {
+export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false, trace = false }) {
   const infra = [];
   const onUnhandled = (reason) => {
     infra.push(describe(reason));
@@ -119,7 +122,7 @@ export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs =
   const startedAt = Date.now();
   try {
     const results = await runPool(names, jobs, (name) =>
-      runTask(name, { tasksDir, baseUrl, apiKey, model, keep }),
+      runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }),
     );
 
     // 让检查器里没 await 的 promise 浮出来：这段时间内的 rejection 都算本轮基础设施错误。
@@ -172,15 +175,19 @@ async function runPool(items, limit, worker) {
 }
 
 /** 跑一个任务：复制夹具 → 真跑一遍 → 跑检查 → 清理。 */
-async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
+async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }) {
   const taskDir = path.join(tasksDir, name);
   const prompt = (await readFile(path.join(taskDir, "task.md"), "utf8")).trim();
   const workdir = await mkdtemp(path.join(tmpdir(), `agent-eval-${name}-`));
   await cp(path.join(taskDir, "files"), workdir, { recursive: true });
 
+  const llm = new Llm({ baseUrl, apiKey, model });
+  const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })));
+  const diagnostics = trace ? await createEvalDiagnostics({ llm, tools, workdir }) : undefined;
   const agent = new Agent({
-    llm: new Llm({ baseUrl, apiKey, model }),
-    tools: new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir }))),
+    llm: diagnostics?.llm ?? llm,
+    tools,
+    ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
     maxSteps: 30,
     // 兜底：单个任务烧到 20 万 token 还没做完，多半是循环出了问题，不该继续付钱。
     maxTotalTokens: 200_000,
@@ -195,6 +202,8 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
     error = failureOfTask;
     failure = classifyRunFailure(failureOfTask);
   }
+
+  const traceRecord = diagnostics ? await diagnostics.finish() : undefined;
 
   if (error === undefined) {
     try {
@@ -223,6 +232,7 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
     seconds: Number(seconds.toFixed(1)),
     error: error === undefined ? undefined : describe(error),
     workdir: keep ? workdir : undefined,
+    ...(traceRecord === undefined ? {} : { trace: traceRecord }),
   };
 
   if (!keep) await rm(workdir, { recursive: true, force: true });
