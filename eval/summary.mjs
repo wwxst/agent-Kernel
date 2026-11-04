@@ -47,14 +47,16 @@ const median = (values) => {
 
 console.log(`最近 ${recent.length} 轮完整评测（共 ${taskCount} 个任务）：`);
 for (const [index, run] of recent.entries()) {
+  const seconds = run.elapsed ?? run.results.reduce((total, task) => total + task.seconds, 0);
   console.log(
-    `  第 ${index + 1} 轮  ${run.passed}/${run.total}  ${average(run.results.map((task) => task.steps)).toFixed(1)} 步  ${Math.round(run.results.reduce((total, task) => total + task.seconds, 0))}s  ${run.at}`,
+    `  第 ${index + 1} 轮  ${run.passed}/${run.total}  ${average(run.results.map((task) => task.steps)).toFixed(1)} 步  ${Math.round(seconds)}s  ${run.at}`,
   );
 }
 
 const passRates = recent.map((run) => (run.passed / run.total) * 100);
 const averageSteps = recent.map((run) => average(run.results.map((task) => task.steps)));
-const totalSeconds = recent.map((run) => run.results.reduce((total, task) => total + task.seconds, 0));
+// 老记录没有 elapsed（串行跑，任务耗时之和就等于墙钟），新记录优先用墙钟。
+const totalSeconds = recent.map((run) => run.elapsed ?? run.results.reduce((total, task) => total + task.seconds, 0));
 
 console.log(
   `\n中位数：通过率 ${median(passRates).toFixed(0)}% · 平均 ${median(averageSteps).toFixed(1)} 步 · 合计 ${Math.round(median(totalSeconds))}s`,

@@ -7,13 +7,16 @@
 ## 怎么跑
 
 ```bash
-npm run eval                 # 全部任务
+npm run eval                 # 全部任务（默认 4 个并发）
 npm run eval -- rename       # 只跑名字里带 rename 的
+npm run eval -- --jobs 1     # 串行跑，方便看单个任务的原始耗时
 npm run eval:check           # 自检：不需要 API Key
 npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
 需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。
+
+任务之间互不依赖，所以默认并发 4 个：20 个任务的墙钟从约 226 秒降到约 74 秒。单任务的平均耗时不变（约 11 秒，8.8 步），因为时间几乎都花在等模型上——一次模型往返约 1.2 秒，工具执行和内核开销合计不到 5%。
 
 结果会打印成一张表，同时写进 `eval/results/<时间戳>.json`（不进 git）。
 
