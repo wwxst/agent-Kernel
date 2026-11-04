@@ -3,7 +3,8 @@
  * 所以它们必须在接口上被验证 —— 不碰私有的 resolve/truncate。
  */
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { Workspace } from "../src/workspace.ts";
@@ -285,5 +286,66 @@ test("grep：越界路径同样被拒绝", async () => {
     await workspace.write("a.txt", "world\n");
 
     await assert.rejects(() => workspace.grep("world", ".."), /path escapes workspace/);
+  });
+});
+
+test("glob：和 grep 一样跳过 node_modules 和 .git", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("src/a.ts", "");
+    await workspace.write("node_modules/pkg/b.ts", "");
+    await workspace.write(".git/c.ts", "");
+
+    assert.equal(await workspace.glob("**/*.ts"), "src/a.ts");
+  });
+});
+
+test("glob：花括号 / 方括号按字面匹配，绕不出工作区", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("src/a.ts", "");
+
+    // 工作区外放一个「诱饵」文件：以前 {../x,src} 这种花括号展开能把它列出来。
+    const outside = path.join(root, "..", `outside-${path.basename(root)}.ts`);
+    await writeFile(outside, "secret\n");
+    try {
+      assert.equal(await workspace.glob("{../outside,src}/**/*.ts"), "(no matches)");
+      assert.equal(await workspace.glob("[a-z]*.ts"), "(no matches)");
+      await assert.rejects(() => workspace.glob("../**/*.ts"), /path escapes workspace/);
+    } finally {
+      await rm(outside, { force: true });
+    }
+  });
+});
+
+test("glob：命中超过上限时明确告诉模型被截断", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    for (let index = 0; index < 205; index++) {
+      await workspace.write(`many/f${String(index).padStart(3, "0")}.txt`, "");
+    }
+
+    const result = await workspace.glob("many/*.txt");
+
+    assert.match(result, /… \(stopped at 200 matches\)$/);
+  });
+});
+
+test("符号链接指向工作区外：read / write / list / grep 一律拒绝", async () => {
+  await withWorkspace(async (root) => {
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    await writeFile(path.join(outside, "secret.txt"), "secret\n");
+
+    const workspace = new Workspace({ root });
+    await symlink(outside, path.join(root, "link"), "junction");
+
+    try {
+      await assert.rejects(() => workspace.read("link/secret.txt"), /path escapes workspace/);
+      await assert.rejects(() => workspace.write("link/new.txt", "x"), /path escapes workspace/);
+      await assert.rejects(() => workspace.list("link"), /path escapes workspace/);
+      await assert.rejects(() => workspace.grep("secret", "link"), /path escapes workspace/);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });

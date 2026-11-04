@@ -13,7 +13,7 @@
  * 两个模块各管一个决定，改的时候不会互相牵动。
  */
 import { spawn } from "node:child_process";
-import { glob as fsGlob, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "./types.ts";
 
@@ -60,6 +60,9 @@ export class Workspace {
 
   private readonly timeoutMs: number;
 
+  /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
+  private rootReal?: string;
+
   constructor({ root, timeoutMs = DEFAULT_TIMEOUT_MS }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
@@ -68,12 +71,14 @@ export class Workspace {
   /** 读一个 UTF-8 文本文件，超长截断。 */
   async read(requested: string): Promise<string> {
     const file = this.resolve(requested);
+    await this.assertInsideWorkspace(file, requested);
     return this.truncate(await readFile(file, "utf8"));
   }
 
   /** 创建或覆盖文件，父目录自动补齐。返回一行给模型看的结果摘要。 */
   async write(requested: string, content: string): Promise<string> {
     const file = this.resolve(requested);
+    await this.assertInsideWorkspace(file, requested);
     await mkdir(path.dirname(file), { recursive: true });
     await writeFile(file, content, "utf8");
     return `wrote ${content.length} chars to ${requested}`;
@@ -90,6 +95,7 @@ export class Workspace {
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
     const file = this.resolve(requested);
+    await this.assertInsideWorkspace(file, requested);
     if (oldString === "") {
       // 中文对照：old_string 不能是空串。
       throw new Error("old_string must not be empty");
@@ -120,6 +126,7 @@ export class Workspace {
   /** 列目录：类型、字节数、名称，按行排好。 */
   async list(requested: string): Promise<string> {
     const dir = this.resolve(requested);
+    await this.assertInsideWorkspace(dir, requested);
     const entries = await readdir(dir, { withFileTypes: true });
     const rows = await Promise.all(
       entries.map(async (entry) => {
@@ -134,23 +141,30 @@ export class Workspace {
   /**
    * 按模式找文件，返回相对工作区根目录的路径，一行一个，排好序。
    *
-   * 模式里出现 `..`、或者写成绝对路径，直接拒绝：glob 会在 cwd 之外展开，
-   * 把路径守卫整个绕过去 —— 所以守卫必须放在展开之前，而不是事后过滤结果。
+   * 做法是「在沙箱里走，拿模式去套」，而不是把模式交给 `fs.glob` 去展开。
+   * 展开派（`fs.glob`）支持花括号展开（`{../outside,src}` 会变成两条模式）之类的语法，
+   * 光靠字符串切分拦不住，能直接跑到工作区外；自己走目录则从结构上走不出去。
+   *
+   * 代价：支持的语法只有 `*`、`**`、`?`，其余字符（含 `{ } [ ]`）按字面匹配。
    */
   async glob(pattern: string): Promise<string> {
     if (pattern === "") throw new Error("pattern must not be empty");
     if (pattern.split(/[\\/]/).includes("..")) throw new Error(`path escapes workspace: ${pattern}`);
     if (path.isAbsolute(pattern)) throw new Error(`pattern must be relative to the workspace root: ${pattern}`);
 
+    const matcher = globToRegExp(toPosix(pattern));
     const matches: string[] = [];
-    for await (const match of fsGlob(pattern, { cwd: this.root })) {
-      matches.push(toPosix(match));
+    for await (const file of walkFiles(this.root)) {
+      const relative = toPosix(path.relative(this.root, file));
+      if (!matcher.test(relative)) continue;
+      matches.push(relative);
       if (matches.length >= MAX_RESULTS) break;
     }
 
     if (matches.length === 0) return "(no matches)";
     matches.sort();
-    return this.truncate(matches.join("\n"));
+    const note = matches.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
+    return this.truncate(matches.join("\n") + note);
   }
 
   /**
@@ -161,6 +175,7 @@ export class Workspace {
    */
   async grep(pattern: string, requested = "."): Promise<string> {
     const start = this.resolve(requested);
+    await this.assertInsideWorkspace(start, requested);
     // 写错的正则让它抛出去，由 ToolRegistry 折成给模型看的 ERROR 文本。
     const regex = new RegExp(pattern);
 
@@ -245,6 +260,51 @@ export class Workspace {
     return absolute;
   }
 
+  /**
+   * 守住「真实路径」：链接（symlink / junction）会让词法上看着在工作区里的路径跑到外面去，
+   * 所以每次真正碰文件系统之前，都要把解析后的真实路径再比一次。
+   *
+   * 目标还不存在时（比如 write 新文件），沿父目录一路往上找第一个存在的路径再比 ——
+   * 谁想在链接目录里新建文件，也一样得先过这道关。
+   */
+  private async assertInsideWorkspace(absolute: string, requested: string): Promise<void> {
+    const rootReal = await this.realRoot();
+
+    let probe = absolute;
+    let real = "";
+    for (;;) {
+      try {
+        real = await realpath(probe);
+        break;
+      } catch (error) {
+        // 路径确实存在（哪怕是个坏链接）却解析不了：不猜它指向哪，直接拒绝。
+        const exists = await lstat(probe).then(
+          () => true,
+          () => false,
+        );
+        if (exists) {
+          // 中文对照：路径跑出了工作区：{原始路径}
+          throw new Error(`path escapes workspace: ${requested}`);
+        }
+        const parent = path.dirname(probe);
+        if (parent === probe) throw error;
+        probe = parent;
+      }
+    }
+
+    const relative = path.relative(rootReal, real);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      // 中文对照：路径跑出了工作区：{原始路径}
+      throw new Error(`path escapes workspace: ${requested}`);
+    }
+  }
+
+  /** 工作区根目录的真实路径，只算一次。 */
+  private async realRoot(): Promise<string> {
+    this.rootReal ??= await realpath(this.root);
+    return this.rootReal;
+  }
+
   /** 超出上限就截断，并明确告诉模型「后面还有，但你看不到了」。 */
   private truncate(text: string): string {
     if (text.length <= MAX_OUTPUT_CHARS) return text;
@@ -254,7 +314,43 @@ export class Workspace {
 }
 
 /**
- * 深度遍历目录，产出文件路径（给 grep 用）。
+ * 把 glob 模式翻译成正则（给「自己走目录再匹配」用）。
+ *
+ * 只认三种通配：`**` 跨目录、`*` 单层内任意、`?` 单个字符；
+ * 其余字符一律按字面匹配 —— 特别是 `{ }` 和 `[ ]` 不再有特殊含义，
+ * 这正是防止「花括号展开跑到工作区外」的那道结构性保险。
+ */
+function globToRegExp(pattern: string): RegExp {
+  let source = "";
+  for (let index = 0; index < pattern.length; index++) {
+    const char = pattern[index];
+
+    if (char === "*" && pattern[index + 1] === "*") {
+      // `**/` = 任意层目录（可以零层）；裸 `**` = 任意字符。
+      if (pattern[index + 2] === "/") {
+        source += "(?:.*/)?";
+        index += 2;
+      } else {
+        source += ".*";
+        index += 1;
+      }
+      continue;
+    }
+    if (char === "*") {
+      source += "[^/]*";
+      continue;
+    }
+    if (char === "?") {
+      source += "[^/]";
+      continue;
+    }
+    source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${source}$`);
+}
+
+/**
+ * 深度遍历目录，产出文件路径（grep 和 glob 共用）。
  *
  * 跳过 SKIP_DIRS，也跳过符号链接（`isFile` 对链接返回 false）：
  * 链接可能指向工作区之外，顺着它走就等于把沙箱绕开了。
@@ -341,9 +437,9 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "glob",
-      // 按模式找文件（例如 "src/**/*.ts"），返回相对工作区根目录的路径。
+      // 按模式找文件（支持 *、**、?），返回相对工作区根目录的路径；例如 "src/**/*.ts"。
       description:
-        'Find files by glob pattern and return their paths relative to the workspace root. Example: "src/**/*.ts".',
+        'Find files by glob pattern (supports *, ** and ?) and return their paths relative to the workspace root. Example: "src/**/*.ts".',
       parameters: {
         type: "object",
         properties: {
