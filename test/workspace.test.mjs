@@ -4,11 +4,11 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { Workspace } from "../src/workspace.ts";
+import { fillBuffer, Workspace } from "../src/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
 
 test("write 后 read 能拿回原文，父目录自动创建", async () => {
@@ -269,12 +269,24 @@ test("grep：没有命中时给出明确提示", async () => {
   });
 });
 
-test("grep：非法正则直接报错（由 ToolRegistry 折成 ERROR 文本）", async () => {
+test("grep：按字面文本搜索，正则元字符不再有特殊含义", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "value = a.b\naxb\n([\n");
+
+    // "a.b" 只命中字面量那一行，不会把 "axb" 也匹配进来。
+    assert.equal(await workspace.grep("a.b"), "a.txt:1: value = a.b");
+    // 以前会抛 "Invalid regular expression" 的写法，现在只是普通字符串。
+    assert.equal(await workspace.grep("(["), "a.txt:3: ([");
+  });
+});
+
+test("grep：空搜索文本直接拒绝（否则等于列出所有内容）", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
     await workspace.write("a.txt", "hello\n");
 
-    await assert.rejects(() => workspace.grep("(["), /Invalid regular expression/);
+    await assert.rejects(() => workspace.grep(""), /search text must not be empty/);
   });
 });
 
@@ -384,6 +396,33 @@ test("grep：超大文件直接跳过，并在结果里说明", async () => {
   });
 });
 
+test("grep：扫描预算用尽时说明结果不完整", async () => {
+  await withWorkspace(async (root) => {
+    for (let index = 0; index < 20; index++) {
+      await writeFile(path.join(root, `f${index}.txt`), "nothing\n");
+    }
+    // 预算只够看 5 个目录项：要停下来，并且把「没搜完」说出去。
+    const workspace = new Workspace({ root, scanLimit: 5 });
+
+    const result = await workspace.grep("needle");
+
+    assert.match(result, /scan stopped after 5 entries; results may be incomplete/);
+  });
+});
+
+test("glob：扫描预算用尽时同样要说明", async () => {
+  await withWorkspace(async (root) => {
+    for (let index = 0; index < 20; index++) {
+      await writeFile(path.join(root, `f${index}.txt`), "");
+    }
+    const workspace = new Workspace({ root, scanLimit: 5 });
+
+    const result = await workspace.glob("**/*.txt");
+
+    assert.match(result, /scan stopped after 5 entries; results may be incomplete/);
+  });
+});
+
 test("edit：重叠的命中也算多处，不能被当成唯一", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
@@ -441,3 +480,191 @@ test(
     });
   },
 );
+
+test("fillBuffer：一次 read 只返回半截时继续读，直到读满", async () => {
+  const source = Buffer.from("0123456789");
+  const buffer = Buffer.alloc(10);
+  const chunkSizes = [3, 2, 5];
+  let reads = 0;
+  const read = async (target, offset, length, position) => {
+    assert.equal(position, offset, "续读必须从上次停下的位置开始");
+    const size = Math.min(chunkSizes[reads++] ?? 0, length);
+    source.copy(target, offset, position, position + size);
+    return { bytesRead: size };
+  };
+
+  assert.equal(await fillBuffer(read, buffer), 10);
+  assert.equal(buffer.toString(), "0123456789");
+  assert.equal(reads, 3);
+});
+
+test("fillBuffer：读到 EOF 就停，不会在文件末尾空转", async () => {
+  const buffer = Buffer.alloc(8);
+  let reads = 0;
+  const read = async (target) => {
+    reads += 1;
+    if (reads > 1) return { bytesRead: 0 };
+    Buffer.from("abc").copy(target, 0);
+    return { bytesRead: 3 };
+  };
+
+  assert.equal(await fillBuffer(read, buffer), 3);
+  assert.equal(reads, 2);
+});
+
+test("read：文件正好等于读取上限时不算截断", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "exact.txt"), "x".repeat(32_768));
+    const workspace = new Workspace({ root });
+
+    const text = await workspace.read("exact.txt");
+
+    assert.equal(text.includes("stopped after 32768 bytes"), false);
+  });
+});
+
+test("read：多一个字节就标记截断，且不会制造半个 UTF-8 字符", async () => {
+  await withWorkspace(async (root) => {
+    // 32767 个 ASCII + 一个 3 字节字符：截断点正好落在这个字符中间。
+    await writeFile(path.join(root, "cut.txt"), "a".repeat(32_767) + "€" + "tail");
+    const workspace = new Workspace({ root });
+
+    const text = await workspace.read("cut.txt");
+
+    assert.match(text, /stopped after 32768 bytes/);
+    assert.equal(text.includes("\uFFFD"), false, "截断不该制造替换字符");
+  });
+});
+
+test("edit：超大文件直接拒绝，原文件一个字节都不动", async () => {
+  await withWorkspace(async (root) => {
+    const original = Buffer.alloc(2_000_001, "a");
+    original.write("TAIL", original.length - 4);
+    const file = path.join(root, "big.txt");
+    await writeFile(file, original);
+    const workspace = new Workspace({ root });
+
+    await assert.rejects(() => workspace.edit("big.txt", "a", "b"), /larger than 2000000 bytes/);
+
+    const after = await readFile(file);
+    assert.equal(after.length, original.length);
+    assert.equal(after.equals(original), true, "失败的 edit 不能改写原文件");
+  });
+});
+
+test("edit：大文件读全后再改，尾部不会被悄悄截掉", async () => {
+  await withWorkspace(async (root) => {
+    const body = "a".repeat(1_000_000) + "MIDDLE" + "b".repeat(999_990) + "TAIL";
+    await writeFile(path.join(root, "big.txt"), body);
+    const workspace = new Workspace({ root });
+
+    await workspace.edit("big.txt", "MIDDLE", "X");
+
+    const after = await readFile(path.join(root, "big.txt"), "utf8");
+    assert.equal(after, "a".repeat(1_000_000) + "X" + "b".repeat(999_990) + "TAIL");
+  });
+});
+
+test("list：条目超过上限时先排序再截断，并说明还有多少", async () => {
+  await withWorkspace(async (root) => {
+    for (let index = 0; index < 505; index++) {
+      await writeFile(path.join(root, `f${String(index).padStart(3, "0")}.txt`), "");
+    }
+    const workspace = new Workspace({ root });
+
+    const result = await workspace.list(".");
+    const rows = result.split("\n").filter((line) => line.startsWith("file "));
+    const shown = rows.map((line) => line.slice(-8));
+
+    // 500 行本身会超过 8000 字符的输出上限，所以正文会被截断 —— 但尾注必须保住。
+    assert.match(result, /\[truncated \d+ chars\]/);
+    assert.match(result, /… \(5 more entries not listed\)$/);
+    assert.equal(shown[0], "f000.txt", "排序发生在截断之前");
+    assert.deepEqual(shown, [...shown].sort());
+  });
+});
+
+test("list：扫描预算耗尽时明确说目录可能没列全", async () => {
+  await withWorkspace(async (root) => {
+    for (let index = 0; index < 20; index++) {
+      await writeFile(path.join(root, `f${index}.txt`), "");
+    }
+    const workspace = new Workspace({ root, scanLimit: 5 });
+
+    const result = await workspace.list(".");
+
+    assert.match(result, /scan stopped after 5 entries; listing may be incomplete/);
+  });
+});
+
+test("glob / grep：工作区内的符号链接目录不会把扫描带到外面", async () => {
+  await withWorkspace(async (root) => {
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-linked-"));
+    await writeFile(path.join(outside, "secret.ts"), "needle\n");
+    await symlink(outside, path.join(root, "nested-link"), "junction");
+    await writeFile(path.join(root, "inside.ts"), "needle\n");
+
+    try {
+      const workspace = new Workspace({ root });
+      assert.equal(await workspace.glob("**/*.ts"), "inside.ts");
+      assert.equal(await workspace.grep("needle"), "inside.ts:1: needle");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test("grep：超长行被截断时留下明确标记", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("long.txt", "needle " + "x".repeat(300) + "\n");
+
+    const result = await workspace.grep("needle");
+
+    assert.match(result, /…\[line truncated\]$/);
+    assert.equal(result.includes("x".repeat(201)), false);
+  });
+});
+
+test("run：取消后整棵进程树都被杀掉，run 等清理完才返回", async () => {
+  await withWorkspace(async (root) => {
+    const controller = new AbortController();
+    const workspace = new Workspace({ root, signal: controller.signal, timeoutMs: 10_000 });
+    const marker = path.join(root, "marker.txt");
+
+    setTimeout(() => controller.abort(new Error("test cancel")), 300);
+    const started = Date.now();
+    const result = await workspace.run(
+      `node -e "setTimeout(() => require('node:fs').writeFileSync('marker.txt', 'x'), 900)"`,
+    );
+    const elapsed = Date.now() - started;
+
+    assert.match(result, /^cancelled by signal/);
+    assert.ok(elapsed < 5_000, `run 应该很快返回，实际 ${elapsed}ms`);
+    await new Promise((done) => setTimeout(done, 1_500));
+    assert.equal(existsSync(marker), false, "取消后孙进程仍在运行");
+  });
+});
+
+test("run：已经取消的工作区不会再启动新进程", async () => {
+  await withWorkspace(async (root) => {
+    const controller = new AbortController();
+    controller.abort(new Error("already cancelled"));
+    const workspace = new Workspace({ root, signal: controller.signal });
+
+    await assert.rejects(() => workspace.run("echo should-not-run"), /cancelled before the command started/);
+  });
+});
+
+test("edit：写回时保留文件开头的 UTF-8 BOM", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("bom.txt", "\uFEFFhello world\n");
+
+    await workspace.edit("bom.txt", "world", "there");
+
+    const bytes = await readFile(path.join(root, "bom.txt"));
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "BOM 不应该被 edit 吃掉");
+    assert.equal(bytes.toString("utf8"), "\uFEFFhello there\n");
+  });
+});

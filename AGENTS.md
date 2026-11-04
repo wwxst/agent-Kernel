@@ -12,30 +12,33 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
+| `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
+| `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 
 ## 代码地图
 
 | 文件 | 职责 | 对外接口 |
 | --- | --- | --- |
-| `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`ChatClient` |
-| `src/errors.ts` | 错误文案兜底：任何抛出物都变成一行非空文本 | `describeError(error)` |
-| `src/agent.ts` | **Kernel**：循环、消息顺序、步数上限 | `Agent.run(task)`、`transcript` |
-| `src/tool-registry.ts` | 工具查找、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
-| `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、截断、超时 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
-| `src/llm.ts` | `ChatClient` 的 HTTP 适配器 | `Llm.chat(messages, tools)` |
-| `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次 | — |
+| `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
+| `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`ChatResponseError` |
+| `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、生命周期 | `Agent.run(task)`、`transcript`、`stats` |
+| `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
+| `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
+| `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage 与 `max_tokens` | `Llm.chat(messages, tools)` |
+| `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次；SIGINT/SIGTERM 取消链的起点 | — |
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` → `types`。`types` 和 `errors` 是叶子，`agent` 不认识 `workspace`。
+依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），不被其他模块反向依赖；`agent` 不认识 `workspace`。
 
 ## 测试放哪
 
-五处缝，重构不该让任何用例变红：
+六处缝，重构不该让任何用例变红：
 
-- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、步数上限。
-- `ToolRegistry.execute`：每个失败分支都折成文本。
-- `Workspace` 的七个方法：路径越界、截断、exit code、`edit` 唯一命中、`glob` 模式、`grep` 命中格式。
-- `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」。
-- `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状；循环细节留在单元层。
+- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、生命周期、取消、token 统计。
+- `ToolRegistry`：Schema 注册校验，以及每个失败分支都折成文本。
+- `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 字面匹配、取消进程树。
+- `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`。
+- `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消；循环细节留在单元层。
+- `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。
 

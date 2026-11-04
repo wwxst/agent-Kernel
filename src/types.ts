@@ -78,6 +78,30 @@ export interface Tool {
 export type ToolDefinition = Omit<Tool, "run">;
 
 /**
+ * 一次模型请求的 token 用量，字段沿用 chat/completions 的 `usage`。
+ *
+ * 这是**账单**，不是估算：端点没返回 usage 时，这一轮就是未知（`undefined`），
+ * 不能补 0 —— 0 的意思是「没花钱」，和「不知道花了多少」是两件事。
+ */
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+/**
+ * 一次 `chat()` 的完整结果：模型消息 + 这一轮的用量。
+ *
+ * 为什么 usage 不挂在 Message 上：Message 会被原样序列化进下一次请求，
+ * 多一个字段就会被发给 API；用量是宿主侧的账，不属于协议消息。
+ */
+export interface ChatResponse {
+  message: Message;
+  /** 端点没给 usage 时是 undefined —— 未知，不是 0。 */
+  usage?: TokenUsage;
+}
+
+/**
  * Agent 唯一依赖的模型接口。
  *
  * 刻意做成接口而不是类，因为跨这条缝真的有两种实现：
@@ -85,5 +109,5 @@ export type ToolDefinition = Omit<Tool, "run">;
  * 只有一种实现时不必开这个口子 —— 那是为将来预留的空缝。
  */
 export interface ChatClient {
-  chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<Message>;
+  chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<ChatResponse>;
 }
