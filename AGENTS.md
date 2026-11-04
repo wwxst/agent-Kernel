@@ -2,7 +2,7 @@
 
 agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用跑掉，把结果发回去。
 给人看的介绍在 [README.md](./README.md)，领域词汇在 [GLOSSARY.md](./GLOSSARY.md)。
-**规范本体在 [CODING_STANDARDS.md](./CODING_STANDARDS.md)：写或改 `src/`、`test/` 之前先读它**（注释、模块形状、命名、错误处理、测试、提交）。
+**规范本体在 [CODING_STANDARDS.md](./CODING_STANDARDS.md)：写或改 `src/`、`test/` 之前先读它**（注释、模块形状、命名、错误处理、防御性编程、测试、提交）。
 
 ## 命令
 
@@ -20,7 +20,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`ChatClient` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、步数上限 | `Agent.run(task)`、`transcript` |
 | `src/tool-registry.ts` | 工具查找、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
-| `src/workspace.ts` | 沙箱内的文件与 shell，含路径守卫、截断、超时 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
+| `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、截断、超时 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器 | `Llm.chat(messages, tools)` |
 | `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次 | — |
 

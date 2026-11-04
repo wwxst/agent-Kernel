@@ -173,3 +173,48 @@ test("execute：参数齐全才真的执行", async () => {
   assert.equal(result, "ok");
   assert.deepEqual(received, [{ path: "a.txt", content: "" }], "空串是合法内容，缺字段不是");
 });
+
+test("execute：空错误消息也不能变成空的 ERROR", async () => {
+  const registry = new ToolRegistry([
+    {
+      name: "boom",
+      description: "throws an Error with no message",
+      parameters: { type: "object", properties: {} },
+      run: async () => {
+        throw new Error("");
+      },
+    },
+  ]);
+
+  assert.equal(await registry.execute(call("boom")), "ERROR: Error");
+});
+
+test("execute：抛空字符串也有兜底文案", async () => {
+  const registry = new ToolRegistry([
+    {
+      name: "boom",
+      description: "throws a blank string",
+      parameters: { type: "object", properties: {} },
+      run: async () => {
+        throw "   ";
+      },
+    },
+  ]);
+
+  assert.equal(await registry.execute(call("boom")), "ERROR: Unknown error (empty string thrown)");
+});
+
+test("execute：抛 undefined 也有兜底文案", async () => {
+  const registry = new ToolRegistry([
+    {
+      name: "boom",
+      description: "throws undefined",
+      parameters: { type: "object", properties: {} },
+      run: async () => {
+        throw undefined;
+      },
+    },
+  ]);
+
+  assert.equal(await registry.execute(call("boom")), "ERROR: Unknown error (undefined)");
+});

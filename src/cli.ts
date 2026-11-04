@@ -18,6 +18,7 @@
  */
 import * as path from "node:path";
 import { Agent } from "./agent.ts";
+import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
@@ -91,7 +92,7 @@ if (!task || task === "--help" || task === "-h") {
     await runTask(task);
   } catch (error) {
     // 中文对照：[agent] 致命错误：{原因}
-    console.error(`[agent] fatal: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[agent] fatal: ${describeError(error)}`);
     // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
     // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
     process.exitCode = 1;

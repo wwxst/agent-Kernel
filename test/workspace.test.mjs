@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -417,3 +417,27 @@ test("run：超时后整棵进程树都被杀掉，孙进程不会再写文件",
     assert.equal(existsSync(marker), false, "超时后孙进程仍在运行");
   });
 });
+
+test(
+  "grep：读不了的文件必须报出来，不能静默跳过",
+  { skip: (process.platform === "win32" || process.getuid?.() === 0) && "chmod 拦不住文件所有者或 root 的读取" },
+  async () => {
+    await withWorkspace(async (root) => {
+      const workspace = new Workspace({ root });
+      await workspace.write("ok.txt", "hello\n");
+      await workspace.write("locked.txt", "hello\n");
+      const locked = path.join(root, "locked.txt");
+      await chmod(locked, 0o000);
+
+      try {
+        const result = await workspace.grep("hello");
+
+        assert.match(result, /1 files could not be read/);
+        assert.match(result, /ok\.txt:1: hello/);
+      } finally {
+        // 恢复权限，否则临时目录删不掉。
+        await chmod(locked, 0o644);
+      }
+    });
+  },
+);
