@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -148,4 +149,17 @@ test("eval diagnostics redacts secret-looking arguments and summarizes large str
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }
+});
+
+
+test("cross-day runner help is available without switching commits or contacting the model", () => {
+  const runner = new URL("../eval/cross-day.mjs", import.meta.url);
+  const result = spawnSync(process.execPath, [runner.pathname, "--help"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /4edd0e4ab004e184d280a95c17e41690fd58c644/);
+  assert.match(result.stdout, /eval\/baselines\/cross-day/);
 });
