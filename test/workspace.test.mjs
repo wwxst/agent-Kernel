@@ -8,7 +8,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fillBuffer, Workspace } from "../src/workspace.ts";
+import { fillBuffer, createWorkspaceTools, DEFAULT_SHELL_DESCRIPTION, Workspace } from "../src/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
 
 test("write 后 read 能拿回原文，父目录自动创建", async () => {
@@ -653,5 +653,25 @@ test("run：已经取消的工作区不会再启动新进程", async () => {
     const workspace = new Workspace({ root, signal: controller.signal });
 
     await assert.rejects(() => workspace.run("echo should-not-run"), /cancelled before the command started/);
+  });
+});
+
+test("shell 工具描述默认是中性文案", async () => {
+  await withWorkspace(async (root) => {
+    const tools = createWorkspaceTools(new Workspace({ root }));
+    const shell = tools.find((tool) => tool.name === "shell");
+
+    assert.equal(shell.description, DEFAULT_SHELL_DESCRIPTION);
+  });
+});
+
+test("shell 描述可以覆盖，且只影响 shell 一个工具", async () => {
+  await withWorkspace(async (root) => {
+    const tools = createWorkspaceTools(new Workspace({ root }), { shellDescription: "uses cmd.exe on Windows" });
+    const shell = tools.find((tool) => tool.name === "shell");
+    const read = tools.find((tool) => tool.name === "read");
+
+    assert.equal(shell.description, "uses cmd.exe on Windows");
+    assert.equal(read.description, "Read a UTF-8 text file. Output is truncated to 8000 chars.");
   });
 });

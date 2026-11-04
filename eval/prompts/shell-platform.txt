@@ -1,0 +1,1 @@
+Run a shell command in the workspace root; uses cmd.exe on Windows and /bin/sh elsewhere; returns exit code plus stdout/stderr.

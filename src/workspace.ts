@@ -708,6 +708,27 @@ function scanTail(budget: { remaining: number }, limit: number): string {
 }
 
 /**
+ * shell 工具的默认描述：只陈述这个工具做什么，不假设具体平台。
+ *
+ * 默认值保持中性是有意的：描述本身也是发给模型的一段文案，改它等于改提示词。
+ * 平台相关的事实（Windows 上是 cmd.exe、其他地方是 /bin/sh）留给调用方按实验需要覆盖，
+ * 见 WorkspaceToolsOptions.shellDescription。
+ */
+export const DEFAULT_SHELL_DESCRIPTION =
+  "Run a shell command in the workspace root; returns exit code plus stdout/stderr.";
+
+/** createWorkspaceTools 的可选覆盖项；默认什么都不覆盖。 */
+export interface WorkspaceToolsOptions {
+  /**
+   * 覆盖 shell 工具的描述。默认是 DEFAULT_SHELL_DESCRIPTION。
+   *
+   * 存在的理由是 A/B：Base / 提示词变体 / 工具描述变体可以共用同一份内核源码，
+   * 只在评测层传入不同的文案，而不是为了做实验去改默认值。
+   */
+  shellDescription?: string;
+}
+
+/**
  * 把 Workspace 的七个行为翻译成模型能调用的工具。
  *
  * 这个函数是适配器：它真正的内容不是逻辑，而是写给模型看的文案
@@ -722,7 +743,7 @@ function scanTail(budget: { remaining: number }, limit: number): string {
  * 下面每段英文文案（description / 参数说明）上面都有一行中文对照：
  * 英文是真正发给模型的原文，中文只存在于源码里，不会被发出去。
  */
-export function createWorkspaceTools(workspace: Workspace): Tool[] {
+export function createWorkspaceTools(workspace: Workspace, options: WorkspaceToolsOptions = {}): Tool[] {
   return [
     {
       name: "read",
@@ -824,7 +845,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     {
       name: "shell",
       // 在工作区根目录跑一条 shell 命令；返回 exit code 和 stdout/stderr。
-      description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr.",
+      // 默认是中性文案；评测层可以按平台事实覆盖它（不改默认值）。
+      description: options.shellDescription ?? DEFAULT_SHELL_DESCRIPTION,
       parameters: {
         type: "object",
         properties: {

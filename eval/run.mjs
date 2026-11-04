@@ -13,6 +13,9 @@
  *                                    # 额外写每个任务的请求 / 工具 / 文件轨迹
  *   node eval/run.mjs 13 20 08 --system-prompt-file variant.txt
  *                                    # A/B 用：只替换系统提示词，其余不动
+ *   node eval/run.mjs 13 20 08 --shell-description-file shell.txt
+ *                                    # A/B 用：只替换 shell 工具描述，其余不动
+ *                                    # 两者可以同时用，但那样一轮里就有两个变量
  *
  * 需要真实 API：BASE_URL / API_KEY / MODEL 来自 .env。
  * 结果同时写进 eval/results/<时间戳>.json（不进 git）。
@@ -63,6 +66,7 @@ async function cli() {
   let jobs = 4;
   let diagnosticsDir;
   let systemPromptFile;
+  let shellDescriptionFile;
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
@@ -84,6 +88,15 @@ async function cli() {
       systemPromptFile = args[(index += 1)];
       if (systemPromptFile === undefined) {
         console.error("--system-prompt-file needs a path");
+        process.exitCode = 1;
+        return;
+      }
+      continue;
+    }
+    if (arg === "--shell-description-file") {
+      shellDescriptionFile = args[(index += 1)];
+      if (shellDescriptionFile === undefined) {
+        console.error("--shell-description-file needs a path");
         process.exitCode = 1;
         return;
       }
@@ -117,6 +130,8 @@ async function cli() {
 
   console.log(`model:  ${model}`);
   console.log(`commit: ${commit}`);
+  console.log(`prompt: ${systemPromptFile === undefined ? "default" : systemPromptFile}`);
+  console.log(`shell:  ${shellDescriptionFile === undefined ? "default" : shellDescriptionFile}`);
   console.log(`tasks:  ${names.length}  并发: ${Math.min(jobs, names.length)}\n`);
 
   // --keep 保留的是「被执行的任务」的工作区：跑全量时会留下 20 份，提醒用任务过滤。
@@ -124,8 +139,25 @@ async function cli() {
     console.warn(`[warn] --keep 会保留 ${names.length} 个工作区；用任务过滤（如 eval -- 13 20 08 --keep）避免占满临时目录\n`);
   }
 
-  const systemPrompt =
-    systemPromptFile === undefined ? undefined : (await readFile(path.resolve(systemPromptFile), "utf8")).trim();
+  const readVariant = async (file, flag) => {
+    if (file === undefined) return undefined;
+    const text = (await readFile(path.resolve(file), "utf8")).trim();
+    if (text === "") {
+      console.error(`${flag} ${file} is empty`);
+      process.exitCode = 1;
+      return null;
+    }
+    return text;
+  };
+
+  const systemPrompt = await readVariant(systemPromptFile, "--system-prompt-file");
+  const shellDescription = await readVariant(shellDescriptionFile, "--shell-description-file");
+  if (systemPrompt === null || shellDescription === null) return;
+
+  const variant = {
+    systemPromptFile: systemPromptFile ?? null,
+    shellDescriptionFile: shellDescriptionFile ?? null,
+  };
 
   const { results, elapsed, infra } = await runRound({
     tasksDir: defaultTasksDir,
@@ -137,13 +169,14 @@ async function cli() {
     keep,
     diagnosticsDir: diagnosticsDir === undefined ? undefined : path.resolve(diagnosticsDir),
     systemPrompt,
+    shellDescription,
   });
 
-  report(summarize({ results, elapsed, model, commit, infra }));
+  report(summarize({ results, elapsed, model, commit, infra, variant }));
 }
 
 /** 跑一轮：并发执行任务，并在结算窗口内收集检查器留下的未处理 rejection。 */
-export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false, diagnosticsDir, systemPrompt }) {
+export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false, diagnosticsDir, systemPrompt, shellDescription }) {
   const infra = [];
   const onUnhandled = (reason) => {
     infra.push(describe(reason));
@@ -154,7 +187,7 @@ export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs =
   const startedAt = Date.now();
   try {
     const results = await runPool(names, jobs, (name) =>
-      runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosticsDir, systemPrompt }),
+      runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosticsDir, systemPrompt, shellDescription }),
     );
 
     // 让检查器里没 await 的 promise 浮出来：这段时间内的 rejection 都算本轮基础设施错误。
@@ -168,7 +201,7 @@ export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs =
 }
 
 /** 把一轮的原始结果折成可落盘的记录；`ok` 同时要求任务全过且没有基础设施错误。 */
-export function summarize({ results, elapsed, model, commit, infra }) {
+export function summarize({ results, elapsed, model, commit, infra, variant }) {
   const requests = results.reduce((total, result) => total + result.requests, 0);
   const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
   const tokens = results.reduce((total, result) => total + result.tokens.total, 0);
@@ -179,6 +212,7 @@ export function summarize({ results, elapsed, model, commit, infra }) {
     at: new Date().toISOString(),
     model,
     commit,
+    variant: variant ?? { systemPromptFile: null, shellDescriptionFile: null },
     ok: infra.length === 0 && passed === results.length,
     passed,
     total: results.length,
@@ -207,7 +241,7 @@ async function runPool(items, limit, worker) {
 }
 
 /** 跑一个任务：复制夹具 → 真跑一遍 → 跑检查 → 清理。 */
-async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosticsDir, systemPrompt }) {
+async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosticsDir, systemPrompt, shellDescription }) {
   const taskDir = path.join(tasksDir, name);
   const prompt = (await readFile(path.join(taskDir, "task.md"), "utf8")).trim();
   const workdir = await mkdtemp(path.join(tmpdir(), `agent-eval-${name}-`));
@@ -218,7 +252,7 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, diagnosti
   const client = new Llm({ baseUrl, apiKey, model });
   const options = {
     llm: recorder === undefined ? client : recorder.wrap(client),
-    tools: new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir }))),
+    tools: new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir }), { shellDescription })),
     maxSteps: 30,
     // 兜底：单个任务烧到 20 万 token 还没做完，多半是循环出了问题，不该继续付钱。
     maxTotalTokens: 200_000,
