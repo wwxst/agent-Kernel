@@ -70,7 +70,10 @@ export class Workspace {
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
     const file = this.resolve(requested);
-    if (oldString === "") throw new Error("old_string must not be empty");
+    if (oldString === "") {
+      // 中文对照：old_string 不能是空串。
+      throw new Error("old_string must not be empty");
+    }
 
     const before = await readFile(file, "utf8");
     const toStyle = (text: string) =>
@@ -78,14 +81,19 @@ export class Workspace {
 
     const needle = toStyle(oldString);
     const occurrences = before.split(needle).length - 1;
-    if (occurrences === 0) throw new Error(`old_string not found in ${requested}`);
+    if (occurrences === 0) {
+      // 中文对照：在 {文件} 里找不到 old_string。
+      throw new Error(`old_string not found in ${requested}`);
+    }
     if (occurrences > 1) {
+      // 中文对照：old_string 在 {文件} 里出现了 {n} 次；把上下文写长一点再试。
       throw new Error(`old_string appears ${occurrences} times in ${requested}; include more surrounding text`);
     }
 
     const at = before.indexOf(needle);
     const after = before.slice(0, at) + toStyle(newString) + before.slice(at + needle.length);
     await writeFile(file, after, "utf8");
+    // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
     return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
 
@@ -146,6 +154,7 @@ export class Workspace {
     // relative 为空 = 就是根目录本身；以 ".." 开头 = 跑到了根目录外面；
     // 返回绝对路径 = 换了盘符（Windows 上 "D:\x" 相对 C:\root 就是这种情况）。
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      // 中文对照：路径跑出了工作区：{原始路径}
       throw new Error(`path escapes workspace: ${requested}`);
     }
     return absolute;
@@ -166,31 +175,41 @@ export class Workspace {
  * （name / description / JSON Schema）。文案写得含糊，模型就会传错参数 ——
  * 所以它和上面的行为放在同一个文件里：改一个上限，顺手就能改对应的说明。
  *
- * 工具名刻意用 agent 生态的通用叫法（read / write / ls / shell），而不是代码里的动词。
+ * 工具名刻意用 agent 生态的通用叫法（read / write / edit / ls / shell），而不是代码里的动词。
  * 方法名和工具名不一致是有意的：前者给读代码的人看，后者给模型看，模型对通用叫法有先验。
  * 其中 `shell` 就是 **bash** 那个工具：跑一条命令、拿回 exit code 和输出，和 Codex、
  * Claude Code 里的 bash 是同一件事；名字不叫 bash，是因为实现不绑定具体 shell（见 ADR-0005）。
+ *
+ * 下面每段英文文案（description / 参数说明）上面都有一行中文对照：
+ * 英文是真正发给模型的原文，中文只存在于源码里，不会被发出去。
  */
 export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
       name: "read",
+      // 读一个 UTF-8 文本文件；输出超过 8000 字符会被截断。
       description: "Read a UTF-8 text file. Output is truncated to 8000 chars.",
       parameters: {
         type: "object",
-        properties: { path: { type: "string", description: "Path relative to the workspace root." } },
+        properties: {
+          // 相对工作区根目录的路径。
+          path: { type: "string", description: "Path relative to the workspace root." },
+        },
         required: ["path"],
       },
       run: async (args) => workspace.read(String(args.path)),
     },
     {
       name: "write",
+      // 创建或覆盖整个 UTF-8 文件；父目录会自动建好。只是改已有文件的一部分时，优先用 edit。
       description:
         "Create or overwrite a whole UTF-8 file; parent directories are created. Prefer edit for changing part of an existing file.",
       parameters: {
         type: "object",
         properties: {
+          // 相对工作区根目录的路径。
           path: { type: "string", description: "Path relative to the workspace root." },
+          // 要写入的完整文件内容。
           content: { type: "string", description: "Full file content to write." },
         },
         required: ["path", "content"],
@@ -199,13 +218,17 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "edit",
+      // 把文件里恰好一处的 old_string 换成 new_string；拿不准就先读文件。
       description:
         "Replace exactly one occurrence of old_string with new_string in an existing file. old_string must appear exactly once; read the file first when unsure.",
       parameters: {
         type: "object",
         properties: {
+          // 相对工作区根目录的路径。
           path: { type: "string", description: "Path relative to the workspace root." },
+          // 要替换的原文，必须恰好出现一次。
           old_string: { type: "string", description: "Exact text to replace; must appear exactly once." },
+          // 替换成什么；空串表示删掉这一段。
           new_string: { type: "string", description: "Replacement text; an empty string deletes the match." },
         },
         required: ["path", "old_string", "new_string"],
@@ -215,20 +238,28 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "ls",
+      // 列目录：每一项的类型、字节数和名字。
       description: "List a directory: entry type, size in bytes, and name.",
       parameters: {
         type: "object",
-        properties: { path: { type: "string", description: "Directory relative to the workspace root." } },
+        properties: {
+          // 相对工作区根目录的目录。
+          path: { type: "string", description: "Directory relative to the workspace root." },
+        },
         required: ["path"],
       },
       run: async (args) => workspace.list(String(args.path)),
     },
     {
       name: "shell",
+      // 在工作区根目录跑一条 shell 命令；返回 exit code 和 stdout/stderr。
       description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr.",
       parameters: {
         type: "object",
-        properties: { command: { type: "string", description: "Shell command, executed with the workspace root as cwd." } },
+        properties: {
+          // 要执行的命令；工作区根目录就是它的 cwd。
+          command: { type: "string", description: "Shell command, executed with the workspace root as cwd." },
+        },
         required: ["command"],
       },
       run: async (args) => workspace.run(String(args.command)),

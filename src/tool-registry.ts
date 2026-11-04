@@ -40,6 +40,7 @@ export class ToolRegistry {
     if (!tool) {
       // 模型会「幻觉」出不存在的工具名，这不是异常，是正常要处理的分支。
       const available = this.tools.map((candidate) => candidate.name).join(", ");
+      // 中文对照：ERROR: 没有这个工具 "{名字}"（可用的有：{列表}）
       return `ERROR: unknown tool "${name}" (available: ${available})`;
     }
 
@@ -48,16 +49,19 @@ export class ToolRegistry {
       // arguments 可能为空串（无参工具），也可能被模型写坏 —— 两种都要兜住。
       const parsed: unknown = JSON.parse(call.function.arguments || "{}");
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        // 中文对照：ERROR: 参数必须是一个 JSON 对象，实际拿到的是 {值}
         return `ERROR: arguments must be a JSON object, got ${JSON.stringify(parsed)}`;
       }
       args = parsed as Record<string, unknown>;
     } catch (error) {
+      // 中文对照：ERROR: 参数不是合法 JSON：{原因}
       return `ERROR: invalid JSON arguments: ${errorMessage(error)}`;
     }
 
     try {
       return await tool.run(args);
     } catch (error) {
+      // 中文对照：ERROR: {原因}
       return `ERROR: ${errorMessage(error)}`;
     }
   }

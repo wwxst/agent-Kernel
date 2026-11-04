@@ -71,12 +71,14 @@ export class Llm implements ChatClient {
     if (!response.ok) {
       // 把响应体带上：400 通常就是因为消息顺序/配对错了，错误详情很有价值。
       const detail = (await response.text()).slice(0, 500);
+      // 中文对照：模型接口返回 HTTP {状态码}：{响应体}
       throw new Error(`LLM HTTP ${response.status}: ${detail}`);
     }
 
     const payload = (await response.json()) as ChatCompletionResponse;
     const message = payload.choices?.[0]?.message;
     if (!message) {
+      // 中文对照：模型响应里缺少 choices[0].message。
       throw new Error("LLM response is missing choices[0].message");
     }
 

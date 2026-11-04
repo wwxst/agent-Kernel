@@ -29,6 +29,7 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 
   const value = Number(raw);
   if (!Number.isInteger(value) || value <= 0) {
+    // 中文对照：「{name} 的值 "{raw}" 不合法（需要一个正整数）」
     console.error(`invalid ${name}: "${raw}" (expected a positive integer)`);
     process.exit(1);
   }
@@ -36,7 +37,9 @@ function positiveIntFromEnv(name: string, fallback: number): number {
 }
 
 const usage = [
+  // 中文对照：用法：node src/cli.ts "<任务>"
   'usage: node src/cli.ts "<task>"',
+  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、TOOL_TIMEOUT_MS
   "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, TOOL_TIMEOUT_MS",
 ].join("\n");
 
@@ -49,6 +52,7 @@ if (!task || task === "--help" || task === "-h") {
 
 const apiKey = process.env.API_KEY ?? process.env.OPENAI_API_KEY ?? "";
 if (!apiKey) {
+  // 中文对照：缺少 API_KEY（或 OPENAI_API_KEY）；参考 .env.example
   console.error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
   process.exit(1);
 }
@@ -64,6 +68,7 @@ const tools = new ToolRegistry(
   createWorkspaceTools(new Workspace({ root, timeoutMs: toolTimeoutMs })),
 );
 
+// 中文对照：工作区：… ／ 模型：… ／ 工具：…
 console.log(`workspace: ${root}`);
 console.log(`model:     ${model}`);
 console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
@@ -83,6 +88,7 @@ try {
   const reply = await agent.run(task);
   console.log(`\n${reply.content ?? ""}`);
 } catch (error) {
+  // 中文对照：[agent] 致命错误：{原因}
   console.error(`[agent] fatal: ${error instanceof Error ? error.message : String(error)}`);
   // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
   // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。

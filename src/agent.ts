@@ -21,12 +21,18 @@ import type { ToolRegistry } from "./tool-registry.ts";
 /**
  * 系统提示词：告诉模型「你是谁、有哪些工具、什么时候该停」。
  * 它是英文的，因为这是给模型看的；源码注释才是给读代码的人看的中文。
+ * 每一行英文上面是它的中文对照 —— 中文只留在源码里，发给模型的只有英文那一行。
  */
 export const DEFAULT_SYSTEM_PROMPT = [
+  // 你是一个在当前工作区里干活的编码 agent。
   "You are a coding agent working inside the current workspace.",
+  // 可用工具：read、write、edit、ls、shell。用它，不要靠猜。
   "Tools: read, write, edit, ls, shell. Use them instead of guessing.",
+  // 动手改之前先看；每次改动小一点；做完跑一次检查或测试。
   "Inspect before editing, keep changes small, and run a check or test when done.",
+  // 不要反问用户；自己做合理假设，把任务做完。
   "Do not ask questions; make reasonable assumptions and finish the task.",
+  // 完成后用一小段总结收尾，然后停止调用工具。
   "Reply with a short summary when done, then stop calling tools.",
 ].join("\n");
 
@@ -127,6 +133,7 @@ export class Agent {
     }
 
     // 7) 步数用尽。
+    // 中文对照：已达到步数上限 {n} 步。
     throw new Error(`step limit ${this.maxSteps} reached`);
   }
 }
