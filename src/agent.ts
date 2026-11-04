@@ -13,9 +13,10 @@
  *                                   └──────────────┘（回到 llm.chat）
  *
  * 换个大模型、换个工具集，这个循环都不用改 —— 这就是「内核」的含义。
+ * 它只依赖两样东西：一个能聊天的客户端，一个能执行工具调用的工具箱。
  */
-import { executeTool } from "./tools.ts";
-import type { ChatClient, Message, Tool, ToolCall } from "./types.ts";
+import type { ChatClient, Message, ToolCall } from "./types.ts";
+import type { Toolbelt } from "./toolbelt.ts";
 
 /**
  * 系统提示词：告诉模型「你是谁、有哪些工具、什么时候该停」。
@@ -35,15 +36,15 @@ export const DEFAULT_SYSTEM_PROMPT = [
  * 关键点：tool_call_id 必须等于模型发起调用时的 call.id。
  * API 靠这个 id 把「结果」和「请求」配对；写错或漏写，整个请求会被判为非法。
  */
-export function createToolResult(call: ToolCall, result: string): Message {
+function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
 
 export interface AgentOptions {
   /** 模型客户端。传接口而不是具体类，测试时才能注入假实现。 */
   llm: ChatClient;
-  /** 可用工具列表；模型只能调用这里声明过的工具。 */
-  tools?: Tool[];
+  /** 模型能调用的工具集合。 */
+  toolbelt: Toolbelt;
   /** 不传就用 DEFAULT_SYSTEM_PROMPT。 */
   systemPrompt?: string;
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
@@ -53,20 +54,21 @@ export interface AgentOptions {
 }
 
 export class Agent {
-  /**
-   * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
-   * 注意「重发」：模型是无状态的，它记得多少，完全取决于我们发过去多少。
-   */
-  readonly messages: Message[] = [];
-
   private readonly llm: ChatClient;
-  private readonly tools: Tool[];
+  private readonly toolbelt: Toolbelt;
   private readonly maxSteps: number;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
 
+  /**
+   * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
+   * 注意「重发」：模型是无状态的，它记得多少，完全取决于我们发过去多少。
+   * 对外只读：调用方可以看，但不能绕过循环往里塞消息。
+   */
+  private readonly messages: Message[] = [];
+
   constructor(options: AgentOptions) {
     this.llm = options.llm;
-    this.tools = options.tools ?? [];
+    this.toolbelt = options.toolbelt;
     this.maxSteps = options.maxSteps ?? 30;
     this.onToolResult = options.onToolResult;
 
@@ -77,20 +79,28 @@ export class Agent {
     });
   }
 
+  /** 到目前为止的完整对话记录（只读快照，调试和断言用）。 */
+  get transcript(): readonly Message[] {
+    return this.messages;
+  }
+
   /**
    * 跑完一次任务，返回模型的最终回复（一条不带 tool_calls 的 assistant 消息）。
    *
    * 示意代码里是 while (true)；这里改成带计数器的 for，唯一的差别就是多了步数上限。
    * 别小看这个上限：模型完全可能陷入「调工具 → 结果不满意 → 再调」的循环，
    * 没有闸门的话，烧的是真金白银。
+   *
+   * 步数用尽时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
+   * 此时 transcript 里保留了全过程，调试时可以直接打印出来看。
    */
-  async run(userMessage: string): Promise<Message> {
+  async run(task: string): Promise<Message> {
     // 1) 用户消息先入栈；之后每次请求模型，都带着从 system 到此刻的完整历史。
-    this.messages.push({ role: "user", content: userMessage });
+    this.messages.push({ role: "user", content: task });
 
     for (let step = 1; step <= this.maxSteps; step++) {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
-      const response = await this.llm.chat(this.messages, this.tools);
+      const response = await this.llm.chat(this.messages, this.toolbelt.definitions);
 
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：
       //    带 tool_calls 的 assistant 消息必须排在对应的 tool 结果之前，
@@ -107,7 +117,7 @@ export class Agent {
       //    这里刻意串行：简单，且消息顺序与模型给出的顺序一一对应。
       //    （并发执行能更快，但结果回灌顺序会乱，属于优化，不属于内核。）
       for (const call of calls) {
-        const result = await executeTool(this.tools, call);
+        const result = await this.toolbelt.dispatch(call);
         this.messages.push(createToolResult(call, result));
         this.onToolResult?.(call, result);
       }
@@ -115,8 +125,7 @@ export class Agent {
       // 6) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
     }
 
-    // 7) 步数用尽。抛错而不是返回半成品：让调用方明确知道「任务没跑完」。
-    //    此时 this.messages 里保留了全过程，调试时可以直接打印出来看。
+    // 7) 步数用尽。
     throw new Error(`step limit ${this.maxSteps} reached`);
   }
 }

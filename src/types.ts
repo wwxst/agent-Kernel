@@ -63,9 +63,19 @@ export interface Tool {
 }
 
 /**
+ * 工具的「说明书」部分：name / description / parameters，不含 run。
+ *
+ * 发请求时只序列化这些字段；run 是宿主侧的代码，模型看不见也不需要知道。
+ */
+export type ToolSpec = Omit<Tool, "run">;
+
+/**
  * Agent 唯一依赖的模型接口。
- * 生产实现是 Llm（发 HTTP 请求），测试实现是按脚本回放的假客户端。
+ *
+ * 刻意做成接口而不是类，因为跨这条缝真的有两种实现：
+ * 生产是 Llm（发 HTTP 请求），测试是按脚本回放的假客户端。
+ * 只有一种实现时不必开这个口子 —— 那是为将来预留的空缝。
  */
 export interface ChatClient {
-  chat(messages: Message[], tools: Tool[]): Promise<Message>;
+  chat(messages: readonly Message[], tools: readonly ToolSpec[]): Promise<Message>;
 }

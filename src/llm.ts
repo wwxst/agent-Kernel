@@ -5,7 +5,7 @@
  * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
-import type { ChatClient, Message, Tool } from "./types.ts";
+import type { ChatClient, Message, ToolSpec } from "./types.ts";
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */
@@ -43,9 +43,9 @@ export class Llm implements ChatClient {
    *
    * 这里只做三件事：拼请求、检查 HTTP 状态、把响应整理成统一的 Message。
    * 任何「模型说错话」的业务问题（比如参数不合法）都不在这里处理 ——
-   * 那是工具层用 ERROR 文本回灌的事，网络层只负责如实搬运。
+   * 那是 Toolbelt 用 ERROR 文本回灌的事，网络层只负责如实搬运。
    */
-  async chat(messages: Message[], tools: Tool[]): Promise<Message> {
+  async chat(messages: readonly Message[], tools: readonly ToolSpec[]): Promise<Message> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
