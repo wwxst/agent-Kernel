@@ -4,7 +4,8 @@
 - 分支：`feat/minimal-agent-loop`
 - 审查基准：`b0e9e72`（本分支上的 `b95e297` 只改了 eval，`src/` 与基准一致）
 - 修复提交：`757ce88` → `f0522db` → `7ee949b` → `4e7c552` → `ad69f5e`
-- 评测基线：commit `4e7c552`，20 个任务，DeepSeek-V4.1-Flash，单轮 20/20
+- 验收基线：commit `4e7c552`，20 个任务，DeepSeek-V4.1-Flash，单轮 20/20
+- 当前基线（追加）：commit `9e52e5c`，同一套任务，`hy3`，单轮 20/20
 - CI：[run 41792841368](https://github.com/wwxst/agent-Kernel/actions/runs/41792841368)（Linux + Windows 全绿）
 
 ## 1. 修复前后架构对比
@@ -100,7 +101,9 @@ CI 现在除了 `npm run check`，还会跑 `npm run eval:check`（不调用模�
 
 逐任务表、复现步骤和口径见 [`eval/baseline.md`](../../eval/baseline.md)，原始记录在 [`eval/baselines/2026-11-04-deepseek-flash.json`](../../eval/baselines/2026-11-04-deepseek-flash.json)。
 
-> 单轮 20/20 说明「当前版本能做完这套任务」，不证明稳定性。旧版本在同一天的 3 轮基线是 19/20、20/20、20/20，其中唯一失败是检查器写错；本轮修复后检查器也做了分类改造，因此两边的分数不能直接当作「提升」来读。
+切换模型后（2026-11-04，`hy3`，同一套 20 个任务，commit `9e52e5c`）又跑了一轮：**20/20**，95 次请求、93 次工具调用、133,091 tokens、墙钟 82.7s。记录在 [`eval/baselines/2026-11-04-hy3.json`](../../eval/baselines/2026-11-04-hy3.json)。
+
+> 单轮 20/20 说明「当前版本能做完这套任务」，不证明稳定性。旧版本在同一天的 3 轮基线是 19/20、20/20、20/20，其中唯一失败是检查器写错；本轮修复后检查器也做了分类改造，因此两边的分数不能直接当作「提升」来读。两个模型各跑一轮都满分，但这不是跨模型的能力比较。
 
 ## 7. Token、请求次数、工具调用次数和耗时
 
@@ -116,6 +119,8 @@ CI 现在除了 `npm run check`，还会跑 `npm run eval:check`（不调用模�
 | 任务耗时合计 | 250.2s（平均 12.5s / 任务） |
 
 最重的任务是 `13-callback-to-promise`（17 请求 / 19 工具 / 45,504 tokens / 25.3s）；最轻的是 `04-create-doc`（4 请求 / 7 工具 / 6,280 tokens / 5.1s）。
+
+换到 `hy3` 后（同上 20 个任务、4 并发、commit `9e52e5c`）：95 次请求（4.8 / 任务）、93 次工具调用（4.7 / 任务）、prompt 124,652 + completion 8,439 = 133,091 tokens、墙钟 82.7s（任务耗时合计 249.9s）。请求数和 token 约为 deepseek-flash 的三分之一，但单次模型往返更慢，4 并发下的墙钟反而更长（82.7s vs 66.5s）。
 
 ## 8. 尚未解决的问题及其风险
 
