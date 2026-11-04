@@ -68,6 +68,8 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
     // 思考模式下模型会带回 reasoning_content：请求里带了 tools 时，它必须原样回传，否则 API 会 400。
     const firstTurn = callTool("call_write", "write", { path: "hello.txt", content: "hello from agent\n" });
     firstTurn.reasoning_content = "先写文件，再读回来确认。";
+    // 厂商私有字段不认识，不该被原样转发回 API。
+    firstTurn.annotations = [{ type: "url_citation", url: "https://example.com" }];
 
     const mock = await startMock([
       firstTurn,
@@ -101,6 +103,8 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       );
       // 思维链跟着 assistant 消息一起回传了（漏了它，真实 API 会 400）
       assert.equal(third[2].reasoning_content, "先写文件，再读回来确认。");
+      // 但不认识的厂商字段被丢掉，不会原样转发（严格端点会因此 400）
+      assert.equal(third[2].annotations, undefined);
       const readResult = third.filter((message) => message.role === "tool").at(-1);
       assert.equal(readResult.tool_call_id, "call_read");
       assert.match(readResult.content, /hello from agent/);
