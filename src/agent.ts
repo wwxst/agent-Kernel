@@ -24,7 +24,7 @@ import type { ToolRegistry } from "./tool-registry.ts";
  */
 export const DEFAULT_SYSTEM_PROMPT = [
   "You are a coding agent working inside the current workspace.",
-  "Tools: read, write, ls, shell. Use them instead of guessing.",
+  "Tools: read, write, edit, ls, shell. Use them instead of guessing.",
   "Inspect before editing, keep changes small, and run a check or test when done.",
   "Do not ask questions; make reasonable assumptions and finish the task.",
   "Reply with a short summary when done, then stop calling tools.",

@@ -86,7 +86,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(first.messages[1].role, "user");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
-        ["read", "write", "ls", "shell"],
+        ["read", "write", "edit", "ls", "shell"],
       );
 
       // 第三次请求：assistant 与 tool 严格交替，结果靠 tool_call_id 配对
