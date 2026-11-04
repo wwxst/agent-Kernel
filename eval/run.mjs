@@ -7,7 +7,7 @@
  *
  * 用法：
  *   npm run eval                     # 跑全部任务
- *   npm run eval -- rename          # 只跑名字里带 rename 的
+ *   npm run eval -- rename           # 只跑名字里带 rename 的
  *   node --env-file-if-exists=.env eval/run.mjs --keep   # 保留失败的工作区
  *
  * 需要真实 API：BASE_URL / API_KEY / MODEL 来自 .env。
@@ -16,8 +16,12 @@
  * 失败分四类，别混在一起看：
  *   task        —— agent 没做完（步数/工具预算耗尽、模型空回复……）
  *   check       —— agent 交卷了，但检查断言没过
- *   infra       —— 检查器自己抛了非断言错误（写错、依赖缺失）
+ *   infra       —— 检查器自己抛了非断言错误（写错、依赖缺失），或检查器里有没 await 的
+ *                  promise 在本轮结算窗口内冒出来（未处理的 rejection）
  *   environment —— 网络、端点超时之类的环境问题
+ *
+ * 第四类（未处理的 rejection）不是「某个任务失败」，而是「这一轮评测不可信」：
+ * 任务可能已经 PASS，但后台还有东西在跑并最终失败。这种轮次整体判失败，不能只看任务表。
  */
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -34,64 +38,49 @@ import { isExpectedFailure } from "./selfcheck.mjs";
 const run = promisify(execFile);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const tasksDir = path.join(here, "tasks");
+const defaultTasksDir = path.join(here, "tasks");
 const resultsDir = path.join(here, "results");
 
-const args = process.argv.slice(2);
-const keep = args.includes("--keep");
-const filters = [];
-let jobs = 4;
+/** 未处理的 rejection 最多等这么久再结算；检查器里的后台任务通常在这之前就会炸。 */
+const INFRA_SETTLE_MS = 20;
 
-for (let index = 0; index < args.length; index += 1) {
-  const arg = args[index];
-  if (arg === "--keep") continue;
-  if (arg === "--jobs") {
-    jobs = Math.max(1, Number(args[(index += 1)]) || jobs);
-    continue;
+const invokedDirectly =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (invokedDirectly) {
+  await cli();
+}
+
+async function cli() {
+  const args = process.argv.slice(2);
+  const keep = args.includes("--keep");
+  const filters = [];
+  let jobs = 4;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--keep") continue;
+    if (arg === "--jobs") {
+      jobs = Math.max(1, Number(args[(index += 1)]) || jobs);
+      continue;
+    }
+    if (arg.startsWith("-")) continue;
+    filters.push(arg);
   }
-  if (arg.startsWith("-")) continue;
-  filters.push(arg);
-}
 
-// 一个写坏的 check 不该把整轮评测带走：检查里若有没 await 的 promise，
-// 它的 rejection 会以未处理事件的形式逃出 try/catch。记一笔，继续跑。
-process.on("unhandledRejection", (reason) => {
-  console.error(`  [warn] unhandled rejection: ${describe(reason)}`);
-});
-
-// 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
-const apiKey = firstNonEmpty(process.env.API_KEY, process.env.OPENAI_API_KEY);
-if (!apiKey) {
-  console.error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
-  process.exitCode = 1;
-} else {
-  await main();
-}
-
-function firstNonEmpty(...values) {
-  for (const value of values) {
-    const trimmed = value?.trim() ?? "";
-    if (trimmed !== "") return trimmed;
+  // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
+  const apiKey = firstNonEmpty(process.env.API_KEY, process.env.OPENAI_API_KEY);
+  if (!apiKey) {
+    console.error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
+    process.exitCode = 1;
+    return;
   }
-  return "";
-}
 
-/** 评测记录要能对上是哪次提交跑出来的；仓库外/没装 git 时记成 unknown。 */
-async function currentCommit() {
-  try {
-    const { stdout } = await run("git", ["rev-parse", "HEAD"], { cwd: here });
-    return stdout.trim();
-  } catch {
-    return "unknown";
-  }
-}
-
-async function main() {
   const baseUrl = process.env.BASE_URL ?? "https://api.openai.com/v1";
   const model = process.env.MODEL ?? "gpt-4o-mini";
   const commit = await currentCommit();
 
-  const names = (await readdir(tasksDir))
+  const names = (await readdir(defaultTasksDir))
     .filter((name) => filters.length === 0 || filters.some((filter) => name.includes(filter)))
     .sort();
 
@@ -105,12 +94,64 @@ async function main() {
   console.log(`commit: ${commit}`);
   console.log(`tasks:  ${names.length}  并发: ${Math.min(jobs, names.length)}\n`);
 
-  // 任务之间互不依赖，串行只是浪费等待模型的时间。
-  const startedAt = Date.now();
-  const results = await runPool(names, jobs, (name) => runTask(name, { baseUrl, apiKey, model }));
-  const elapsed = (Date.now() - startedAt) / 1000;
+  const { results, elapsed, infra } = await runRound({
+    tasksDir: defaultTasksDir,
+    names,
+    baseUrl,
+    apiKey,
+    model,
+    jobs,
+    keep,
+  });
 
-  report(results, elapsed, { model, commit });
+  report(summarize({ results, elapsed, model, commit, infra }));
+}
+
+/** 跑一轮：并发执行任务，并在结算窗口内收集检查器留下的未处理 rejection。 */
+export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false }) {
+  const infra = [];
+  const onUnhandled = (reason) => {
+    infra.push(describe(reason));
+    console.error(`  [infra] unhandled rejection: ${describe(reason)}`);
+  };
+
+  process.on("unhandledRejection", onUnhandled);
+  const startedAt = Date.now();
+  try {
+    const results = await runPool(names, jobs, (name) =>
+      runTask(name, { tasksDir, baseUrl, apiKey, model, keep }),
+    );
+
+    // 让检查器里没 await 的 promise 浮出来：这段时间内的 rejection 都算本轮基础设施错误。
+    // 更晚才炸的 rejection 会走 Node 默认行为（非零退出），同样不会让评测静默通过。
+    await new Promise((resolve) => setTimeout(resolve, INFRA_SETTLE_MS));
+
+    return { results, elapsed: (Date.now() - startedAt) / 1000, infra };
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+  }
+}
+
+/** 把一轮的原始结果折成可落盘的记录；`ok` 同时要求任务全过且没有基础设施错误。 */
+export function summarize({ results, elapsed, model, commit, infra }) {
+  const requests = results.reduce((total, result) => total + result.requests, 0);
+  const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
+  const tokens = results.reduce((total, result) => total + result.tokens.total, 0);
+  const unknown = results.reduce((total, result) => total + result.tokens.unknownResponses, 0);
+  const passed = results.filter((result) => result.ok).length;
+
+  return {
+    at: new Date().toISOString(),
+    model,
+    commit,
+    ok: infra.length === 0 && passed === results.length,
+    passed,
+    total: results.length,
+    elapsed: Number(elapsed.toFixed(1)),
+    totals: { requests, toolCalls, tokens, unknownResponses: unknown },
+    infraErrors: infra,
+    results,
+  };
 }
 
 /** 简单的并发池：同一时刻最多 limit 个任务在跑，结果按原顺序返回。 */
@@ -131,7 +172,7 @@ async function runPool(items, limit, worker) {
 }
 
 /** 跑一个任务：复制夹具 → 真跑一遍 → 跑检查 → 清理。 */
-async function runTask(name, { baseUrl, apiKey, model }) {
+async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep }) {
   const taskDir = path.join(tasksDir, name);
   const prompt = (await readFile(path.join(taskDir, "task.md"), "utf8")).trim();
   const workdir = await mkdtemp(path.join(tmpdir(), `agent-eval-${name}-`));
@@ -218,24 +259,39 @@ function describe(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function report(results, elapsed, { model, commit }) {
-  const passed = results.filter((result) => result.ok).length;
-  const requests = results.reduce((total, result) => total + result.requests, 0);
-  const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
-  const tokens = results.reduce((total, result) => total + result.tokens.total, 0);
-  const unknown = results.reduce((total, result) => total + result.tokens.unknownResponses, 0);
-  const busy = results.reduce((total, result) => total + result.seconds, 0);
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const trimmed = value?.trim() ?? "";
+    if (trimmed !== "") return trimmed;
+  }
+  return "";
+}
+
+/** 评测记录要能对上是哪次提交跑出来的；仓库外/没装 git 时记成 unknown。 */
+async function currentCommit() {
+  try {
+    const { stdout } = await run("git", ["rev-parse", "HEAD"], { cwd: here });
+    return stdout.trim();
+  } catch {
+    return "unknown";
+  }
+}
+
+function report(record) {
+  const { passed, total, totals, elapsed, results, infraErrors, ok } = record;
+  const unknown = totals.unknownResponses;
+  const busy = results.reduce((sum, result) => sum + result.seconds, 0);
 
   // 并发跑时「任务耗时之和」会大于墙钟，两个都写出来，避免误读。
   // usage 有缺失时 tokens 前加 at least：那是已统计到的下限，不是实际账单。
   console.log(
-    `\n${passed}/${results.length} 通过 · ${requests} 次模型请求 · ${toolCalls} 次工具调用 · ` +
-      `${unknown > 0 ? "at least " : ""}${tokens} tokens` +
-      `${unknown > 0 ? `（${unknown} 个响应没有 usage）` : ""} · 墙钟 ${elapsed.toFixed(1)}s` +
+    `\n${passed}/${total} 通过 · ${totals.requests} 次模型请求 · ${totals.toolCalls} 次工具调用 · ` +
+      `${unknown > 0 ? "at least " : ""}${totals.tokens} tokens` +
+      `${unknown > 0 ? `（${unknown} 个请求没有 usage）` : ""} · 墙钟 ${elapsed.toFixed(1)}s` +
       `（任务耗时合计 ${busy.toFixed(1)}s）`,
   );
 
-  if (passed < results.length) {
+  if (passed < total) {
     const kinds = [
       ["task", "任务失败"],
       ["check", "检查未通过"],
@@ -250,20 +306,14 @@ function report(results, elapsed, { model, commit }) {
     }
   }
 
-  // 落一份结果，方便对比两次改动（评测的价值在趋势，不在单次分数）。
-  const record = {
-    at: new Date().toISOString(),
-    model,
-    commit,
-    passed,
-    total: results.length,
-    elapsed: Number(elapsed.toFixed(1)),
-    totals: { requests, toolCalls, tokens, unknownResponses: unknown },
-    results,
-  };
+  if (infraErrors.length > 0) {
+    console.log(`\n评测基础设施错误（${infraErrors.length}）：未处理的 promise rejection，这一轮不能算通过`);
+    for (const message of infraErrors) console.log(`  - ${message.split("\n")[0]}`);
+  }
+
   mkdir(resultsDir, { recursive: true })
     .then(() => writeFile(path.join(resultsDir, `${Date.now()}.json`), JSON.stringify(record, null, 2), "utf8"))
     .catch((error) => console.error(`could not write results: ${describe(error)}`));
 
-  if (passed < results.length) process.exitCode = 1;
+  if (!ok) process.exitCode = 1;
 }

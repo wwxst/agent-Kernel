@@ -121,11 +121,13 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
   // 成本摘要：usage 缺失时写 at least，绝不把「已统计到的」说成「实际花的」。
   const stats = agent.stats;
   const lower = stats.usage.unknown > 0 ? "at least " : "";
-  const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} response(s) without usage` : "";
+  const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} request(s) without usage` : "";
+  // 软预算：任务可能已经成功，但这次 Run 的花费达到了上限，调用方要看得见。
+  const overBudget = stats.tokenBudget.exceeded ? ` · budget exceeded (limit=${stats.tokenBudget.limit})` : "";
   console.log(
     `\n[usage] requests=${stats.requests} tool_calls=${stats.toolCalls} ` +
       `tokens=${lower}${stats.usage.totalTokens} (prompt=${lower}${stats.usage.promptTokens} ` +
-      `completion=${lower}${stats.usage.completionTokens})${unknown}`,
+      `completion=${lower}${stats.usage.completionTokens})${unknown}${overBudget}`,
   );
 }
 

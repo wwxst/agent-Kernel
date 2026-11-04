@@ -5,6 +5,7 @@
  * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
+import { ChatResponseError, describeError } from "./errors.ts";
 import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
 
 export interface LlmOptions {
@@ -93,7 +94,15 @@ export class Llm implements ChatClient {
     }
 
     const payload: unknown = await response.json();
-    return { message: readMessage(payload), usage: readUsage(payload) };
+    let usage: TokenUsage | undefined;
+    try {
+      // 先读 usage：后面的 message 校验可能失败，但这次请求可能已经产生费用。
+      // 顺序反过来，usage 就会随着「响应不合法」一起被丢掉，账上只能记成未知。
+      usage = readUsage(payload);
+      return { message: readMessage(payload), usage };
+    } catch (error) {
+      throw new ChatResponseError(describeError(error), usage);
+    }
   }
 }
 
@@ -119,6 +128,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *
  * finish_reason 也要看：`length` 说明这一轮被截断，`content_filter` 说明内容被拦了。
  * 两种情况都可能带着「看起来正常」的 message，放过去就是拿半截输出当真结果。
+ *
+ * finish_reason 还决定这一轮**该不该有**工具调用，两者必须一致：
+ *   - `stop` + 非空 tool_calls：Agent 会去执行工具，但端点说这一轮已经结束了；
+ *   - `tool_calls` + 空 tool_calls：Agent 会当成最终答复，丢掉端点声称发生的调用。
+ * 两种都是协议自相矛盾，按错误响应处理，不能「猜一个」继续跑。
  */
 function readMessage(payload: unknown): Message {
   const choices = isRecord(payload) ? payload.choices : undefined;
@@ -126,7 +140,7 @@ function readMessage(payload: unknown): Message {
 
   const first = choices[0];
   if (!isRecord(first)) throw invalid("choices[0] must be an object");
-  readFinishReason(first.finish_reason);
+  const finishReason = readFinishReason(first.finish_reason);
 
   const candidate = first.message;
   if (!isRecord(candidate)) throw invalid("choices[0].message must be an object");
@@ -142,8 +156,17 @@ function readMessage(payload: unknown): Message {
     throw invalid("choices[0].message.content must be a string or null");
   }
 
+  const toolCalls = candidate.tool_calls === undefined ? [] : readToolCalls(candidate.tool_calls);
+  if (finishReason === "tool_calls" && toolCalls.length === 0) {
+    throw invalid('finish_reason "tool_calls" requires a non-empty tool_calls array');
+  }
+  if (finishReason === "stop" && toolCalls.length > 0) {
+    throw invalid('finish_reason "stop" must not include tool_calls');
+  }
+
   const message: Message = { role: "assistant", content: content ?? "" };
-  if (candidate.tool_calls !== undefined) message.tool_calls = readToolCalls(candidate.tool_calls);
+  // 空数组不写进 Message：它就是「没有工具调用」，和字段缺失同义。
+  if (toolCalls.length > 0) message.tool_calls = toolCalls;
 
   const reasoning = candidate.reasoning_content;
   if (reasoning !== undefined) {
@@ -154,9 +177,9 @@ function readMessage(payload: unknown): Message {
   return message;
 }
 
-/** 只有这两种 finish_reason 算「这一轮正常结束」。 */
-function readFinishReason(value: unknown): void {
-  if (value === "stop" || value === "tool_calls") return;
+/** 只有这两种 finish_reason 算「这一轮正常结束」；返回值用来和 tool_calls 做一致性校验。 */
+function readFinishReason(value: unknown): "stop" | "tool_calls" {
+  if (value === "stop" || value === "tool_calls") return value;
   // 中文对照：这一轮被截断了（达到输出上限），内容不完整。
   if (value === "length") throw invalid('finish_reason "length": the response was truncated (max output tokens reached)');
   // 中文对照：这一轮的内容被安全过滤拦下了。
@@ -168,9 +191,15 @@ function readFinishReason(value: unknown): void {
 function readToolCalls(value: unknown): ToolCall[] {
   if (!Array.isArray(value)) throw invalid("choices[0].message.tool_calls must be an array");
 
+  // 重复 id 会让 tool 结果无法唯一配对：两条 result 都指向同一个 id，
+  // 后续请求要么被 API 拒绝，要么让模型看见一条错位的结果。
+  const seenIds = new Set<string>();
+
   return value.map((raw, index) => {
     if (!isRecord(raw)) throw invalid(`tool_calls[${index}] must be an object`);
     if (typeof raw.id !== "string" || raw.id === "") throw invalid(`tool_calls[${index}].id must be a non-empty string`);
+    if (seenIds.has(raw.id)) throw invalid(`tool_calls[${index}].id duplicates "${raw.id}"`);
+    seenIds.add(raw.id);
     if (raw.type !== "function") throw invalid(`tool_calls[${index}].type must be "function"`);
 
     const fn = raw.function;

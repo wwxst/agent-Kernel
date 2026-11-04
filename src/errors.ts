@@ -8,6 +8,24 @@
  * 放在单独模块里，是为了让 Toolbelt 和 CLI 用同一套兜底：
  * 错误文案出现两套互相矛盾的处理，比错误本身更难查。
  */
+import type { TokenUsage } from "./types.ts";
+
+/**
+ * 模型响应形状非法时抛出的错误，可以带上端点已经返回的 usage。
+ *
+ * 「响应读不懂」不等于「这次请求没花钱」：端点可能正常算了钱，只是 message 不合法。
+ * 把 usage 一起带出来，Kernel 才能把这次请求记成已知成本；否则只能记成未知（或者更糟，记成 0）。
+ * 放在 errors.ts 是因为 ChatClient 的任何实现都可能抛它，而 Agent 只依赖 types/errors。
+ */
+export class ChatResponseError extends Error {
+  readonly usage?: TokenUsage;
+
+  constructor(message: string, usage?: TokenUsage) {
+    super(message);
+    this.name = "ChatResponseError";
+    this.usage = usage;
+  }
+}
 
 export function describeError(error: unknown): string {
   if (error instanceof Error) {

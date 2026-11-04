@@ -22,6 +22,7 @@
  * 「谁重置 transcript、失败后算不算已消费、并发调用怎么排队」，那是一整套会话管理，
  * 不在当前范围内。显式拒绝比隐式继承便宜得多。
  */
+import { ChatResponseError } from "./errors.ts";
 import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "./types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 
@@ -72,9 +73,12 @@ export interface AgentUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  /** 带 usage 的响应数。 */
+  /** 带 usage 的请求数。 */
   reported: number;
-  /** 没带 usage 的响应数；大于 0 时上面的合计只是下限。 */
+  /**
+   * 成本未知的请求数：端点没返回 usage，或者请求在中途失败（可能已产生费用）。
+   * 大于 0 时上面的合计只是下限，不能说「这次任务精确花了 X token」。
+   */
   unknown: number;
 }
 
@@ -85,6 +89,17 @@ export interface AgentStats {
   /** 真正执行的工具调用数；预算按这个数算。 */
   toolCalls: number;
   usage: AgentUsage;
+  /**
+   * token 预算的状态。`exceeded` 可能在一次**成功**的 Run 之后为 true ——
+   * 那个把预算顶穿的最终回复已经被返回，钱也已经花了，只是不再发新请求。
+   * 调用方要「硬上限」的话，应该在成功返回后自己检查这个标志。
+   */
+  tokenBudget: {
+    /** undefined = 没有设置预算。 */
+    limit?: number;
+    /** 已统计到的合计是否达到或超过上限。 */
+    exceeded: boolean;
+  };
 }
 
 export interface AgentOptions {
@@ -106,8 +121,14 @@ export interface AgentOptions {
   /**
    * 一次任务累计多少 token（prompt + completion）后停止。不传表示不限制。
    *
-   * 只统计端点**报告了** usage 的部分。usage 缺失时统计是下限，budget 也拦不住那部分消耗 ——
-   * 这一点在 stats.usage.unknown 里明确写出来，不假装预算是精确的。
+   * 这是**软预算 / 请求准入**，不是硬性总量上限：
+   *   - 达到上限后不再发新请求、不再执行没有后续请求验证的工具；
+   *   - 但把预算顶穿的那一条回复已经产生费用，Agent 会如实记录它；
+   *   - 如果那条正好是最终答复，Run 会正常返回成功，`stats.tokenBudget.exceeded` 为 true，
+   *     调用方可以据此决定要不要把这次任务标记为超预算。
+   *
+   * 只统计端点**报告了** usage 的部分；请求失败或没带 usage 时成本记为未知（stats.usage.unknown），
+   * 预算拦不住那部分消耗。不假装这是精确的成本上限。
    */
   maxTotalTokens?: number;
   /**
@@ -191,14 +212,22 @@ export class Agent {
 
   /** 到目前为止的用量快照。返回新对象：调用方改不到内部计数。 */
   get stats(): AgentStats {
+    const limit = this.maxTotalTokens;
     return {
       requests: this.requestCount,
       toolCalls: this.executedToolCalls,
       usage: { ...this.usage },
+      tokenBudget: {
+        limit,
+        exceeded: limit !== undefined && this.usage.totalTokens >= limit,
+      },
     };
   }
 
-  /** 记一笔用量。usage 缺失时只增加 unknown，绝不补 0 冒充「没花钱」。 */
+  /**
+   * 记一笔用量。usage 缺失时只增加 unknown，绝不补 0 冒充「没花钱」。
+   * 请求失败时也走这里传 undefined：它可能已经产生费用，只是我们不知道多少。
+   */
   private recordUsage(usage: TokenUsage | undefined): void {
     if (usage === undefined) {
       this.usage.unknown++;
@@ -224,11 +253,11 @@ export class Agent {
     const lowerBound = this.usage.unknown > 0 ? "at least " : "";
     const unknownNote =
       this.usage.unknown > 0
-        ? `; ${this.usage.unknown} response(s) reported no usage, so the real total is higher`
+        ? `; ${this.usage.unknown} request(s) have no usage (failed or unreported), so the real total is higher`
         : "";
     throw new Error(
       `token budget ${budget} reached: ${lowerBound}${this.usage.totalTokens} tokens counted over ` +
-        `${this.usage.reported} response(s) with usage${unknownNote}`,
+        `${this.usage.reported} request(s) with usage${unknownNote}`,
     );
   }
 
@@ -274,7 +303,15 @@ export class Agent {
       this.stopIfCancelled();
       this.stopIfBudgetExhausted();
       this.requestCount++;
-      const response: ChatResponse = await this.llm.chat(this.messages, this.tools.definitions);
+      let response: ChatResponse;
+      try {
+        response = await this.llm.chat(this.messages, this.tools.definitions);
+      } catch (error) {
+        // 请求已经发出去：响应非法但带回 usage 时精确记账，否则记未知。
+        // 不记的话，失败请求的成本会从统计里凭空消失。
+        this.recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
+        throw error;
+      }
 
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：
       //    带 tool_calls 的 assistant 消息必须排在对应的 tool 结果之前，
