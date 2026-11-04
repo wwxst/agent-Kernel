@@ -214,9 +214,11 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
     async chat(messages, definitions) {
       const index = trace.requests.length + 1;
       currentRequestIndex = index;
+      const requestStarted = performance.now();
       const entry = {
         index,
-        elapsedMs: Math.round(performance.now() - startedAt),
+        taskElapsedMs: Math.round(performance.now() - startedAt),
+        requestDurationMs: null,
         messageCount: messages.length,
         messageChars: messages.reduce((total, message) => total + safeJsonLength(message), 0),
         toolCount: definitions.length,
@@ -234,18 +236,23 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
         entry.totalTokens = usage.total_tokens;
         entry.usageKnown = true;
         const previous = [...trace.requests].reverse().find((request) => request.usageKnown);
-        if (previous) entry.promptTokenDelta = usage.prompt_tokens - previous.promptTokens;
+        if (previous) {
+          entry.promptTokenDelta = usage.prompt_tokens - previous.promptTokens;
+          entry.promptTokenDeltaFromRequest = previous.index;
+        }
       };
 
       try {
         const response = await llm.chat(messages, definitions);
         recordUsage(response?.usage);
-        entry.elapsedMs = Math.round(performance.now() - startedAt);
+        entry.taskElapsedMs = Math.round(performance.now() - startedAt);
+        entry.requestDurationMs = Math.round(performance.now() - requestStarted);
         trace.requests.push(entry);
         return response;
       } catch (error) {
         recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
-        entry.elapsedMs = Math.round(performance.now() - startedAt);
+        entry.taskElapsedMs = Math.round(performance.now() - startedAt);
+        entry.requestDurationMs = Math.round(performance.now() - requestStarted);
         entry.error = describeError(error).slice(0, 500);
         trace.requests.push(entry);
         throw error;
