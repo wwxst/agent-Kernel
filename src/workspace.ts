@@ -14,6 +14,7 @@
  */
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import type { Dir } from "node:fs";
 import { lstat, mkdir, opendir, open, realpath, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 import type { Tool } from "./types.ts";
@@ -220,8 +221,8 @@ export class Workspace {
         entries.push({ name: entry.name, isFile: entry.isFile(), isDirectory: entry.isDirectory() });
       }
     } finally {
-      // 提前 break 时 for await 不保证已经关掉句柄；关两次是安全的（第二次是 no-op）。
-      await handle.close().catch(() => {});
+      // 提前 break 时 for await 不保证已经关掉句柄；重复关闭由 closeDir 容忍。
+      await closeDir(handle);
     }
 
     // 先稳定排序，再截断：目录枚举顺序由文件系统决定，直接切前 500 条
@@ -698,7 +699,22 @@ async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGene
       }
     }
   } finally {
-    await handle.close().catch(() => {});
+    await closeDir(handle);
+  }
+}
+
+/**
+ * 关闭目录句柄，只容忍「已经关闭」这一种情况。
+ *
+ * `for await` 正常结束或提前 break 时，Node 会自动关闭 Dir；随后再 close() 会抛
+ * `ERR_DIR_CLOSED`。这是可预期的重复关闭，不是资源泄漏 —— 但其他关闭错误照常抛出，
+ * 不能被一句 catch 无声吞掉。
+ */
+async function closeDir(handle: Dir): Promise<void> {
+  try {
+    await handle.close();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ERR_DIR_CLOSED") throw error;
   }
 }
 
