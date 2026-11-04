@@ -14,7 +14,7 @@
  * JSON under eval/baselines/cross-day/<date>/ for later review/commit.
  */
 import { execFile } from "node:child_process";
-import { access, mkdir, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -67,6 +67,53 @@ function median(values) {
   return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
 }
 
+function currentEnvironment() {
+  return {
+    node: process.version,
+    platform: process.platform,
+    arch: process.arch,
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  };
+}
+
+async function loadPriorSummaries({ date, model, baseUrl }) {
+  const archiveRoot = path.join(here, "baselines", "cross-day");
+  let entries;
+  try {
+    entries = await readdir(archiveRoot, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+
+  const environment = currentEnvironment();
+  const prior = [];
+  for (const entry of entries.filter((item) => item.isDirectory() && item.name < date).sort((a, b) => a.name.localeCompare(b.name))) {
+    const summaryPath = path.join(archiveRoot, entry.name, "summary.json");
+    let summary;
+    try {
+      summary = JSON.parse(await readFile(summaryPath, "utf8"));
+    } catch (error) {
+      throw new Error("cannot validate prior archive " + entry.name + ": " + (error instanceof Error ? error.message : String(error)));
+    }
+
+    if (summary.date !== entry.name || summary.baselineSha !== BASELINE_SHA || summary.model !== model ||
+        summary.baseUrl !== baseUrl || summary.tasks !== TASK_COUNT || summary.jobs !== JOBS) {
+      throw new Error("prior archive " + entry.name + " does not match the pinned experiment configuration");
+    }
+    for (const key of ["node", "platform", "arch", "timezone"]) {
+      if (summary.environment?.[key] !== environment[key]) {
+        throw new Error(
+          "environment drift from " + entry.name + ": " + key + " was " +
+          String(summary.environment?.[key]) + ", now " + String(environment[key]),
+        );
+      }
+    }
+    prior.push(summary);
+  }
+  return prior;
+}
+
 function roundMetrics(record) {
   const results = record.results ?? [];
   const hasResults = results.length > 0;
@@ -104,7 +151,7 @@ function roundMetrics(record) {
   };
 }
 
-function buildDailySummary({ date, records, model, baseUrl, taskNames }) {
+function buildDailySummary({ date, records, model, baseUrl, taskNames, priorDaysCompared }) {
   const rounds = records.map(roundMetrics);
   const taskNamesSeen = [...new Set(records.flatMap((record) => (record.results ?? []).map((result) => result.name)))].sort();
   const perTask = taskNamesSeen.map((name) => {
@@ -144,11 +191,10 @@ function buildDailySummary({ date, records, model, baseUrl, taskNames }) {
     plannedRounds: ROUNDS,
     complete: records.length === ROUNDS,
     generatedAt: new Date().toISOString(),
-    environment: {
-      node: process.version,
-      platform: process.platform,
-      arch: process.arch,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    environment: currentEnvironment(),
+    environmentConsistency: {
+      priorDaysCompared,
+      originalSixRoundBaselineEnvironmentRecorded: false,
     },
     overall: {
       taskAttempts,
@@ -222,6 +268,7 @@ async function main() {
 
   const originalSha = await git(["rev-parse", "HEAD"]);
   const originalBranch = await git(["branch", "--show-current"]);
+  const priorSummaries = await loadPriorSummaries({ date: options.date, model, baseUrl });
   const archiveDir = path.join(here, "baselines", "cross-day", options.date);
   try {
     await access(archiveDir);
@@ -309,7 +356,14 @@ async function main() {
       if (runnerFailed || interrupted) break;
     }
 
-    const summary = buildDailySummary({ date: options.date, records, model, baseUrl, taskNames });
+    const summary = buildDailySummary({
+      date: options.date,
+      records,
+      model,
+      baseUrl,
+      taskNames,
+      priorDaysCompared: priorSummaries.map((item) => item.date),
+    });
     await writeFile(path.join(archiveDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
     console.log("\nDaily result: " + summary.overall.taskPasses + "/" + summary.overall.taskAttempts +
       " tasks · " + summary.overall.passRate + "% · " + summary.overall.successfulRounds + "/" + ROUNDS +
