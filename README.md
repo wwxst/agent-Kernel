@@ -141,7 +141,7 @@ npm run check       # typecheck + 全部测试
 保持「内核」的边界，下面这些留给上层或后续迭代：
 
 - 流式输出（`stream: true` 与增量渲染）
-- 多轮 REPL / 会话持久化（现在一次进程只跑一个任务）
+- 多轮 REPL / 会话持久化：一次进程只跑一个任务；`Agent` 实例本身也是一次性的，连续 `run()` 会继承上一条 transcript，真要多轮再定生命周期
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 权限审批与安全隔离：文件工具以 `WORKDIR` 作为操作范围约定，`shell` 仍然是启动它的用户的权限（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - token 预算、上下文压缩、自动重试

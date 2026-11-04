@@ -18,6 +18,10 @@ import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
  * 为什么必须做：模型会漏字段、也会给错类型。漏了 `content` 就直接执行 `write`，
  * 结果是把文件清空 —— 一次「看起来成功」的静默破坏，比报错危险得多。
  * 校验放在 execute() 里，和「失败折成文本」同一条路，任何工具都躲不过去。
+ *
+ * 覆盖范围刻意很小：只校验 `required` + `string` / `number` / `boolean` 三种类型。
+ * 七个内置工具的参数全是字符串，够用；嵌套对象、数组、枚举都不看。
+ * 加一个用复杂 schema 的工具之前，先补这里的校验 —— 否则它会「看起来校验过」。
  */
 function validateArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
   const schema = tool.parameters as {

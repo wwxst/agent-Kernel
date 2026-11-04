@@ -14,6 +14,11 @@
  *
  * 换个大模型、换个工具集，这个循环都不用改 —— 这就是「内核」的含义。
  * 它只依赖两样东西：一个能聊天的客户端，一个能执行工具调用的工具注册表。
+ *
+ * 生命周期：一个实例 = 一次任务。`run()` 每次都往同一条 transcript 里追加，
+ * 所以连续调用会继承上一次的上下文（包括上一次的 user 消息）。
+ * CLI 每次新建 Agent，因此现在没有实际问题；将来真要多轮复用，
+ * 先定清楚「谁负责重置、什么时候重置」，再来改这里，别让它变成隐式行为。
  */
 import type { ChatClient, Message, ToolCall } from "./types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
