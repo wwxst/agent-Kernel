@@ -442,13 +442,25 @@ async function readTextUpTo(
 /**
  * 杀掉整棵进程树：Windows 上用 `taskkill /T`，POSIX 上杀进程组。
  * 只杀外层 shell 是不够的 —— Windows 上 `npm test` 这类命令会留下一串孤儿进程。
+ *
+ * 两条路都可能失败（taskkill 起不来、进程组已经没了），所以都要兜底：
+ * 超时那一刻宁可「只杀掉外层 shell」，也不能抛出一个没人接的异常把整个进程带走。
  */
 function killTree(child: ChildProcess): void {
   const pid = child.pid;
   if (pid === undefined) return;
 
   if (process.platform === "win32") {
-    spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true });
+    // 不监听 'error' 的话，spawn 失败会变成未处理事件；非零退出则说明没杀成。
+    // 两种情况都回落到 child.kill()，至少把外层 shell 收掉。
+    const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+      windowsHide: true,
+      stdio: "ignore",
+    });
+    killer.on("error", () => child.kill());
+    killer.on("close", (code) => {
+      if (code !== 0) child.kill();
+    });
     return;
   }
 
