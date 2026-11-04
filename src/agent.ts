@@ -13,10 +13,10 @@
  *                                   └──────────────┘（回到 llm.chat）
  *
  * 换个大模型、换个工具集，这个循环都不用改 —— 这就是「内核」的含义。
- * 它只依赖两样东西：一个能聊天的客户端，一个能执行工具调用的工具箱。
+ * 它只依赖两样东西：一个能聊天的客户端，一个能执行工具调用的工具注册表。
  */
 import type { ChatClient, Message, ToolCall } from "./types.ts";
-import type { Toolbelt } from "./toolbelt.ts";
+import type { ToolRegistry } from "./tool-registry.ts";
 
 /**
  * 系统提示词：告诉模型「你是谁、有哪些工具、什么时候该停」。
@@ -24,7 +24,7 @@ import type { Toolbelt } from "./toolbelt.ts";
  */
 export const DEFAULT_SYSTEM_PROMPT = [
   "You are a coding agent working inside the current workspace.",
-  "Tools: read_file, write_file, list_dir, run_command. Use them instead of guessing.",
+  "Tools: read, write, ls, shell. Use them instead of guessing.",
   "Inspect before editing, keep changes small, and run a check or test when done.",
   "Do not ask questions; make reasonable assumptions and finish the task.",
   "Reply with a short summary when done, then stop calling tools.",
@@ -44,7 +44,7 @@ export interface AgentOptions {
   /** 模型客户端。传接口而不是具体类，测试时才能注入假实现。 */
   llm: ChatClient;
   /** 模型能调用的工具集合。 */
-  toolbelt: Toolbelt;
+  tools: ToolRegistry;
   /** 不传就用 DEFAULT_SYSTEM_PROMPT。 */
   systemPrompt?: string;
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
@@ -55,7 +55,7 @@ export interface AgentOptions {
 
 export class Agent {
   private readonly llm: ChatClient;
-  private readonly toolbelt: Toolbelt;
+  private readonly tools: ToolRegistry;
   private readonly maxSteps: number;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
 
@@ -68,7 +68,7 @@ export class Agent {
 
   constructor(options: AgentOptions) {
     this.llm = options.llm;
-    this.toolbelt = options.toolbelt;
+    this.tools = options.tools;
     this.maxSteps = options.maxSteps ?? 30;
     this.onToolResult = options.onToolResult;
 
@@ -87,8 +87,9 @@ export class Agent {
   /**
    * 跑完一次任务，返回模型的最终回复（一条不带 tool_calls 的 assistant 消息）。
    *
-   * 示意代码里是 while (true)；这里改成带计数器的 for，唯一的差别就是多了步数上限。
-   * 别小看这个上限：模型完全可能陷入「调工具 → 结果不满意 → 再调」的循环，
+   * 这就是 **agent loop**：教科书里那个 `while (true)` —— 问模型、执行它要的工具、
+   * 把结果塞回去，直到它不再要工具。这里用带计数器的 for 代替 while (true)，
+   * 唯一多出来的东西就是步数上限：模型完全可能陷入「调工具 → 结果不满意 → 再调」，
    * 没有闸门的话，烧的是真金白银。
    *
    * 步数用尽时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
@@ -100,7 +101,7 @@ export class Agent {
 
     for (let step = 1; step <= this.maxSteps; step++) {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
-      const response = await this.llm.chat(this.messages, this.toolbelt.definitions);
+      const response = await this.llm.chat(this.messages, this.tools.definitions);
 
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：
       //    带 tool_calls 的 assistant 消息必须排在对应的 tool 结果之前，
@@ -117,7 +118,7 @@ export class Agent {
       //    这里刻意串行：简单，且消息顺序与模型给出的顺序一一对应。
       //    （并发执行能更快，但结果回灌顺序会乱，属于优化，不属于内核。）
       for (const call of calls) {
-        const result = await this.toolbelt.dispatch(call);
+        const result = await this.tools.execute(call);
         this.messages.push(createToolResult(call, result));
         this.onToolResult?.(call, result);
       }

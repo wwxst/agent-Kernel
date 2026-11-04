@@ -16,7 +16,7 @@ export type Role =
   | "tool"; // 工具的返回结果，必须能对应到某一次 tool_call
 
 /**
- * 模型发起的一次工具调用。
+ * 模型发起的一次工具调用 —— 也就是 **function calling** 里的那一次 call。
  *
  * 注意 arguments 是「JSON 字符串」而不是对象：
  * 模型是一个 token 一个 token 往外吐文本的，它没法直接产出一个 JS 对象。
@@ -49,7 +49,7 @@ export interface Message {
 }
 
 /**
- * 一个工具的完整定义。
+ * 一个工具的完整定义（function calling 里的那份函数定义）。
  *
  * description 和 parameters（JSON Schema）是写给模型看的「说明书」：
  * 模型靠它们决定调不调、传什么参数。run 才是真正干活的代码。
@@ -66,8 +66,9 @@ export interface Tool {
  * 工具的「说明书」部分：name / description / parameters，不含 run。
  *
  * 发请求时只序列化这些字段；run 是宿主侧的代码，模型看不见也不需要知道。
+ * 名字用 `ToolDefinition`，因为 OpenAI、Anthropic、MCP 的文档里都叫 tool definition。
  */
-export type ToolSpec = Omit<Tool, "run">;
+export type ToolDefinition = Omit<Tool, "run">;
 
 /**
  * Agent 唯一依赖的模型接口。
@@ -77,5 +78,5 @@ export type ToolSpec = Omit<Tool, "run">;
  * 只有一种实现时不必开这个口子 —— 那是为将来预留的空缝。
  */
 export interface ChatClient {
-  chat(messages: readonly Message[], tools: readonly ToolSpec[]): Promise<Message>;
+  chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<Message>;
 }

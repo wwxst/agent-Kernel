@@ -9,7 +9,7 @@
  *   3. 命令必须有超时。命令可能永远不结束（比如起了个 dev server）。
  *
  * 失败时它抛异常 —— 这是它在接口上的错误模式；
- * 折成 "ERROR: ..." 文本回灌给模型是 Toolbelt 的事，不是这里的事。
+ * 折成 "ERROR: ..." 文本回灌给模型是 ToolRegistry 的事，不是这里的事。
  * 两个模块各管一个决定，改的时候不会互相牵动。
  */
 import { spawn } from "node:child_process";
@@ -135,11 +135,16 @@ export class Workspace {
  * 这个函数是适配器：它真正的内容不是逻辑，而是写给模型看的文案
  * （name / description / JSON Schema）。文案写得含糊，模型就会传错参数 ——
  * 所以它和上面的行为放在同一个文件里：改一个上限，顺手就能改对应的说明。
+ *
+ * 工具名刻意用 agent 生态的通用叫法（read / write / ls / shell），而不是代码里的动词。
+ * 方法名和工具名不一致是有意的：前者给读代码的人看，后者给模型看，模型对通用叫法有先验。
+ * 其中 `shell` 就是 **bash** 那个工具：跑一条命令、拿回 exit code 和输出，和 Codex、
+ * Claude Code 里的 bash 是同一件事；名字不叫 bash，是因为实现不绑定具体 shell（见 ADR-0005）。
  */
-export function workspaceTools(workspace: Workspace): Tool[] {
+export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
-      name: "read_file",
+      name: "read",
       description: "Read a UTF-8 text file. Output is truncated to 8000 chars.",
       parameters: {
         type: "object",
@@ -149,7 +154,7 @@ export function workspaceTools(workspace: Workspace): Tool[] {
       run: async (args) => workspace.read(String(args.path)),
     },
     {
-      name: "write_file",
+      name: "write",
       description: "Create or overwrite a UTF-8 file; parent directories are created automatically.",
       parameters: {
         type: "object",
@@ -162,7 +167,7 @@ export function workspaceTools(workspace: Workspace): Tool[] {
       run: async (args) => workspace.write(String(args.path), String(args.content ?? "")),
     },
     {
-      name: "list_dir",
+      name: "ls",
       description: "List a directory: entry type, size in bytes, and name.",
       parameters: {
         type: "object",
@@ -172,7 +177,7 @@ export function workspaceTools(workspace: Workspace): Tool[] {
       run: async (args) => workspace.list(String(args.path)),
     },
     {
-      name: "run_command",
+      name: "shell",
       description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr.",
       parameters: {
         type: "object",

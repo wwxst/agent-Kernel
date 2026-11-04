@@ -2,7 +2,7 @@
  * 端到端测试：真的拉起一个 agent 进程，用一个本地 mock 服务冒充模型。
  *
  * 这一层只验证「组装得对不对」：环境变量、退出码、stdout 的进度输出、
- * 以及请求体确实是 OpenAI 兼容的形状。循环内部的细节在 agent/toolbelt/workspace
+ * 以及请求体确实是 OpenAI 兼容的形状。循环内部的细节在 agent/tool-registry/workspace
  * 的单元测试里覆盖，这里不再重复。
  *
  * 运行：npm test
@@ -66,8 +66,8 @@ function runCli(env) {
 test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼容形状", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
-      callTool("call_write", "write_file", { path: "hello.txt", content: "hello from agent\n" }),
-      callTool("call_read", "read_file", { path: "hello.txt" }),
+      callTool("call_write", "write", { path: "hello.txt", content: "hello from agent\n" }),
+      callTool("call_read", "read", { path: "hello.txt" }),
       finalReply("done: created hello.txt"),
     ]);
 
@@ -86,7 +86,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(first.messages[1].role, "user");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
-        ["read_file", "write_file", "list_dir", "run_command"],
+        ["read", "write", "ls", "shell"],
       );
 
       // 第三次请求：assistant 与 tool 严格交替，结果靠 tool_call_id 配对
@@ -107,7 +107,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
 test("越界路径：变成 ERROR 回灌，进程正常退出", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
-      callTool("call_1", "read_file", { path: "../../outside.txt" }),
+      callTool("call_1", "read", { path: "../../outside.txt" }),
       finalReply("recovered after bad path"),
     ]);
 
@@ -128,7 +128,7 @@ test("越界路径：变成 ERROR 回灌，进程正常退出", async () => {
 test("步数上限：退出码 1，stderr 说明原因", async () => {
   await withWorkspace(async (workdir) => {
     // 只有一条脚本，且永远是工具调用：不设上限就会无限循环。
-    const mock = await startMock([callTool("call_loop", "list_dir", { path: "." })]);
+    const mock = await startMock([callTool("call_loop", "ls", { path: "." })]);
 
     try {
       const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir, MAX_STEPS: "2" });
