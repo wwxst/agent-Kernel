@@ -101,6 +101,12 @@ test("chat：content 类型不对必须报错", async () => {
   });
 });
 
+test("chat：content 字段缺失也必须报错（和 null 不是一回事）", async () => {
+  await withEndpoint({ choices: [{ message: { role: "assistant" } }] }, async (url) => {
+    await assert.rejects(() => clientFor(url).chat([], []), /content must be a string or null/);
+  });
+});
+
 test("chat：tool_calls 不是数组必须报错", async () => {
   await withEndpoint({ choices: [{ message: { role: "assistant", content: "", tool_calls: {} } }] }, async (url) => {
     await assert.rejects(() => clientFor(url).chat([], []), /tool_calls must be an array/);
