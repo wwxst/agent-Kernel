@@ -22,7 +22,7 @@
  * 「谁重置 transcript、失败后算不算已消费、并发调用怎么排队」，那是一整套会话管理，
  * 不在当前范围内。显式拒绝比隐式继承便宜得多。
  */
-import type { ChatClient, Message, ToolCall } from "./types.ts";
+import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "./types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 
 /**
@@ -35,10 +35,12 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "You are a coding agent working inside the current workspace.",
   // 可用工具：read、write、edit、glob、grep、ls、shell。用它，不要靠猜。
   "Tools: read, write, edit, glob, grep, ls, shell. Use them instead of guessing.",
-  // 动手改之前先看；每次改动小一点；做完跑一次检查或测试。
-  "Inspect before editing, keep changes small, and run a check or test when done.",
-  // 不要反问用户；自己做合理假设，把任务做完。
-  "Do not ask questions; make reasonable assumptions and finish the task.",
+  // 动手改之前先看；每次改动小一点；做完跑一次检查或测试来验证。
+  "Inspect before editing, keep changes small, and verify your work with a check or test.",
+  // 非关键歧义自己合理判断；影响正确性、文件范围或重要操作的歧义可以问用户。
+  "Ask when an ambiguity affects correctness, the files in scope, or an important operation; otherwise make a reasonable assumption and continue.",
+  // 不要声称跑过没跑的命令或测试；无法验证时明确说明。
+  "Never claim to have run a command or test that you did not run. If you cannot verify something, say so explicitly.",
   // 完成后用一小段总结收尾，然后停止调用工具。
   "Reply with a short summary when done, then stop calling tools.",
 ].join("\n");
@@ -60,6 +62,31 @@ function cancellationError(signal: AbortSignal): Error {
   return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
 }
 
+/**
+ * 一次任务里能观察到的用量。
+ *
+ * `unknown` 不是装饰：端点可能不返回 usage，那几个 token 数就只是**已报告部分**的和。
+ * 只要 unknown > 0，调用方就不能说「这次任务精确花了 X token」。
+ */
+export interface AgentUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  /** 带 usage 的响应数。 */
+  reported: number;
+  /** 没带 usage 的响应数；大于 0 时上面的合计只是下限。 */
+  unknown: number;
+}
+
+/** 任务的成本与执行量。和 transcript 一样，失败之后也可以读。 */
+export interface AgentStats {
+  /** 发出去的模型请求数（失败的请求也算一次尝试）。 */
+  requests: number;
+  /** 真正执行的工具调用数；预算按这个数算。 */
+  toolCalls: number;
+  usage: AgentUsage;
+}
+
 export interface AgentOptions {
   /** 模型客户端。传接口而不是具体类，测试时才能注入假实现。 */
   llm: ChatClient;
@@ -77,6 +104,13 @@ export interface AgentOptions {
    */
   maxToolCalls?: number;
   /**
+   * 一次任务累计多少 token（prompt + completion）后停止。不传表示不限制。
+   *
+   * 只统计端点**报告了** usage 的部分。usage 缺失时统计是下限，budget 也拦不住那部分消耗 ——
+   * 这一点在 stats.usage.unknown 里明确写出来，不假装预算是精确的。
+   */
+  maxTotalTokens?: number;
+  /**
    * 取消信号。CLI 收到 SIGINT / SIGTERM 时 abort 它：
    * 循环不再发起新的模型请求或工具调用，正在跑的 shell 由 Workspace 收掉进程树。
    */
@@ -90,11 +124,24 @@ export class Agent {
   private readonly tools: ToolRegistry;
   private readonly maxSteps: number;
   private readonly maxToolCalls: number;
+  private readonly maxTotalTokens?: number;
   private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
 
   /** 已经执行的工具调用数；预算按它算，也用它写「部分执行」的失败报告。 */
   private executedToolCalls = 0;
+
+  /** 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
+  private requestCount = 0;
+
+  /** 累计用量；每次响应都要经过 recordUsage，缺 usage 的单独计数。 */
+  private readonly usage: AgentUsage = {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    reported: 0,
+    unknown: 0,
+  };
 
   /** 生命周期闸门：第一次 run() 之前是 false，之后永远是 true（失败/取消也算消费）。 */
   private started = false;
@@ -111,6 +158,7 @@ export class Agent {
     this.tools = options.tools;
     this.maxSteps = options.maxSteps ?? 30;
     this.maxToolCalls = options.maxToolCalls ?? 60;
+    this.maxTotalTokens = options.maxTotalTokens;
     this.signal = options.signal;
     this.onToolResult = options.onToolResult;
 
@@ -139,6 +187,49 @@ export class Agent {
     for (const call of calls) {
       this.messages.push(createToolResult(call, `ERROR: not run: ${reason}`));
     }
+  }
+
+  /** 到目前为止的用量快照。返回新对象：调用方改不到内部计数。 */
+  get stats(): AgentStats {
+    return {
+      requests: this.requestCount,
+      toolCalls: this.executedToolCalls,
+      usage: { ...this.usage },
+    };
+  }
+
+  /** 记一笔用量。usage 缺失时只增加 unknown，绝不补 0 冒充「没花钱」。 */
+  private recordUsage(usage: TokenUsage | undefined): void {
+    if (usage === undefined) {
+      this.usage.unknown++;
+      return;
+    }
+    this.usage.reported++;
+    this.usage.promptTokens += usage.prompt_tokens;
+    this.usage.completionTokens += usage.completion_tokens;
+    this.usage.totalTokens += usage.total_tokens;
+  }
+
+  /**
+   * 预算用尽就停手：不再发请求，也不执行「没有下一次请求去验证」的工具。
+   *
+   * 只在**已知**合计达到上限时触发。usage 缺失时这条闸门拦不住那部分消耗，
+   * 所以错误文案和 stats 都只说「已统计到多少」，不说「实际花了多少」。
+   */
+  private stopIfBudgetExhausted(pending: readonly ToolCall[] = []): void {
+    const budget = this.maxTotalTokens;
+    if (budget === undefined || this.usage.totalTokens < budget) return;
+
+    this.skipCalls(pending, `token budget ${budget} reached`);
+    const lowerBound = this.usage.unknown > 0 ? "at least " : "";
+    const unknownNote =
+      this.usage.unknown > 0
+        ? `; ${this.usage.unknown} response(s) reported no usage, so the real total is higher`
+        : "";
+    throw new Error(
+      `token budget ${budget} reached: ${lowerBound}${this.usage.totalTokens} tokens counted over ` +
+        `${this.usage.reported} response(s) with usage${unknownNote}`,
+    );
   }
 
   /**
@@ -181,25 +272,32 @@ export class Agent {
     for (let step = 1; step <= this.maxSteps; step++) {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
       this.stopIfCancelled();
-      const response = await this.llm.chat(this.messages, this.tools.definitions);
+      this.stopIfBudgetExhausted();
+      this.requestCount++;
+      const response: ChatResponse = await this.llm.chat(this.messages, this.tools.definitions);
 
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：
       //    带 tool_calls 的 assistant 消息必须排在对应的 tool 结果之前，
       //    否则下一轮请求会被 API 拒绝（结果找不到「上家」）。
-      this.messages.push(response);
+      const message = response.message;
+      this.messages.push(message);
+      this.recordUsage(response.usage);
 
-      const calls = response.tool_calls ?? [];
+      const calls = message.tool_calls ?? [];
       if (calls.length === 0) {
         // 4) 没有工具调用 = 模型认为可以交卷了，本轮结束。
         //    但「交卷」得真有东西：空回复不是成功，是模型没说话 ——
         //    内容被过滤、生成被截断、服务端半截响应，都会走到这一条。
-        if ((response.content ?? "").trim() === "") {
+        if ((message.content ?? "").trim() === "") {
           throw new Error("model returned an empty final answer");
         }
-        return response;
+        return message;
       }
 
-      // 5) 最后一次请求只留给最终答复：要工具也不再执行 —— 没有下一次请求能验证它的结果。
+      // 5) 这一轮可能刚好把预算用光：后面的工具没有下一次请求去验证，不能执行。
+      this.stopIfBudgetExhausted(calls);
+
+      // 6) 最后一次请求只留给最终答复：要工具也不再执行 —— 没有下一次请求能验证它的结果。
       //    未执行的调用仍补一条 not run 结果，保证 assistant / tool 配对完整。
       if (step === this.maxSteps) {
         this.skipCalls(calls, "no model request left to verify the result");
@@ -209,7 +307,7 @@ export class Agent {
         );
       }
 
-      // 6) 整批先算预算：执行到一半才发现超限，会留下一批「跑了但没回报」的调用。
+      // 7) 整批先算预算：执行到一半才发现超限，会留下一批「跑了但没回报」的调用。
       if (this.executedToolCalls + calls.length > this.maxToolCalls) {
         this.skipCalls(calls, `tool call budget ${this.maxToolCalls} would be exceeded`);
         throw new Error(
@@ -218,7 +316,7 @@ export class Agent {
         );
       }
 
-      // 7) 有工具调用就逐个执行，并把结果写回对话记录。
+      // 8) 有工具调用就逐个执行，并把结果写回对话记录。
       //    这里刻意串行：简单，且消息顺序与模型给出的顺序一一对应。
       //    （并发执行能更快，但结果回灌顺序会乱，属于优化，不属于内核。）
       for (let index = 0; index < calls.length; index++) {
@@ -231,7 +329,7 @@ export class Agent {
         this.onToolResult?.(call, result);
       }
 
-      // 8) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
+      // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
     }
 
     // 理论上走不到这里：最后一步要么返回最终回复，要么抛「最后一步不执行工具」。

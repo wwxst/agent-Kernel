@@ -5,7 +5,7 @@
  * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
-import type { ChatClient, Message, ToolCall, ToolDefinition } from "./types.ts";
+import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */
@@ -16,6 +16,13 @@ export interface LlmOptions {
   temperature?: number;
   /** 单次请求超时，默认 120 秒。网络卡住时不能把整个循环一起卡死。 */
   timeoutMs?: number;
+  /**
+   * 单次响应最多生成多少 token，默认 8192。
+   *
+   * 这是**单次输出**上限，不是任务预算：它防的是一条跑飞的回复把上下文和账单一起撑爆。
+   * 请求里的 `max_tokens` 就是它；端点若仍然返回 finish_reason "length"，readMessage 会报错。
+   */
+  maxOutputTokens?: number;
   /**
    * 取消信号。外部取消（CLI 收到 SIGINT）时 abort 它，正在飞的 HTTP 请求会立刻被掐断，
    * 而不是等 120 秒超时。和 timeout 合并成一个 signal 传给 fetch，两者谁先到谁生效。
@@ -29,6 +36,7 @@ export class Llm implements ChatClient {
   private readonly model: string;
   private readonly temperature: number;
   private readonly timeoutMs: number;
+  private readonly maxOutputTokens: number;
   private readonly signal?: AbortSignal;
 
   constructor(options: LlmOptions) {
@@ -37,6 +45,7 @@ export class Llm implements ChatClient {
     this.model = options.model;
     this.temperature = options.temperature ?? 0;
     this.timeoutMs = options.timeoutMs ?? 120_000;
+    this.maxOutputTokens = options.maxOutputTokens ?? 8192;
     this.signal = options.signal;
   }
 
@@ -50,7 +59,7 @@ export class Llm implements ChatClient {
    * 但「如实搬运」的前提是响应确实是那个形状：网络响应是外部输入，
    * `as` 只是编译期断言，所以这里做一次运行时校验（见 readMessage）。
    */
-  async chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<Message> {
+  async chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<ChatResponse> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -68,6 +77,8 @@ export class Llm implements ChatClient {
         // auto：让模型自己决定这一轮是回答还是调工具。
         tool_choice: "auto",
         temperature: this.temperature,
+        // 单次输出去上限：不让一条跑飞的回复把上下文和账单一起撑爆。
+        max_tokens: this.maxOutputTokens,
       }),
       // 超时后 fetch 会抛 AbortError，被上层 catch 成一次可见的失败。
       // 外部取消（Ctrl-C）也走 signal：两条路合并，fetch 不用知道是谁按的停止键。
@@ -81,7 +92,8 @@ export class Llm implements ChatClient {
       throw new Error(`LLM HTTP ${response.status}: ${detail}`);
     }
 
-    return readMessage(await response.json());
+    const payload: unknown = await response.json();
+    return { message: readMessage(payload), usage: readUsage(payload) };
   }
 }
 
@@ -170,4 +182,32 @@ function readToolCalls(value: unknown): ToolCall[] {
 
     return { id: raw.id, type: "function", function: { name: fn.name, arguments: fn.arguments } };
   });
+}
+
+/**
+ * 读 usage：有就逐字段校验，没有就返回 undefined（未知）。
+ *
+ * 为什么不「缺字段就补 0」：那会让预算和成本统计显示成「花了 0 token」，
+ * 比没有统计更危险 —— 调用方会以为预算还有富余。缺了就是不知道。
+ * 但「有 usage 却字段类型不对」是端点在违反协议，必须报错，不能悄悄当成未知。
+ */
+function readUsage(payload: unknown): TokenUsage | undefined {
+  const usage = isRecord(payload) ? payload.usage : undefined;
+  if (usage === undefined || usage === null) return undefined;
+  if (!isRecord(usage)) throw invalid("usage must be an object");
+
+  return {
+    prompt_tokens: readTokenCount(usage, "prompt_tokens"),
+    completion_tokens: readTokenCount(usage, "completion_tokens"),
+    total_tokens: readTokenCount(usage, "total_tokens"),
+  };
+}
+
+/** usage 里的 token 数必须是非负整数；小数、负数、字符串都不是「用法」。 */
+function readTokenCount(usage: Record<string, unknown>, field: string): number {
+  const value = usage[field];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    throw invalid(`usage.${field} must be a non-negative integer`);
+  }
+  return value;
 }

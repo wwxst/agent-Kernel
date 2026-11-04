@@ -25,6 +25,7 @@ export function finalReply(content) {
 /**
  * 按脚本回放的 ChatClient。请求次数超出脚本长度时重复最后一条，保证 agent 总能收尾。
  *
+ * 脚本项可以是一条 Message，也可以是 `{ message, usage }` —— 后者用来测 token 统计。
  * 每次请求都做一次深拷贝再存起来：Agent 接下来会继续往自己的 messages 里 push，
  * 不拷贝的话断言看到的是「未来」的历史，而非当时的请求。
  */
@@ -36,7 +37,10 @@ export function createScriptedChat(script) {
     requests,
     async chat(messages, tools) {
       requests.push(structuredClone({ messages, tools }));
-      return structuredClone(script[Math.min(turn++, script.length - 1)]);
+      const entry = structuredClone(script[Math.min(turn++, script.length - 1)]);
+      // 普通 Message 脚本没有 message 字段；带用量的脚本写成 { message, usage }。
+      const message = entry.message ?? entry;
+      return entry.usage === undefined ? { message } : { message, usage: entry.usage };
     },
   };
 }

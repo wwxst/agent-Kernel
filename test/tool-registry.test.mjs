@@ -218,3 +218,77 @@ test("execute：抛 undefined 也有兜底文案", async () => {
 
   assert.equal(await registry.execute(call("boom")), "ERROR: Unknown error (undefined)");
 });
+
+/** 一个只有 Schema、没有行为的工具：注册期校验用。 */
+function schemaTool(parameters) {
+  return { name: "t", description: "test", parameters, run: async () => "ok" };
+}
+
+test("注册：重名工具直接拒绝", () => {
+  assert.throws(() => new ToolRegistry([echoTool(), echoTool()]), /duplicate tool name "echo"/);
+});
+
+test("注册：声明 array / object 参数直接拒绝（校验器不懂它们）", () => {
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ type: "object", properties: { tags: { type: "array" } } })]),
+    /parameter "tags" has unsupported type "array"/,
+  );
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ type: "object", properties: { cfg: { type: "object" } } })]),
+    /parameter "cfg" has unsupported type "object"/,
+  );
+});
+
+test("注册：parameters 必须是 object schema", () => {
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ type: "array", properties: {} })]),
+    /parameters\.type must be "object"/,
+  );
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ properties: {} })]),
+    /parameters\.type must be "object"/,
+  );
+});
+
+test("注册：required 必须声明在 properties 里，且是字符串数组", () => {
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ type: "object", properties: { a: { type: "string" } }, required: ["b"] })]),
+    /required parameter "b" is not declared/,
+  );
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ type: "object", properties: {}, required: "a" })]),
+    /parameters\.required must be an array of strings/,
+  );
+});
+
+test("注册：每个参数都必须声明受支持的类型", () => {
+  assert.throws(
+    () => new ToolRegistry([schemaTool({ type: "object", properties: { a: {} } })]),
+    /parameter "a" must declare a type/,
+  );
+});
+
+test("execute：number 参数拒绝 Infinity，boolean 参数拒绝字符串", async () => {
+  const registry = new ToolRegistry([
+    {
+      name: "num",
+      description: "number",
+      parameters: {
+        type: "object",
+        properties: { n: { type: "number" }, flag: { type: "boolean" } },
+        required: ["n"],
+      },
+      run: async (args) => `got ${String(args.n)} ${String(args.flag)}`,
+    },
+  ]);
+
+  assert.match(
+    await registry.execute(call("num", '{"n": 1e999}')),
+    /invalid arguments: argument "n" must be a finite number/,
+  );
+  assert.match(
+    await registry.execute(call("num", '{"n": 1, "flag": "true"}')),
+    /argument "flag" must be a boolean/,
+  );
+  assert.equal(await registry.execute(call("num", '{"n": 1, "flag": true}')), "got 1 true");
+});

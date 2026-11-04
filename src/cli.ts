@@ -13,6 +13,8 @@
  *   WORKDIR         工具能碰的根目录，默认当前目录
  *   MAX_STEPS       循环上限，默认 30
  *   MAX_TOOL_CALLS  一次任务最多执行多少次工具调用，默认 60
+ *   MAX_TOTAL_TOKENS 一次任务累计 token 预算，默认 500000；0 表示不限制
+ *   MAX_OUTPUT_TOKENS 单次模型响应最多生成多少 token，默认 8192
  *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
  *
  * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
@@ -37,11 +39,24 @@ function positiveIntFromEnv(name: string, fallback: number): number {
   return value;
 }
 
+/** 读一个「非负整数」环境变量；0 表示关闭这一项限制。 */
+function nonNegativeIntFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return fallback;
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    // 中文对照：「{name} 的值 "{raw}" 不合法（需要 0 或正整数）」
+    throw new Error(`invalid ${name}: "${raw}" (expected 0 or a positive integer)`);
+  }
+  return value;
+}
+
 const usage = [
   // 中文对照：用法：node src/cli.ts "<任务>"
   'usage: node src/cli.ts "<task>"',
-  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, TOOL_TIMEOUT_MS",
+  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
+  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS",
 ].join("\n");
 
 /**
@@ -63,6 +78,8 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
   const root = path.resolve(process.env.WORKDIR ?? process.cwd());
   const maxSteps = positiveIntFromEnv("MAX_STEPS", 30);
   const maxToolCalls = positiveIntFromEnv("MAX_TOOL_CALLS", 60);
+  const maxTotalTokens = nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000);
+  const maxOutputTokens = positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192);
   const toolTimeoutMs = positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000);
 
   const tools = new ToolRegistry(
@@ -75,10 +92,11 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
   console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
 
   const agent = new Agent({
-    llm: new Llm({ baseUrl, apiKey, model, signal }),
+    llm: new Llm({ baseUrl, apiKey, model, maxOutputTokens, signal }),
     tools,
     maxSteps,
     maxToolCalls,
+    maxTotalTokens: maxTotalTokens === 0 ? undefined : maxTotalTokens,
     signal,
     // 打印每一步的工具调用，让你能「看见」循环在转。
     onToolResult: (call, result) => {
@@ -89,6 +107,16 @@ async function runTask(task: string, signal: AbortSignal): Promise<void> {
 
   const reply = await agent.run(task);
   console.log(`\n${reply.content ?? ""}`);
+
+  // 成本摘要：usage 缺失时写 at least，绝不把「已统计到的」说成「实际花的」。
+  const stats = agent.stats;
+  const lower = stats.usage.unknown > 0 ? "at least " : "";
+  const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} response(s) without usage` : "";
+  console.log(
+    `\n[usage] requests=${stats.requests} tool_calls=${stats.toolCalls} ` +
+      `tokens=${lower}${stats.usage.totalTokens} (prompt=${lower}${stats.usage.promptTokens} ` +
+      `completion=${lower}${stats.usage.completionTokens})${unknown}`,
+  );
 }
 
 const task = process.argv.slice(2).join(" ").trim();

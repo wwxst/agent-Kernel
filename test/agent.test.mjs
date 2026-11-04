@@ -309,3 +309,84 @@ test("生命周期：任务失败后实例仍然算已消费", async () => {
   await assert.rejects(() => agent.run("fail"), /empty final answer/);
   await assert.rejects(() => agent.run("retry"), /single-use/);
 });
+
+test("token 统计：累计 prompt / completion / total 与请求数", async () => {
+  const chat = createScriptedChat([
+    {
+      message: callTool("c1", "echo", { value: "a" }),
+      usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+    },
+    {
+      message: finalReply("done"),
+      usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 },
+    },
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+
+  await agent.run("task");
+
+  assert.deepEqual(agent.stats, {
+    requests: 2,
+    toolCalls: 1,
+    usage: { promptTokens: 150, completionTokens: 15, totalTokens: 165, reported: 2, unknown: 0 },
+  });
+});
+
+test("token 统计：usage 缺失时标记 unknown，不补 0", async () => {
+  const chat = createScriptedChat([
+    {
+      message: callTool("c1", "echo", { value: "a" }),
+      usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 },
+    },
+    finalReply("done"),
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+
+  await agent.run("task");
+
+  assert.equal(agent.stats.usage.totalTokens, 11);
+  assert.equal(agent.stats.usage.reported, 1);
+  assert.equal(agent.stats.usage.unknown, 1, "缺 usage 的那一轮必须单独计数");
+});
+
+test("token 预算：已知合计达到上限时不再发请求，也不执行未验证的工具", async () => {
+  const chat = createScriptedChat([
+    {
+      message: callTool("c1", "echo", { value: "a" }),
+      usage: { prompt_tokens: 80, completion_tokens: 20, total_tokens: 100 },
+    },
+    finalReply("should not happen"),
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxTotalTokens: 100 });
+
+  await assert.rejects(
+    () => agent.run("task"),
+    /token budget 100 reached: 100 tokens counted over 1 response\(s\) with usage/,
+  );
+  assert.equal(chat.requests.length, 1);
+  const toolMessage = agent.transcript.filter((message) => message.role === "tool").at(-1);
+  assert.equal(toolMessage.content, "ERROR: not run: token budget 100 reached");
+});
+
+test("token 预算：usage 未知时只声称「已统计到多少」", async () => {
+  const chat = createScriptedChat([
+    callTool("c1", "echo", { value: "a" }),
+    {
+      message: callTool("c2", "echo", { value: "b" }),
+      usage: { prompt_tokens: 90, completion_tokens: 10, total_tokens: 100 },
+    },
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxTotalTokens: 100 });
+
+  await assert.rejects(
+    () => agent.run("task"),
+    /token budget 100 reached: at least 100 tokens counted over 1 response\(s\) with usage; 1 response\(s\) reported no usage/,
+  );
+  assert.equal(agent.stats.usage.unknown, 1);
+});
+
+test("系统提示词：关键歧义可以问，禁止编造验证结果", () => {
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Ask when an ambiguity affects correctness/);
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command or test that you did not run/);
+  assert.equal(DEFAULT_SYSTEM_PROMPT.includes("Do not ask questions"), false);
+});
