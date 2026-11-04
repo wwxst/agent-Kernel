@@ -133,14 +133,19 @@ test("发给模型的工具清单只有说明书，没有 run", async () => {
   assert.equal("run" in spec, false);
 });
 
-test("transcript 返回的是副本：改它不会改到内部记录", async () => {
-  const chat = createScriptedChat([finalReply("ok")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+test("transcript 返回深拷贝：改消息内容和嵌套的 tool_calls 都不影响内部记录", async () => {
+  const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
 
   await agent.run("task");
 
   const snapshot = agent.transcript;
   snapshot.push({ role: "user", content: "spoof" });
+  snapshot[2].content = "tampered";
+  snapshot[2].tool_calls[0].function.name = "evil";
 
-  assert.equal(agent.transcript.length, snapshot.length - 1);
+  const after = agent.transcript;
+  assert.equal(after.length, snapshot.length - 1, "push 不该改到内部数组");
+  assert.notEqual(after[2].content, "tampered", "改 Message 不该改到内部记录");
+  assert.equal(after[2].tool_calls[0].function.name, "echo", "改嵌套的 tool_calls 也不该改到内部记录");
 });

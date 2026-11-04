@@ -37,7 +37,7 @@
 | `Agent.run()` 里的循环 | **agent loop**，教科书里的 `while (true)` |
 | `tool_calls`、`Tool`、`ToolRegistry` | **function calling** |
 | `shell` 工具 | **bash** —— 跑命令的那个工具 |
-| `Workspace` | **sandbox workspace**，模型能碰的目录树 |
+| `Workspace` | 文件工具的工作区根目录，**不是安全边界**（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)） |
 
 写法就是一句判断句：`// 这就是 agent loop：教科书里那个 while (true)，外加一道步数闸门。` 不要写成「本系统的 XXX 模块负责……」。
 
@@ -61,7 +61,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 ## 3. 模块形状
 
 - **一个文件一个模块，一个改动理由**。两个不相关的原因同时要改这个文件，说明该拆了。
-- **接口尽可能小**：能私有就私有。`Workspace.resolve` 和 `truncate` 是私有的，所以测试打在 `read` 上，而不是打在工具函数上。
+- **接口尽可能小**：能私有就私有。`Workspace.resolve`、`assertInsideWorkspace`、`clip` 是私有的，所以测试打在 `read` 上，而不是打在工具函数上。
 - **深模块**：大量行为藏在小接口后面。判据是删除测试 —— 删掉它，复杂度是消失了（说明是空壳），还是散回调用方（说明它在干活）。
 - **两种实现才开接口**：`ChatClient` 有 `Llm` 和测试里的假客户端，所以是接口；`ToolRegistry`、`Workspace` 只有一种实现，直接是类。
 - **依赖方向单向**：`cli → {agent, tool-registry, workspace, llm} → types`。`agent` 不认识 `workspace`，`types` 是叶子。
@@ -74,7 +74,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 改名之前先做一次检索：这个概念在 OpenAI / Anthropic 的文档、主流 SDK（AI SDK、LangChain）、MCP 规范里叫什么？有共识就照抄，没共识再自己起。
 
 - 领域概念用 `GLOSSARY.md` 的词，不用 `_Avoid_` 列出的同义词。
-- 工具名跟 agent 生态走（`read` / `write` / `ls` / `shell`，将来是 `edit`），见 [ADR-0005](./docs/adr/0005-name-tools-after-the-ecosystem.md)。
+- 工具名跟 agent 生态走（`read` / `write` / `edit` / `glob` / `grep` / `ls` / `shell`），见 [ADR-0005](./docs/adr/0005-name-tools-after-the-ecosystem.md)。
 - 工厂用 `createX`（`createWorkspaceTools`）；缺了动词的函数名读起来像变量。
 - 文件名小写单词或连字符；类 PascalCase；函数与变量 camelCase；模块级常量 SCREAMING_SNAKE。
 - 动词开头表示行为（`resolve`、`truncate`、`execute`），名词表示数据（`Message`、`ToolRegistry`）。

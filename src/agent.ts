@@ -85,9 +85,14 @@ export class Agent {
     });
   }
 
-  /** 到目前为止的完整对话记录（数组副本，调用方拿不到内部引用）。 */
+  /**
+   * 到目前为止的完整对话记录。
+   *
+   * 返回深拷贝：数组复制挡不住 `snapshot[0].content = "..."`，只有把 Message 也复制了，
+   * 「只读」才是真的只读，而不是只挡住了 push/splice。
+   */
   get transcript(): readonly Message[] {
-    return [...this.messages];
+    return structuredClone(this.messages);
   }
 
   /**
