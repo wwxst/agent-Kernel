@@ -12,6 +12,8 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
+| `npm run eval` | 评测集：10 个真实小任务，记录成功率/步数/耗时；需要 `.env`，会花钱 |
+| `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会失败 |
 
 ## 代码地图
 

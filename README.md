@@ -136,6 +136,20 @@ npm run check       # typecheck + 全部测试
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错（不能变成空成功） |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状 |
 
+## 评测
+
+单元测试证明「代码没坏」，评测证明「agent 还能干活」。`eval/` 下放了 10 个真实小任务——修 bug、改名、加路由、抽重复、补文档、删死代码——用真实模型跑一遍，记录成功率、步数和耗时：
+
+```bash
+npm run eval            # 需要 .env，会真的调用模型、真的花钱
+npm run eval -- rename  # 只跑名字里带 rename 的
+npm run eval:check      # 自检：不调用模型，验证每个任务的初始状态确实会失败
+```
+
+首次跑（2026-11-04，DeepSeek-V4.1-Flash）：**9/10 通过，平均 7.7 步，合计约 91 秒**。失败的那条是检查写得太严（只认 `npm run test`，模型写的是 `` `test` ``），属于评测自身的 bug，已放宽；不是 agent 做错了。
+
+结果同时写进 `eval/results/`（不进 git）。评测**不进 CI**：它要真实 Key、会花钱、而且本身非确定性——CI 只跑确定性的 `npm run check`。任务怎么写、三条规矩是什么，见 [eval/README.md](./eval/README.md)。
+
 ## 刻意没做的事
 
 保持「内核」的边界，下面这些留给上层或后续迭代：

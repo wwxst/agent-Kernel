@@ -1,3 +1,6 @@
 node_modules/
 .env
 *.log
+
+# 评测结果：每次跑都会生成，留一份就够了，不进 git
+eval/results/
