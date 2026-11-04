@@ -188,4 +188,5 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 - [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、代码地图、测试放哪。
 - [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Kernel、Step、Transcript、ERROR text……）。
 - [docs/adr/](./docs/adr/)：已经定下、别再重新讨论的决定。
+- [docs/reports/](./docs/reports/)：阶段修复报告（问题、方案、测试、CI 与评测基线）。
 - `.agents/skills/`：装好的 agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。
