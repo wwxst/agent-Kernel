@@ -65,8 +65,12 @@ function runCli(env) {
 
 test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼容形状", async () => {
   await withWorkspace(async (workdir) => {
+    // 思考模式下模型会带回 reasoning_content：请求里带了 tools 时，它必须原样回传，否则 API 会 400。
+    const firstTurn = callTool("call_write", "write", { path: "hello.txt", content: "hello from agent\n" });
+    firstTurn.reasoning_content = "先写文件，再读回来确认。";
+
     const mock = await startMock([
-      callTool("call_write", "write", { path: "hello.txt", content: "hello from agent\n" }),
+      firstTurn,
       callTool("call_read", "read", { path: "hello.txt" }),
       finalReply("done: created hello.txt"),
     ]);
@@ -95,6 +99,8 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
         third.map((message) => message.role),
         ["system", "user", "assistant", "tool", "assistant", "tool"],
       );
+      // 思维链跟着 assistant 消息一起回传了（漏了它，真实 API 会 400）
+      assert.equal(third[2].reasoning_content, "先写文件，再读回来确认。");
       const readResult = third.filter((message) => message.role === "tool").at(-1);
       assert.equal(readResult.tool_call_id, "call_read");
       assert.match(readResult.content, /hello from agent/);
