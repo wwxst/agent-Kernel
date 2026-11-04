@@ -149,3 +149,10 @@ test("transcript 返回深拷贝：改消息内容和嵌套的 tool_calls 都不
   assert.notEqual(after[2].content, "tampered", "改 Message 不该改到内部记录");
   assert.equal(after[2].tool_calls[0].function.name, "echo", "改嵌套的 tool_calls 也不该改到内部记录");
 });
+
+test("空回复不算完成：模型什么都没说时必须报错", async () => {
+  const chat = createScriptedChat([finalReply("   ")]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+
+  await assert.rejects(() => agent.run("task"), /model returned an empty final answer/);
+});

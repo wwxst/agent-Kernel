@@ -122,6 +122,11 @@ export class Agent {
       const calls = response.tool_calls ?? [];
       if (calls.length === 0) {
         // 4) 没有工具调用 = 模型认为可以交卷了，本轮结束。
+        //    但「交卷」得真有东西：空回复不是成功，是模型没说话 ——
+        //    内容被过滤、生成被截断、服务端半截响应，都会走到这一条。
+        if ((response.content ?? "").trim() === "") {
+          throw new Error("model returned an empty final answer");
+        }
         return response;
       }
 

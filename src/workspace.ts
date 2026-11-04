@@ -46,6 +46,14 @@ const MAX_RESULTS = 200;
 /** grep 单行最多展示多少字符。 */
 const MAX_LINE_CHARS = 200;
 
+/**
+ * 一次 glob / grep 最多访问多少个目录项（文件和目录都算）。
+ *
+ * 限制「返回多少条」不等于限制「扫了多少东西」：在小仓库里搜一个不存在的字符串，
+ * 一样会走完整棵树。大仓库里这条预算保证搜索会在有限步内停手，并明确告诉模型结果不完整。
+ */
+const MAX_SCAN_ENTRIES = 20_000;
+
 /** 搜内容时直接跳过的目录：不是代码，搜起来慢，结果全是噪音。 */
 const SKIP_DIRS = new Set([".git", "node_modules"]);
 
@@ -64,6 +72,8 @@ export interface WorkspaceOptions {
   root: string;
   /** 单条 shell 命令的超时，默认 120 秒。 */
   timeoutMs?: number;
+  /** 单次 glob / grep 的扫描预算（目录项个数），默认 20000。测试会传一个小值。 */
+  scanLimit?: number;
 }
 
 /**
@@ -77,12 +87,15 @@ export class Workspace {
 
   private readonly timeoutMs: number;
 
+  private readonly scanLimit: number;
+
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
 
-  constructor({ root, timeoutMs = DEFAULT_TIMEOUT_MS }: WorkspaceOptions) {
+  constructor({ root, timeoutMs = DEFAULT_TIMEOUT_MS, scanLimit = MAX_SCAN_ENTRIES }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
+    this.scanLimit = scanLimit;
   }
 
   /**
@@ -197,18 +210,20 @@ export class Workspace {
     if (path.isAbsolute(pattern)) throw new Error(`pattern must be relative to the workspace root: ${pattern}`);
 
     const matcher = globToRegExp(toPosix(pattern));
+    const budget = { remaining: this.scanLimit };
     const matches: string[] = [];
-    for await (const file of walkFiles(this.root)) {
+    for await (const file of walkFiles(this.root, budget)) {
       const relative = toPosix(path.relative(this.root, file));
       if (!matcher.test(relative)) continue;
       matches.push(relative);
       if (matches.length >= MAX_RESULTS) break;
     }
 
-    if (matches.length === 0) return "(no matches)";
+    const tails =
+      (matches.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") + scanTail(budget, this.scanLimit);
+    if (matches.length === 0) return `(no matches)${tails}`;
     matches.sort();
-    const note = matches.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
-    return this.clip(matches.join("\n"), note);
+    return this.clip(matches.join("\n"), tails);
   }
 
   /**
@@ -218,6 +233,9 @@ export class Workspace {
    * 超过 MAX_GREP_FILE_BYTES 的文件不读，并在结果里说明跳过了几个 ——
    * 否则模型会以为「没搜到」等于「不存在」。
    * 读不了的文件（权限、坏链接）也跳过：一次搜索不该被一个文件打断。
+   *
+   * 已知边界：正则跑在主线程，遇到灾难性回溯会卡住整个 agent，
+   * 目前只靠「单文件 1 MB + 扫描预算」限制输入规模，没有中断能力（要中断得放进 worker）。
    */
   async grep(pattern: string, requested = "."): Promise<string> {
     const start = this.resolve(requested);
@@ -230,7 +248,8 @@ export class Workspace {
     let unreadable = 0;
     // 一次 grep 只分配一块上限大小的读缓冲，所有文件复用 —— 不按文件数乘内存。
     const buffer = Buffer.alloc(MAX_GREP_FILE_BYTES + 1);
-    for await (const file of walkFiles(start)) {
+    const budget = { remaining: this.scanLimit };
+    for await (const file of walkFiles(start, budget)) {
       if (hits.length >= MAX_RESULTS) break;
 
       let content: string;
@@ -261,11 +280,12 @@ export class Workspace {
       }
     }
 
-    // 部分失败要报告：截断、跳过、读不了一律写进尾注，由 clip 保住。
+    // 部分失败要报告：截断、跳过、读不了、扫描预算用尽，一律写进尾注，由 clip 保住。
     const tails =
       (hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") +
       (skippedLarge > 0 ? `\n… (skipped ${skippedLarge} files over 1 MB)` : "") +
-      (unreadable > 0 ? `\n… (${unreadable} files could not be read)` : "");
+      (unreadable > 0 ? `\n… (${unreadable} files could not be read)` : "") +
+      scanTail(budget, this.scanLimit);
 
     if (hits.length === 0) return `(no matches)${tails}`;
     // 先按文件、再按行号排：同一份文件里的命中保持阅读顺序。
@@ -513,17 +533,30 @@ function globToRegExp(pattern: string): RegExp {
  *
  * 跳过 SKIP_DIRS，也跳过符号链接（`isFile` 对链接返回 false）：
  * 链接可能指向工作区之外，顺着它走就等于把路径守卫绕开了。
+ *
+ * budget 是调用方给的扫描预算：每访问一个目录项就减一，减到 0 立刻收手。
+ * 预算耗尽时调用方用 scanTail() 告诉模型「结果不完整」。
  */
-async function* walkFiles(dir: string): AsyncGenerator<string> {
+async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGenerator<string> {
+  if (budget.remaining <= 0) return;
+
   for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (budget.remaining <= 0) return;
+    budget.remaining--;
+
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (SKIP_DIRS.has(entry.name)) continue;
-      yield* walkFiles(full);
+      yield* walkFiles(full, budget);
     } else if (entry.isFile()) {
       yield full;
     }
   }
+}
+
+/** 扫描预算用尽时的尾注；说清楚「结果可能不完整」，别让模型以为已经搜遍全仓。 */
+function scanTail(budget: { remaining: number }, limit: number): string {
+  return budget.remaining <= 0 ? `\n… (stopped after ${limit} entries scanned)` : "";
 }
 
 /**
