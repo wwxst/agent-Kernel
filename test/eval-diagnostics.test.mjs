@@ -9,7 +9,7 @@ import { Agent } from "../src/agent.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 import { createEvalDiagnostics } from "../eval/diagnostics.mjs";
 
-test("eval diagnostics records request usage, tool results, and per-tool file changes", async () => {
+test("诊断：记录每次请求的 usage、工具结果和逐工具的文件变化", async () => {
   const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
   let request = 0;
   const llm = {
@@ -101,7 +101,7 @@ test("eval diagnostics records request usage, tool results, and per-tool file ch
   }
 });
 
-test("eval diagnostics redacts secret-looking arguments and summarizes large strings", async () => {
+test("诊断：脱敏像密钥的参数，并摘要超长字符串", async () => {
   const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
   const secret = "do-not-store-this-key";
   const largeContent = "x".repeat(700);
@@ -153,7 +153,7 @@ test("eval diagnostics redacts secret-looking arguments and summarizes large str
 });
 
 
-test("cross-day runner help is available without switching commits or contacting the model", () => {
+test("跨天 runner：--help 不需要切换提交，也不联系模型", () => {
   const runner = fileURLToPath(new URL("../eval/cross-day.mjs", import.meta.url));
   const result = spawnSync(process.execPath, [runner, "--help"], {
     cwd: process.cwd(),

@@ -668,7 +668,7 @@ function globToRegExp(pattern: string): RegExp {
 }
 
 /**
- * 深度遍历目录，产出文件路径（grep、glob、list 共用）。
+ * 深度遍历目录，产出文件路径（grep、glob 共用；list 走自己的 opendir 预算循环）。
  *
  * 用 `opendir` 逐项异步迭代，而不是 `readdir` 一次性把整层目录读进数组：
  * 预算要限制的是「真的读了多少目录项」，而 readdir 在预算生效之前就已经把目录读完了。
