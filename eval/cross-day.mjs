@@ -29,6 +29,14 @@ const ROUNDS = 3;
 const JOBS = 4;
 const TASK_COUNT = 20;
 
+let interrupted = false;
+const onInterrupt = () => {
+  interrupted = true;
+  console.error("[eval:cross-day] interrupt received; finishing the current round before restoring the original branch");
+};
+process.on("SIGINT", onInterrupt);
+process.on("SIGTERM", onInterrupt);
+
 function localDate() {
   const now = new Date();
   const part = (value) => String(value).padStart(2, "0");
@@ -251,6 +259,7 @@ async function main() {
 
     let runnerFailed = false;
     for (let round = 1; round <= ROUNDS; round += 1) {
+      if (interrupted) break;
       console.log("\n=== " + options.date + " round " + round + "/" + ROUNDS + " ===");
       let record;
       try {
@@ -297,7 +306,7 @@ async function main() {
         "utf8",
       );
       // A rejected round may have left workers in flight; do not start another round.
-      if (runnerFailed) break;
+      if (runnerFailed || interrupted) break;
     }
 
     const summary = buildDailySummary({ date: options.date, records, model, baseUrl, taskNames });
@@ -307,7 +316,8 @@ async function main() {
       " full rounds · median " + summary.medians.tokens + " tokens");
     console.log("archived: eval/baselines/cross-day/" + options.date);
 
-    if (records.length !== ROUNDS || records.some((record) => record.ok !== true)) process.exitCode = 1;
+    if (interrupted) process.exitCode = 130;
+    else if (records.length !== ROUNDS || records.some((record) => record.ok !== true)) process.exitCode = 1;
   } finally {
     if (checkedOutBaseline) {
       if (originalBranch) {
@@ -324,4 +334,7 @@ try {
 } catch (error) {
   console.error("[eval:cross-day] " + (error instanceof Error ? error.message : String(error)));
   process.exitCode = 1;
+} finally {
+  process.off("SIGINT", onInterrupt);
+  process.off("SIGTERM", onInterrupt);
 }
