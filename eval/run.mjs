@@ -8,7 +8,9 @@
  * 用法：
  *   npm run eval                     # 跑全部任务
  *   npm run eval -- rename           # 只跑名字里带 rename 的
- *   node --env-file-if-exists=.env eval/run.mjs --keep   # 保留失败的工作区
+ *   npm run eval -- --trace --keep 13-callback-to-promise  # 保留单个任务并记录请求/工具轨迹
+ *
+ * 注意：--keep 会保留所有被选中的任务工作区，不只保留失败任务；请和任务过滤器一起用。
  *
  * 需要真实 API：BASE_URL / API_KEY / MODEL 来自 .env。
  * 结果同时写进 eval/results/<时间戳>.json（不进 git）。
