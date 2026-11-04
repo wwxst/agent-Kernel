@@ -46,6 +46,13 @@ export interface Message {
   tool_calls?: ToolCall[];
   /** 只有 tool 消息会带：这条结果在回应哪一次调用。 */
   tool_call_id?: string;
+  /**
+   * 只有 assistant 消息可能带：思考模式下的思维链（DeepSeek 的 `reasoning_content`）。
+   *
+   * 硬约束：请求里带了 `tools` 时，它必须原样回传给 API，缺了就 400。
+   * 所以整条消息原样入栈、原样发回 —— 不要为了「精简字段」把它过滤掉。
+   */
+  reasoning_content?: string;
 }
 
 /**
