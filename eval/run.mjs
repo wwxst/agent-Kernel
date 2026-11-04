@@ -28,7 +28,19 @@ const resultsDir = path.join(here, "results");
 
 const args = process.argv.slice(2);
 const keep = args.includes("--keep");
-const filters = args.filter((arg) => !arg.startsWith("-"));
+const filters = [];
+let jobs = 4;
+
+for (let index = 0; index < args.length; index += 1) {
+  const arg = args[index];
+  if (arg === "--keep") continue;
+  if (arg === "--jobs") {
+    jobs = Math.max(1, Number(args[(index += 1)]) || jobs);
+    continue;
+  }
+  if (arg.startsWith("-")) continue;
+  filters.push(arg);
+}
 
 // 一个写坏的 check 不该把整轮评测带走：检查里若有没 await 的 promise，
 // 它的 rejection 会以未处理事件的形式逃出 try/catch。记一笔，继续跑。
@@ -59,14 +71,31 @@ async function main() {
   }
 
   console.log(`model: ${model}`);
-  console.log(`tasks: ${names.length}\n`);
+  console.log(`tasks: ${names.length}  并发: ${Math.min(jobs, names.length)}\n`);
 
-  const results = [];
-  for (const name of names) {
-    results.push(await runTask(name, { baseUrl, apiKey, model }));
-  }
+  // 任务之间互不依赖，串行只是浪费等待模型的时间。
+  const startedAt = Date.now();
+  const results = await runPool(names, jobs, (name) => runTask(name, { baseUrl, apiKey, model }));
+  const elapsed = (Date.now() - startedAt) / 1000;
 
-  report(results);
+  report(results, elapsed);
+}
+
+/** 简单的并发池：同一时刻最多 limit 个任务在跑，结果按原顺序返回。 */
+async function runPool(items, limit, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(items[index]);
+    }
+  });
+
+  await Promise.all(runners);
+  return results;
 }
 
 /** 跑一个任务：复制夹具 → 真跑一遍 → 跑检查 → 清理。 */
@@ -135,19 +164,22 @@ function describe(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function report(results) {
+function report(results, elapsed) {
   const passed = results.filter((result) => result.ok).length;
   const steps = results.reduce((total, result) => total + result.steps, 0);
-  const seconds = results.reduce((total, result) => total + result.seconds, 0);
+  const busy = results.reduce((total, result) => total + result.seconds, 0);
 
-  console.log(`\n${passed}/${results.length} 通过 · 平均 ${(steps / results.length).toFixed(1)} 步 · 合计 ${seconds.toFixed(1)}s`);
+  // 并发跑时「任务耗时之和」会大于墙钟，两个都写出来，避免误读。
+  console.log(
+    `\n${passed}/${results.length} 通过 · 平均 ${(steps / results.length).toFixed(1)} 步 · 墙钟 ${elapsed.toFixed(1)}s（任务耗时合计 ${busy.toFixed(1)}s）`,
+  );
   if (passed < results.length) {
     console.log("失败的任务：");
     for (const result of results.filter((entry) => !entry.ok)) console.log(`  - ${result.name}: ${result.error ?? "?"}`);
   }
 
   // 落一份结果，方便对比两次改动（评测的价值在趋势，不在单次分数）。
-  const record = { at: new Date().toISOString(), passed, total: results.length, results };
+  const record = { at: new Date().toISOString(), passed, total: results.length, elapsed: Number(elapsed.toFixed(1)), results };
   mkdir(resultsDir, { recursive: true })
     .then(() => writeFile(path.join(resultsDir, `${Date.now()}.json`), JSON.stringify(record, null, 2), "utf8"))
     .catch((error) => console.error(`could not write results: ${describe(error)}`));
