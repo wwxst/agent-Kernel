@@ -64,9 +64,21 @@ const averageRequests = recent.map((run) =>
 // 老记录没有 elapsed（串行跑，任务耗时之和就等于墙钟），新记录优先用墙钟。
 const totalSeconds = recent.map((run) => run.elapsed ?? run.results.reduce((total, task) => total + task.seconds, 0));
 
+// 按轮取中位数会把「3 轮里 1 轮 19/20」压成 100%：中位数只描述典型轮次，
+// 不描述总通过量。两个口径都打印，避免把典型轮次误读成整体成功率。
+const aggregatePassed = recent.reduce((total, run) => total + run.passed, 0);
+const aggregateTotal = recent.reduce((total, run) => total + run.total, 0);
+const models = [...new Set(recent.map((run) => run.model).filter((model) => model !== undefined))];
+const commits = [...new Set(recent.map((run) => (run.commit ?? "unknown").slice(0, 7)))];
 console.log(
-  `\n中位数：通过率 ${median(passRates).toFixed(0)}% · 平均 ${median(averageRequests).toFixed(1)} 次请求 · ` +
+  `\n模型：${models.length > 0 ? models.join(", ") : "unknown"} · 提交：${commits.join(", ")}`,
+);
+console.log(
+  `按轮中位数：通过率 ${median(passRates).toFixed(0)}% · 平均 ${median(averageRequests).toFixed(1)} 次请求 · ` +
     `合计 ${Math.round(median(totalSeconds))}s`,
+);
+console.log(
+  `合计：${aggregatePassed}/${aggregateTotal} 个任务（${((aggregatePassed / aggregateTotal) * 100).toFixed(1)}%）`,
 );
 
 // 成本只在有记录时汇总：没有 usage 的轮次混在一起算中位数会骗人。

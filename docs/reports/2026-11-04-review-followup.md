@@ -4,6 +4,7 @@
 - 本轮 HEAD：`e86cde4`（代码修复 `7829faf` + 评测任务修正 `e86cde4`）
 - 范围：只处理复核提出的前三项 + 记录第四项；不引入新架构、不进入下一阶段功能
 - 多轮基线：[`eval/baseline.md`](../../eval/baseline.md)
+- 后续 6 轮稳定性验证与 CLI 失败路径 usage：见 [稳定性报告](./2026-11-04-stability-6rounds.md)
 - CI：`7829faf` [run 41795501081](https://github.com/wwxst/agent-Kernel/actions/runs/41795501081)、`e86cde4` [run 41795793064](https://github.com/wwxst/agent-Kernel/actions/runs/41795793064)（Linux + Windows 全绿）
 
 ## 1. 四项处理结果
