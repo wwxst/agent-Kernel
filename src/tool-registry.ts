@@ -9,12 +9,8 @@
  *
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
+import { describeError } from "./errors.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
-
-/** 把任意抛出物转成一行人类可读的文本。 */
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /**
  * 按工具自己的 JSON Schema 校验参数（只覆盖工具定义里真正用到的子集）。
@@ -84,7 +80,7 @@ export class ToolRegistry {
       args = parsed as Record<string, unknown>;
     } catch (error) {
       // 中文对照：ERROR: 参数不是合法 JSON：{原因}
-      return `ERROR: invalid JSON arguments: ${errorMessage(error)}`;
+      return `ERROR: invalid JSON arguments: ${describeError(error)}`;
     }
 
     // 结构不对就到此为止：让模型自己补参数，别让它「带着空值」去改文件。
@@ -98,7 +94,7 @@ export class ToolRegistry {
       return await tool.run(args);
     } catch (error) {
       // 中文对照：ERROR: {原因}
-      return `ERROR: ${errorMessage(error)}`;
+      return `ERROR: ${describeError(error)}`;
     }
   }
 }

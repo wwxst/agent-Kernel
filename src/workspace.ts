@@ -227,6 +227,7 @@ export class Workspace {
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
+    let unreadable = 0;
     // 一次 grep 只分配一块上限大小的读缓冲，所有文件复用 —— 不按文件数乘内存。
     const buffer = Buffer.alloc(MAX_GREP_FILE_BYTES + 1);
     for await (const file of walkFiles(start)) {
@@ -242,6 +243,8 @@ export class Workspace {
         }
         content = read.text;
       } catch {
+        // 读不了也要记账：丢掉这个文件可以，但「结果可能不完整」必须告诉模型。
+        unreadable++;
         continue;
       }
       if (content.includes("\u0000")) continue;
@@ -258,13 +261,17 @@ export class Workspace {
       }
     }
 
-    if (hits.length === 0) return skippedLarge > 0 ? `(no matches; skipped ${skippedLarge} files over 1 MB)` : "(no matches)";
+    // 部分失败要报告：截断、跳过、读不了一律写进尾注，由 clip 保住。
+    const tails =
+      (hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") +
+      (skippedLarge > 0 ? `\n… (skipped ${skippedLarge} files over 1 MB)` : "") +
+      (unreadable > 0 ? `\n… (${unreadable} files could not be read)` : "");
+
+    if (hits.length === 0) return `(no matches)${tails}`;
     // 先按文件、再按行号排：同一份文件里的命中保持阅读顺序。
     hits.sort((a, b) => (a.file === b.file ? a.line - b.line : a.file < b.file ? -1 : 1));
 
-    const stopped = hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "";
-    const skipped = skippedLarge > 0 ? `\n… (skipped ${skippedLarge} files over 1 MB)` : "";
-    return this.clip(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n"), stopped + skipped);
+    return this.clip(hits.map((hit) => `${hit.file}:${hit.line}: ${hit.text}`).join("\n"), tails);
   }
 
   /**

@@ -123,7 +123,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-61 个用例，分四层，都不需要 API Key、不联网：
+65 个用例，分四层，都不需要 API Key、不联网（其中 1 条验证「读不了的文件要报出来」，只在 POSIX 上跑）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -144,7 +144,7 @@ npm run check       # typecheck + 全部测试
 
 ## 文档与技能
 
-- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、教学式注释、模块形状、命名、错误处理、测试）。
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、教学式注释、模块形状、命名、错误处理、防御性编程、测试）。
 - [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、代码地图、测试放哪。
 - [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Kernel、Step、Transcript、ERROR text……）。
 - [docs/adr/](./docs/adr/)：已经定下、别再重新讨论的决定。
