@@ -29,3 +29,26 @@ jobs:
       # typecheck + 全部用例；不需要 API Key，不联网。
       - name: Run checks
         run: npm run check
+
+  # 和上面的 job 互补，不是重复：
+  # Linux 跑 POSIX 权限（chmod）与进程组清理；Windows 跑反斜杠路径语义与 taskkill 进程树。
+  check-windows:
+    name: Typecheck and Tests (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: npm run check
