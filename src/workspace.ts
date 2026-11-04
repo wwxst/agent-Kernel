@@ -405,7 +405,8 @@ export class Workspace {
       };
 
       const stop = (reason: string) => {
-        if (stopped !== undefined) return;
+        // 进程已经收尾之后不再补一刀：Windows 上 PID 可能已经被复用。
+        if (settled || stopped !== undefined) return;
         stopped = reason;
         cleanup = terminateTree(child);
       };
