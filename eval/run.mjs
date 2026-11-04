@@ -30,6 +30,12 @@ const args = process.argv.slice(2);
 const keep = args.includes("--keep");
 const filters = args.filter((arg) => !arg.startsWith("-"));
 
+// 一个写坏的 check 不该把整轮评测带走：检查里若有没 await 的 promise，
+// 它的 rejection 会以未处理事件的形式逃出 try/catch。记一笔，继续跑。
+process.on("unhandledRejection", (reason) => {
+  console.error(`  [warn] unhandled rejection: ${describe(reason)}`);
+});
+
 const apiKey = process.env.API_KEY ?? process.env.OPENAI_API_KEY ?? "";
 if (!apiKey) {
   console.error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
