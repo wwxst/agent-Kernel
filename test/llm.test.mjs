@@ -59,7 +59,7 @@ async function expectReject(message, pattern, finishReason = "stop") {
 }
 
 test("chat：合法响应被归一化，只保留协议字段", async () => {
-  const message = await chatWith({
+  const { message } = await chatWith({
     role: "assistant",
     content: null,
     reasoning_content: "先看文件。",
@@ -80,6 +80,61 @@ test("chat：合法响应被归一化，只保留协议字段", async () => {
     tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }],
     reasoning_content: "先看文件。",
   });
+});
+
+test("chat：保留 usage，字段原样归一化", async () => {
+  const payload = {
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, cache_hit_tokens: 0 },
+  };
+  const server = await respondWith(payload);
+  try {
+    const result = await clientFor(server.url).chat([], []);
+    assert.deepEqual(result.usage, { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 });
+  } finally {
+    await server.close();
+  }
+});
+
+test("chat：没有 usage 时是未知，不是 0", async () => {
+  const { usage } = await chatWith({ role: "assistant", content: "ok" });
+
+  assert.equal(usage, undefined);
+});
+
+test("chat：usage 字段类型不对必须报错（不能悄悄当成未知）", async () => {
+  const payload = {
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: { prompt_tokens: 1.5, completion_tokens: 2, total_tokens: 3 },
+  };
+  const server = await respondWith(payload);
+  try {
+    await assert.rejects(
+      () => clientFor(server.url).chat([], []),
+      /usage\.prompt_tokens must be a non-negative integer/,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("chat：请求体带上单次输出上限 max_tokens", async () => {
+  const server = await respondWith({
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+  });
+  try {
+    const client = new Llm({
+      baseUrl: server.url,
+      apiKey: "test-key",
+      model: "mock-model",
+      maxOutputTokens: 1234,
+    });
+    await client.chat([], []);
+
+    assert.equal(server.requests[0].max_tokens, 1234);
+  } finally {
+    await server.close();
+  }
 });
 
 test("chat：message 是空对象时必须报错，不能变成空成功", async () => {

@@ -8,7 +8,13 @@ const run = promisify(execFile);
 
 export default async function check(root) {
   const testFile = path.join(root, "slug.test.mjs");
-  const source = await readFile(testFile, "utf8");
+  let source;
+  try {
+    source = await readFile(testFile, "utf8");
+  } catch {
+    // 任务要求新建测试文件：文件不存在是「还没做」，用断言表达。
+    assert.fail("slug.test.mjs 不存在");
+  }
 
   assert.match(source, /node:test/, "测试要用 node:test");
   assert.equal((source.match(/test\(/g) ?? []).length >= 3, true, "至少三个用例");

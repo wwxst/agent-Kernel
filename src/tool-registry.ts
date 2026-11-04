@@ -12,6 +12,63 @@
 import { describeError } from "./errors.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
 
+/** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
+const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 注册时的 Schema 体检：只接受「这个注册表真的会校验」的形状。
+ *
+ * 为什么必须在注册时拒绝，而不是等到执行时才发现：一个声明 `array` / `object`
+ * 参数的工具会顺利通过 validateArguments（因为校验器不认识这个类型，直接跳过），
+ * 于是它「看起来被校验过」—— 这是最危险的一种安全假象。宁可在装配阶段就报错。
+ */
+function assertSupportedSchema(tool: Tool): void {
+  const schema: unknown = tool.parameters;
+  if (!isRecord(schema)) {
+    throw new Error(`tool "${tool.name}": parameters must be a JSON Schema object`);
+  }
+  if (schema.type !== "object") {
+    throw new Error(`tool "${tool.name}": parameters.type must be "object"`);
+  }
+
+  const properties = schema.properties ?? {};
+  if (!isRecord(properties)) {
+    throw new Error(`tool "${tool.name}": parameters.properties must be an object`);
+  }
+
+  for (const [key, property] of Object.entries(properties)) {
+    if (!isRecord(property) || typeof property.type !== "string") {
+      throw new Error(`tool "${tool.name}": parameter "${key}" must declare a type`);
+    }
+    if (!SUPPORTED_PARAMETER_TYPES.has(property.type)) {
+      throw new Error(
+        `tool "${tool.name}": parameter "${key}" has unsupported type "${property.type}"; ` +
+          `supported types: ${[...SUPPORTED_PARAMETER_TYPES].join(", ")}`,
+      );
+    }
+  }
+
+  const required = schema.required;
+  if (required === undefined) return;
+  if (!Array.isArray(required)) {
+    throw new Error(`tool "${tool.name}": parameters.required must be an array of strings`);
+  }
+  for (const key of required) {
+    if (typeof key !== "string") {
+      throw new Error(`tool "${tool.name}": parameters.required must contain only strings`);
+    }
+    if (!Object.hasOwn(properties, key)) {
+      throw new Error(
+        `tool "${tool.name}": required parameter "${key}" is not declared in parameters.properties`,
+      );
+    }
+  }
+}
+
 /**
  * 按工具自己的 JSON Schema 校验参数（只覆盖工具定义里真正用到的子集）。
  *
@@ -21,7 +78,8 @@ import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
  *
  * 覆盖范围刻意很小：只校验 `required` + `string` / `number` / `boolean` 三种类型。
  * 七个内置工具的参数全是字符串，够用；嵌套对象、数组、枚举都不看。
- * 加一个用复杂 schema 的工具之前，先补这里的校验 —— 否则它会「看起来校验过」。
+ * 但「不看」不等于「放过」：声明了校验器不认识的类型，注册时就会被 assertSupportedSchema 拒绝，
+ * 所以不会出现「看起来校验过、其实完全没查」的工具。
  */
 function validateArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
   const schema = tool.parameters as {
@@ -38,7 +96,9 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
     const expected = schema.properties?.[key]?.type;
     if (expected === undefined) continue; // 没声明的字段不管，交给工具自己判断
     if (expected === "string" && typeof value !== "string") return `argument "${key}" must be a string`;
-    if (expected === "number" && typeof value !== "number") return `argument "${key}" must be a number`;
+    if (expected === "number" && (typeof value !== "number" || !Number.isFinite(value))) {
+      return `argument "${key}" must be a finite number`;
+    }
     if (expected === "boolean" && typeof value !== "boolean") return `argument "${key}" must be a boolean`;
   }
 
@@ -48,7 +108,19 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
 
+  /**
+   * 装配时就把不合法的工具挡掉：重名会让「按名字找工具」有歧义，
+   * 不支持的 Schema 类型会让参数校验静默失效。两者都不该等到模型调用时才暴露。
+   */
   constructor(tools: readonly Tool[]) {
+    const seen = new Set<string>();
+    for (const tool of tools) {
+      if (seen.has(tool.name)) {
+        throw new Error(`duplicate tool name "${tool.name}"`);
+      }
+      seen.add(tool.name);
+      assertSupportedSchema(tool);
+    }
     this.tools = tools;
   }
 

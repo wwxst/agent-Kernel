@@ -90,10 +90,15 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       const first = mock.requests[0];
       assert.equal(first.messages[0].role, "system");
       assert.equal(first.messages[1].role, "user");
+      assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
         ["read", "write", "edit", "glob", "grep", "ls", "shell"],
       );
+
+      // mock 不回 usage：成本摘要必须写 at least，不能把「已统计到 0」说成「只花了 0」。
+      assert.match(run.stdout, /\[usage\] requests=3 tool_calls=2 tokens=at least 0/);
+      assert.match(run.stdout, /3 response\(s\) without usage/);
 
       // 第三次请求：assistant 与 tool 严格交替，结果靠 tool_call_id 配对
       const third = mock.requests[2].messages;

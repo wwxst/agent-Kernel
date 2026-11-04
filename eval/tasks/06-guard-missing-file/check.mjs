@@ -6,7 +6,14 @@ import { pathToFileURL } from "node:url";
 export default async function check(root) {
   const { load } = await import(pathToFileURL(path.join(root, "load.mjs")).href);
 
-  assert.equal(load(path.join(root, "does-not-exist.txt")), null, "文件不存在时应该返回 null");
+  let missing;
+  try {
+    missing = load(path.join(root, "does-not-exist.txt"));
+  } catch (error) {
+    // 初始实现会直接把 ENOENT 抛出来；这是任务要修的 bug，用断言说清楚。
+    assert.fail(`文件不存在时 load 抛错了：${error.message}`);
+  }
+  assert.equal(missing, null, "文件不存在时应该返回 null");
 
   const existing = path.join(root, "config.json");
   await writeFile(existing, '{"ok":true}', "utf8");
