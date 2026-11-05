@@ -1,0 +1,351 @@
+{
+  "date": "2026-11-05",
+  "ref": "stability-2026-11-04",
+  "commit": "4edd0e4ab004e184d280a95c17e41690fd58c644",
+  "model": "hy3",
+  "rounds": 3,
+  "aggregate": {
+    "passed": 52,
+    "total": 60
+  },
+  "medians": {
+    "requests": 98,
+    "toolCalls": 98,
+    "tokens": 132352,
+    "elapsed": 75
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-05T01:49:03.329Z",
+      "passed": 12,
+      "total": 20,
+      "requests": 65,
+      "toolCalls": 63,
+      "tokens": 75108,
+      "elapsed": 55.3,
+      "failures": [
+        {
+          "name": "13-callback-to-promise",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"upstream rate limit reached for this model; retry in 59s - {\\\"code\\\":14003,\\\"msg\\\":\\\"too many requests\\\",\\\"requestId\\\":\\\"01a1a964dbc47b6fbc48f9d3aeb1ff3a\\\",\\\"displayMsg\\\":{\\\"en\\\":\\\"Model busy. Please switch models or retry later\\\",\\\"zh\\\":\\\"模型繁忙，请换模型或稍后重试\\\",\\\"zh-hant\\\":\\\"模型繁忙，請更換模型或 (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "14-fix-sort-order",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "15-merge-defaults",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "16-handle-bad-json",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "17-write-missing-test",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "18-remove-debug-logs",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "19-banned-admin-bug",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        },
+        {
+          "name": "20-fix-email-regex",
+          "failure": "task",
+          "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "at": "2026-11-05T01:50:31.711Z",
+      "passed": 20,
+      "total": 20,
+      "requests": 102,
+      "toolCalls": 99,
+      "tokens": 139563,
+      "elapsed": 88.2,
+      "failures": []
+    },
+    {
+      "round": 3,
+      "at": "2026-11-05T01:51:46.877Z",
+      "passed": 20,
+      "total": 20,
+      "requests": 98,
+      "toolCalls": 98,
+      "tokens": 132352,
+      "elapsed": 75,
+      "failures": []
+    }
+  ],
+  "perTask": [
+    {
+      "name": "01-add-health-route",
+      "tokens": [
+        3668,
+        3572,
+        4715
+      ],
+      "min": 3572,
+      "max": 4715,
+      "spread": 1.32,
+      "failures": []
+    },
+    {
+      "name": "02-fix-failing-test",
+      "tokens": [
+        5174,
+        5189,
+        5189
+      ],
+      "min": 5174,
+      "max": 5189,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "03-rename-function",
+      "tokens": [
+        6762,
+        6848,
+        6911
+      ],
+      "min": 6762,
+      "max": 6911,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "04-create-doc",
+      "tokens": [
+        3678,
+        4964,
+        4946
+      ],
+      "min": 3678,
+      "max": 4964,
+      "spread": 1.35,
+      "failures": []
+    },
+    {
+      "name": "05-extract-constant",
+      "tokens": [
+        3649,
+        3669,
+        3644
+      ],
+      "min": 3644,
+      "max": 3669,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "06-guard-missing-file",
+      "tokens": [
+        9700,
+        4645,
+        4752
+      ],
+      "min": 4645,
+      "max": 9700,
+      "spread": 2.09,
+      "failures": []
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "tokens": [
+        3456,
+        8884,
+        9532
+      ],
+      "min": 3456,
+      "max": 9532,
+      "spread": 2.76,
+      "failures": []
+    },
+    {
+      "name": "08-extract-duplication",
+      "tokens": [
+        5170,
+        5043,
+        5067
+      ],
+      "min": 5043,
+      "max": 5170,
+      "spread": 1.03,
+      "failures": []
+    },
+    {
+      "name": "09-update-readme",
+      "tokens": [
+        3584,
+        3592,
+        3594
+      ],
+      "min": 3584,
+      "max": 3594,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "10-delete-dead-code",
+      "tokens": [
+        8371,
+        7987,
+        9554
+      ],
+      "min": 7987,
+      "max": 9554,
+      "spread": 1.2,
+      "failures": []
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "tokens": [
+        15105,
+        6207,
+        15392
+      ],
+      "min": 6207,
+      "max": 15392,
+      "spread": 2.48,
+      "failures": []
+    },
+    {
+      "name": "12-add-input-validation",
+      "tokens": [
+        4591,
+        4584,
+        4597
+      ],
+      "min": 4584,
+      "max": 4597,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "13-callback-to-promise",
+      "tokens": [
+        2200,
+        22160,
+        20625
+      ],
+      "min": 2200,
+      "max": 22160,
+      "spread": 10.07,
+      "failures": [
+        "13-callback-to-promise"
+      ]
+    },
+    {
+      "name": "14-fix-sort-order",
+      "tokens": [
+        0,
+        4516,
+        4526
+      ],
+      "min": 0,
+      "max": 4526,
+      "spread": null,
+      "failures": [
+        "14-fix-sort-order"
+      ]
+    },
+    {
+      "name": "15-merge-defaults",
+      "tokens": [
+        0,
+        11876,
+        4595
+      ],
+      "min": 0,
+      "max": 11876,
+      "spread": null,
+      "failures": [
+        "15-merge-defaults"
+      ]
+    },
+    {
+      "name": "16-handle-bad-json",
+      "tokens": [
+        0,
+        4660,
+        4664
+      ],
+      "min": 0,
+      "max": 4664,
+      "spread": null,
+      "failures": [
+        "16-handle-bad-json"
+      ]
+    },
+    {
+      "name": "17-write-missing-test",
+      "tokens": [
+        0,
+        6129,
+        5063
+      ],
+      "min": 0,
+      "max": 6129,
+      "spread": null,
+      "failures": [
+        "17-write-missing-test"
+      ]
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "tokens": [
+        0,
+        3509,
+        4472
+      ],
+      "min": 0,
+      "max": 4472,
+      "spread": null,
+      "failures": [
+        "18-remove-debug-logs"
+      ]
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "tokens": [
+        0,
+        4976,
+        5289
+      ],
+      "min": 0,
+      "max": 5289,
+      "spread": null,
+      "failures": [
+        "19-banned-admin-bug"
+      ]
+    },
+    {
+      "name": "20-fix-email-regex",
+      "tokens": [
+        0,
+        16553,
+        5225
+      ],
+      "min": 0,
+      "max": 16553,
+      "spread": null,
+      "failures": [
+        "20-fix-email-regex"
+      ]
+    }
+  ]
+}

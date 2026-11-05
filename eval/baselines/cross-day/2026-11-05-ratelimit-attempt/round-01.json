@@ -1,0 +1,294 @@
+{
+  "at": "2026-11-05T01:49:03.329Z",
+  "model": "hy3",
+  "commit": "4edd0e4ab004e184d280a95c17e41690fd58c644",
+  "ok": false,
+  "passed": 12,
+  "total": 20,
+  "elapsed": 55.3,
+  "totals": {
+    "requests": 65,
+    "toolCalls": 63,
+    "tokens": 75108,
+    "unknownResponses": 8
+  },
+  "infraErrors": [],
+  "results": [
+    {
+      "name": "01-add-health-route",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 2,
+      "tokens": {
+        "prompt": 3406,
+        "completion": 262,
+        "total": 3668,
+        "unknownResponses": 0
+      },
+      "seconds": 8.5
+    },
+    {
+      "name": "02-fix-failing-test",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 4942,
+        "completion": 232,
+        "total": 5174,
+        "unknownResponses": 0
+      },
+      "seconds": 11.1
+    },
+    {
+      "name": "03-rename-function",
+      "ok": true,
+      "requests": 5,
+      "toolCalls": 8,
+      "tokens": {
+        "prompt": 6361,
+        "completion": 401,
+        "total": 6762,
+        "unknownResponses": 0
+      },
+      "seconds": 13.6
+    },
+    {
+      "name": "04-create-doc",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 3405,
+        "completion": 273,
+        "total": 3678,
+        "unknownResponses": 0
+      },
+      "seconds": 8.9
+    },
+    {
+      "name": "05-extract-constant",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 2,
+      "tokens": {
+        "prompt": 3425,
+        "completion": 224,
+        "total": 3649,
+        "unknownResponses": 0
+      },
+      "seconds": 7.8
+    },
+    {
+      "name": "06-guard-missing-file",
+      "ok": true,
+      "requests": 7,
+      "toolCalls": 7,
+      "tokens": {
+        "prompt": 9025,
+        "completion": 675,
+        "total": 9700,
+        "unknownResponses": 0
+      },
+      "seconds": 20.3
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 2,
+      "tokens": {
+        "prompt": 3213,
+        "completion": 243,
+        "total": 3456,
+        "unknownResponses": 0
+      },
+      "seconds": 8.6
+    },
+    {
+      "name": "08-extract-duplication",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 4756,
+        "completion": 414,
+        "total": 5170,
+        "unknownResponses": 0
+      },
+      "seconds": 11.8
+    },
+    {
+      "name": "09-update-readme",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 3347,
+        "completion": 237,
+        "total": 3584,
+        "unknownResponses": 0
+      },
+      "seconds": 8.7
+    },
+    {
+      "name": "10-delete-dead-code",
+      "ok": true,
+      "requests": 6,
+      "toolCalls": 11,
+      "tokens": {
+        "prompt": 7793,
+        "completion": 578,
+        "total": 8371,
+        "unknownResponses": 0
+      },
+      "seconds": 20.3
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "ok": true,
+      "requests": 10,
+      "toolCalls": 9,
+      "tokens": {
+        "prompt": 14089,
+        "completion": 1016,
+        "total": 15105,
+        "unknownResponses": 0
+      },
+      "seconds": 30.2
+    },
+    {
+      "name": "12-add-input-validation",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4397,
+        "completion": 194,
+        "total": 4591,
+        "unknownResponses": 0
+      },
+      "seconds": 10.2
+    },
+    {
+      "name": "13-callback-to-promise",
+      "ok": false,
+      "failure": "task",
+      "requests": 3,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 2115,
+        "completion": 85,
+        "total": 2200,
+        "unknownResponses": 1
+      },
+      "seconds": 5.8,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"upstream rate limit reached for this model; retry in 59s - {\\\"code\\\":14003,\\\"msg\\\":\\\"too many requests\\\",\\\"requestId\\\":\\\"01a1a964dbc47b6fbc48f9d3aeb1ff3a\\\",\\\"displayMsg\\\":{\\\"en\\\":\\\"Model busy. Please switch models or retry later\\\",\\\"zh\\\":\\\"模型繁忙，请换模型或稍后重试\\\",\\\"zh-hant\\\":\\\"模型繁忙，請更換模型或 (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "14-fix-sort-order",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "15-merge-defaults",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "16-handle-bad-json",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "17-write-missing-test",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    },
+    {
+      "name": "20-fix-email-regex",
+      "ok": false,
+      "failure": "task",
+      "requests": 1,
+      "toolCalls": 0,
+      "tokens": {
+        "prompt": 0,
+        "completion": 0,
+        "total": 0,
+        "unknownResponses": 1
+      },
+      "seconds": 0,
+      "error": "LLM HTTP 429: {\"error\": {\"message\": \"every usable account in realm 'intl' is cooling the upstream hy3 window; the pool resumes in 59s (resets at 2026-11-05T01:49:43Z)\", \"type\": \"rate_limit_error\", \"code\": 429, \"retry_after\": 59, \"reset_at\": 1793843383}}"
+    }
+  ]
+}
