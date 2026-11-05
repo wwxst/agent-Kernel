@@ -192,7 +192,7 @@ interface ApprovalPrompt {
  * 非交互进程（管道、CI、评测）没有 TTY：直接拒绝，不读 stdin。
  * 读 stdin 会把管道里后续的任务行当成审批答案，既错位又危险。
  */
-function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
+function createApprovalPrompt(controller: AbortController, cwd: string): ApprovalPrompt {
   const signal = controller.signal;
   const gate = approvalGate(signal, hasInteractiveTerminal(), false);
   if (!gate.ask) {
@@ -219,7 +219,7 @@ function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
       const gate = approvalGate(signal, hasInteractiveTerminal(), false);
       if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
       // 等待被 abort / close / 正常回答三者之一收口；不再直接等一个不接 signal 的 question。
-      const answer = await askWithSignal(open(), formatApproval(request), signal);
+      const answer = await askWithSignal(open(), formatApproval(request, cwd), signal);
       return isApproved(answer);
     },
     close: () => {
@@ -396,8 +396,14 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
   const approve: PermissionApprover = async (request) => {
     const gate = approvalGate(signal, canPrompt, lines.length > 0);
     if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
-    const answer = await nextLine(formatApproval(request));
-    return answer !== null && isApproved(answer);
+    const answer = await nextLine(formatApproval(request, config.root));
+    if (answer === null) {
+      // EOF/readline 关闭不是「用户拒绝」；让 Permission 的 catch 折成审批通道错误。
+      throw new Error(
+        signal.aborted ? "shell approval skipped: task cancelled" : "shell approval skipped: approval prompt closed",
+      );
+    }
+    return isApproved(answer);
   };
 
   // 权限是会话级的：/reset 只换 Agent，不换这个对象，所以模式不会被重置。
@@ -498,7 +504,7 @@ if (cli.error !== undefined) {
     if (replMode) {
       await repl(config, controller);
     } else {
-      const approvalPrompt = createApprovalPrompt(controller);
+      const approvalPrompt = createApprovalPrompt(controller, config.root);
       try {
         // 一次性任务同样使用会话级 Permission：审批器负责「怎么问」，Permission 负责「放不放行」。
         const permission = new Permission(config.permission, approvalPrompt.approve);

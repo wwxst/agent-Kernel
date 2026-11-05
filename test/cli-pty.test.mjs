@@ -74,10 +74,8 @@ function killTree(child) {
  * 用 script(1) 给 CLI 分配 PTY，等审批提示出现后再写入回答/控制字节。
  * 15 秒还没结束就判超时 —— 这正是「审批卡住」的回归信号。
  */
-function runPty(env, task, answer) {
-  const command = [process.execPath, cliPath, "--permission", "workspace-write", task]
-    .map(shellQuote)
-    .join(" ");
+function runPty(env, args, answer, { initialInput } = {}) {
+  const command = [process.execPath, cliPath, ...args].map(shellQuote).join(" ");
   const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
     cwd: projectRoot,
     env: {
@@ -90,6 +88,9 @@ function runPty(env, task, answer) {
     stdio: ["pipe", "pipe", "pipe"],
     detached: true,
   });
+
+  // REPL 用例需要先喂一条任务；PTY 的输入会缓冲到 readline 建好之后。
+  if (initialInput !== undefined) child.stdin.write(initialInput);
 
   let stdout = "";
   let stderr = "";
@@ -104,7 +105,7 @@ function runPty(env, task, answer) {
     }, 15_000);
 
     const maybeAnswer = () => {
-      if (sent || !stdout.includes("[permission] allow shell once")) return;
+      if (sent || !stdout.includes("[permission] shell in")) return;
       sent = true;
       answer(child);
     };
@@ -131,22 +132,26 @@ function runPty(env, task, answer) {
 test("PTY：允许一次后 shell 真正执行", { skip }, async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
-      callTool("call_allow", "shell", { command: "echo pty-allow" }),
+      callTool("call_allow", "shell", { command: "echo pty-allow\necho pty-allow-2" }),
       finalReply("allow path done"),
     ]);
 
     try {
       const run = await runPty(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        "do the task",
+        ["--permission", "workspace-write", "do the task"],
         (child) => child.stdin.write("y\n"),
       );
 
       assert.equal(run.timedOut, false, `approval hung:\n${run.stdout}\n${run.stderr}`);
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /allow path done/);
+      // 多行命令要在审批界面逐行展示，而不是折叠成一行。
+      assert.match(run.stdout, /\| echo pty-allow/);
+      assert.match(run.stdout, /\| echo pty-allow-2/);
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.match(toolMessage.content, /pty-allow/);
+      assert.match(toolMessage.content, /pty-allow-2/);
     } finally {
       await mock.close();
     }
@@ -163,7 +168,7 @@ test("PTY：拒绝后 shell 不执行，模型继续收尾", { skip }, async () 
     try {
       const run = await runPty(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        "do the task",
+        ["--permission", "workspace-write", "do the task"],
         (child) => child.stdin.write("n\n"),
       );
 
@@ -187,7 +192,7 @@ test("PTY：审批中 Ctrl-C 及时取消，退出码 130", { skip }, async () =
     try {
       const run = await runPty(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        "do the task",
+        ["--permission", "workspace-write", "do the task"],
         (child) => child.stdin.write("\u0003"),
       );
 
@@ -211,7 +216,7 @@ test("PTY：审批中 EOF 明确结束等待并默认拒绝", { skip }, async ()
     try {
       const run = await runPty(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        "do the task",
+        ["--permission", "workspace-write", "do the task"],
         (child) => {
           child.stdin.write("\u0004");
           child.stdin.end();
@@ -223,6 +228,36 @@ test("PTY：审批中 EOF 明确结束等待并默认拒绝", { skip }, async ()
       assert.match(run.stdout, /eof path done/);
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.match(toolMessage.content, /^ERROR: permission denied: .*closed before an answer/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("PTY REPL：审批中 EOF 报审批通道关闭，而不是用户拒绝", { skip }, async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_repl_eof", "shell", { command: "echo pty-repl-eof" }),
+      finalReply("repl eof done"),
+    ]);
+
+    try {
+      const run = await runPty(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        ["--repl", "--permission", "workspace-write"],
+        (child) => {
+          child.stdin.write("\u0004");
+          child.stdin.end();
+        },
+        { initialInput: "do the task\n" },
+      );
+
+      assert.equal(run.timedOut, false, `approval hung after REPL EOF:\n${run.stdout}\n${run.stderr}`);
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /repl eof done/);
+      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.match(toolMessage.content, /^ERROR: permission denied: .*approval prompt closed/);
+      assert.doesNotMatch(toolMessage.content, /user denied/);
     } finally {
       await mock.close();
     }

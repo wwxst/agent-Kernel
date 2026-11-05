@@ -1,5 +1,5 @@
 /**
- * 审批提示的显示与读取：把一条 Tool call 变成终端上的一行问题，并让等待可以被取消。
+ * 审批提示的显示与读取：把一条 Tool call 变成终端上的问题，并让等待可以被取消。
  *
  * 为什么单独一个模块：`readline.question()` 只认输入行或接口关闭，不接 AbortSignal。
  * 取消时如果只 `close()`，Promise 在部分 Node/终端组合下不会 settle，整个 Run 卡在审批上。
@@ -7,22 +7,41 @@
  */
 import type { PermissionRequest } from "./permission.ts";
 
-/** 审批提示里最多显示多少字符的命令；完整命令仍然原样执行。 */
-const APPROVAL_PREVIEW_CHARS = 160;
+/**
+ * 把审批提示里的控制字符转成可见转义，防止终端控制序列重写/覆盖审批界面。
+ *
+ * 换行不在这里处理：调用方按行拆开并加前缀，既保留多行命令，又不让命令行伪造提示符。
+ * 除换行外的 C0/C1、DEL、Unicode 行分隔符和 bidi 控制字符一律转义。
+ */
+function escapeControlCharacters(text: string): string {
+  return text.replace(
+    /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g,
+    (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
+  );
+}
 
 /**
- * 审批提示压成一行：命令里的换行会把提示符和问题撕开，用户就不知道自己在回答哪一句。
- * 这里只截断**显示**，不会改动真正要执行的命令；放行的是原始参数。
+ * 审批提示：完整展示待执行命令、实际 cwd 和一次性确认问题。
+ *
+ * 不折叠换行、不截断命令尾部：多行命令每行加 `|` 前缀，控制字符转义后显示。
+ * 用户看到的是要执行的完整文本，而不是一段可能误导的摘要。
  */
-export function formatApproval(request: PermissionRequest): string {
+export function formatApproval(request: PermissionRequest, cwd: string): string {
   const command = request.args.command;
   // shell 的 command 已由 ToolRegistry 的 Schema 校验为字符串；这里只做显示层的收窄，
   // 不重复承担校验。拿不到时明确写出来，不展示一个空命令。
-  const oneLine = typeof command === "string" ? command.replace(/\s+/g, " ").trim() : "(command unavailable)";
-  const preview =
-    oneLine.length > APPROVAL_PREVIEW_CHARS ? `${oneLine.slice(0, APPROVAL_PREVIEW_CHARS)}…` : oneLine;
-  // 中文对照：\n[permission] 允许 {工具} 执行一次：{命令}？[y/N]
-  return `\n[permission] allow ${request.tool} once${preview === "" ? "" : `: ${preview}`}? [y/N] `;
+  const actual = typeof command === "string" ? command : "(command unavailable)";
+  const commandLines =
+    actual === "" ? ["(empty command)"] : actual.split("\n").map((line) => `  | ${escapeControlCharacters(line)}`);
+  const cwdText = escapeControlCharacters(cwd).replace(/\n/g, "\\u000a");
+  // 中文对照：\n[permission] {工具} 在 {cwd} 执行\n命令：\n  | {命令行}\n允许一次？[y/N]
+  return [
+    "",
+    `[permission] ${request.tool} in ${cwdText}`,
+    "command:",
+    ...commandLines,
+    "allow once? [y/N] ",
+  ].join("\n");
 }
 
 /**

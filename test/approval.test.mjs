@@ -88,14 +88,43 @@ test("askWithSignal：readline 自身 reject 时原样传出", async () => {
   await assert.rejects(answer, /readline failed/);
 });
 
-test("formatApproval：单行显示，超长命令截断，缺命令时明确写出", () => {
-  const normal = formatApproval({ tool: "shell", args: { command: "echo  hi\nworld" } });
-  assert.match(normal, /allow shell once: echo hi world\? \[y\/N\]/);
+test("formatApproval：完整展示多行命令和实际 cwd，不折叠换行", () => {
+  const text = formatApproval(
+    { tool: "shell", args: { command: "echo safe\nrm -rf ../other-project" } },
+    "/work/project",
+  );
 
-  const long = formatApproval({ tool: "shell", args: { command: "x".repeat(200) } });
-  assert.match(long, /x{160}…\? \[y\/N\]/);
-  assert.ok(!long.includes("x".repeat(161)));
+  assert.match(text, /\[permission\] shell in \/work\/project/);
+  assert.match(text, /  \| echo safe/);
+  assert.match(text, /  \| rm -rf \.\.\/other-project/);
+  assert.match(text, /allow once\? \[y\/N\]/);
+  assert.ok(!text.includes("echo safe rm"), "换行不能被折叠成空格");
+});
 
-  const missing = formatApproval({ tool: "shell", args: {} });
-  assert.match(missing, /command unavailable/);
+test("formatApproval：超长命令完整显示，不截断尾部", () => {
+  const command = `echo ${"x".repeat(300)}`;
+  const text = formatApproval({ tool: "shell", args: { command } }, "/work");
+
+  assert.ok(text.includes(command));
+  assert.ok(!text.includes("…"), "审批展示不能截断命令");
+});
+
+test("formatApproval：控制字符和 bidi 控制字符都转义，cwd 也不例外", () => {
+  const text = formatApproval(
+    { tool: "shell", args: { command: "echo \u001b[31mred\u001b[0m\rmore\t\u202e" } },
+    "/tmp/\u001b[2Jrepo",
+  );
+
+  assert.ok(!text.includes("\u001b"));
+  assert.ok(!text.includes("\r"));
+  assert.ok(!text.includes("\t"));
+  assert.ok(!text.includes("\u202e"));
+  assert.match(text, /\\u001b\[31mred\\u001b\[0m/);
+  assert.match(text, /\\u000dmore\\u0009\\u202e/);
+  assert.match(text, /\\u001b\[2Jrepo/);
+});
+
+test("formatApproval：空命令和缺失命令都明确写出", () => {
+  assert.match(formatApproval({ tool: "shell", args: { command: "" } }, "/work"), /\(empty command\)/);
+  assert.match(formatApproval({ tool: "shell", args: {} }, "/work"), /\(command unavailable\)/);
 });
