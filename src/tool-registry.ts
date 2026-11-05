@@ -10,6 +10,7 @@
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
 import { describeError } from "./errors.ts";
+import type { Permission } from "./permission.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
@@ -105,14 +106,24 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
   return undefined;
 }
 
+export interface ToolRegistryOptions {
+  /**
+   * 执行前的权限策略。不传 = 不检查：测试和评测会自己组装工具集（比如只有 echo），
+   * 它们不该被 CLI 的默认模式误伤。CLI 总会传一个，所以「默认 workspace-write」是 CLI 的默认。
+   */
+  permission?: Permission;
+}
+
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
+
+  private readonly permission?: Permission;
 
   /**
    * 装配时就把不合法的工具挡掉：重名会让「按名字找工具」有歧义，
    * 不支持的 Schema 类型会让参数校验静默失效。两者都不该等到模型调用时才暴露。
    */
-  constructor(tools: readonly Tool[]) {
+  constructor(tools: readonly Tool[], options: ToolRegistryOptions = {}) {
     const seen = new Set<string>();
     for (const tool of tools) {
       if (seen.has(tool.name)) {
@@ -122,6 +133,7 @@ export class ToolRegistry {
       assertSupportedSchema(tool);
     }
     this.tools = tools;
+    this.permission = options.permission;
   }
 
   /** 发给模型的那一半：只有说明书，没有 run。 */
@@ -164,6 +176,24 @@ export class ToolRegistry {
     if (problem !== undefined) {
       // 中文对照：ERROR: 参数不合法：{原因}
       return `ERROR: invalid arguments: ${problem}`;
+    }
+
+    // 权限检查放在参数校验之后、run 之前：
+    //   - 坏参数先按参数错误回给模型，别让它以为问题是「权限」；
+    //   - 一个根本不会执行的调用，不值得打断用户去审批；
+    //   - 拒绝时直接返回，工具代码一行都不会跑。
+    if (this.permission !== undefined) {
+      try {
+        const decision = await this.permission.check({ tool: tool.name, args });
+        if (!decision.allowed) {
+          // 中文对照：ERROR: 权限被拒绝：{原因}
+          return `ERROR: permission denied: ${decision.reason}`;
+        }
+      } catch (error) {
+        // 权限模块自己不该抛；真抛了也不能穿出 execute，否则整个 Run 会被一个策略故障终止。
+        // 中文对照：ERROR: 权限被拒绝：{原因}
+        return `ERROR: permission denied: ${describeError(error)}`;
+      }
     }
 
     try {
