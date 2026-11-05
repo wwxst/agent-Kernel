@@ -100,6 +100,12 @@ function loadConfig(): Config {
 }
 
 /**
+ * 本轮是否已经把正文流式打印过。用模块级变量而不是 Agent 内部状态：
+ * 「显示过没有」是 CLI 的事，Agent 只负责把增量交出来。
+ */
+let streamedThisTurn = false;
+
+/**
  * 组装一个 Agent。REPL 的 /reset 也走这里 —— 换一个全新的 Agent，
  * 但复用同一份配置和取消信号（Ctrl-C 应该停掉整个进程，而不是只停一轮）。
  *
@@ -117,7 +123,15 @@ function createAgent(config: Config, signal: AbortSignal): Agent {
   console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
 
   return new Agent({
-    llm: new Llm({ baseUrl: config.baseUrl, apiKey: config.apiKey, model: config.model, maxOutputTokens: config.maxOutputTokens, signal }),
+    llm: new Llm({
+      baseUrl: config.baseUrl,
+      apiKey: config.apiKey,
+      model: config.model,
+      maxOutputTokens: config.maxOutputTokens,
+      signal,
+      // 交互式 CLI 用流式：模型一开口就能看到字，不必等整段生成完。
+      stream: true,
+    }),
     tools,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
@@ -128,6 +142,13 @@ function createAgent(config: Config, signal: AbortSignal): Agent {
       const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
       console.log(`  ↳ ${call.function.name} → ${firstLine}`);
     },
+    // 正文增量直接写 stdout：不换行、不加前缀，让流出来的字连成一段。
+    // 第一段之前补一个换行，避免紧跟在工具结果那一行后面。
+    onDelta: (text) => {
+      if (!streamedThisTurn) process.stdout.write("\n");
+      streamedThisTurn = true;
+      process.stdout.write(text);
+    },
   });
 }
 
@@ -137,9 +158,12 @@ function createAgent(config: Config, signal: AbortSignal): Agent {
  * 失败时先打 usage 再抛：失败的任务同样花了 token，账单不能因为异常就消失。
  */
 async function runTurn(agent: Agent, task: string): Promise<void> {
+  streamedThisTurn = false;
   try {
     const reply = await agent.run(task);
-    console.log(`\n${reply.content ?? ""}`);
+    // 流式时正文已经逐字打过了；没有增量（比如纯工具调用轮）就打印最终回复。
+    if (streamedThisTurn) process.stdout.write("\n");
+    else console.log(`\n${reply.content ?? ""}`);
     printUsage(agent.stats, { failed: false });
   } catch (error) {
     // 失败的任务同样花了 token：账单不能因为异常就消失。
