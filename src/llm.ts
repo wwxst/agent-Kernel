@@ -6,7 +6,7 @@
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
 import { ChatResponseError, describeError } from "./errors.ts";
-import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
+import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */
@@ -29,6 +29,12 @@ export interface LlmOptions {
    * 而不是等 120 秒超时。和 timeout 合并成一个 signal 传给 fetch，两者谁先到谁生效。
    */
   signal?: AbortSignal;
+  /**
+   * 是否用 SSE 流式接收。默认 false：评测与非交互调用要的是可复现的完整响应。
+   * 打开后请求会带 `stream: true` 与 `stream_options.include_usage`，
+   * 正文增量通过 `chat(..., { onDelta })` 交出去。
+   */
+  stream?: boolean;
 }
 
 export class Llm implements ChatClient {
@@ -39,6 +45,7 @@ export class Llm implements ChatClient {
   private readonly timeoutMs: number;
   private readonly maxOutputTokens: number;
   private readonly signal?: AbortSignal;
+  private readonly stream: boolean;
 
   constructor(options: LlmOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, "");
@@ -48,6 +55,7 @@ export class Llm implements ChatClient {
     this.timeoutMs = options.timeoutMs ?? 120_000;
     this.maxOutputTokens = options.maxOutputTokens ?? 8192;
     this.signal = options.signal;
+    this.stream = options.stream ?? false;
   }
 
   /**
@@ -59,8 +67,15 @@ export class Llm implements ChatClient {
    *
    * 但「如实搬运」的前提是响应确实是那个形状：网络响应是外部输入，
    * `as` 只是编译期断言，所以这里做一次运行时校验（见 readMessage）。
+   *
+   * 流式与非流式的区别只到「怎么收」：两条路最后都走 readMessage，
+   * 合法性与归一化只有一份判定。
    */
-  async chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<ChatResponse> {
+  async chat(
+    messages: readonly Message[],
+    tools: readonly ToolDefinition[],
+    options: ChatOptions = {},
+  ): Promise<ChatResponse> {
     const response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
@@ -80,6 +95,8 @@ export class Llm implements ChatClient {
         temperature: this.temperature,
         // 单次输出去上限：不让一条跑飞的回复把上下文和账单一起撑爆。
         max_tokens: this.maxOutputTokens,
+        // 流式才发这两个字段：有的端点对非流式请求收到 stream_options 会直接 400。
+        ...(this.stream ? { stream: true, stream_options: { include_usage: true } } : {}),
       }),
       // 超时后 fetch 会抛 AbortError，被上层 catch 成一次可见的失败。
       // 外部取消（Ctrl-C）也走 signal：两条路合并，fetch 不用知道是谁按的停止键。
@@ -93,6 +110,8 @@ export class Llm implements ChatClient {
       throw new Error(`LLM HTTP ${response.status}: ${detail}`);
     }
 
+    if (this.stream) return this.readStreamed(response, options.onDelta);
+
     const payload: unknown = await response.json();
     let usage: TokenUsage | undefined;
     try {
@@ -104,6 +123,189 @@ export class Llm implements ChatClient {
       throw new ChatResponseError(describeError(error), usage);
     }
   }
+
+  /**
+   * 读 SSE 流：`data: {...}` 一行一个 chunk，`data: [DONE]` 收尾。
+   *
+   * 三个容易写错的地方：
+   *   1. chunk 不保证按行到达 —— 半个 JSON 卡在两个 TCP 包里是常态，所以先攒 buffer 再切行；
+   *   2. tool_calls 是分片到达的，按 index 合并 id / name / arguments，不能每片当成一次调用；
+   *   3. usage 通常在最后一个 choices 为空的 chunk 里，要单独收，不能跟着 finish_reason 一起丢。
+   *
+   * 增量回调只用于显示；最终消息仍由拼装结果经过 readMessage 校验后返回 ——
+   * 这样流式与非流式走同一套「什么样才算合法响应」的判定。
+   */
+  private async readStreamed(response: Response, onDelta?: (text: string) => void): Promise<ChatResponse> {
+    if (response.body === null) throw new ChatResponseError("LLM response is invalid: stream has no body");
+
+    const decoder = new TextDecoder();
+    const assembly = new StreamAssembly();
+    let buffer = "";
+    let usage: TokenUsage | undefined;
+
+    const consume = (line: string): void => {
+      if (!line.startsWith("data:")) return;
+      const data = line.slice("data:".length).trim();
+      if (data === "" || data === "[DONE]") return;
+      let chunk: unknown;
+      try {
+        chunk = JSON.parse(data);
+      } catch {
+        // 已经收到的 usage 要带上：流读到一半失败，这次请求同样可能计费。
+        throw new ChatResponseError("LLM response is invalid: stream chunk is not JSON", usage);
+      }
+      try {
+        usage = readUsage(chunk) ?? usage;
+        assembly.merge(chunk, onDelta);
+      } catch (error) {
+        throw new ChatResponseError(describeError(error), usage);
+      }
+    };
+
+    const reader = response.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline !== -1) {
+          const line = buffer.slice(0, newline).replace(/\r$/, "");
+          buffer = buffer.slice(newline + 1);
+          consume(line);
+          newline = buffer.indexOf("\n");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    // 最后一帧可能没有换行符收尾。
+    if (buffer.trim() !== "") consume(buffer.trim());
+
+    try {
+      return { message: assembly.toMessage(), usage };
+    } catch (error) {
+      throw new ChatResponseError(describeError(error), usage);
+    }
+  }
+}
+
+/**
+ * 流式响应的拼装器：把一串 delta 还原成一条完整的 assistant Message。
+ *
+ * 保留 index 排序：并行调用的参数是交错到达的，按到达顺序拼会得到两条错位的调用。
+ * 名字可能一次发全、也可能分片发，所以用 mergeFragment 处理重复与拼接。
+ */
+class StreamAssembly {
+  private content = "";
+
+  private reasoning = "";
+
+  private finishReason: unknown;
+
+  private readonly calls = new Map<number, { id: string; type: string; name: string; arguments: string }>();
+
+  merge(chunk: unknown, onDelta?: (text: string) => void): void {
+    if (!isRecord(chunk)) throw invalid("stream chunk must be an object");
+    const choices = chunk.choices;
+    if (!Array.isArray(choices)) throw invalid("stream chunk choices must be an array");
+
+    // usage-only chunk 的 choices 是空数组：没有 delta 可拼，但 usage 已经在外面读走了。
+    const first = choices[0];
+    if (first === undefined) return;
+    if (!isRecord(first)) throw invalid("stream chunk choices[0] must be an object");
+
+    if (first.finish_reason !== undefined && first.finish_reason !== null) {
+      if (typeof first.finish_reason !== "string") throw invalid("stream finish_reason must be a string");
+      this.finishReason = first.finish_reason;
+    }
+
+    const delta = first.delta;
+    if (delta === undefined || delta === null) return;
+    if (!isRecord(delta)) throw invalid("stream delta must be an object");
+
+    if (delta.content !== undefined && delta.content !== null) {
+      if (typeof delta.content !== "string") throw invalid("stream delta.content must be a string");
+      this.content += delta.content;
+      if (delta.content !== "") onDelta?.(delta.content);
+    }
+
+    if (delta.reasoning_content !== undefined && delta.reasoning_content !== null) {
+      if (typeof delta.reasoning_content !== "string") {
+        throw invalid("stream delta.reasoning_content must be a string");
+      }
+      this.reasoning += delta.reasoning_content;
+    }
+
+    if (delta.tool_calls !== undefined && delta.tool_calls !== null) {
+      if (!Array.isArray(delta.tool_calls)) throw invalid("stream delta.tool_calls must be an array");
+      for (const [position, raw] of delta.tool_calls.entries()) {
+        this.mergeToolCall(position, raw);
+      }
+    }
+  }
+
+  toMessage(): Message {
+    if (this.finishReason === undefined) throw invalid("stream ended before the model finished");
+
+    const message: Record<string, unknown> = { role: "assistant", content: this.content };
+    if (this.reasoning !== "") message.reasoning_content = this.reasoning;
+    if (this.calls.size > 0) {
+      message.tool_calls = [...this.calls.entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([, call]) => ({
+          id: call.id,
+          type: call.type,
+          function: { name: call.name, arguments: call.arguments },
+        }));
+    }
+
+    // 交给同一个 readMessage：finish_reason 与 tool_calls 的一致性、id 唯一性都在那里判。
+    return readMessage({ choices: [{ index: 0, message, finish_reason: this.finishReason }] });
+  }
+
+  private mergeToolCall(position: number, raw: unknown): void {
+    if (!isRecord(raw)) throw invalid(`stream tool_calls[${position}] must be an object`);
+
+    const index = raw.index;
+    if (index !== undefined && (typeof index !== "number" || !Number.isInteger(index) || index < 0)) {
+      throw invalid("stream tool_call index must be a non-negative integer");
+    }
+    // 标准实现会给 index；没给的端点按“本 chunk 里的位置”兜底，至少不会两条调用挤在一起。
+    const key = typeof index === "number" ? index : position;
+    const call = this.calls.get(key) ?? { id: "", type: "function", name: "", arguments: "" };
+
+    if (raw.id !== undefined) {
+      if (typeof raw.id !== "string" || raw.id === "") throw invalid("stream tool_call id must be a non-empty string");
+      if (call.id !== "" && call.id !== raw.id) throw invalid(`stream tool_call ${key} changed id mid-stream`);
+      call.id = raw.id;
+    }
+    if (raw.type !== undefined && raw.type !== "function") throw invalid('stream tool_call type must be "function"');
+
+    const fn = raw.function;
+    if (fn !== undefined) {
+      if (!isRecord(fn)) throw invalid("stream tool_call function must be an object");
+      if (fn.name !== undefined) {
+        if (typeof fn.name !== "string") throw invalid("stream tool_call function.name must be a string");
+        call.name = mergeFragment(call.name, fn.name);
+      }
+      if (fn.arguments !== undefined) {
+        if (typeof fn.arguments !== "string") throw invalid("stream tool_call function.arguments must be a string");
+        call.arguments += fn.arguments;
+      }
+    }
+
+    this.calls.set(key, call);
+  }
+}
+
+/**
+ * 名字可能一次发全，也可能分片发；有的端点还会把完整名字重复发一遍。
+ * 完全相同的重复不拼接，其余一律当成新片段接上。
+ */
+function mergeFragment(current: string, fragment: string): string {
+  if (fragment === "" || fragment === current) return current;
+  return current + fragment;
 }
 
 /** 一条消息读不懂时抛出的错误：前缀统一，便于日志里一眼认出来。 */
