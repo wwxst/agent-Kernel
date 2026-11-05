@@ -159,6 +159,11 @@ export interface AgentOptions {
   signal?: AbortSignal;
   /** 每次工具执行完的回调，用来打印进度；Agent 本身不直接 console.log。 */
   onToolResult?: (call: ToolCall, result: string) => void;
+  /**
+   * 流式正文增量。只在 ChatClient 支持流式时才会被调用，且只用于显示：
+   * 最终消息仍以 chat() 的返回值为准，回调晚到、漏掉都不影响正确性。
+   */
+  onDelta?: (text: string) => void;
 }
 
 export class Agent {
@@ -169,6 +174,8 @@ export class Agent {
   private readonly maxTotalTokens?: number;
   private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
+
+  private readonly onDelta?: (text: string) => void;
 
   /** 本次 Run 已经执行的工具调用数；Tool call budget 按它算，也用它写「部分执行」的失败报告。 */
   private runToolCalls = 0;
@@ -207,6 +214,7 @@ export class Agent {
     this.maxTotalTokens = options.maxTotalTokens;
     this.signal = options.signal;
     this.onToolResult = options.onToolResult;
+    this.onDelta = options.onDelta;
 
     // 系统提示词只放一次，之后每轮都跟着 messages 一起发出去。
     this.messages.push({
@@ -367,7 +375,7 @@ export class Agent {
       this.sessionRequests++;
       let response: ChatResponse;
       try {
-        response = await this.llm.chat(this.messages, this.tools.definitions);
+        response = await this.llm.chat(this.messages, this.tools.definitions, { onDelta: this.onDelta });
       } catch (error) {
         // 请求已经发出去：响应非法但带回 usage 时精确记账，否则记未知。
         // 不记的话，失败请求的成本会从统计里凭空消失。

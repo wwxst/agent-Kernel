@@ -73,7 +73,7 @@ _Avoid_: cost（成本是 usage 乘以单价，本仓库不猜单价）
 _Avoid_: hard cap, quota（它不保证总量不超过上限）
 
 **Chat client**:
-Kernel 向谁要下一条 Message 和这一轮的 Token usage：生产实现 POST 一个 OpenAI 兼容端点，测试实现按脚本回放。
+Kernel 向谁要下一条 Message 和这一轮的 Token usage：生产实现 POST 一个 OpenAI 兼容端点（可选 SSE 流式），测试实现按脚本回放。流式只影响「怎么显示」，不影响返回的 Message。
 _Avoid_: LLM, model, provider
 
 ## Relationships

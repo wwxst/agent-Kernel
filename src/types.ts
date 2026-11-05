@@ -102,6 +102,18 @@ export interface ChatResponse {
 }
 
 /**
+ * 一次 chat() 的可选参数。
+ *
+ * 目前只有流式回调：传了它，实现可以在生成过程中把正文增量交出来；
+ * 不传就等完整响应。回调只负责「显示」，最终消息仍以返回值里的 Message 为准 ——
+ * 拼装、校验、记账都不能依赖增量回调的执行时机。
+ */
+export interface ChatOptions {
+  /** 收到一段正文增量时回调一次。可能被调用很多次，也可能一次都不调用。 */
+  onDelta?: (text: string) => void;
+}
+
+/**
  * Agent 唯一依赖的模型接口。
  *
  * 刻意做成接口而不是类，因为跨这条缝真的有两种实现：
@@ -109,5 +121,5 @@ export interface ChatResponse {
  * 只有一种实现时不必开这个口子 —— 那是为将来预留的空缝。
  */
 export interface ChatClient {
-  chat(messages: readonly Message[], tools: readonly ToolDefinition[]): Promise<ChatResponse>;
+  chat(messages: readonly Message[], tools: readonly ToolDefinition[], options?: ChatOptions): Promise<ChatResponse>;
 }

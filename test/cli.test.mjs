@@ -30,6 +30,20 @@ async function startMock(script, { usage } = {}) {
     request.on("end", () => {
       requests.push(JSON.parse(body));
       const message = script[Math.min(turn++, script.length - 1)];
+
+      // CLI 走流式：把同一条 message 包装成 SSE，让端到端测试也经过真实的解析路径。
+      if (JSON.parse(body).stream === true) {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const frame = (delta, finish_reason = null, extra = {}) =>
+          `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }], ...extra })}\n\n`;
+        // 一条完整的 delta 就够 CLI 用；分片拼装由 llm.test.mjs 单独覆盖。
+        response.write(frame({ ...message }));
+        response.write(frame({}, message.tool_calls?.length ? "tool_calls" : "stop"));
+        if (usage !== undefined) response.write(`data: ${JSON.stringify({ choices: [], usage })}\n\n`);
+        response.end("data: [DONE]\n\n");
+        return;
+      }
+
       response.writeHead(200, { "content-type": "application/json" });
       const payload = {
         choices: [
