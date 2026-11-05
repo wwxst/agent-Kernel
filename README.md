@@ -140,7 +140,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-159 个用例，分九层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+155 个用例，分八层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -162,7 +162,7 @@ npm run eval            # 需要 .env，会真的调用模型、真的花钱
 npm run eval -- rename  # 只跑名字里带 rename 的
 npm run eval:check      # 自检：不调用模型，验证每个任务的初始状态确实会断言失败
 npm run eval -- --trace --keep 13-callback-to-promise  # 可选诊断：保留单个任务并记录请求/工具轨迹
-npm run eval:cross-day   # 在不同自然日各运行 3 轮，固定使用 4edd0e4 基线
+npm run eval:cross-day   # 在不同自然日各运行 3 轮，固定使用 eac798d（prompt v2）基线
 ```
 
 基线（2026-11-05，`hy3`，prompt v2，连续 6 轮，4 并发）：
