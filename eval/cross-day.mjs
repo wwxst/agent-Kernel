@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Run three same-day stability rounds against the immutable 2026-11-04 baseline.
+ * Run three same-day stability rounds against the immutable prompt-v2 baseline.
  *
  * This helper lives on the diagnostics branch, but dynamically imports eval/run.mjs
  * only after checking out the baseline SHA. The measured Agent/eval code is therefore
@@ -22,7 +22,7 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.dirname(here);
-const BASELINE_SHA = "4edd0e4ab004e184d280a95c17e41690fd58c644";
+const BASELINE_SHA = "eac798de31b24463dba09361b8c2c551e1e114d2";
 const EXPECTED_MODEL = "hy3";
 const EXPECTED_BASE_URL = "http://127.0.0.1:8788/v1";
 const ROUNDS = 3;
