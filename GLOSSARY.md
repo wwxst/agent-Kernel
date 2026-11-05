@@ -13,8 +13,12 @@ _Avoid_: engine, runtime, framework
 _Avoid_: ReAct（那是另一种带显式推理步的循环）
 
 **Run**:
-对一条任务的一次完整执行，终止于最终回复（正常）、预算耗尽或取消（失败）。一个 Agent 实例只能有一次 Run。
-_Avoid_: session, job, conversation
+对一条任务的一次完整执行，终止于最终回复（正常）、预算耗尽或取消（失败）。同一个 Agent 可以按顺序跑多个 Run，Transcript 跨 Run 累积；预算按 Run 算，会话账单看 `sessionStats`。
+_Avoid_: job, turn
+
+**Session**:
+一个 Agent 实例从创建到丢弃之间的一段对话，由按顺序执行的多个 Run 组成。CLI 的 `--repl` 就是它的外壳；`/reset` 等于换一个新 Session。
+_Avoid_: conversation（口语可以，代码里没有单独的 Session 类型）
 
 **Step**:
 一次模型请求，加上它索要的那一轮工具调用。循环按步计数，步数上限数的就是它。它**不等于**工具执行次数：一次模型回复可以要多个工具。
@@ -74,12 +78,12 @@ _Avoid_: LLM, model, provider
 
 ## Relationships
 
-- 一次 **Run** 产生一条 **Transcript**，以一条 system **Message** 开头。
+- 一个 **Session** 产生一条 **Transcript**，以一条 system **Message** 开头；一次 **Run** 往里追加一条 user **Message** 及其后续。
 - **Transcript** 是 **Message** 的序列；每个 **Step** 追加一条 assistant **Message**，它可能携带多个 **Tool call**。
 - 每个 **Tool call** 恰好由一条 **Tool result** **Message** 答复，两者靠 id 配对；没有执行的调用也留一条 `not run` 结果，配对不为预算或取消让路。
 - **Tool registry** 持有 N 个 **Tool**，这些 **Tool** 只作用于一个 **Workspace**。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
-- 一个 **Agent** 实例对应一次 **Run**；第二次调用直接失败，不复用 **Transcript**。
+- 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
 
 ## Flagged ambiguities
 

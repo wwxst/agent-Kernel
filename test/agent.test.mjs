@@ -232,7 +232,7 @@ test("工具预算：一批调用会超限时整批都不执行", async () => {
 
   await assert.rejects(
     () => agent.run("task"),
-    /tool call budget 2 exceeded: 0 already executed, this batch asks for 3; none of them were run/,
+    /tool call budget 2 exceeded: 0 already executed in this Run, this batch asks for 3; none of them were run/,
   );
   assert.deepEqual(executed, [], "执行到一半才发现超限就太晚了");
   assert.equal(chat.requests.length, 1);
@@ -252,7 +252,7 @@ test("工具预算：跨批次累计，超限后不再启动新批次", async ()
 
   await assert.rejects(
     () => agent.run("task"),
-    /tool call budget 1 exceeded: 1 already executed, this batch asks for 1; none of them were run/,
+    /tool call budget 1 exceeded: 1 already executed in this Run, this batch asks for 1; none of them were run/,
   );
   assert.equal(chat.requests.length, 2);
 
@@ -279,16 +279,56 @@ test("最后一步：模型仍要工具时不执行无法验证的副作用", as
   assert.equal(chat.requests.length, 1);
 });
 
-test("生命周期：第二次 run() 明确抛错，且不继承上一条 transcript", async () => {
-  const chat = createScriptedChat([finalReply("first")]);
+test("会话：第二个 Run 继承 transcript，stats 只描述本次 Run", async () => {
+  const chat = createScriptedChat([finalReply("first"), finalReply("second")]);
   const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
 
   await agent.run("first task");
-  const before = agent.transcript.length;
+  await agent.run("second task");
 
-  await assert.rejects(() => agent.run("second task"), /agent instance is single-use: run\(\) has already been called/);
-  assert.equal(chat.requests.length, 1, "第二次调用不能真的发请求");
-  assert.equal(agent.transcript.length, before, "第二次调用不能往 transcript 里塞东西");
+  assert.equal(chat.requests.length, 2);
+  // 第二次请求能看到第一轮的全部历史：system → user → assistant → 新的 user。
+  assert.deepEqual(
+    chat.requests[1].messages.map((message) => message.role),
+    ["system", "user", "assistant", "user"],
+  );
+  assert.equal(agent.stats.requests, 1, "stats 是本次 Run 的账");
+  assert.equal(agent.sessionStats.runs, 2);
+  assert.equal(agent.sessionStats.requests, 2);
+  assert.equal(agent.transcript.length, 5);
+});
+
+test("会话：预算按 Run 重新计算，第二轮不继承第一轮的花费", async () => {
+  const chat = createScriptedChat([
+    callTool("c1", "echo", { value: "a" }),
+    finalReply("first"),
+    callTool("c2", "echo", { value: "b" }),
+    finalReply("second"),
+  ]);
+  // 一次 Run 只允许一个工具：第二轮如果继承了第一轮的计数，这里就会抛错。
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxToolCalls: 1 });
+
+  await agent.run("one");
+  await agent.run("two");
+
+  assert.equal(agent.stats.toolCalls, 1);
+  assert.equal(agent.sessionStats.toolCalls, 2);
+});
+
+test("会话：token 预算也只算本次 Run", async () => {
+  const usage = { prompt_tokens: 60, completion_tokens: 10, total_tokens: 70 };
+  const chat = createScriptedChat([
+    { message: finalReply("first"), usage },
+    { message: finalReply("second"), usage },
+  ]);
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]), maxTotalTokens: 100 });
+
+  await agent.run("one");
+  await agent.run("two");
+
+  assert.equal(agent.stats.usage.totalTokens, 70);
+  assert.equal(agent.sessionStats.usage.totalTokens, 140);
+  assert.equal(agent.stats.tokenBudget.exceeded, false);
 });
 
 test("生命周期：并发 run() 时后一个立刻被拒绝", async () => {
@@ -298,17 +338,22 @@ test("生命周期：并发 run() 时后一个立刻被拒绝", async () => {
   const first = agent.run("first");
   const second = agent.run("second");
 
-  await assert.rejects(second, /single-use/);
+  await assert.rejects(second, /already running/);
   await first;
   assert.equal(chat.requests.length, 1);
 });
 
-test("生命周期：任务失败后实例仍然算已消费", async () => {
-  const chat = createScriptedChat([finalReply("   ")]);
+test("生命周期：任务失败后会话还能继续，失败的历史留在 transcript 里", async () => {
+  const chat = createScriptedChat([finalReply("   "), finalReply("recovered")]);
   const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
 
   await assert.rejects(() => agent.run("fail"), /empty final answer/);
-  await assert.rejects(() => agent.run("retry"), /single-use/);
+  const failedLength = agent.transcript.length;
+
+  const reply = await agent.run("retry");
+  assert.equal(reply.content, "recovered");
+  assert.equal(agent.transcript.length > failedLength, true);
+  assert.equal(agent.sessionStats.runs, 2);
 });
 
 test("token 统计：累计 prompt / completion / total 与请求数", async () => {
