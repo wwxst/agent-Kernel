@@ -2,7 +2,7 @@
 
 最小 Coding Agent：**一个类、一个循环、七个工具**，运行时零依赖。
 
-> 当前状态：v0.4，个人练习项目。
+> 当前状态：v0.5，个人练习项目。
 
 ## 快速开始
 
@@ -187,7 +187,7 @@ npm run eval -- 13 20 08 --diagnostics diagnostics/run-1 --keep
 # ^ 只跑筛选出的任务，额外记录逐请求 usage、工具参数/顺序/结果大小、文件变化轨迹
 
 node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4
-# ^ 在固定 tag stability-2026-11-04 的 worktree 里跑 3 轮，按日期归档
+# ^ 在固定 tag stability-2026-11-05-prompt-v2 的 worktree 里跑 3 轮，按日期归档
 ```
 
 `--keep` 保留的是「被执行的任务」的工作区：跑全量时会留下 20 份，所以诊断时用任务过滤。跨天运行器会校验 tag、复制 `.env` 路径、归档 `round-01..03.json` 和 `day-summary.json`，详见 [跨天验证协议](./docs/reports/2026-11-04-cross-day-protocol.md)。

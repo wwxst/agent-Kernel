@@ -11,7 +11,7 @@
  *   node eval/cross-day.mjs                                  # 今天（Asia/Shanghai），3 轮
  *   node eval/cross-day.mjs --date 2026-11-05                # 指定归档日期
  *   node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4
- *   node eval/cross-day.mjs --ref stability-2026-11-04
+ *   node eval/cross-day.mjs --ref stability-2026-11-05-prompt-v2
  *
  * 产出：
  *   eval/baselines/cross-day/<date>/round-01.json … round-03.json
@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..");
 const archiveRoot = path.join(here, "baselines", "cross-day");
-const DEFAULT_REF = "stability-2026-11-04";
+const DEFAULT_REF = "stability-2026-11-05-prompt-v2";
 const TIME_ZONE = "Asia/Shanghai";
 
 const invokedDirectly =

@@ -77,7 +77,7 @@ node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4
 - `--diagnostics <dir>`：每个任务额外写一份 JSON —— 逐请求 prompt/completion tokens、工具名/参数/顺序/结果大小、write/edit 的文件大小与 hash 变化。只包 `Llm.chat` 和 `Agent.onToolResult`，不改变内核行为。
 - `--system-prompt-file <file>`：A/B 实验用，只替换系统提示词，其余配置不变。
 - `--keep` 保留的是「被执行的任务」的工作区；跑全量时会留下 20 份，诊断时用任务过滤。
-- `cross-day.mjs`：固定 tag `stability-2026-11-04`（commit `4edd0e4`），在临时 worktree 里跑 3 轮，按 `Asia/Shanghai` 日期归档到 `eval/baselines/cross-day/<date>/`。协议和预演结果见 [跨天验证协议](../docs/reports/2026-11-04-cross-day-protocol.md)。
+- `cross-day.mjs`：固定 tag `stability-2026-11-05-prompt-v2`（commit `eac798d`），在临时 worktree 里跑 3 轮，按 `Asia/Shanghai` 日期归档到 `eval/baselines/cross-day/<date>/`。协议和预演结果见 [跨天验证协议](../docs/reports/2026-11-04-cross-day-protocol.md)；换 tag 用 `--ref`。
 
 ## 为什么不在 CI 里跑
 

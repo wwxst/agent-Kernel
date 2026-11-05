@@ -15,7 +15,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- --repl` | 多轮会话：`/exit`、`/reset`、`/help`；需要 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
-| `node eval/cross-day.mjs --date <YYYY-MM-DD>` | 跨天评测：固定 tag `stability-2026-11-04` 的 worktree 里跑 3 轮，按日期归档；需要 `.env` |
+| `node eval/cross-day.mjs --date <YYYY-MM-DD>` | 跨天评测：固定 tag `stability-2026-11-05-prompt-v2` 的 worktree 里跑 3 轮，按日期归档；需要 `.env` |
 
 ## 代码地图
 
