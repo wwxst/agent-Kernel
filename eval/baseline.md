@@ -11,6 +11,8 @@
 - **配置**：20 个任务、4 并发、每任务 `maxSteps=30`、`maxTotalTokens=200000`
 - **原始记录**：逐轮 [`round-01.json`](./baselines/2026-11-05-hy3-prompt-v2/round-01.json) … [`round-06.json`](./baselines/2026-11-05-hy3-prompt-v2/round-06.json)，汇总 [`summary.json`](./baselines/2026-11-05-hy3-prompt-v2/summary.json)
 
+> 这组数字对应 tag `stability-2026-11-05-prompt-v2`（`eac798d`）。之后 `af49190` 把 `grep` 改成了 worker 里的正则匹配，main 已经领先这个 tag；做对照时以 tag 上的数据为准，main 需要重新建基线。
+
 ### 逐轮汇总
 
 | 轮 | Commit | 通过 | 请求 | 工具调用 | prompt | completion | total tokens | 墙钟 | 任务耗时合计 |
