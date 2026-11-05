@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
@@ -108,6 +108,8 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(await readFile(path.join(workdir, "hello.txt"), "utf8"), "hello from agent\n");
       assert.match(run.stdout, /done: created hello\.txt/);
       assert.match(run.stdout, /wrote 17 chars to hello\.txt/);
+      // 不传 --permission 时默认是 workspace-write：文件工具放行。
+      assert.match(run.stdout, /permission: workspace-write/);
 
       // 第一次请求：system 在最前，四个工具按协议格式发过去
       const first = mock.requests[0];
@@ -311,6 +313,154 @@ test("REPL：一轮失败不结束会话，下一轮还能继续", async () => {
       assert.match(run.stdout, /task failed/);
       assert.match(run.stdout, /recovered on the second turn/);
       assert.equal(mock.requests.length, 2);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("--permission read-only：写工具被拒绝，文件不落盘，模型能继续收尾", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_write", "write", { path: "blocked.txt", content: "nope" }),
+      finalReply("permission denied as expected"),
+    ]);
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--permission", "read-only", "do the task"] },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /permission: read-only/);
+      assert.match(run.stdout, /ERROR: permission denied: tool "write" is not allowed in read-only mode/);
+      await assert.rejects(readFile(path.join(workdir, "blocked.txt"), "utf8"), /ENOENT/);
+
+      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.match(toolMessage.content, /^ERROR: permission denied: /);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("workspace-write：无 TTY 时 shell 默认拒绝，命令不会执行", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_shell", "shell", { command: "mkdir shell-ran" }),
+      finalReply("shell was denied"),
+    ]);
+
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /permission: workspace-write/);
+      assert.match(run.stdout, /ERROR: permission denied: .*no approval prompt is available/);
+      await assert.rejects(stat(path.join(workdir, "shell-ran")), /ENOENT/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("REPL：无 TTY 时 shell 被拒绝，也不会吞掉下一行输入", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_shell", "shell", { command: "mkdir shell-ran" }),
+      finalReply("first turn done"),
+      finalReply("second turn done"),
+    ]);
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--repl"], input: "first task\nsecond task\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /first turn done/);
+      assert.match(run.stdout, /second turn done/);
+      assert.equal((run.stdout.match(/ERROR: permission denied/g) ?? []).length, 1);
+      await assert.rejects(stat(path.join(workdir, "shell-ran")), /ENOENT/);
+      // 第一轮：shell 调用 + 收尾；第二轮：收尾。审批没有把 "second task" 当成答案。
+      assert.equal(mock.requests.length, 3);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("--permission=full-access：shell 不用审批就执行", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_shell", "shell", { command: "mkdir shell-ran" }),
+      finalReply("shell ran"),
+    ]);
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--permission=full-access", "do the task"] },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /permission: full-access/);
+      assert.match(run.stdout, /shell ran/);
+      assert.equal((await stat(path.join(workdir, "shell-ran"))).isDirectory(), true);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("--permission 非法值：退出码 1，不调用模型", async () => {
+  const run = await runCli({}, { args: ["--permission", "wide-open", "do the task"] });
+
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /invalid --permission value "wide-open"/);
+});
+
+test("--permission 缺少值：退出码 1，提示可用模式", async () => {
+  const run = await runCli({}, { args: ["--permission"] });
+
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /missing value for --permission/);
+});
+
+test("REPL：/permission 查看与切换，/reset 保留当前模式", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_write_1", "write", { path: "blocked-1.txt", content: "no" }),
+      finalReply("first turn done"),
+      callTool("call_write_2", "write", { path: "blocked-2.txt", content: "no" }),
+      finalReply("second turn done"),
+    ]);
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        {
+          args: ["--repl"],
+          input: "/permission\n/permission read-only\nfirst task\n/reset\nsecond task\n/exit\n",
+        },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /permission: workspace-write/);
+      assert.match(run.stdout, /permission: read-only/);
+      assert.equal((run.stdout.match(/permission: read-only/g) ?? []).length, 2, "reset 后重开 Agent 仍打印 read-only");
+      assert.equal((run.stdout.match(/ERROR: permission denied/g) ?? []).length, 2);
+      await assert.rejects(readFile(path.join(workdir, "blocked-1.txt"), "utf8"), /ENOENT/);
+      await assert.rejects(readFile(path.join(workdir, "blocked-2.txt"), "utf8"), /ENOENT/);
+
+      // reset 换了 Agent 但没有换权限：第二轮仍然被拒绝。
+      assert.equal(mock.requests.length, 4);
+      assert.deepEqual(
+        mock.requests[2].messages.map((message) => message.role),
+        ["system", "user"],
+      );
     } finally {
       await mock.close();
     }
