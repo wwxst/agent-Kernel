@@ -7,6 +7,7 @@ Permission v0.1 给 agent 三档模式：`read-only` 只放行 `read` / `ls` / `
 - 检查点在 `ToolRegistry.execute()`：参数校验之后、`tool.run()` 之前。拒绝不执行工具，返回一条 `ERROR: permission denied: …` 的 **Tool result**，模型下一轮可以自己换做法。
 - 权限按工具名分档，不看参数。路径是否越界仍由 `Workspace` 的路径守卫判断；两层各管一件事。
 - 权限由宿主注入：`ToolRegistry` 不注入时不检查（测试、评测这类宿主自己决定工具集）；CLI 总会注入，所以用户侧默认是 `workspace-write`。
+- 模型提示由 `permissionPrompt(mode)` 生成，CLI 把它拼进唯一的 system 消息；Agent 每次请求前原地刷新，`/permission` 切换后下一次请求立即生效，不追加新的 system 消息。它只指导模型，放行/拒绝仍由 `ToolRegistry` 强制执行。
 - 审批提示懒创建 readline：没有 `shell` 调用的任务不进入终端 raw mode，Ctrl-C 仍走原取消链；REPL 里如果任务运行时已经排着下一行输入，这次 `shell` 会被拒绝，那一行留给下一轮，避免把任务当成审批答案。
 - 审批等待用 `askWithSignal` 把 `AbortSignal`、readline 的 `close` 和正常回答一起收口：Ctrl-C 立即结束等待并走取消链，EOF 明确按拒绝处理，不会停在 `question()` 上。
 - `shell` 的审批是**逐次**的：允许一次或拒绝，不缓存「上次同意过」。没有 TTY、取消、审批通道异常都按拒绝处理；无 TTY 时不读 stdin，避免把管道里的下一行任务当成审批答案。
@@ -29,6 +30,7 @@ Permission v0.1 给 agent 三档模式：`read-only` 只放行 `read` / `ls` / `
 ## 不变量
 
 - 权限拒绝永远折成非空 `ERROR` 文本，不抛异常、不终止 Run。
+- Prompt 只指导模型；真正的放行/拒绝始终由 `ToolRegistry` 和 `Permission` 执行，不允许用 Prompt 代替检查。
 - 审批展示必须包含完整命令与实际 cwd；控制字符转义，不折叠换行、不截断尾部。
 - 权限检查必须发生在参数校验之后：坏参数先按参数错误回灌，不打扰用户审批。
 - 被拒绝的工具一行代码都不执行。

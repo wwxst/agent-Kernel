@@ -52,6 +52,10 @@ _Avoid_: sandbox, isolation, ACL
 **Permission** 的当前档位。CLI 默认 `workspace-write`；`--permission` 决定起始值，REPL 的 `/permission` 切换，`/reset` 不改变它。
 _Avoid_: permission level, security level
 
+**Permission prompt**:
+宿主写进唯一 system **Message** 的当前权限说明，由 `permissionPrompt(mode)` 生成。每次模型请求前刷新；`/permission` 切换后下一次请求生效，`/reset` 保留当前 mode。它只指导模型，不执行检查。
+_Avoid_: policy prompt（Policy 是 **Permission** 本身）, system rules（太泛）
+
 **Approval**:
 `workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。
 _Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
@@ -101,6 +105,7 @@ _Avoid_: LLM, model, provider
 - 每个 **Tool call** 在参数校验通过后先过 **Permission**；拒绝时工具不执行，结果是一条 **ERROR text**。
 - **Permission** 只约束 Tool call，不改变进程权限；**shell** 放行后与启动者同权，可以离开 **Workspace**。
 - 一个 **Session** 有一个 **Permission mode**；`/reset` 换 Agent，但不换 mode。
+- 每次 **Step** 的模型请求前，**Permission prompt** 刷新唯一的 system Message；它只负责指导，放行/拒绝仍由 **Tool registry** 执行。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
 
