@@ -101,3 +101,5 @@ eval/baselines/cross-day/<date>/
 2. 打一个新 tag（例如 `stability-2026-11-04-prompt-v2`）；
 3. 在新 tag 上重跑 3 轮同日基线，再开始跨天三天；
 4. 不要把新旧 tag 的数据混在同一张跨天表里。
+
+**2026-11-05 更新**：候选 B 已采用（commit `eac798d`，tag `stability-2026-11-05-prompt-v2`），并在新 tag 上跑了 6 轮同日基线（120/120，详见 [提示词 v2 报告](./2026-11-05-prompt-v2.md)）。v1 tag 的跨天停在 Day 1，不再继续 Day 2/3；v2 的跨天从 11-06 重新开始。
