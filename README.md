@@ -11,6 +11,7 @@
 ```powershell
 Copy-Item .env.example .env    # 填入 API_KEY；用什么模型由你决定
 npm run agent -- "给这个仓库加一个 /health 接口并写测试"
+npm run agent -- --repl        # 多轮会话：/exit 退出、/reset 清空上下文、/help 看命令
 ```
 
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
@@ -69,7 +70,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 5. **工具错误也要「入栈」。** 失败被折成 `ERROR: ...` 文本，模型下一轮能看见并自己纠正。
 6. **两个执行预算分开算。** `maxSteps` 数「问了模型几次」，`maxToolCalls` 数「真正跑了几个工具」。一次回复可以要 3 个工具，只用一个数字会假装管住了另一个。
 7. **最后的请求预算留给收尾。** 走到第 `maxSteps` 次请求时，模型只能给最终答复；它还要工具，那些工具不执行 —— 没有下一次请求去验证结果，执行了就是一批「跑过但没人看过」的副作用。
-8. **一个实例只跑一次。** 第二次 `run()` 直接抛生命周期错误，不继承上一条 transcript；失败或取消后也一样。
+8. **一个实例是一段会话，可以连续跑多个 Run。** 每次 `run()` 是一次 Run：Transcript 跨 Run 累积，但 Step / 工具 / token 三个预算按 Run 重新算；同一时刻只允许一个 Run 在跑。失败的一轮不会销毁会话，历史留在 Transcript 里（`/reset` 是干净的退出方式）。取舍见 [ADR-0011](./docs/adr/0011-agent-can-run-many-times.md)。
 
 ## 与设计稿的对应
 
@@ -124,9 +125,9 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `API_KEY` | — | 必填，或改用 `OPENAI_API_KEY` |
 | `MODEL` | `gpt-4o-mini` | 模型名 |
 | `WORKDIR` | 当前目录 | 文件工具的根目录（不是安全边界） |
-| `MAX_STEPS` | `30` | 最多请求模型多少次 |
-| `MAX_TOOL_CALLS` | `60` | 一次任务最多真正执行多少次工具调用 |
-| `MAX_TOTAL_TOKENS` | `500000` | 任务累计 token 预算（软上限：到线后不再发请求，已发生的费用照记）；`0` 表示不限制 |
+| `MAX_STEPS` | `30` | 单次 Run 最多请求模型多少次 |
+| `MAX_TOOL_CALLS` | `60` | 单次 Run 最多真正执行多少次工具调用 |
+| `MAX_TOTAL_TOKENS` | `500000` | 单次 Run 的累计 token 预算（软上限：到线后不再发请求，已发生的费用照记）；`0` 表示不限制 |
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应最多生成多少 token |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
 
@@ -137,15 +138,15 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-147 个用例，分九层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+152 个用例，分九层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
-| `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、生命周期、取消、token 统计 |
+| `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、会话生命周期、取消、token 统计 |
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消 |
-| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage |
+| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset` |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败；429 归为环境错误 |
 | `test/diagnostics.test.mjs` | 诊断层：逐请求 usage、工具顺序/参数/结果大小、文件大小与 hash 轨迹 |
@@ -196,7 +197,8 @@ node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4
 保持「内核」的边界，下面这些留给上层或后续迭代：
 
 - 流式输出（`stream: true` 与增量渲染）
-- 多轮 REPL / 会话持久化：一次进程只跑一个任务；`Agent` 实例用一次就作废（第二次 `run()` 直接抛错）
+- 会话持久化到磁盘：进程内的多轮 REPL 已经有了（`--repl`），跨进程恢复 transcript 没有做
+- 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 权限审批与安全隔离：文件工具以 `WORKDIR` 作为操作范围约定，`shell` 仍然是启动它的用户的权限（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）

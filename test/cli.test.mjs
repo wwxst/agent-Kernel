@@ -53,12 +53,14 @@ async function startMock(script, { usage } = {}) {
 }
 
 /** 拉起一个 agent 进程，返回退出码与两路输出。 */
-function runCli(env) {
-  const child = spawn(process.execPath, [cliPath, "do the task"], {
+function runCli(env, { args = ["do the task"], input } = {}) {
+  const child = spawn(process.execPath, [cliPath, ...args], {
     cwd: projectRoot,
     // API_KEY 给个假值：测试里没有真实网络请求（缺 Key 的用例会显式覆盖它）。
     env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", ...env },
   });
+
+  if (input !== undefined) child.stdin.end(input);
 
   let stdout = "";
   let stderr = "";
@@ -224,6 +226,81 @@ test("API Key：只有空白值时按缺失处理", async () => {
 
   assert.equal(run.code, 1);
   assert.match(run.stderr, /missing API_KEY/);
+});
+
+test("REPL：两轮共享 transcript，每轮打自己的 usage，退出时打会话总账", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("first answer"), finalReply("second answer")]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--repl"], input: "first task\nsecond task\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /first answer/);
+      assert.match(run.stdout, /second answer/);
+      assert.equal(mock.requests.length, 2);
+      // 第二轮请求带着第一轮的全部历史。
+      assert.deepEqual(
+        mock.requests[1].messages.map((message) => message.role),
+        ["system", "user", "assistant", "user"],
+      );
+      // 每轮一行 [usage]，退出时再加一行跨 Run 的 [session]。
+      assert.equal((run.stdout.match(/\[usage\]/g) ?? []).length, 2);
+      assert.match(run.stdout, /\[session\] runs=2 requests=2/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("REPL：/reset 清空上下文，重新开一个 Agent", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("first answer"), finalReply("second answer")]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--repl"], input: "first task\n/reset\nsecond task\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /session reset/);
+      assert.equal(mock.requests.length, 2);
+      assert.deepEqual(
+        mock.requests[1].messages.map((message) => message.role),
+        ["system", "user"],
+      );
+      // reset 之后是新会话：总账只算 reset 后那一轮。
+      assert.match(run.stdout, /\[session\] runs=1 requests=1/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("REPL：一轮失败不结束会话，下一轮还能继续", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_1", "ls", { path: "." }),
+      finalReply("recovered on the second turn"),
+    ]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir, MAX_STEPS: "1" },
+        { args: ["--repl"], input: "first task\nsecond task\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stderr, /turn failed: step limit 1 reached/);
+      // 失败那一轮同样打了 usage（task failed），第二轮照常成功。
+      assert.match(run.stdout, /task failed/);
+      assert.match(run.stdout, /recovered on the second turn/);
+      assert.equal(mock.requests.length, 2);
+    } finally {
+      await mock.close();
+    }
+  });
 });
 
 test(

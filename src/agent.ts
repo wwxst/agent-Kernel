@@ -65,6 +65,11 @@ function cancellationError(signal: AbortSignal): Error {
   return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
 }
 
+/** 一份全零的用量。每次 Run 开始和 Session 创建时各拿一份，避免共用同一个可变对象。 */
+function emptyUsage(): AgentUsage {
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, reported: 0, unknown: 0 };
+}
+
 /**
  * 一次任务里能观察到的用量。
  *
@@ -84,15 +89,15 @@ export interface AgentUsage {
   unknown: number;
 }
 
-/** 任务的成本与执行量。和 transcript 一样，失败之后也可以读。 */
+/** 一次 Run 的成本与执行量。和 transcript 一样，失败之后也可以读；跨 Run 的累计见 `sessionStats`。 */
 export interface AgentStats {
-  /** 发出去的模型请求数（失败的请求也算一次尝试）。 */
+  /** 本次 Run 发出去的模型请求数（失败的请求也算一次尝试）。 */
   requests: number;
-  /** 真正执行的工具调用数；预算按这个数算。 */
+  /** 本次 Run 真正执行的工具调用数；Tool call budget 按这个数算。 */
   toolCalls: number;
   usage: AgentUsage;
   /**
-   * token 预算的状态。`exceeded` 可能在一次**成功**的 Run 之后为 true ——
+   * 本次 Run 的 token 预算状态。`exceeded` 可能在一次**成功**的 Run 之后为 true ——
    * 那个把预算顶穿的最终回复已经被返回，钱也已经花了，只是不再发新请求。
    * 调用方要「硬上限」的话，应该在成功返回后自己检查这个标志。
    */
@@ -102,6 +107,20 @@ export interface AgentStats {
     /** 已统计到的合计是否达到或超过上限。 */
     exceeded: boolean;
   };
+}
+
+/**
+ * 整个 Session 的累计用量：跨 Run 求和，用来回答「这轮对话一共花了多少」。
+ *
+ * 和 `stats` 分开是有意的：预算按 Run 算（一轮任务的花销），账单按 Session 算（整个进程）。
+ * 两个数字混在一起，就没有办法既限制单轮、又看清总量。
+ */
+export interface AgentSessionStats {
+  /** 已经开始的 Run 数；失败或取消的 Run 也算一次。 */
+  runs: number;
+  requests: number;
+  toolCalls: number;
+  usage: AgentUsage;
 }
 
 export interface AgentOptions {
@@ -151,23 +170,27 @@ export class Agent {
   private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
 
-  /** 已经执行的工具调用数；预算按它算，也用它写「部分执行」的失败报告。 */
-  private executedToolCalls = 0;
+  /** 本次 Run 已经执行的工具调用数；Tool call budget 按它算，也用它写「部分执行」的失败报告。 */
+  private runToolCalls = 0;
 
-  /** 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
-  private requestCount = 0;
+  /** 本次 Run 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
+  private runRequests = 0;
 
-  /** 累计用量；每次响应都要经过 recordUsage，缺 usage 的单独计数。 */
-  private readonly usage: AgentUsage = {
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    reported: 0,
-    unknown: 0,
-  };
+  /** 本次 Run 的用量；Token budget 按它算。每次 Run 开始时归零。 */
+  private runUsage: AgentUsage = emptyUsage();
 
-  /** 生命周期闸门：第一次 run() 之前是 false，之后永远是 true（失败/取消也算消费）。 */
-  private started = false;
+  /** 跨 Run 的累计账单。 */
+  private sessionRequests = 0;
+
+  private sessionToolCalls = 0;
+
+  private readonly sessionUsage: AgentUsage = emptyUsage();
+
+  /** 已经开始的 Run 数。 */
+  private runCount = 0;
+
+  /** 同一时刻只允许一个 Run：两个 run() 同时写一条 transcript，语义无法解释。 */
+  private running = false;
 
   /**
    * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
@@ -212,54 +235,72 @@ export class Agent {
     }
   }
 
-  /** 到目前为止的用量快照。返回新对象：调用方改不到内部计数。 */
+  /** 本次 Run 的用量快照。返回新对象：调用方改不到内部计数。 */
   get stats(): AgentStats {
     const limit = this.maxTotalTokens;
     return {
-      requests: this.requestCount,
-      toolCalls: this.executedToolCalls,
-      usage: { ...this.usage },
+      requests: this.runRequests,
+      toolCalls: this.runToolCalls,
+      usage: { ...this.runUsage },
       tokenBudget: {
         limit,
-        exceeded: limit !== undefined && this.usage.totalTokens >= limit,
+        exceeded: limit !== undefined && this.runUsage.totalTokens >= limit,
       },
+    };
+  }
+
+  /** 跨 Run 的累计快照：整个 Session 一共跑了多少次、花了多少。 */
+  get sessionStats(): AgentSessionStats {
+    return {
+      runs: this.runCount,
+      requests: this.sessionRequests,
+      toolCalls: this.sessionToolCalls,
+      usage: { ...this.sessionUsage },
     };
   }
 
   /**
    * 记一笔用量。usage 缺失时只增加 unknown，绝不补 0 冒充「没花钱」。
    * 请求失败时也走这里传 undefined：它可能已经产生费用，只是我们不知道多少。
+   *
+   * 同时记到本次 Run 和整个 Session：预算看 Run，账单看 Session。
    */
   private recordUsage(usage: TokenUsage | undefined): void {
     if (usage === undefined) {
-      this.usage.unknown++;
+      this.runUsage.unknown++;
+      this.sessionUsage.unknown++;
       return;
     }
-    this.usage.reported++;
-    this.usage.promptTokens += usage.prompt_tokens;
-    this.usage.completionTokens += usage.completion_tokens;
-    this.usage.totalTokens += usage.total_tokens;
+    this.runUsage.reported++;
+    this.sessionUsage.reported++;
+    this.runUsage.promptTokens += usage.prompt_tokens;
+    this.sessionUsage.promptTokens += usage.prompt_tokens;
+    this.runUsage.completionTokens += usage.completion_tokens;
+    this.sessionUsage.completionTokens += usage.completion_tokens;
+    this.runUsage.totalTokens += usage.total_tokens;
+    this.sessionUsage.totalTokens += usage.total_tokens;
   }
 
   /**
    * 预算用尽就停手：不再发请求，也不执行「没有下一次请求去验证」的工具。
    *
-   * 只在**已知**合计达到上限时触发。usage 缺失时这条闸门拦不住那部分消耗，
+   * 只看**本次 Run** 的合计：REPL 里的第二轮不该被第一轮的花费挤掉工具额度。
+   * 只在已知合计达到上限时触发；usage 缺失时这条闸门拦不住那部分消耗，
    * 所以错误文案和 stats 都只说「已统计到多少」，不说「实际花了多少」。
    */
   private stopIfBudgetExhausted(pending: readonly ToolCall[] = []): void {
     const budget = this.maxTotalTokens;
-    if (budget === undefined || this.usage.totalTokens < budget) return;
+    if (budget === undefined || this.runUsage.totalTokens < budget) return;
 
     this.skipCalls(pending, `token budget ${budget} reached`);
-    const lowerBound = this.usage.unknown > 0 ? "at least " : "";
+    const lowerBound = this.runUsage.unknown > 0 ? "at least " : "";
     const unknownNote =
-      this.usage.unknown > 0
-        ? `; ${this.usage.unknown} request(s) have no usage (failed or unreported), so the real total is higher`
+      this.runUsage.unknown > 0
+        ? `; ${this.runUsage.unknown} request(s) have no usage (failed or unreported), so the real total is higher`
         : "";
     throw new Error(
-      `token budget ${budget} reached: ${lowerBound}${this.usage.totalTokens} tokens counted over ` +
-        `${this.usage.reported} request(s) with usage${unknownNote}`,
+      `token budget ${budget} reached: ${lowerBound}${this.runUsage.totalTokens} tokens counted over ` +
+        `${this.runUsage.reported} request(s) with usage${unknownNote}`,
     );
   }
 
@@ -274,11 +315,14 @@ export class Agent {
   }
 
   /**
-   * 跑完一次任务，返回模型的最终回复（一条不带 tool_calls 的 assistant 消息）。
+   * 跑完一次 Run，返回模型的最终回复（一条不带 tool_calls 的 assistant 消息）。
    *
    * 这就是 **agent loop**：教科书里那个 `while (true)` —— 问模型、执行它要的工具、
    * 把结果塞回去，直到它不再要工具。这里用带计数器的 for 代替 while (true)，
    * 并加了三道闸门：模型请求次数、工具执行次数、取消信号。
+   *
+   * 一个 Agent 可以连续跑多个 Run（REPL 就是这样一个循环），Transcript 跨 Run 累积；
+   * 但同一时刻只允许一个 Run —— 两个循环同时往一条 transcript 里写，顺序无法解释。
    *
    * 失败时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
    * 错误文案里带「已经执行了多少」，此时 transcript 里保留了全过程。
@@ -288,12 +332,27 @@ export class Agent {
    * 等于制造一批「跑过但没人看过」的副作用。
    */
   async run(task: string): Promise<Message> {
-    // 一个实例只跑一次：第二次调用会让两条任务共用一条 transcript，语义无法解释。
-    if (this.started) {
-      throw new Error("agent instance is single-use: run() has already been called");
+    if (this.running) {
+      throw new Error("agent.run() is already running: await the current Run before starting another");
     }
-    this.started = true;
+    this.running = true;
+    this.beginRun();
+    try {
+      return await this.runLoop(task);
+    } finally {
+      this.running = false;
+    }
+  }
 
+  /** 每次 Run 开始时归零「本次」的计数；Session 累计不归零。 */
+  private beginRun(): void {
+    this.runCount++;
+    this.runRequests = 0;
+    this.runToolCalls = 0;
+    this.runUsage = emptyUsage();
+  }
+
+  private async runLoop(task: string): Promise<Message> {
     // 取消发生在任务开始之前：用户已经按了 Ctrl-C，就不该再花一次模型请求。
     this.stopIfCancelled();
 
@@ -304,7 +363,8 @@ export class Agent {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
       this.stopIfCancelled();
       this.stopIfBudgetExhausted();
-      this.requestCount++;
+      this.runRequests++;
+      this.sessionRequests++;
       let response: ChatResponse;
       try {
         response = await this.llm.chat(this.messages, this.tools.definitions);
@@ -341,16 +401,16 @@ export class Agent {
       if (step === this.maxSteps) {
         this.skipCalls(calls, "no model request left to verify the result");
         throw new Error(
-          `step limit ${this.maxSteps} reached after executing ${this.executedToolCalls} tool call(s); ` +
+          `step limit ${this.maxSteps} reached after executing ${this.runToolCalls} tool call(s); ` +
             `the final model response asked for ${calls.length} more, which were not run`,
         );
       }
 
       // 7) 整批先算预算：执行到一半才发现超限，会留下一批「跑了但没回报」的调用。
-      if (this.executedToolCalls + calls.length > this.maxToolCalls) {
+      if (this.runToolCalls + calls.length > this.maxToolCalls) {
         this.skipCalls(calls, `tool call budget ${this.maxToolCalls} would be exceeded`);
         throw new Error(
-          `tool call budget ${this.maxToolCalls} exceeded: ${this.executedToolCalls} already executed, ` +
+          `tool call budget ${this.maxToolCalls} exceeded: ${this.runToolCalls} already executed in this Run, ` +
             `this batch asks for ${calls.length}; none of them were run`,
         );
       }
@@ -363,7 +423,8 @@ export class Agent {
         this.stopIfCancelled(calls.slice(index));
         const call = calls[index];
         const result = await this.tools.execute(call);
-        this.executedToolCalls++;
+        this.runToolCalls++;
+        this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
         this.onToolResult?.(call, result);
       }
@@ -375,7 +436,7 @@ export class Agent {
     // 保留它兜住 maxSteps <= 0 这种配置错误，也让这个函数在类型上一定有出口。
     // 中文对照：已达到步数上限 {n} 步，已执行 {m} 次工具调用。
     throw new Error(
-      `step limit ${this.maxSteps} reached after executing ${this.executedToolCalls} tool call(s)`,
+      `step limit ${this.maxSteps} reached after executing ${this.runToolCalls} tool call(s)`,
     );
   }
 }
