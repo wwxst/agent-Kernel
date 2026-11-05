@@ -34,6 +34,7 @@ import { promisify } from "node:util";
 import { Agent } from "../src/agent.ts";
 import { createEvalDiagnostics } from "./diagnostics.mjs";
 import { Llm } from "../src/llm.ts";
+import { Permission } from "../src/permission.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "../src/workspace.ts";
 import { isExpectedFailure } from "./selfcheck.mjs";
@@ -184,7 +185,10 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }) 
   await cp(path.join(taskDir, "files"), workdir, { recursive: true });
 
   const llm = new Llm({ baseUrl, apiKey, model });
-  const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })));
+  // 评测是受信任的宿主：显式 full-access，而不是依赖「不注入就不检查」的默认。
+  const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })), {
+    permission: new Permission("full-access"),
+  });
   const diagnostics = trace ? await createEvalDiagnostics({ llm, tools, workdir }) : undefined;
   const agent = new Agent({
     llm: diagnostics?.llm ?? llm,

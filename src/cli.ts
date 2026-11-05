@@ -26,10 +26,16 @@ import { Agent } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
-import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, parsePermissionMode } from "./permission.ts";
+import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, canAskForApproval, isApproved, parsePermissionMode } from "./permission.ts";
 import type { PermissionApprover, PermissionMode, PermissionRequest } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
+
+/** 帮助文案、错误文案和 usage 共用同一份模式列表，避免四处各写一遍。 */
+const PERMISSION_MODE_LIST = PERMISSION_MODES.join(", ");
+
+/** 审批提示最多显示多少字符的命令；完整命令仍然原样执行。 */
+const APPROVAL_PREVIEW_CHARS = 160;
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
 function firstNonEmpty(...values: Array<string | undefined>): string {
@@ -144,13 +150,19 @@ function parseArgs(argv: readonly string[]): CliArgs {
       continue;
     }
     if (arg === "--permission" || arg.startsWith("--permission=")) {
-      const raw = arg === "--permission" ? argv[++index] : arg.slice("--permission=".length);
+      let raw: string | undefined;
+      if (arg === "--permission") {
+        index++;
+        raw = argv[index];
+      } else {
+        raw = arg.slice("--permission=".length);
+      }
       if (raw === undefined || raw === "" || raw.startsWith("--")) {
-        return result(`missing value for --permission (expected: ${PERMISSION_MODES.join(", ")})`);
+        return result(`missing value for --permission (expected: ${PERMISSION_MODE_LIST})`);
       }
       const parsed = parsePermissionMode(raw);
       if (parsed === undefined) {
-        return result(`invalid --permission value "${raw}" (expected: ${PERMISSION_MODES.join(", ")})`);
+        return result(`invalid --permission value "${raw}" (expected: ${PERMISSION_MODE_LIST})`);
       }
       permission = parsed;
       continue;
@@ -167,49 +179,75 @@ function parseArgs(argv: readonly string[]): CliArgs {
  * 这里只截断**显示**，不会改动真正要执行的命令；放行的是原始参数。
  */
 function formatApproval(request: PermissionRequest): string {
-  const command = typeof request.args.command === "string" ? request.args.command : "";
-  const oneLine = command.replace(/\s+/g, " ").trim();
-  const preview = oneLine.length > 160 ? `${oneLine.slice(0, 160)}…` : oneLine;
+  const command = request.args.command;
+  // shell 的 command 已由 ToolRegistry 的 Schema 校验为字符串；这里只做显示层的收窄，
+  // 不重复承担校验。拿不到时明确写出来，不展示一个空命令。
+  const oneLine = typeof command === "string" ? command.replace(/\s+/g, " ").trim() : "(command unavailable)";
+  const preview =
+    oneLine.length > APPROVAL_PREVIEW_CHARS ? `${oneLine.slice(0, APPROVAL_PREVIEW_CHARS)}…` : oneLine;
+  // 中文对照：\n[permission] 允许 {工具} 执行一次：{命令}？[y/N]
   return `\n[permission] allow ${request.tool} once${preview === "" ? "" : `: ${preview}`}? [y/N] `;
 }
 
-interface Approver {
+/** 审批和 REPL 提示都要求 stdin / stdout 都是 TTY：没有输出终端没法问，没有输入终端没法答。 */
+function hasInteractiveTerminal(): boolean {
+  return process.stdin.isTTY === true && process.stdout.isTTY === true;
+}
+
+interface ApprovalPrompt {
   /** 无 TTY 时没有审批通道：故意不给函数，让 Permission 报「没有审批提示」而不是「用户拒绝」。 */
   approve?: PermissionApprover;
   close(): void;
 }
 
 /**
+ * 一次性任务里的审批通道。
+ *
+ * readline 要到第一次真正需要审批时才创建：它在终端模式下会进入 raw mode，
+ * 一创建就会抢走 Ctrl-C。没有 shell 调用的任务不该因为「可能审批」而改变取消行为。
+ *
  * 非交互进程（管道、CI、评测）没有 TTY：直接拒绝，不读 stdin。
  * 读 stdin 会把管道里后续的任务行当成审批答案，既错位又危险。
  */
-function createApprover(signal: AbortSignal): Approver {
-  if (process.stdin.isTTY !== true || process.stdout.isTTY !== true) {
+function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
+  const signal = controller.signal;
+  if (!canAskForApproval(signal, hasInteractiveTerminal())) {
     return { close: () => {} };
   }
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+  let rl: ReturnType<typeof createInterface> | undefined;
   let closed = false;
-  rl.on("close", () => {
-    closed = true;
-  });
-  const onAbort = () => rl.close();
+
+  const onAbort = () => rl?.close();
   signal.addEventListener("abort", onAbort, { once: true });
+
+  const open = (): ReturnType<typeof createInterface> => {
+    if (rl !== undefined) return rl;
+    const created = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+    created.on("close", () => {
+      closed = true;
+    });
+    // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT。审批期间仍然要停掉整个会话，
+    // 所以显式 abort 同一个 controller，走和普通任务一样的取消链。
+    created.on("SIGINT", () => {
+      controller.abort(new Error("received SIGINT"));
+      created.close();
+    });
+    rl = created;
+    return created;
+  };
 
   return {
     approve: async (request) => {
-      if (closed || signal.aborted) return false;
-      try {
-        const answer = await rl.question(formatApproval(request));
-        return /^(?:y|yes)$/i.test(answer.trim());
-      } catch {
-        // EOF / 取消会关掉 readline：异常和取消都按拒绝处理。
-        return false;
-      }
+      if (closed || !canAskForApproval(signal, true)) return false;
+      // readline 在 EOF / 关闭时会 reject；让 Permission 的 catch 把原因折进拒绝文本，
+      // 这里不吞异常（吞掉会误报成「用户拒绝」）。
+      const answer = await open().question(formatApproval(request));
+      return isApproved(answer);
     },
     close: () => {
       signal.removeEventListener("abort", onAbort);
-      rl.close();
+      rl?.close();
     },
   };
 }
@@ -318,9 +356,10 @@ function printSession(stats: AgentSessionStats): void {
 }
 
 const REPL_HELP = [
-  // 中文对照：命令：/exit 退出、/reset 清空上下文并重开一个 Agent、/help 显示这段帮助
+  // 中文对照：命令：/exit 退出、/reset 清空上下文并重开一个 Agent、/permission 查看或切换权限、/help 显示这段帮助
   "commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this",
-  `          /permission [mode]  show or switch permission (${PERMISSION_MODES.join(", ")})`,
+  // 中文对照：/permission [模式] 查看或切换权限（read-only、workspace-write、full-access）
+  `          /permission [mode]  show or switch permission (${PERMISSION_MODE_LIST})`,
 ].join("\n");
 
 /**
@@ -330,10 +369,18 @@ const REPL_HELP = [
  * 失败的一轮不会结束会话：打印错误、继续等下一行输入。唯一的例外是取消 ——
  * Ctrl-C 停掉的是整个进程，所以循环跟着退出。
  */
-async function repl(config: Config, signal: AbortSignal): Promise<void> {
+async function repl(config: Config, controller: AbortController): Promise<void> {
+  const signal = controller.signal;
   const interactive = process.stdin.isTTY === true;
-  const canPrompt = interactive && process.stdout.isTTY === true;
+  const canPrompt = hasInteractiveTerminal();
   const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: interactive });
+
+  // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT。
+  // 显式接住，仍然走同一条取消链：abort 控制器、关掉 readline、循环退出。
+  rl.on("SIGINT", () => {
+    controller.abort(new Error("received SIGINT"));
+    rl.close();
+  });
 
   // 自己维护一条「已读到的行」队列，而不是用 rl.question：
   // 管道输入会在任务还没跑完时就读到 EOF 并 close，question 会直接拒绝，缓冲里的后续行就丢了；
@@ -355,8 +402,8 @@ async function repl(config: Config, signal: AbortSignal): Promise<void> {
   });
 
   const nextLine = (prompt: string): Promise<string | null> => {
-    // 队列里已经有行（管道一次性喂完）时不要再写提示符，避免输出里多出空提示。
-    if (lines.length === 0 && !ended) {
+    // 和旧 REPL 一样，每次读下一行前画提示符；管道里已经排着行时也不改变输出节奏。
+    if (!ended) {
       rl.setPrompt(prompt);
       rl.prompt();
     }
@@ -371,10 +418,12 @@ async function repl(config: Config, signal: AbortSignal): Promise<void> {
   signal.addEventListener("abort", onAbort, { once: true });
 
   const approve: PermissionApprover = async (request) => {
-    // 无 TTY 时绝不读 stdin：否则管道里下一行任务会被当成审批答案。
-    if (signal.aborted || !canPrompt) return false;
+    if (!canAskForApproval(signal, canPrompt)) return false;
+    // 任务运行时用户可能已经打好了下一行；那一行属于 REPL，不能当成审批答案。
+    // 直接拒绝这次 shell，把行留在队列里，下一轮继续当任务读。
+    if (lines.length > 0) return false;
     const answer = await nextLine(formatApproval(request));
-    return answer !== null && /^(?:y|yes)$/i.test(answer.trim());
+    return answer !== null && isApproved(answer);
   };
 
   // 权限是会话级的：/reset 只换 Agent，不换这个对象，所以模式不会被重置。
@@ -408,7 +457,7 @@ async function repl(config: Config, signal: AbortSignal): Promise<void> {
           const mode = parsePermissionMode(value);
           if (mode === undefined) {
             // 中文对照：未知权限模式 "{值}"（可用：…）
-            console.log(`unknown permission mode "${value}" (expected: ${PERMISSION_MODES.join(", ")})`);
+            console.log(`unknown permission mode "${value}" (expected: ${PERMISSION_MODE_LIST})`);
           } else {
             permission.setMode(mode);
             console.log(`permission: ${permission.mode}`);
@@ -444,7 +493,7 @@ const usage = [
   'usage: node src/cli.ts "<task>" [--permission <mode>]',
   "       node src/cli.ts --repl [--permission <mode>]     # multi-turn session; /exit, /reset, /permission, /help",
   // 中文对照：权限模式：…（默认：…）
-  `       modes: ${PERMISSION_MODES.join(", ")} (default: ${DEFAULT_PERMISSION_MODE})`,
+  `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
   "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS",
 ].join("\n");
@@ -473,15 +522,15 @@ if (cli.error !== undefined) {
   try {
     const config = loadConfig(cli.permission);
     if (replMode) {
-      await repl(config, controller.signal);
+      await repl(config, controller);
     } else {
-      const approver = createApprover(controller.signal);
+      const approvalPrompt = createApprovalPrompt(controller);
       try {
         // 一次性任务同样使用会话级 Permission：审批器负责「怎么问」，Permission 负责「放不放行」。
-        const permission = new Permission(config.permission, approver.approve);
+        const permission = new Permission(config.permission, approvalPrompt.approve);
         await runTurn(createAgent(config, controller.signal, permission), cli.task);
       } finally {
-        approver.close();
+        approvalPrompt.close();
       }
     }
   } catch (error) {

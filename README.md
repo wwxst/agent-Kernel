@@ -22,7 +22,7 @@ CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是�
 
 ## 代码结构
 
-八个模块，依赖只有一个方向，叶子是不依赖任何人的模块（`types.ts`、`errors.ts`、`permission.ts`）：
+八个模块，依赖只有一个方向。`types.ts` 是叶子；`errors.ts` 只依赖 `types.ts` 的类型，`permission.ts` 复用 `errors.ts` 的 `describeError`：
 
 | 文件 | 一句话 |
 | --- | --- |
@@ -136,7 +136,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 CLI 用 `--permission <mode>`（也支持 `--permission=<mode>`）选起始模式；REPL 用 `/permission` 查看、`/permission read-only` 切换。`/reset` 只换 Agent 和 Transcript，不改变当前权限。
 
-`workspace-write` 下的 `shell` 每次都要人工确认：输入 `y` / `yes` 允许这一次，其他输入（包括空行）都拒绝。没有 TTY、取消、审批通道异常都按拒绝处理；无 TTY 时不会去读 stdin，避免把管道里的下一行任务当成审批答案。REPL 和审批共用同一个 readline，并按顺序一次只等一行。
+`workspace-write` 下的 `shell` 每次都要人工确认：输入 `y` / `yes` 允许这一次，其他输入（包括空行）都拒绝。没有 TTY、取消、审批通道异常都按拒绝处理；无 TTY 时不会去读 stdin，避免把管道里的下一行任务当成审批答案。REPL 和审批共用同一个 readline，并按顺序一次只等一行；如果任务运行期间已经排着下一行输入，这次 shell 会被拒绝，那一行留给下一轮任务，不会被当成审批答案。
 
 **Permission 不是 Sandbox。** 它只决定一次 Tool call 放不放行，不改变进程的操作系统权限：没有容器、没有用户切换、没有只读挂载。`workspace-write` 的 `shell` 一旦被批准，子进程就和启动它的人同权，可以 `cd ..` 走出工作区；`read` / `write` 的路径守卫拦的是模型手滑，不是恶意代码（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）。真隔离得靠容器、虚拟机、独立用户或只读挂载，不能靠 Permission 的字符串判断。取舍见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)。
 
@@ -162,7 +162,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-179 个用例，分九层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
+182 个用例，分九层，都不需要 API Key、不联网（其中 2 条只在 Linux 跑：chmod 权限、向子进程发 SIGINT）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |

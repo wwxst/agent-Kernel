@@ -9,6 +9,7 @@
  * 模块只做策略判断，不碰 stdin/stdout：审批回调由宿主（CLI）注入，测试可以注入假实现。
  * 这样「什么时候问人」和「问人时怎么读一行」分开，REPL 才能把同一个 readline 传给审批。
  */
+import { describeError } from "./errors.ts";
 
 /** 三档权限，顺序就是帮助文案里的顺序。 */
 export const PERMISSION_MODES = ["read-only", "workspace-write", "full-access"] as const;
@@ -22,10 +23,18 @@ const READ_ONLY_TOOL_NAMES = ["read", "ls", "glob", "grep"] as const;
 const READ_ONLY_TOOLS = new Set<string>(READ_ONLY_TOOL_NAMES);
 const READ_ONLY_TOOL_LIST = READ_ONLY_TOOL_NAMES.join(", ");
 
-/** 只改文件的工具；它们是否真的留在工作区由 Workspace 的路径守卫决定，不归 Permission 管。 */
+/**
+ * 只改文件的工具；它们是否真的留在工作区由 Workspace 的路径守卫决定，不归 Permission 管。
+ * 下面两张表就是这版策略的全部内容：工具名是模型看到的接口，改工具集时必须同步这里。
+ */
 const WRITE_TOOLS = new Set(["write", "edit"]);
 
-/** 一次权限检查要看的调用信息：工具名 + 已经校验过的参数（审批提示要用 command）。 */
+/**
+ * 一次权限检查要看的调用信息：工具名 + 已经校验过的参数。
+ *
+ * 策略本身只读 `tool`；`args` 是留给审批提示的（比如 shell 的 command），Permission 不解释它。
+ * 这样策略不需要认识每个工具的参数，审批提示又拿得到原始命令。
+ */
 export interface PermissionRequest {
   tool: string;
   args: Record<string, unknown>;
@@ -44,6 +53,21 @@ export type PermissionResult =
 /** 只接受三档字符串；CLI 的 `--permission` 和 REPL 的 `/permission` 共用这一处判定。 */
 export function parsePermissionMode(value: string): PermissionMode | undefined {
   return PERMISSION_MODES.find((mode) => mode === value);
+}
+
+/** 审批回答只认 y / yes（大小写不敏感）；空行、n、其他任何输入都是拒绝。 */
+export function isApproved(answer: string): boolean {
+  return /^(?:y|yes)$/i.test(answer.trim());
+}
+
+/**
+ * 审批前的前置门：没有交互终端或已经取消时，不问、直接拒绝。
+ *
+ * 抽出来不只是为了少写两个条件：它让「取消默认拒绝」有独立的测试点，
+ * 不需要为了验证一个 signal 去伪造一个终端。
+ */
+export function canAskForApproval(signal: AbortSignal, interactive: boolean): boolean {
+  return interactive && !signal.aborted;
 }
 
 /**
@@ -120,10 +144,14 @@ export class Permission {
     try {
       if ((await this.approve(request)) === true) return { allowed: true };
       return { allowed: false, reason: 'user denied tool "shell"' };
-    } catch {
+    } catch (error) {
       // 审批通道自己坏了（readline 关闭、TTY 消失）也按拒绝处理：
       // 异常绝不能变成「默认放行」，那正好是权限系统最危险的方向。
-      return { allowed: false, reason: 'tool "shell" approval failed; denied by default' };
+      // 原因写进拒绝文本，避免把「读不到输入」误报成「用户拒绝」。
+      return {
+        allowed: false,
+        reason: `tool "shell" approval failed: ${describeError(error)}; denied by default`,
+      };
     }
   }
 }

@@ -6,6 +6,8 @@ Permission v0.1 给 agent 三档模式：`read-only` 只放行 `read` / `ls` / `
 
 - 检查点在 `ToolRegistry.execute()`：参数校验之后、`tool.run()` 之前。拒绝不执行工具，返回一条 `ERROR: permission denied: …` 的 **Tool result**，模型下一轮可以自己换做法。
 - 权限按工具名分档，不看参数。路径是否越界仍由 `Workspace` 的路径守卫判断；两层各管一件事。
+- 权限由宿主注入：`ToolRegistry` 不注入时不检查（测试、评测这类宿主自己决定工具集）；CLI 总会注入，所以用户侧默认是 `workspace-write`。
+- 审批提示懒创建 readline：没有 `shell` 调用的任务不进入终端 raw mode，Ctrl-C 仍走原取消链；REPL 里如果任务运行时已经排着下一行输入，这次 `shell` 会被拒绝，那一行留给下一轮，避免把任务当成审批答案。
 - `shell` 的审批是**逐次**的：允许一次或拒绝，不缓存「上次同意过」。没有 TTY、取消、审批通道异常都按拒绝处理；无 TTY 时不读 stdin，避免把管道里的下一行任务当成审批答案。
 - REPL 与审批共用同一个 readline，并按顺序一次只等一行；`/reset` 换 Agent 但不换 Permission 对象。
 - CLI 用 `--permission` 选起始模式，REPL 用 `/permission` 查看和切换。

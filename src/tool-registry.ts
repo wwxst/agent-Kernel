@@ -190,7 +190,8 @@ export class ToolRegistry {
           return `ERROR: permission denied: ${decision.reason}`;
         }
       } catch (error) {
-        // 权限模块自己不该抛；真抛了也不能穿出 execute，否则整个 Run 会被一个策略故障终止。
+        // Permission.check 已经把审批异常折成拒绝；这里兜的是策略模块自身的意外故障。
+        // execute 对外承诺永不抛异常，任何协作者抛错都必须在这个边界收口 —— 不是重复校验。
         // 中文对照：ERROR: 权限被拒绝：{原因}
         return `ERROR: permission denied: ${describeError(error)}`;
       }

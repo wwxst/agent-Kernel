@@ -26,13 +26,13 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`ChatResponseError` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、权限检查、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
-| `src/permission.ts` | 三档权限策略、shell 的一次性审批、拒绝原因；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode` |
+| `src/permission.ts` | 三档权限策略、shell 的一次性审批、拒绝原因；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`canAskForApproval` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
 | `src/cli.ts` | 组装：命令行参数 / 环境变量 → 对象图 → 跑一次或进 REPL；`--permission`、`/permission`、SIGINT/SIGTERM 取消链的起点 | — |
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `llm` / `errors` → `types`。`types`、`permission` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），不被其他模块反向依赖；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查）。
+依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `llm` / `errors` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查）。
 
 ## 测试放哪
 
@@ -40,7 +40,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计。
 - `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，以及每个失败分支都折成文本。
-- `Permission`：三档策略、shell 每次询问、无 TTY / 取消 / 审批异常默认拒绝。
+- `Permission`：三档策略、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝。
 - `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消；循环细节留在单元层。

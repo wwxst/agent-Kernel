@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, parsePermissionMode } from "../src/permission.ts";
+import { DEFAULT_PERMISSION_MODE, Permission, canAskForApproval, isApproved, parsePermissionMode } from "../src/permission.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 
 /** 一次权限检查的请求形状。 */
@@ -52,10 +52,31 @@ test("Permission：默认是 workspace-write", () => {
 });
 
 test("parsePermissionMode：只认三档，大小写和拼写错误都返回 undefined", () => {
-  for (const mode of PERMISSION_MODES) assert.equal(parsePermissionMode(mode), mode);
+  assert.equal(parsePermissionMode("read-only"), "read-only");
+  assert.equal(parsePermissionMode("workspace-write"), "workspace-write");
+  assert.equal(parsePermissionMode("full-access"), "full-access");
   for (const value of ["", "readonly", "Read-Only", "workspace_write", "wide-open", " read-only "]) {
     assert.equal(parsePermissionMode(value), undefined);
   }
+});
+
+test("isApproved：只有 y / yes（大小写不敏感）算允许", () => {
+  for (const answer of ["y", "Y", "yes", "YES", " yes "]) {
+    assert.equal(isApproved(answer), true);
+  }
+  for (const answer of ["", "n", "no", "true", "1", "yes please"]) {
+    assert.equal(isApproved(answer), false);
+  }
+});
+
+test("canAskForApproval：无 TTY 或已取消时不允许提问", () => {
+  const controller = new AbortController();
+
+  assert.equal(canAskForApproval(controller.signal, true), true);
+  assert.equal(canAskForApproval(controller.signal, false), false);
+
+  controller.abort();
+  assert.equal(canAskForApproval(controller.signal, true), false);
 });
 
 test("read-only：放行 read/ls/glob/grep，拒绝 write/edit/shell，且不触发审批", async () => {
@@ -130,6 +151,19 @@ test("workspace-write：审批抛异常按拒绝处理", async () => {
   const result = await permission.check(request("shell", { command: "echo hi" }));
 
   assert.equal(result.allowed, false);
+  assert.match(result.reason, /readline closed/);
+  assert.match(result.reason, /denied by default/);
+});
+
+test("workspace-write：审批被取消（AbortError）也按拒绝处理", async () => {
+  const permission = new Permission("workspace-write", async () => {
+    throw new DOMException("aborted", "AbortError");
+  });
+
+  const result = await permission.check(request("shell", { command: "echo hi" }));
+
+  assert.equal(result.allowed, false);
+  assert.match(result.reason, /aborted/);
   assert.match(result.reason, /denied by default/);
 });
 
