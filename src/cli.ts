@@ -22,20 +22,18 @@
  */
 import * as path from "node:path";
 import { createInterface } from "node:readline/promises";
+import { askWithSignal, formatApproval } from "./approval.ts";
 import { Agent } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode } from "./permission.ts";
-import type { PermissionApprover, PermissionMode, PermissionRequest } from "./permission.ts";
+import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
 /** 帮助文案、错误文案和 usage 共用同一份模式列表，避免四处各写一遍。 */
 const PERMISSION_MODE_LIST = PERMISSION_MODES.join(", ");
-
-/** 审批提示最多显示多少字符的命令；完整命令仍然原样执行。 */
-const APPROVAL_PREVIEW_CHARS = 160;
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
 function firstNonEmpty(...values: Array<string | undefined>): string {
@@ -174,21 +172,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
   return result();
 }
 
-/**
- * 审批提示压成一行：命令里的换行会把提示符和问题撕开，用户就不知道自己在回答哪一句。
- * 这里只截断**显示**，不会改动真正要执行的命令；放行的是原始参数。
- */
-function formatApproval(request: PermissionRequest): string {
-  const command = request.args.command;
-  // shell 的 command 已由 ToolRegistry 的 Schema 校验为字符串；这里只做显示层的收窄，
-  // 不重复承担校验。拿不到时明确写出来，不展示一个空命令。
-  const oneLine = typeof command === "string" ? command.replace(/\s+/g, " ").trim() : "(command unavailable)";
-  const preview =
-    oneLine.length > APPROVAL_PREVIEW_CHARS ? `${oneLine.slice(0, APPROVAL_PREVIEW_CHARS)}…` : oneLine;
-  // 中文对照：\n[permission] 允许 {工具} 执行一次：{命令}？[y/N]
-  return `\n[permission] allow ${request.tool} once${preview === "" ? "" : `: ${preview}`}? [y/N] `;
-}
-
 /** 审批和 REPL 提示都要求 stdin / stdout 都是 TTY：没有输出终端没法问，没有输入终端没法答。 */
 function hasInteractiveTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
@@ -218,9 +201,6 @@ function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
 
   let rl: ReturnType<typeof createInterface> | undefined;
 
-  const onAbort = () => rl?.close();
-  signal.addEventListener("abort", onAbort, { once: true });
-
   const open = (): ReturnType<typeof createInterface> => {
     if (rl !== undefined) return rl;
     const created = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
@@ -238,13 +218,11 @@ function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
     approve: async (request) => {
       const gate = approvalGate(signal, hasInteractiveTerminal(), false);
       if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
-      // readline 在 EOF / 关闭时会 reject；让 Permission 的 catch 把原因折进拒绝文本，
-      // 这里不吞异常（吞掉会误报成「用户拒绝」）。
-      const answer = await open().question(formatApproval(request));
+      // 等待被 abort / close / 正常回答三者之一收口；不再直接等一个不接 signal 的 question。
+      const answer = await askWithSignal(open(), formatApproval(request), signal);
       return isApproved(answer);
     },
     close: () => {
-      signal.removeEventListener("abort", onAbort);
       rl?.close();
     },
   };
