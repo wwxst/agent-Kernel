@@ -24,6 +24,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、生命周期 | `Agent.run(task)`、`transcript`、`stats` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
+| `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage 与 `max_tokens` | `Llm.chat(messages, tools)` |
 | `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次；SIGINT/SIGTERM 取消链的起点 | — |
 
@@ -35,7 +36,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、生命周期、取消、token 统计。
 - `ToolRegistry`：Schema 注册校验，以及每个失败分支都折成文本。
-- `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 字面匹配、取消进程树。
+- `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。

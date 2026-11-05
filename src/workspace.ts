@@ -17,6 +17,7 @@ import type { ChildProcess } from "node:child_process";
 import type { Dir } from "node:fs";
 import { lstat, mkdir, opendir, open, realpath, stat, writeFile } from "node:fs/promises";
 import * as path from "node:path";
+import { Worker } from "node:worker_threads";
 import type { Tool } from "./types.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
@@ -46,6 +47,15 @@ const MAX_RESULTS = 200;
 
 /** grep 单行最多展示多少字符。 */
 const MAX_LINE_CHARS = 200;
+
+/**
+ * 一次 grep 花在正则匹配上的时间预算（毫秒）。
+ *
+ * 只统计 worker 里的匹配时间，不含读文件 —— 慢磁盘不该吃掉正则的预算。
+ * 超时意味着模型给了一条会指数级回溯的模式：停手、保留已有命中、明确说结果不完整，
+ * 而不是让整个 agent 陪它一起卡住。
+ */
+const REGEX_BUDGET_MS = 2_000;
 
 /** 单行被截断时追加的标记：不标出来，模型会以为那就是整行。 */
 const LINE_TRUNCATED = " …[line truncated]";
@@ -79,6 +89,8 @@ export interface WorkspaceOptions {
   timeoutMs?: number;
   /** 单次 glob / grep / list 的扫描预算（目录项个数），默认 20000。测试会传一个小值。 */
   scanLimit?: number;
+  /** 单次 grep 花在正则匹配上的时间预算，默认 2000 毫秒。测试会传一个很小的值。 */
+  regexBudgetMs?: number;
   /**
    * 取消信号。CLI 收到 SIGINT / SIGTERM 时 abort 它，正在跑的 shell 会连同进程树一起被收掉。
    *
@@ -86,6 +98,14 @@ export interface WorkspaceOptions {
    * 多一层管理器只会多一个需要同步的地方。
    */
   signal?: AbortSignal;
+}
+
+/** grep 的可选参数：默认按正则、区分大小写；只有模型明确要求时才切到字面模式。 */
+export interface GrepOptions {
+  /** 正则标志，只接受 i / m / s / u；g 和 y 会被忽略。 */
+  flags?: string;
+  /** true 时把 pattern 当字面字符串，不解释正则元字符。 */
+  fixed?: boolean;
 }
 
 /**
@@ -101,16 +121,25 @@ export class Workspace {
 
   private readonly scanLimit: number;
 
+  private readonly regexBudgetMs: number;
+
   /** 当前任务的取消信号；没有就表示不可取消（测试和库调用常见）。 */
   private readonly signal?: AbortSignal;
 
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
 
-  constructor({ root, timeoutMs = DEFAULT_TIMEOUT_MS, scanLimit = MAX_SCAN_ENTRIES, signal }: WorkspaceOptions) {
+  constructor({
+    root,
+    timeoutMs = DEFAULT_TIMEOUT_MS,
+    scanLimit = MAX_SCAN_ENTRIES,
+    regexBudgetMs = REGEX_BUDGET_MS,
+    signal,
+  }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
     this.scanLimit = scanLimit;
+    this.regexBudgetMs = regexBudgetMs;
     this.signal = signal;
   }
 
@@ -288,70 +317,107 @@ export class Workspace {
   }
 
   /**
-   * 在文本文件里按**字面字符串**搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
+   * 在文本文件里按**正则**搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
    *
-   * 为什么是字面而不是正则：模型给的正则可能带灾难性回溯（`(a+)+$`），而匹配跑在主线程上，
-   * 一条这样的模式就能把整个 agent 挂住 —— 没有 worker、没有超时，只能等用户 Ctrl-C。
-   * 第一阶段先把它降级成字面搜索：失去正则能力，换来不可能被输入卡死。
-   * 要恢复正则，得先把匹配放进 worker 并带上可中断的超时，而不是只把 `new RegExp` 加回来。
+   * 正则由模型提供，`(a+)+$` 这类模式会指数级回溯。匹配因此跑在 `grep-worker.ts` 的线程里，
+   * 主线程只守 `regexBudgetMs` 的时间预算：超时就 terminate 线程，回溯跟着线程一起消失。
+   * 「不会被输入卡死」这条不变量还在，模型拿回了正则能力 —— 取舍记在 ADR-0010。
+   *
+   * `fixed` 把 pattern 转义成等价的正则源码，复用同一条匹配路径：转义后的字面量
+   * 不可能回溯，但没必要为它维护第二套匹配逻辑和第二种错误口径。
    *
    * 二进制文件（含 NUL 字节）直接跳过：按 UTF-8 读出来只是乱码。
    * 超过 MAX_GREP_FILE_BYTES 的文件不读，并在结果里说明跳过了几个 ——
    * 否则模型会以为「没搜到」等于「不存在」。
    * 读不了的文件（权限、坏链接）也跳过：一次搜索不该被一个文件打断。
    */
-  async grep(text: string, requested = "."): Promise<string> {
-    if (text === "") {
-      // 空串是每行的子串：放过去会让「搜一下」变成「列全部内容」。
-      throw new Error("search text must not be empty");
+  async grep(pattern: string, requested = ".", options: GrepOptions = {}): Promise<string> {
+    if (pattern === "") {
+      // 空模式会匹配每一行（`new RegExp("")` 恒真），放过去等于「列出所有内容」。
+      throw new Error("search pattern must not be empty");
     }
+    const flags = normalizeGrepFlags(options.flags ?? "");
+    const source = options.fixed === true ? escapeRegExp(pattern) : pattern;
+    assertValidPattern(source, flags);
+
     const start = this.resolve(requested);
     await this.assertInsideWorkspace(start, requested);
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
     let unreadable = 0;
+    let regexStopped = false;
+    let spentMs = 0;
     // 一次 grep 只分配一块上限大小的读缓冲，所有文件复用 —— 不按文件数乘内存。
     const buffer = Buffer.alloc(MAX_GREP_FILE_BYTES + 1);
     const budget = { remaining: this.scanLimit };
-    for await (const file of walkFiles(start, budget)) {
-      if (hits.length >= MAX_RESULTS) break;
+    const matcher = new RegexGrep(source, flags);
+    try {
+      for await (const file of walkFiles(start, budget)) {
+        if (hits.length >= MAX_RESULTS) break;
 
-      let content: string;
-      try {
-        // 用句柄读到上限为止：先 stat 再看 readFile 有竞态，真正的上限得落在读了多少字节。
-        const read = await readTextUpTo(file, MAX_GREP_FILE_BYTES, buffer);
-        if (read.truncated) {
-          skippedLarge++;
+        const remaining = this.regexBudgetMs - spentMs;
+        if (remaining <= 0) {
+          // 预算在「还有文件没搜」的时候用完了：结果不完整，必须说出来。
+          regexStopped = true;
+          break;
+        }
+
+        let content: string;
+        try {
+          // 用句柄读到上限为止：先 stat 再看 readFile 有竞态，真正的上限得落在读了多少字节。
+          const read = await readTextUpTo(file, MAX_GREP_FILE_BYTES, buffer);
+          if (read.truncated) {
+            skippedLarge++;
+            continue;
+          }
+          content = read.text;
+        } catch {
+          // 读不了也要记账：丢掉这个文件可以，但「结果可能不完整」必须告诉模型。
+          unreadable++;
           continue;
         }
-        content = read.text;
-      } catch {
-        // 读不了也要记账：丢掉这个文件可以，但「结果可能不完整」必须告诉模型。
-        unreadable++;
-        continue;
-      }
-      if (content.includes("\u0000")) continue;
+        if (content.includes("\u0000")) continue;
 
-      const lines = content.split("\n");
-      for (let index = 0; index < lines.length; index++) {
-        if (!lines[index].includes(text)) continue;
-        const line = lines[index].trim();
-        hits.push({
-          file: toPosix(path.relative(this.root, file)),
-          line: index + 1,
-          // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
-          text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
-        });
-        if (hits.length >= MAX_RESULTS) break;
+        const startedAt = Date.now();
+        let lineNumbers: number[];
+        try {
+          lineNumbers = await matcher.match(content, MAX_RESULTS - hits.length, remaining, this.signal);
+        } catch (error) {
+          // 超时是预期结果，不是失败：停在当前文件，保留已经拿到的命中。
+          if (error instanceof Error && error.message === REGEX_TIMEOUT) {
+            regexStopped = true;
+            break;
+          }
+          throw error;
+        }
+        // 只累计匹配时间：读文件和 worker 启动不该吃掉正则的预算。
+        spentMs += Date.now() - startedAt;
+
+        if (lineNumbers.length > 0) {
+          const lines = content.split("\n");
+          for (const lineNumber of lineNumbers) {
+            const line = lines[lineNumber - 1].trim();
+            hits.push({
+              file: toPosix(path.relative(this.root, file)),
+              line: lineNumber,
+              // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
+              text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
+            });
+            if (hits.length >= MAX_RESULTS) break;
+          }
+        }
       }
+    } finally {
+      await matcher.close();
     }
 
-    // 部分失败要报告：截断、跳过、读不了、扫描预算用尽，一律写进尾注，由 clip 保住。
+    // 部分失败要报告：截断、跳过、读不了、扫描预算用尽、正则超时，一律写进尾注，由 clip 保住。
     const tails =
       (hits.length >= MAX_RESULTS ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") +
       (skippedLarge > 0 ? `\n… (skipped ${skippedLarge} files over 1 MB)` : "") +
       (unreadable > 0 ? `\n… (${unreadable} files could not be read)` : "") +
+      (regexStopped ? `\n… (regex stopped after ${this.regexBudgetMs}ms; results may be incomplete)` : "") +
       scanTail(budget, this.scanLimit);
 
     if (hits.length === 0) return `(no matches)${tails}`;
@@ -637,6 +703,129 @@ function terminateTree(child: ChildProcess): Promise<void> {
   return Promise.resolve();
 }
 
+/** 超时用的是这条固定消息：调用方靠它区分「正则跑太久」和真正的 worker 故障。 */
+const REGEX_TIMEOUT = "regex matching timed out";
+
+type PendingMatch = {
+  resolve: (lines: number[]) => void;
+  reject: (error: Error) => void;
+};
+
+type MatchReply = { id: number; lines?: number[]; error?: string };
+
+/**
+ * 一个 grep 调用对应一个匹配线程。
+ *
+ * 线程只做逐行匹配；遍历、读文件、截断、排序都留在主线程 —— worker 不该再实现一套工作区规则。
+ * 超时和取消都走 terminate：回溯是同步循环，没有任何办法让 `regex.test()` 自己停下来。
+ */
+class RegexGrep {
+  private readonly worker: Worker;
+
+  private readonly pattern: string;
+
+  private readonly flags: string;
+
+  private readonly pending = new Map<number, PendingMatch>();
+
+  private nextId = 1;
+
+  constructor(pattern: string, flags: string) {
+    this.pattern = pattern;
+    this.flags = flags;
+    this.worker = new Worker(new URL("./grep-worker.ts", import.meta.url));
+    this.worker.on("message", (reply: MatchReply) => this.settle(reply));
+    // 线程崩了：所有等待中的调用统一失败，不能留下永远不会 settle 的 promise。
+    this.worker.on("error", (error: Error) => this.failAll(new Error(`grep worker failed: ${error.message}`)));
+    this.worker.on("exit", () => this.failAll(new Error("grep worker exited unexpectedly")));
+  }
+
+  /**
+   * 把一份文件内容送进线程匹配，最多等 timeoutMs。
+   * signal 触发时 terminate 线程并拒绝 —— 取消不该等当前文件匹配完。
+   */
+  match(text: string, limit: number, timeoutMs: number, signal?: AbortSignal): Promise<number[]> {
+    if (signal?.aborted === true) return Promise.reject(new Error("cancelled by signal"));
+
+    const id = this.nextId++;
+    return new Promise<number[]>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        signal?.removeEventListener("abort", onAbort);
+        // 先 terminate 再拒绝：线程里可能正卡在指数级回溯上。
+        void this.worker.terminate();
+        reject(new Error(REGEX_TIMEOUT));
+      }, timeoutMs);
+      const onAbort = () => {
+        this.pending.delete(id);
+        clearTimeout(timer);
+        void this.worker.terminate();
+        reject(new Error("cancelled by signal"));
+      };
+
+      this.pending.set(id, {
+        resolve: (lines) => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          resolve(lines);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", onAbort);
+          reject(error);
+        },
+      });
+      signal?.addEventListener("abort", onAbort, { once: true });
+      this.worker.postMessage({ id, text, pattern: this.pattern, flags: this.flags, limit });
+    });
+  }
+
+  async close(): Promise<void> {
+    this.failAll(new Error("grep worker closed"));
+    await this.worker.terminate();
+  }
+
+  private settle(reply: MatchReply): void {
+    const pending = this.pending.get(reply.id);
+    if (pending === undefined) return;
+    this.pending.delete(reply.id);
+    if (reply.error !== undefined) pending.reject(new Error(reply.error));
+    else pending.resolve(reply.lines ?? []);
+  }
+
+  private failAll(error: Error): void {
+    const waiting = [...this.pending.values()];
+    this.pending.clear();
+    for (const pending of waiting) pending.reject(error);
+  }
+}
+
+/** 把字面字符串转成等价的正则源码：fixed 模式复用同一条匹配路径。 */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * 只接受 i / m / s / u；g 和 y 直接丢掉 —— 逐行匹配每次都从 lastIndex = 0 开始，
+ * 这两个标志带进来只会让模型以为自己控制了什么。其它字母说明参数写错了，直接报错。
+ */
+function normalizeGrepFlags(flags: string): string {
+  const unknown = [...flags].filter((flag) => !"gimsuy".includes(flag));
+  if (unknown.length > 0) {
+    throw new Error(`unsupported regex flags: ${unknown.join("")}; use i, m, s, u`);
+  }
+  return [...new Set([...flags].filter((flag) => "imsu".includes(flag)))].join("");
+}
+
+/** 先在主线程编译一次：坏正则要在开始扫描前失败，不能扫到一半才抛。 */
+function assertValidPattern(source: string, flags: string): void {
+  try {
+    new RegExp(source, flags);
+  } catch (error) {
+    throw new Error(`invalid pattern: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /**
  * 把 glob 模式翻译成正则（给「自己走目录再匹配」用）。
  *
@@ -813,20 +1002,28 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "grep",
-      // 按字面文本在文件内容里搜索，返回「路径:行号: 内容」；不是正则。
+      // 按正则搜索文件内容，返回「路径:行号: 内容」；fixed=true 时按字面字符串搜。
       description:
-        "Search file contents for a literal string (not a regular expression); returns one file:line: match line per hit.",
+        "Search file contents by JavaScript regular expression; returns one file:line: match line per hit. Set fixed=true to search a literal string.",
       parameters: {
         type: "object",
         properties: {
-          // 要搜索的字面文本（区分大小写）；按普通字符串匹配，不做正则解释。
-          text: { type: "string", description: "Literal text to search for (case-sensitive; not a regular expression)." },
+          // 要搜索的正则（JavaScript 语法，逐行匹配）；fixed=true 时按字面字符串解释。
+          pattern: { type: "string", description: "JavaScript regular expression, matched line by line." },
           // 从哪个目录开始搜；默认工作区根目录。
           path: { type: "string", description: "Directory to search, relative to the workspace root. Defaults to the root." },
+          // 正则标志：i 忽略大小写，m / s / u 按 JS 语义；g 会被忽略。
+          flags: { type: "string", description: "Regex flags: i, m, s, u (g is ignored)." },
+          // true 时把 pattern 当字面字符串，不解释正则元字符。
+          fixed: { type: "boolean", description: "Treat pattern as a literal string instead of a regular expression." },
         },
-        required: ["text"],
+        required: ["pattern"],
       },
-      run: async (args) => workspace.grep(String(args.text), String(args.path ?? ".")),
+      run: async (args) =>
+        workspace.grep(String(args.pattern), String(args.path ?? "."), {
+          flags: args.flags === undefined ? "" : String(args.flags),
+          fixed: args.fixed === true,
+        }),
     },
     {
       name: "ls",
