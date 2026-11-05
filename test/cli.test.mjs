@@ -396,6 +396,117 @@ test("REPL：无 TTY 时 shell 被拒绝，也不会吞掉下一行输入", asyn
   });
 });
 
+test("TUI：状态栏、运行记录、统计与会话命令", async () => {
+  await withWorkspace(async (workdir) => {
+    const usage = { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 };
+    const mock = await startMock(
+      [
+        callTool("call_write", "write", { path: "hello.txt", content: "hello" }),
+        finalReply("tui first done"),
+        finalReply("tui second done"),
+      ],
+      { usage },
+    );
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        {
+          args: ["--tui"],
+          input:
+            "first task\n/permission wide-open\n/permission read-only\n/help\n/reset\nsecond task\n/exit\n",
+        },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      // 顶部状态栏（非 TTY 退化成三行）
+      assert.match(run.stdout, /model: mock-model/);
+      assert.ok(run.stdout.includes(`workspace: ${workdir}`));
+      assert.match(run.stdout, /permission: workspace-write/);
+
+      // 中间运行记录：用户任务、工具调用、成功结果、模型回复
+      assert.match(run.stdout, /you: first task/);
+      assert.match(run.stdout, /→ write path=hello\.txt/);
+      assert.match(run.stdout, /✓ write \[ok\] wrote 5 chars to hello\.txt/);
+      assert.match(run.stdout, /model: tui first done/);
+      // 第一轮两次请求，各 110 tokens
+      assert.match(run.stdout, /\[stats\] requests=2 tool_calls=1 tokens=220/);
+
+      // 会话命令：非法模式报错、切换权限、帮助、reset
+      assert.match(run.stdout, /unknown permission mode "wide-open"/);
+      assert.match(run.stdout, /permission: read-only/);
+      assert.match(run.stdout, /commands: \/exit/);
+      assert.match(run.stdout, /\(session reset\)/);
+      assert.match(run.stdout, /model: tui second done/);
+      assert.match(run.stdout, /\[session\] runs=1 requests=1 tool_calls=0 tokens=110/);
+
+      // reset 换 Agent 但不换权限：第二次请求回到 system + user，且提示为 read-only。
+      const secondRequest = mock.requests[2];
+      assert.deepEqual(
+        secondRequest.messages.map((message) => message.role),
+        ["system", "user"],
+      );
+      assert.match(secondRequest.messages[0].content, /Permission mode: read-only/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("initial task done")]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--tui", "do", "the", "initial", "task"], input: "/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /you: do the initial task/);
+      assert.match(run.stdout, /model: initial task done/);
+      assert.match(run.stdout, /\[stats\] requests=1 tool_calls=0 tokens=at least 0/);
+      assert.match(run.stdout, /\[session\] runs=1 requests=1/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_shell", "shell", { command: "echo should-not-run" }),
+      finalReply("shell denied in tui"),
+    ]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--tui", "--permission", "workspace-write", "do it"], input: "/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /→ shell echo should-not-run/);
+      assert.match(
+        run.stdout,
+        /✗ shell \[denied\] permission denied: tool "shell" requires approval, but no approval prompt is available; denied/,
+      );
+      // 没有审批通道就不该展示审批界面。
+      assert.doesNotMatch(run.stdout, /\[permission\]/);
+      assert.match(run.stdout, /model: shell denied in tui/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("--tui 与 --repl 不能同时使用", async () => {
+  const run = await runCli({}, { args: ["--tui", "--repl"] });
+
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /cannot combine --repl and --tui/);
+});
+
 test("--permission=full-access：shell 不用审批就执行", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([

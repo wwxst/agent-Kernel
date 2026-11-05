@@ -30,6 +30,8 @@ import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
+import { Tui } from "./tui.ts";
+import type { ToolCall } from "./types.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
 /** 帮助文案、错误文案和 usage 共用同一份模式列表，避免四处各写一遍。 */
@@ -111,6 +113,7 @@ function loadConfig(permission: PermissionMode): Config {
 interface CliArgs {
   help: boolean;
   repl: boolean;
+  tui: boolean;
   permission: PermissionMode;
   task: string;
   error?: string;
@@ -119,18 +122,20 @@ interface CliArgs {
 /**
  * 解析命令行：`--permission` 支持空格和等号两种写法，剩下的位置参数拼成任务文本。
  *
- * 不用现成的参数解析库：运行时零依赖，而且这里只有四个选项。
+ * 不用现成的参数解析库：运行时零依赖，而且这里只有五个选项。
  * 模式在解析时就校验，非法值不会拖到 loadConfig 之后才报。
  */
 function parseArgs(argv: readonly string[]): CliArgs {
   let help = false;
   let repl = false;
+  let tui = false;
   let permission: PermissionMode = DEFAULT_PERMISSION_MODE;
   const taskParts: string[] = [];
 
   const result = (error?: string): CliArgs => ({
     help,
     repl,
+    tui,
     permission,
     task: taskParts.join(" ").trim(),
     error,
@@ -145,6 +150,10 @@ function parseArgs(argv: readonly string[]): CliArgs {
     }
     if (arg === "--repl") {
       repl = true;
+      continue;
+    }
+    if (arg === "--tui") {
+      tui = true;
       continue;
     }
     if (arg === "--permission" || arg.startsWith("--permission=")) {
@@ -169,6 +178,8 @@ function parseArgs(argv: readonly string[]): CliArgs {
     taskParts.push(arg);
   }
 
+  // 两个交互壳不能同时选：一个是逐行 REPL，一个是固定栏位 TUI，混在一起没有可解释的行为。
+  if (repl && tui) return result("cannot combine --repl and --tui");
   return result();
 }
 
@@ -235,23 +246,46 @@ function createApprovalPrompt(controller: AbortController, cwd: string): Approva
 let streamedThisTurn = false;
 
 /**
+ * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（REPL、一次性任务）；
+ * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
+ */
+interface AgentCallbacks {
+  onRequestStart?: () => void;
+  onToolCall?: (call: ToolCall) => void;
+  onToolResult?: (call: ToolCall, result: string) => void;
+  onDelta?: (text: string) => void;
+}
+
+/**
  * 组装一个 Agent。REPL 的 /reset 也走这里 —— 换一个全新的 Agent，
  * 但复用同一份配置和取消信号（Ctrl-C 应该停掉整个进程，而不是只停一轮）。
  *
  * signal 是这次会话唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
  * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
+ *
+ * `announce: false` 只给 TUI 用：状态栏已经显示模型/工作区/权限，不再往运行记录里
+ * 打一遍启动 banner。
  */
-function createAgent(config: Config, signal: AbortSignal, permission: Permission): Agent {
+function createAgent(
+  config: Config,
+  signal: AbortSignal,
+  permission: Permission,
+  options: { announce?: boolean; callbacks?: AgentCallbacks } = {},
+): Agent {
   const tools = new ToolRegistry(
     createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal })),
     { permission },
   );
 
-  // 中文对照：工作区：… ／ 模型：… ／ 权限：… ／ 工具：…
-  console.log(`workspace: ${config.root}`);
-  console.log(`model:     ${config.model}`);
-  console.log(`permission: ${permission.mode}`);
-  console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
+  if (options.announce !== false) {
+    // 中文对照：工作区：… ／ 模型：… ／ 权限：… ／ 工具：…
+    console.log(`workspace: ${config.root}`);
+    console.log(`model:     ${config.model}`);
+    console.log(`permission: ${permission.mode}`);
+    console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
+  }
+
+  const callbacks = options.callbacks;
 
   return new Agent({
     llm: new Llm({
@@ -271,18 +305,24 @@ function createAgent(config: Config, signal: AbortSignal, permission: Permission
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
     signal,
-    // 打印每一步的工具调用，让你能「看见」循环在转。
-    onToolResult: (call, result) => {
-      const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
-      console.log(`  ↳ ${call.function.name} → ${firstLine}`);
-    },
+    // 默认实现打印每一步的工具调用，让你能「看见」循环在转；TUI 会换成运行记录里的两行。
+    onRequestStart: callbacks?.onRequestStart,
+    onToolCall: callbacks?.onToolCall,
+    onToolResult:
+      callbacks?.onToolResult ??
+      ((call, result) => {
+        const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
+        console.log(`  ↳ ${call.function.name} → ${firstLine}`);
+      }),
     // 正文增量直接写 stdout：不换行、不加前缀，让流出来的字连成一段。
     // 第一段之前补一个换行，避免紧跟在工具结果那一行后面。
-    onDelta: (text) => {
-      if (!streamedThisTurn) process.stdout.write("\n");
-      streamedThisTurn = true;
-      process.stdout.write(text);
-    },
+    onDelta:
+      callbacks?.onDelta ??
+      ((text) => {
+        if (!streamedThisTurn) process.stdout.write("\n");
+        streamedThisTurn = true;
+        process.stdout.write(text);
+      }),
   });
 }
 
@@ -340,6 +380,31 @@ const REPL_HELP = [
   // 中文对照：/permission [模式] 查看或切换权限（read-only、workspace-write、full-access）
   `          /permission [mode]  show or switch permission (${PERMISSION_MODE_LIST})`,
 ].join("\n");
+
+/**
+ * REPL 和 TUI 共用同一套会话命令解析。
+ *
+ * 两个壳的输出方式不同（console vs 运行记录），但「/exit 是退出、/permission 后面
+ * 跟什么、非法模式怎么报」这类规则只能有一份；否则两个界面会悄悄分叉。
+ */
+type SessionCommand =
+  | { kind: "exit" | "help" | "reset" | "task" }
+  | { kind: "permission"; mode?: PermissionMode; value?: string };
+
+function parseSessionCommand(input: string): SessionCommand {
+  if (input === "/exit" || input === "/quit") return { kind: "exit" };
+  if (input === "/help") return { kind: "help" };
+  if (input === "/reset") return { kind: "reset" };
+
+  const permissionCommand = input.match(/^\/permission(?:\s+(.*))?$/);
+  if (permissionCommand === null) return { kind: "task" };
+
+  const value = (permissionCommand[1] ?? "").trim();
+  if (value === "") return { kind: "permission" };
+  const mode = parsePermissionMode(value);
+  // 非法值保留原文，交给各壳用同一份可用模式列表报错。
+  return mode === undefined ? { kind: "permission", value } : { kind: "permission", mode };
+}
 
 /**
  * 多轮会话。
@@ -419,32 +484,27 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
       const line = await nextLine("> ");
       if (line === null) break;
       const input = line.trim();
+      const command = parseSessionCommand(input);
 
-      if (input === "/exit" || input === "/quit") break;
-      if (input === "/help") {
+      if (command.kind === "exit") break;
+      if (command.kind === "help") {
         console.log(REPL_HELP);
         continue;
       }
-      if (input === "/reset") {
+      if (command.kind === "reset") {
         agent = createAgent(config, signal, permission);
         console.log("(session reset)\n");
         continue;
       }
-
-      const permissionCommand = input.match(/^\/permission(?:\s+(.*))?$/);
-      if (permissionCommand) {
-        const value = (permissionCommand[1] ?? "").trim();
-        if (value === "") {
+      if (command.kind === "permission") {
+        if (command.value !== undefined) {
+          // 中文对照：未知权限模式 "{值}"（可用：…）
+          console.log(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
+        } else if (command.mode !== undefined) {
+          permission.setMode(command.mode);
           console.log(`permission: ${permission.mode}`);
         } else {
-          const mode = parsePermissionMode(value);
-          if (mode === undefined) {
-            // 中文对照：未知权限模式 "{值}"（可用：…）
-            console.log(`unknown permission mode "${value}" (expected: ${PERMISSION_MODE_LIST})`);
-          } else {
-            permission.setMode(mode);
-            console.log(`permission: ${permission.mode}`);
-          }
+          console.log(`permission: ${permission.mode}`);
         }
         continue;
       }
@@ -471,10 +531,145 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
   if (signal.aborted) process.exitCode = 130;
 }
 
+/**
+ * 轻量 TUI 会话：同一个 Agent / Permission / 取消链，只把显示和输入换成 Tui。
+ *
+ * TUI 是外壳，不是内核：Transcript、预算、工具配对仍由 Agent 管；审批仍由 Permission 决定。
+ * `--tui` 可以带一个初始任务（先跑完再等输入），之后每一行输入是一次 Run。
+ * `/reset` 换 Agent 但不换 Permission；`/permission` 切换后状态栏和下一次请求同时生效。
+ */
+async function tuiSession(config: Config, controller: AbortController, initialTask?: string): Promise<void> {
+  const signal = controller.signal;
+  const interactive = hasInteractiveTerminal();
+  const tui = new Tui({
+    input: process.stdin,
+    output: process.stdout,
+    model: config.model,
+    workspace: config.root,
+    permission: config.permission,
+    controller,
+    interactive,
+    columns: process.stdout.columns,
+    rows: process.stdout.rows,
+  });
+
+  // 审批和任务输入共用 Tui 的同一个 readline/行队列；权限策略本身仍是会话级对象。
+  // 无 TTY 时不注入审批器：Permission 会明确说「没有审批通道」，而不是把
+  // 「读不到终端」误报成「审批失败」或「用户拒绝」。
+  const permission = new Permission(
+    config.permission,
+    interactive ? (request) => tui.approve(request) : undefined,
+  );
+
+  // Agent 在回调创建时还没赋值，但回调只会在 run() 期间触发；用 current 拿最新实例的账。
+  let current: Agent | undefined;
+  const callbacks: AgentCallbacks = {
+    onRequestStart: () => tui.setThinking(true),
+    onToolCall: (call) => {
+      tui.toolCall(call);
+      if (current !== undefined) tui.setStats(current.sessionStats);
+    },
+    onToolResult: (call, result) => {
+      tui.toolResult(call, result);
+      if (current !== undefined) tui.setStats(current.sessionStats);
+    },
+    onDelta: (text) => tui.assistantDelta(text),
+  };
+
+  const newAgent = (): Agent => {
+    current = createAgent(config, signal, permission, { announce: false, callbacks });
+    return current;
+  };
+
+  let agent: Agent;
+  try {
+    agent = newAgent();
+    tui.start();
+    tui.setStats(agent.sessionStats);
+  } catch (error) {
+    // 装配/画屏幕失败也要把终端还原，不能把 shell 留在 raw mode。
+    tui.close();
+    throw error;
+  }
+
+  /** 跑一轮；返回 false 表示取消，循环该停了。失败但不取消时返回 true。 */
+  const runTask = async (task: string, showTask = true): Promise<boolean> => {
+    tui.beginTurn(task, { show: showTask });
+    try {
+      const reply = await agent.run(task);
+      tui.finishAssistant(reply.content ?? "");
+      tui.finishTurn(agent.stats, agent.sessionStats, { failed: false });
+      return true;
+    } catch (error) {
+      // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
+      tui.finishAssistant("");
+      tui.finishTurn(agent.stats, agent.sessionStats, { failed: true });
+      if (signal.aborted) {
+        tui.logLine(`[agent] cancelled: ${describeError(error)}`);
+        return false;
+      }
+      // 一轮失败不等于会话失败：继续等下一行输入。
+      tui.logLine(`[agent] turn failed: ${describeError(error)}`);
+      return true;
+    }
+  };
+
+  let keepGoing = true;
+  try {
+    if (initialTask !== undefined && initialTask !== "") {
+      keepGoing = await runTask(initialTask);
+    }
+
+    while (keepGoing && !signal.aborted) {
+      const line = await tui.readLine();
+      if (line === null) break;
+      const input = line.trim();
+      const command = parseSessionCommand(input);
+
+      if (command.kind === "exit") break;
+      if (command.kind === "help") {
+        tui.logLine(REPL_HELP);
+        continue;
+      }
+      if (command.kind === "reset") {
+        agent = newAgent();
+        tui.logLine("(session reset)");
+        tui.setStats(agent.sessionStats);
+        continue;
+      }
+      if (command.kind === "permission") {
+        if (command.value !== undefined) {
+          // 中文对照：未知权限模式 "{值}"（可用：…）
+          tui.logLine(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
+        } else if (command.mode !== undefined) {
+          permission.setMode(command.mode);
+          tui.setPermission(command.mode);
+          tui.logLine(`permission: ${permission.mode}`);
+        } else {
+          tui.logLine(`permission: ${permission.mode}`);
+        }
+        continue;
+      }
+
+      if (input === "") continue;
+      // TTY 的 readline 已经回显了这一行；管道没有回显，补一条 `you:`。
+      keepGoing = await runTask(input, !interactive);
+    }
+  } finally {
+    // 先写总账再退出：TUI 的日志行比固定栏位更适合作为最后的记录。
+    tui.sessionSummary(agent.sessionStats);
+    tui.close();
+  }
+
+  if (signal.aborted) process.exitCode = 130;
+}
+
 const usage = [
   // 中文对照：用法：node src/cli.ts "<任务>" [--permission <模式>]；node src/cli.ts --repl 进入多轮会话
   'usage: node src/cli.ts "<task>" [--permission <mode>]',
   "       node src/cli.ts --repl [--permission <mode>]     # multi-turn session; /exit, /reset, /permission, /help",
+  // 中文对照：node src/cli.ts --tui [--permission <模式>] 进入轻量 TUI；可带一个初始任务
+  "       node src/cli.ts --tui [--permission <mode>] [task]  # lightweight TUI session",
   // 中文对照：权限模式：…（默认：…）
   `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
@@ -483,7 +678,9 @@ const usage = [
 
 const cli = parseArgs(process.argv.slice(2));
 // 没给任务、又是在终端里直接运行：默认进 REPL。管道/CI 里没有输入，给用法更安全。
-const replMode = cli.repl || (cli.task === "" && process.stdin.isTTY === true);
+// --tui 是显式选择：它自己会处理初始任务，不能因为 task 为空就退回 usage。
+const replMode = cli.repl || (!cli.tui && cli.task === "" && process.stdin.isTTY === true);
+const tuiMode = cli.tui;
 
 if (cli.error !== undefined) {
   // 中文对照：[agent] 致命错误：{原因}
@@ -492,7 +689,7 @@ if (cli.error !== undefined) {
   process.exitCode = 1;
 } else if (cli.help) {
   console.log(usage);
-} else if (cli.task === "" && !replMode) {
+} else if (cli.task === "" && !replMode && !tuiMode) {
   console.log(usage);
   process.exitCode = 1;
 } else {
@@ -504,7 +701,9 @@ if (cli.error !== undefined) {
 
   try {
     const config = loadConfig(cli.permission);
-    if (replMode) {
+    if (tuiMode) {
+      await tuiSession(config, controller, cli.task === "" ? undefined : cli.task);
+    } else if (replMode) {
       await repl(config, controller);
     } else {
       const approvalPrompt = createApprovalPrompt(controller, config.root);

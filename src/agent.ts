@@ -160,6 +160,18 @@ export interface AgentOptions {
   /** 每次工具执行完的回调，用来打印进度；Agent 本身不直接 console.log。 */
   onToolResult?: (call: ToolCall, result: string) => void;
   /**
+   * 每次工具**开始执行前**的回调。给 TUI 用：先把「要跑什么」写进运行记录，
+   * 再等审批和真实结果，而不是等工具跑完才一次性出现。
+   *
+   * 不会为被预算/取消跳过的调用触发 —— 那些调用没有执行，不能假装它们开始过。
+   */
+  onToolCall?: (call: ToolCall) => void;
+  /**
+   * 每次模型请求**发出前**的回调。给 TUI 显示 `thinking...` 用：
+   * 请求开始到第一个正文增量/工具调用之间，界面不应该是一片空白。
+   */
+  onRequestStart?: () => void;
+  /**
    * 流式正文增量。只在 ChatClient 支持流式时才会被调用，且只用于显示：
    * 最终消息仍以 chat() 的返回值为准，回调晚到、漏掉都不影响正确性。
    */
@@ -175,6 +187,10 @@ export class Agent {
   private readonly maxTotalTokens?: number;
   private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
+
+  private readonly onToolCall?: (call: ToolCall) => void;
+
+  private readonly onRequestStart?: () => void;
 
   private readonly onDelta?: (text: string) => void;
 
@@ -217,6 +233,8 @@ export class Agent {
     this.maxTotalTokens = options.maxTotalTokens;
     this.signal = options.signal;
     this.onToolResult = options.onToolResult;
+    this.onToolCall = options.onToolCall;
+    this.onRequestStart = options.onRequestStart;
     this.onDelta = options.onDelta;
 
     // 系统提示词只放一条，之后每轮都跟着 messages 一起发出去；内容可由 provider 在请求前刷新。
@@ -385,6 +403,8 @@ export class Agent {
       this.stopIfBudgetExhausted();
       // 每次请求前重新求值：/permission 切换后，下一次请求必须看到新规则。
       this.refreshSystemPrompt();
+      // 请求真正发出前给 TUI 一个「开始思考」的信号；失败/取消也要由调用方清掉。
+      this.onRequestStart?.();
       this.runRequests++;
       this.sessionRequests++;
       let response: ChatResponse;
@@ -444,6 +464,9 @@ export class Agent {
         // 取消可能正好发生在两次调用之间：剩下的调用不再启动，但每条都要留下结果。
         this.stopIfCancelled(calls.slice(index));
         const call = calls[index];
+        // 「要跑了」先于「跑完了」：TUI 靠这个回调把工具调用写进运行记录，
+        // 长命令执行期间也看得见它在干什么。这里没有 await，不会给取消留出新的缝隙。
+        this.onToolCall?.(call);
         const result = await this.tools.execute(call);
         this.runToolCalls++;
         this.sessionToolCalls++;

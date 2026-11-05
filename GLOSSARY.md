@@ -57,8 +57,24 @@ _Avoid_: permission level, security level
 _Avoid_: policy prompt（Policy 是 **Permission** 本身）, system rules（太泛）
 
 **Approval**:
-`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。
+`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。REPL 和 **TUI** 共用同一套前置门与 `y` / `yes` 判定，只是展示位置不同。
 _Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
+
+**TUI**:
+CLI 的轻量交互界面：**Status bar**、**Run log**、输入区。支持 DECSTBM 的终端用固定状态栏/统计行和底部输入；传统 Windows conhost 退化为行式聊天（状态头打印一次、输入提示在最后一行）。不切 alternate screen、不引 TUI 库；非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或 **Permission**。
+_Avoid_: dashboard, full-screen app, UI framework
+
+**Status bar**:
+TUI 的状态显示：固定布局下是顶部第 1 行，行式布局下是启动时打印的状态头。显示 model、workspace 和当前 **Permission mode**；固定布局另有一行 **Session** 的 requests / tool_calls / tokens。
+_Avoid_: header, banner
+
+**Thinking**:
+模型请求发出后、第一段正文/工具调用/错误到达前显示的状态提示（`thinking...`）。它只表示等待，不代表请求成功；第一段输出会原地清掉它。
+_Avoid_: reasoning（那是模型返回的 `reasoning_content`，v0.1 不展示）
+
+**Run log**:
+TUI 里给人看的滚动记录：模型回复、**Tool call**、**Tool result** 与拒绝原因。它不是 **Transcript** —— 它不参与下一轮请求，也不改变模型看到什么。
+_Avoid_: transcript, history, context
 
 **Sandbox**:
 操作系统级隔离：容器、虚拟机、独立用户、只读挂载之类。本仓库没有实现 Sandbox；**Permission** 与 **Workspace** 的路径守卫都不是 Sandbox。
@@ -108,9 +124,14 @@ _Avoid_: LLM, model, provider
 - 每次 **Step** 的模型请求前，**Permission prompt** 刷新唯一的 system Message；它只负责指导，放行/拒绝仍由 **Tool registry** 执行。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
+- **TUI** 是 **Session** 的一个外壳：**Status bar** 显示 model / workspace / **Permission mode**，**Run log** 显示模型回复、Tool call、Tool result 与拒绝原因；输入复用同一套 `/permission`、`/reset`、`/help`、`/exit`，在支持固定布局的终端里留在底部。
+- 每次 **Step** 的模型请求发出后、第一段输出前显示 **Thinking**；第一段正文、Tool call 或错误会清掉它。它不是模型的 `reasoning_content`。
+- **Run log** 不是 **Transcript**：前者只负责显示，后者才是发给模型的记忆；删掉 Run log 不会改变任何一轮请求。
+- **Approval** 在 REPL 与 TUI 里是同一个策略判断，只是问题出现的位置不同：REPL 用多行 prompt，TUI 先写运行记录再读单行 `y/N`。
 
 ## Flagged ambiguities
 
 - "agent" 既指整个程序（CLI 加 Kernel），也指循环本身。本仓库里 **Kernel** 专指循环，**Run** 专指一次执行；"agent" 只作为项目名出现。
 - "error" 有两种：**ERROR text** 是回灌给模型的文本；异常（throw）只出现在 Tool 之外的宿主代码里。
 - "permission" 不是 "sandbox"：**Permission** 只决定一次 Tool call 放不放行；**Sandbox** 是操作系统级隔离，本仓库没有实现。
+- "log" 有两种：**Run log** 是 TUI 给人看的滚动记录；**Transcript** 是模型记忆。两者不互为副本，也不要求同步。

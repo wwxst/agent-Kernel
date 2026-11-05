@@ -14,6 +14,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access` |
 | `npm run agent -- --repl` | 多轮会话：`/exit`、`/reset`、`/permission`、`/help`；需要 `.env` |
+| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | 轻量 TUI：状态栏、运行记录、shell 审批、底部输入；可带一个初始任务；需要 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
@@ -31,21 +32,23 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
-| `src/cli.ts` | 组装：命令行参数 / 环境变量 → 对象图 → 跑一次或进 REPL；`--permission`、`/permission`、SIGINT/SIGTERM 取消链的起点 | — |
+| `src/tui.ts` | 轻量 TUI：固定状态栏/统计行（终端支持 DECSTBM 时）、行式聊天退化、输入行队列、thinking 提示、shell 审批展示；不碰 Agent 循环 | `Tui`（`start`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
+| `src/cli.ts` | 组装：命令行参数 / 环境变量 → 对象图 → 跑一次、进 REPL 或进 TUI；`--permission`、`/permission`、SIGINT/SIGTERM 取消链的起点 | — |
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`，`approval` 只依赖 `permission` 的类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查）。
+依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` / `tui` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`，`approval` 只依赖 `permission` 的类型；`tui` 只依赖 `approval` / `permission` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查），更不认识 `tui`。
 
 ## 测试放哪
 
-八处缝，重构不该让任何用例变红：
+九处缝，重构不该让任何用例变红：
 
-- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新。
+- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序。
 - `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，漏传 / `undefined` / 非法 permission 在构造阶段报错，以及每个失败分支都折成文本。
 - `Permission`：三档策略、`permissionPrompt` 三档说明、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝。
 - `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
 - `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
-- `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消；循环细节留在单元层。
+- `test/tui.test.mjs`：状态栏与运行记录、成功/失败/拒绝分类、审批完整命令与 cwd、y/N、排队输入、thinking 的显示与清除、TTY 固定布局与行式聊天退化；用假输入/输出流，不需要真终端。
+- `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 的状态栏/命令/统计；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。

@@ -8,17 +8,26 @@
 import type { PermissionRequest } from "./permission.ts";
 
 /**
- * 把审批提示里的控制字符转成可见转义，防止终端控制序列重写/覆盖审批界面。
+ * 把终端展示文本里的控制字符转成可见转义，防止终端控制序列重写/覆盖界面。
+ *
+ * 审批提示和 TUI 的运行记录共用这一份：展示层不转义，模型或工具输出里的
+ * `\x1b[...` 就能改写屏幕，把「拒绝」画成「允许」。
  *
  * 换行不在这里处理：调用方按行拆开并加前缀，既保留多行命令，又不让命令行伪造提示符。
  * 除换行外的 C0/C1、DEL、Unicode 行分隔符和 bidi 控制字符一律转义。
  */
-function escapeControlCharacters(text: string): string {
+export function escapeControlCharacters(text: string): string {
   return text.replace(
     /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069]/g,
     (char) => `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
   );
 }
+
+/**
+ * 审批问题本身。格式化提示和 TUI 的输入行共用同一句，避免两处各写一遍后悄悄分叉。
+ * 只认 `y` / `yes`；空行和其他输入都是拒绝，因此方括号里把默认值写成大写 N。
+ */
+export const APPROVAL_QUESTION = "allow once? [y/N] ";
 
 /**
  * 审批提示：完整展示待执行命令、实际 cwd 和一次性确认问题。
@@ -40,7 +49,7 @@ export function formatApproval(request: PermissionRequest, cwd: string): string 
     `[permission] ${request.tool} in ${cwdText}`,
     "command:",
     ...commandLines,
-    "allow once? [y/N] ",
+    APPROVAL_QUESTION,
   ].join("\n");
 }
 

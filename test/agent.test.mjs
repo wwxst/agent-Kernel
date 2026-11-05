@@ -118,6 +118,45 @@ test("onToolResult 对每条工具结果各回调一次", async () => {
   assert.deepEqual(seen, [["c1", "echo a"]]);
 });
 
+test("onToolCall 在工具真正执行前回调，顺序是 call → run → result", async () => {
+  const events = [];
+  const tool = {
+    ...echoTool(),
+    run: async (args) => {
+      events.push("run");
+      return `echo ${String(args.value)}`;
+    },
+  };
+  const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([tool]),
+    onToolCall: (call) => events.push(`call:${call.id}`),
+    onToolResult: (call) => events.push(`result:${call.id}`),
+  });
+
+  await agent.run("do it");
+
+  assert.deepEqual(events, ["call:c1", "run", "result:c1"]);
+});
+
+test("onRequestStart 在每个 Step 的模型请求前各回调一次", async () => {
+  const events = [];
+  const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    onRequestStart: () => events.push("request"),
+    onToolCall: () => events.push("tool"),
+    onToolResult: () => events.push("result"),
+  });
+
+  await agent.run("do it");
+
+  // 第一个 Step 请求后调工具，第二个 Step 再请求一次。
+  assert.deepEqual(events, ["request", "tool", "result", "request"]);
+});
+
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {
   const defaults = createScriptedChat([finalReply("ok")]);
   await new Agent({ llm: defaults, tools: makeRegistry([]) }).run("task");
