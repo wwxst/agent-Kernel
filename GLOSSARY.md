@@ -53,7 +53,7 @@ _Avoid_: sandbox, isolation, ACL
 _Avoid_: permission level, security level
 
 **Approval**:
-`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。
+`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。
 _Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
 
 **Sandbox**:
