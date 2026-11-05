@@ -27,7 +27,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、权限检查、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/permission.ts` | 三档权限策略、shell 的一次性审批、拒绝原因；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`approvalGate` |
-| `src/approval.ts` | 审批提示格式化与读取：单行命令、`AbortSignal` / readline close / 正常回答的竞态收口 | `formatApproval`、`askWithSignal` |
+| `src/approval.ts` | 审批提示格式化与读取：完整命令、实际 cwd、控制字符转义；`AbortSignal` / readline close / 正常回答的竞态收口 | `formatApproval`、`askWithSignal` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
@@ -42,7 +42,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计。
 - `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，以及每个失败分支都折成文本。
 - `Permission`：三档策略、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝。
-- `Approval`：`formatApproval`、`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
+- `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
 - `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消；循环细节留在单元层。
