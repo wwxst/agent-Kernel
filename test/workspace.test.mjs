@@ -269,24 +269,75 @@ test("grep：没有命中时给出明确提示", async () => {
   });
 });
 
-test("grep：按字面文本搜索，正则元字符不再有特殊含义", async () => {
+test("grep：按正则搜索，元字符有特殊含义", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "value = a.b\naxb\nab\n");
+
+    // `.` 匹配任意字符：a.b 命中 "a.b" 和 "axb"，不命中 "ab"。
+    assert.equal(await workspace.grep("a.b"), "a.txt:1: value = a.b\na.txt:2: axb");
+    // 坏正则在开始扫描前就要失败，不能变成「静默没搜到」。
+    await assert.rejects(() => workspace.grep("(["), /invalid pattern/);
+  });
+});
+
+test("grep：fixed=true 时回到字面搜索", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
     await workspace.write("a.txt", "value = a.b\naxb\n([\n");
 
-    // "a.b" 只命中字面量那一行，不会把 "axb" 也匹配进来。
-    assert.equal(await workspace.grep("a.b"), "a.txt:1: value = a.b");
-    // 以前会抛 "Invalid regular expression" 的写法，现在只是普通字符串。
-    assert.equal(await workspace.grep("(["), "a.txt:3: ([");
+    assert.equal(await workspace.grep("a.b", ".", { fixed: true }), "a.txt:1: value = a.b");
+    assert.equal(await workspace.grep("([", ".", { fixed: true }), "a.txt:3: ([");
   });
 });
 
-test("grep：空搜索文本直接拒绝（否则等于列出所有内容）", async () => {
+test("grep：flags 支持忽略大小写，未知标志直接报错", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("a.txt", "Hello\nworld\n");
+
+    assert.equal(await workspace.grep("hello", ".", { flags: "i" }), "a.txt:1: Hello");
+    // g 是逐行匹配用不到的标志，忽略即可；x 是写错了，必须报出来。
+    assert.equal(await workspace.grep("hello", ".", { flags: "gi" }), "a.txt:1: Hello");
+    await assert.rejects(() => workspace.grep("hello", ".", { flags: "x" }), /unsupported regex flags/);
+  });
+});
+
+test("grep：灾难性回溯会被超时打断，不会卡死主线程", async () => {
+  await withWorkspace(async (root) => {
+    // 40 个 a 再加一个 !：`(a+)+$` 在这行上是 2^40 级回溯，正常跑完要按年算。
+    await writeFile(path.join(root, "evil.txt"), `${"a".repeat(40)}!\n`);
+    const workspace = new Workspace({ root, regexBudgetMs: 50 });
+
+    const started = Date.now();
+    const result = await workspace.grep("(a+)+$");
+    const elapsed = Date.now() - started;
+
+    assert.match(result, /regex stopped after 50ms; results may be incomplete/);
+    assert.equal(elapsed < 3_000, true, `超时后必须很快返回，实际用了 ${elapsed}ms`);
+  });
+});
+
+test("grep：取消信号会打断正在匹配的线程", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "evil.txt"), `${"a".repeat(40)}!\n`);
+    const controller = new AbortController();
+    // 预算给得很宽，能停下来的唯一理由只能是取消。
+    const workspace = new Workspace({ root, signal: controller.signal, regexBudgetMs: 10_000 });
+
+    const running = workspace.grep("(a+)+$");
+    setTimeout(() => controller.abort(), 50);
+
+    await assert.rejects(() => running, /cancelled by signal/);
+  });
+});
+
+test("grep：空搜索模式直接拒绝（否则等于列出所有内容）", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
     await workspace.write("a.txt", "hello\n");
 
-    await assert.rejects(() => workspace.grep(""), /search text must not be empty/);
+    await assert.rejects(() => workspace.grep(""), /search pattern must not be empty/);
   });
 });
 
