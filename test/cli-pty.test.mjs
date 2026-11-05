@@ -193,7 +193,8 @@ test("PTY：审批中 Ctrl-C 及时取消，退出码 130", { skip }, async () =
 
       assert.equal(run.timedOut, false, `approval hung after Ctrl-C:\n${run.stdout}\n${run.stderr}`);
       assert.equal(run.code, 130, run.stderr);
-      assert.match(run.stderr, /cancelled/);
+      // script(1) 把子进程的 stderr 也接到同一个 PTY，所以取消文案可能出现在 stdout。
+      assert.match(run.stdout + run.stderr, /cancelled/);
     } finally {
       await mock.close();
     }
