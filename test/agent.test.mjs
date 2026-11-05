@@ -129,6 +129,25 @@ test("系统提示词：默认放一条 system 消息，也可以整条替换", 
   assert.equal(custom.requests[0].messages[0].content, "be terse");
 });
 
+test("系统提示词：函数在每次请求前求值，切换后不重复 system 消息", async () => {
+  const chat = createScriptedChat([finalReply("first"), finalReply("second")]);
+  let prompt = "prompt: read-only";
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]), systemPrompt: () => prompt });
+
+  await agent.run("first");
+  prompt = "prompt: full-access";
+  await agent.run("second");
+
+  assert.equal(chat.requests[0].messages[0].content, "prompt: read-only");
+  assert.equal(chat.requests[1].messages[0].content, "prompt: full-access");
+  assert.equal(chat.requests[1].messages.filter((message) => message.role === "system").length, 1);
+  assert.equal(agent.transcript.filter((message) => message.role === "system").length, 1);
+  assert.deepEqual(
+    chat.requests[1].messages.map((message) => message.role),
+    ["system", "user", "assistant", "user"],
+  );
+});
+
 test("发给模型的工具清单只有说明书，没有 run", async () => {
   const chat = createScriptedChat([finalReply("ok")]);
   await new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) }).run("task");

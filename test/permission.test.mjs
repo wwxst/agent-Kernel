@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_PERMISSION_MODE, Permission, approvalGate, isApproved, parsePermissionMode } from "../src/permission.ts";
+import { DEFAULT_PERMISSION_MODE, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "../src/permission.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 
 /** 一次权限检查的请求形状。 */
@@ -210,6 +210,21 @@ test("read-only / workspace-write：没分类的工具默认拒绝", async () =>
     const result = await new Permission(mode).check(request("future_tool"));
     assert.equal(result.allowed, false);
   }
+});
+
+test("permissionPrompt：三档都说明当前限制，且不混入其他模式", () => {
+  const readOnly = permissionPrompt("read-only");
+  assert.match(readOnly, /Permission mode: read-only/);
+  assert.match(readOnly, /write, edit, and shell are denied/);
+  assert.doesNotMatch(readOnly, /workspace-write|full-access/);
+
+  const workspace = permissionPrompt("workspace-write");
+  assert.match(workspace, /Permission mode: workspace-write/);
+  assert.match(workspace, /shell requires explicit user approval for every command/);
+
+  const full = permissionPrompt("full-access");
+  assert.match(full, /Permission mode: full-access/);
+  assert.match(full, /All tools, including shell, may be used without approval/);
 });
 
 test("ToolRegistry：权限拒绝返回 ERROR，工具代码不会执行", async () => {

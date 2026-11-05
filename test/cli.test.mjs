@@ -114,6 +114,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       // 第一次请求：system 在最前，四个工具按协议格式发过去
       const first = mock.requests[0];
       assert.equal(first.messages[0].role, "system");
+      assert.match(first.messages[0].content, /Permission mode: workspace-write/);
       assert.equal(first.messages[1].role, "user");
       assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
@@ -336,6 +337,10 @@ test("--permission read-only：写工具被拒绝，ERROR 回灌后模型继续�
       assert.match(run.stdout, /permission: read-only/);
       assert.match(run.stdout, /ERROR: permission denied: tool "write" is not allowed in read-only mode/);
 
+      const first = mock.requests[0];
+      assert.match(first.messages[0].content, /Permission mode: read-only/);
+      assert.doesNotMatch(first.messages[0].content, /workspace-write|full-access/);
+
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.match(toolMessage.content, /^ERROR: permission denied: /);
     } finally {
@@ -408,6 +413,9 @@ test("--permission=full-access：shell 不用审批就执行", async () => {
       assert.match(run.stdout, /permission: full-access/);
       assert.match(run.stdout, /shell ran/);
 
+      const first = mock.requests[0];
+      assert.match(first.messages[0].content, /Permission mode: full-access/);
+
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.match(toolMessage.content, /full-access-ran/);
     } finally {
@@ -460,6 +468,49 @@ test("REPL：/permission 查看与切换，/reset 保留当前模式", async () 
       );
       assert.equal(toolResults.length, 2);
       for (const result of toolResults) assert.match(result, /^ERROR: permission denied: /);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("REPL：/permission 切换后下一次请求使用新提示，/reset 不残留旧规则", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      finalReply("workspace done"),
+      finalReply("read-only done"),
+      finalReply("after reset done"),
+    ]);
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--repl"], input: "first\n/permission read-only\nsecond\n/reset\nthird\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 3);
+
+      const [workspaceRequest, readOnlyRequest, resetRequest] = mock.requests;
+      assert.match(workspaceRequest.messages[0].content, /Permission mode: workspace-write/);
+      assert.match(readOnlyRequest.messages[0].content, /Permission mode: read-only/);
+      assert.doesNotMatch(readOnlyRequest.messages[0].content, /workspace-write|full-access/);
+      assert.match(resetRequest.messages[0].content, /Permission mode: read-only/);
+      assert.doesNotMatch(resetRequest.messages[0].content, /workspace-write|full-access/);
+
+      for (const request of mock.requests) {
+        assert.equal(request.messages.filter((message) => message.role === "system").length, 1);
+      }
+      // 切换发生在同一会话里：第二次请求仍带着第一轮的历史。
+      assert.deepEqual(
+        readOnlyRequest.messages.map((message) => message.role),
+        ["system", "user", "assistant", "user"],
+      );
+      // /reset 换 Agent：第三次请求回到 system + user。
+      assert.deepEqual(
+        resetRequest.messages.map((message) => message.role),
+        ["system", "user"],
+      );
     } finally {
       await mock.close();
     }

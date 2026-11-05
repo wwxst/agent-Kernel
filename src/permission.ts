@@ -55,6 +55,50 @@ export function parsePermissionMode(value: string): PermissionMode | undefined {
   return PERMISSION_MODES.find((mode) => mode === value);
 }
 
+/**
+ * 给模型看的当前权限说明。
+ *
+ * 它只指导模型少走弯路，不是执行检查：真正的放行/拒绝仍由 `Permission.check`
+ * 和 `ToolRegistry.execute` 决定。提示写错不会让工具被放行，反之也不会。
+ */
+export function permissionPrompt(mode: PermissionMode): string {
+  switch (mode) {
+    case "read-only":
+      return [
+        // 权限模式：只读。
+        "Permission mode: read-only.",
+        // 只能调用 read、ls、glob、grep；write、edit、shell 会被拒绝。
+        "You may only call read, ls, glob, and grep. write, edit, and shell are denied.",
+        // 需要修改时说明当前是只读模式，不要尝试被拒绝的工具。
+        "If the task requires a change, explain that this mode is read-only instead of trying a denied tool.",
+      ].join("\n");
+
+    case "workspace-write":
+      return [
+        // 权限模式：工作区写入。
+        "Permission mode: workspace-write.",
+        // 可以调用 read、ls、glob、grep、write、edit；文件修改必须留在工作区内。
+        "You may call read, ls, glob, grep, write, and edit; keep file changes inside the workspace.",
+        // shell 每条命令都需要用户批准，可能被拒绝；不要把批准当成默认。
+        "shell requires explicit user approval for every command and may be denied. Do not assume a command was approved.",
+      ].join("\n");
+
+    case "full-access":
+      return [
+        // 权限模式：完全访问。
+        "Permission mode: full-access.",
+        // 所有工具（包括 shell）无需审批即可调用。
+        "All tools, including shell, may be used without approval.",
+        // 仍然保持改动范围合理，并在完成后验证。
+        "Still keep changes scoped and verify your work.",
+      ].join("\n");
+
+    default:
+      // 类型上到不了这里；JS 调用方传了未知模式时，直接报错而不是给模型空规则。
+      throw new Error(`unknown permission mode "${String(mode)}"`);
+  }
+}
+
 /** 审批回答只认 y / yes（大小写不敏感）；空行、n、其他任何输入都是拒绝。 */
 export function isApproved(answer: string): boolean {
   return /^(?:y|yes)$/i.test(answer.trim());

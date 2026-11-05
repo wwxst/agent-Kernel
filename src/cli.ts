@@ -23,11 +23,11 @@
 import * as path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { askWithSignal, formatApproval } from "./approval.ts";
-import { Agent } from "./agent.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
-import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode } from "./permission.ts";
+import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
@@ -264,6 +264,9 @@ function createAgent(config: Config, signal: AbortSignal, permission: Permission
       stream: true,
     }),
     tools,
+    // 权限说明只指导模型；真正的放行/拒绝仍由 ToolRegistry 执行。
+    // 函数在每次请求前求值，/permission 切换后下一次请求自动使用新规则。
+    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}`,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,

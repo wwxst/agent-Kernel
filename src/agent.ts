@@ -128,8 +128,8 @@ export interface AgentOptions {
   llm: ChatClient;
   /** 模型能调用的工具集合。 */
   tools: ToolRegistry;
-  /** 不传就用 DEFAULT_SYSTEM_PROMPT。 */
-  systemPrompt?: string;
+  /** 不传就用 DEFAULT_SYSTEM_PROMPT。传函数时在每次模型请求前求值，用于动态权限说明。 */
+  systemPrompt?: string | (() => string);
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
   maxSteps?: number;
   /**
@@ -169,6 +169,7 @@ export interface AgentOptions {
 export class Agent {
   private readonly llm: ChatClient;
   private readonly tools: ToolRegistry;
+  private readonly systemPrompt: () => string;
   private readonly maxSteps: number;
   private readonly maxToolCalls: number;
   private readonly maxTotalTokens?: number;
@@ -209,6 +210,8 @@ export class Agent {
   constructor(options: AgentOptions) {
     this.llm = options.llm;
     this.tools = options.tools;
+    const systemPrompt = options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.systemPrompt = typeof systemPrompt === "string" ? () => systemPrompt : systemPrompt;
     this.maxSteps = options.maxSteps ?? 30;
     this.maxToolCalls = options.maxToolCalls ?? 60;
     this.maxTotalTokens = options.maxTotalTokens;
@@ -217,10 +220,23 @@ export class Agent {
     this.onDelta = options.onDelta;
 
     // 系统提示词只放一次，之后每轮都跟着 messages 一起发出去。
-    this.messages.push({
-      role: "system",
-      content: options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-    });
+    this.messages.push({ role: "system", content: this.systemPrompt() });
+  }
+
+  /**
+   * 刷新唯一的 system 消息。
+   *
+   * 动态权限说明只改这一条消息的内容，不追加新的 system 消息：
+   * 追加会改变消息顺序，也会让模型同时看到新旧两套规则。原地更新保留
+   * 「一条 system + 一条 user + assistant/tool 配对」的 Transcript 形状。
+   */
+  private refreshSystemPrompt(): void {
+    const system = this.messages[0];
+    if (system?.role !== "system") {
+      // 构造函数保证过；真丢了说明内部状态被破坏，不能继续用一条没有规则的历史。
+      throw new Error("transcript is missing its system message");
+    }
+    system.content = this.systemPrompt();
   }
 
   /**
@@ -371,6 +387,8 @@ export class Agent {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
       this.stopIfCancelled();
       this.stopIfBudgetExhausted();
+      // 每次请求前重新求值：/permission 切换后，下一次请求必须看到新规则。
+      this.refreshSystemPrompt();
       this.runRequests++;
       this.sessionRequests++;
       let response: ChatResponse;
