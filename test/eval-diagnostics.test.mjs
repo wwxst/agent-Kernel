@@ -161,6 +161,6 @@ test("跨天 runner：--help 不需要切换提交，也不联系模型", () => 
   });
 
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /4edd0e4ab004e184d280a95c17e41690fd58c644/);
+  assert.match(result.stdout, /eac798de31b24463dba09361b8c2c551e1e114d2/);
   assert.match(result.stdout, /eval\/baselines\/cross-day/);
 });
