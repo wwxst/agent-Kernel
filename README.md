@@ -165,7 +165,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-199 个用例，分十一层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
+201 个用例，分十一层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |

@@ -219,7 +219,7 @@ export class Agent {
     this.onToolResult = options.onToolResult;
     this.onDelta = options.onDelta;
 
-    // 系统提示词只放一次，之后每轮都跟着 messages 一起发出去。
+    // 系统提示词只放一条，之后每轮都跟着 messages 一起发出去；内容可由 provider 在请求前刷新。
     this.messages.push({ role: "system", content: this.systemPrompt() });
   }
 
@@ -231,12 +231,8 @@ export class Agent {
    * 「一条 system + 一条 user + assistant/tool 配对」的 Transcript 形状。
    */
   private refreshSystemPrompt(): void {
-    const system = this.messages[0];
-    if (system?.role !== "system") {
-      // 构造函数保证过；真丢了说明内部状态被破坏，不能继续用一条没有规则的历史。
-      throw new Error("transcript is missing its system message");
-    }
-    system.content = this.systemPrompt();
+    // 构造函数保证 index 0 是唯一的 system 消息；这里只刷新内容，不追加、不重复校验。
+    this.messages[0].content = this.systemPrompt();
   }
 
   /**

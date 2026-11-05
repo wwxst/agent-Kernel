@@ -148,6 +148,28 @@ test("系统提示词：函数在每次请求前求值，切换后不重复 syst
   );
 });
 
+test("系统提示词：同一个 Run 的后续 Step 也使用最新提示", async () => {
+  const requests = [];
+  let prompt = "prompt: old";
+  const chat = {
+    async chat(messages) {
+      requests.push(structuredClone({ messages }));
+      if (requests.length === 1) {
+        prompt = "prompt: new";
+        return { message: callTool("c1", "echo", { value: "a" }) };
+      }
+      return { message: finalReply("done") };
+    },
+  };
+  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), systemPrompt: () => prompt });
+
+  await agent.run("task");
+
+  assert.equal(requests[0].messages[0].content, "prompt: old");
+  assert.equal(requests[1].messages[0].content, "prompt: new");
+  assert.equal(requests[1].messages.filter((message) => message.role === "system").length, 1);
+});
+
 test("发给模型的工具清单只有说明书，没有 run", async () => {
   const chat = createScriptedChat([finalReply("ok")]);
   await new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) }).run("task");

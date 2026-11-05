@@ -215,7 +215,9 @@ test("read-only / workspace-write：没分类的工具默认拒绝", async () =>
 test("permissionPrompt：三档都说明当前限制，且不混入其他模式", () => {
   const readOnly = permissionPrompt("read-only");
   assert.match(readOnly, /Permission mode: read-only/);
+  assert.match(readOnly, /This overrides the base tool list/);
   assert.match(readOnly, /write, edit, and shell are denied/);
+  assert.match(readOnly, /skip it and explain why/);
   assert.doesNotMatch(readOnly, /workspace-write|full-access/);
 
   const workspace = permissionPrompt("workspace-write");

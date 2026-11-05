@@ -25,9 +25,12 @@ const READ_ONLY_TOOL_LIST = READ_ONLY_TOOL_NAMES.join(", ");
 
 /**
  * 只改文件的工具；它们是否真的留在工作区由 Workspace 的路径守卫决定，不归 Permission 管。
- * 下面两张表就是这版策略的全部内容：工具名是模型看到的接口，改工具集时必须同步这里。
+ * 工具名清单同时供策略和模型提示使用：加工具只改这里，避免提示与实际放行悄悄分叉。
  */
-const WRITE_TOOLS = new Set(["write", "edit"]);
+const WRITE_TOOL_NAMES = ["write", "edit"] as const;
+const WRITE_TOOLS = new Set<string>(WRITE_TOOL_NAMES);
+const WRITE_TOOL_LIST = WRITE_TOOL_NAMES.join(", ");
+const SHELL_TOOL = "shell";
 
 /**
  * 一次权限检查要看的调用信息：工具名 + 已经校验过的参数。
@@ -60,6 +63,7 @@ export function parsePermissionMode(value: string): PermissionMode | undefined {
  *
  * 它只指导模型少走弯路，不是执行检查：真正的放行/拒绝仍由 `Permission.check`
  * 和 `ToolRegistry.execute` 决定。提示写错不会让工具被放行，反之也不会。
+ * 名字按 spec 使用 `permissionPrompt`；返回值是提示文本，不是工厂对象。
  */
 export function permissionPrompt(mode: PermissionMode): string {
   switch (mode) {
@@ -67,20 +71,20 @@ export function permissionPrompt(mode: PermissionMode): string {
       return [
         // 权限模式：只读。
         "Permission mode: read-only.",
-        // 只能调用 read、ls、glob、grep；write、edit、shell 会被拒绝。
-        "You may only call read, ls, glob, and grep. write, edit, and shell are denied.",
-        // 需要修改时说明当前是只读模式，不要尝试被拒绝的工具。
-        "If the task requires a change, explain that this mode is read-only instead of trying a denied tool.",
+        // 本说明覆盖基础提示里的工具清单：只有 read、ls、glob、grep 可用；write、edit、shell 会被拒绝。
+        `This overrides the base tool list: only ${READ_ONLY_TOOL_LIST} are available. ${WRITE_TOOL_LIST}, and ${SHELL_TOOL} are denied.`,
+        // 验证需要被拒绝的工具时跳过并说明，不要尝试被拒绝的工具。
+        "If a check or test requires a denied tool, skip it and explain why instead of trying a denied tool.",
       ].join("\n");
 
     case "workspace-write":
       return [
         // 权限模式：工作区写入。
         "Permission mode: workspace-write.",
-        // 可以调用 read、ls、glob、grep、write、edit；文件修改必须留在工作区内。
-        "You may call read, ls, glob, grep, write, and edit; keep file changes inside the workspace.",
+        // 可以调用只读工具与写工具；文件修改必须留在工作区内。
+        `You may call ${READ_ONLY_TOOL_LIST}, ${WRITE_TOOL_LIST}; keep file changes inside the workspace.`,
         // shell 每条命令都需要用户批准，可能被拒绝；不要把批准当成默认。
-        "shell requires explicit user approval for every command and may be denied. Do not assume a command was approved.",
+        `${SHELL_TOOL} requires explicit user approval for every command and may be denied. Do not assume a command was approved.`,
       ].join("\n");
 
     case "full-access":
@@ -88,7 +92,7 @@ export function permissionPrompt(mode: PermissionMode): string {
         // 权限模式：完全访问。
         "Permission mode: full-access.",
         // 所有工具（包括 shell）无需审批即可调用。
-        "All tools, including shell, may be used without approval.",
+        `All tools, including ${SHELL_TOOL}, may be used without approval.`,
         // 仍然保持改动范围合理，并在完成后验证。
         "Still keep changes scoped and verify your work.",
       ].join("\n");
@@ -171,7 +175,7 @@ export class Permission {
 
       case "workspace-write":
         if (READ_ONLY_TOOLS.has(request.tool) || WRITE_TOOLS.has(request.tool)) return { allowed: true };
-        if (request.tool === "shell") return this.askForShell(request);
+        if (request.tool === SHELL_TOOL) return this.askForShell(request);
         return {
           allowed: false,
           reason: `tool "${request.tool}" is not allowed in workspace-write mode`,
@@ -193,20 +197,20 @@ export class Permission {
     if (this.approve === undefined) {
       return {
         allowed: false,
-        reason: 'tool "shell" requires approval, but no approval prompt is available; denied',
+        reason: `tool "${SHELL_TOOL}" requires approval, but no approval prompt is available; denied`,
       };
     }
 
     try {
       if ((await this.approve(request)) === true) return { allowed: true };
-      return { allowed: false, reason: 'user denied tool "shell"' };
+      return { allowed: false, reason: `user denied tool "${SHELL_TOOL}"` };
     } catch (error) {
       // 审批通道自己坏了（readline 关闭、TTY 消失）也按拒绝处理：
       // 异常绝不能变成「默认放行」，那正好是权限系统最危险的方向。
       // 原因写进拒绝文本，避免把「读不到输入」误报成「用户拒绝」。
       return {
         allowed: false,
-        reason: `tool "shell" approval failed: ${describeError(error)}; denied by default`,
+        reason: `tool "${SHELL_TOOL}" approval failed: ${describeError(error)}; denied by default`,
       };
     }
   }

@@ -474,41 +474,61 @@ test("REPL：/permission 查看与切换，/reset 保留当前模式", async () 
   });
 });
 
-test("REPL：/permission 切换后下一次请求使用新提示，/reset 不残留旧规则", async () => {
+test("REPL：/permission 切换后下一次请求使用新提示", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
       finalReply("workspace done"),
       finalReply("read-only done"),
+    ]);
+
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--repl"], input: "first\n/permission read-only\nsecond\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 2);
+
+      const [workspaceRequest, readOnlyRequest] = mock.requests;
+      assert.match(workspaceRequest.messages[0].content, /Permission mode: workspace-write/);
+      assert.match(readOnlyRequest.messages[0].content, /Permission mode: read-only/);
+      assert.doesNotMatch(readOnlyRequest.messages[0].content, /workspace-write|full-access/);
+      assert.equal(readOnlyRequest.messages.filter((message) => message.role === "system").length, 1);
+      // 切换发生在同一会话里：第二次请求仍带着第一轮的历史。
+      assert.deepEqual(
+        readOnlyRequest.messages.map((message) => message.role),
+        ["system", "user", "assistant", "user"],
+      );
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("REPL：/reset 保留当前权限提示，不残留旧规则", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      finalReply("first done"),
       finalReply("after reset done"),
     ]);
 
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--repl"], input: "first\n/permission read-only\nsecond\n/reset\nthird\n/exit\n" },
+        { args: ["--repl"], input: "/permission read-only\nfirst\n/reset\nsecond\n/exit\n" },
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.equal(mock.requests.length, 3);
-
-      const [workspaceRequest, readOnlyRequest, resetRequest] = mock.requests;
-      assert.match(workspaceRequest.messages[0].content, /Permission mode: workspace-write/);
-      assert.match(readOnlyRequest.messages[0].content, /Permission mode: read-only/);
-      assert.doesNotMatch(readOnlyRequest.messages[0].content, /workspace-write|full-access/);
-      assert.match(resetRequest.messages[0].content, /Permission mode: read-only/);
-      assert.doesNotMatch(resetRequest.messages[0].content, /workspace-write|full-access/);
-
+      assert.equal(mock.requests.length, 2);
       for (const request of mock.requests) {
+        assert.match(request.messages[0].content, /Permission mode: read-only/);
+        assert.doesNotMatch(request.messages[0].content, /workspace-write|full-access/);
         assert.equal(request.messages.filter((message) => message.role === "system").length, 1);
       }
-      // 切换发生在同一会话里：第二次请求仍带着第一轮的历史。
+      // /reset 换 Agent：第二次请求回到 system + user。
       assert.deepEqual(
-        readOnlyRequest.messages.map((message) => message.role),
-        ["system", "user", "assistant", "user"],
-      );
-      // /reset 换 Agent：第三次请求回到 system + user。
-      assert.deepEqual(
-        resetRequest.messages.map((message) => message.role),
+        mock.requests[1].messages.map((message) => message.role),
         ["system", "user"],
       );
     } finally {
