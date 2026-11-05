@@ -1,0 +1,155 @@
+{
+  "task": "06-guard-missing-file",
+  "ok": true,
+  "stats": {
+    "requests": 5,
+    "toolCalls": 5,
+    "usage": {
+      "promptTokens": 5934,
+      "completionTokens": 451,
+      "totalTokens": 6385,
+      "reported": 5,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\agent-eval-06-guard-missing-file-wW2VGG",
+  "startedAt": "2026-11-05T01:57:57.978Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 3360,
+      "messageCount": 2,
+      "messageChars": 625,
+      "usage": {
+        "prompt_tokens": 994,
+        "completion_tokens": 104,
+        "total_tokens": 1098
+      },
+      "toolCalls": 2,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1953,
+      "messageCount": 5,
+      "messageChars": 1059,
+      "usage": {
+        "prompt_tokens": 1066,
+        "completion_tokens": 21,
+        "total_tokens": 1087
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 4358,
+      "messageCount": 7,
+      "messageChars": 1208,
+      "usage": {
+        "prompt_tokens": 1133,
+        "completion_tokens": 186,
+        "total_tokens": 1319
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 4008,
+      "messageCount": 9,
+      "messageChars": 1861,
+      "usage": {
+        "prompt_tokens": 1299,
+        "completion_tokens": 123,
+        "total_tokens": 1422
+      },
+      "toolCalls": 1,
+      "contentChars": 112
+    },
+    {
+      "index": 5,
+      "durationMs": 1825,
+      "messageCount": 11,
+      "messageChars": 2174,
+      "usage": {
+        "prompt_tokens": 1442,
+        "completion_tokens": 17,
+        "total_tokens": 1459
+      },
+      "toolCalls": 0,
+      "contentChars": 33
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "load("
+      },
+      "resultChars": 40,
+      "resultLines": 1,
+      "resultHead": "load.mjs:4: export function load(file) {",
+      "elapsedMs": 3364
+    },
+    {
+      "index": 2,
+      "name": "grep",
+      "args": {
+        "text": "function load"
+      },
+      "resultChars": 40,
+      "resultLines": 1,
+      "resultHead": "load.mjs:4: export function load(file) {",
+      "elapsedMs": 3366
+    },
+    {
+      "index": 3,
+      "name": "read",
+      "args": {
+        "path": "load.mjs"
+      },
+      "resultChars": 125,
+      "resultLines": 7,
+      "resultHead": "import { readFileSync } from \"node:fs\";",
+      "elapsedMs": 5321
+    },
+    {
+      "index": 4,
+      "name": "edit",
+      "args": {
+        "path": "load.mjs",
+        "old_string": "import { readFileSync } from \"node:fs\";\n\n/** 读一个配置文件。 */\nexport function load(file) {\n  return readFileSync(file, \"utf8\");\n}",
+        "new_string": "import { readFileSync } from \"node:fs\";\n\n/** 读一个配置文件。文件不存在时返回 null。 */\nexport function load(file) {\n  try {\n    return readFileSync(file, \"utf8\");\n  } catch (err) {\n    if (err.code === \"ENOENT\") return null;\n    throw err;\n  }\n}"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited load.mjs (125 → 230 chars)",
+      "elapsedMs": 9683,
+      "file": {
+        "path": "load.mjs",
+        "beforeBytes": 141,
+        "afterBytes": 264,
+        "deltaBytes": 123,
+        "beforeSha256": "2fe8a5ed9341df55",
+        "afterSha256": "0def1df9ee8dcf83"
+      }
+    },
+    {
+      "index": 5,
+      "name": "shell",
+      "args": {
+        "command": "node -e \"import('./load.mjs').then(m=>{console.log('missing:', m.load('__no_such_file__')); console.log('exists:', m.load('load.mjs')!==null);})\""
+      },
+      "resultChars": 34,
+      "resultLines": 4,
+      "resultHead": "exit 0",
+      "elapsedMs": 13788
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "task": "06-guard-missing-file",
+  "ok": true,
+  "stats": {
+    "requests": 4,
+    "toolCalls": 3,
+    "usage": {
+      "promptTokens": 4359,
+      "completionTokens": 255,
+      "totalTokens": 4614,
+      "reported": 4,
+      "unknown": 0
+    },
+    "tokenBudget": {
+      "limit": 200000,
+      "exceeded": false
+    }
+  },
+  "root": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\agent-eval-06-guard-missing-file-VMcx7z",
+  "startedAt": "2026-11-05T01:58:13.801Z",
+  "requests": [
+    {
+      "index": 1,
+      "durationMs": 1920,
+      "messageCount": 2,
+      "messageChars": 625,
+      "usage": {
+        "prompt_tokens": 994,
+        "completion_tokens": 29,
+        "total_tokens": 1023
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 2,
+      "durationMs": 1793,
+      "messageCount": 4,
+      "messageChars": 710,
+      "usage": {
+        "prompt_tokens": 1035,
+        "completion_tokens": 21,
+        "total_tokens": 1056
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 3,
+      "durationMs": 3678,
+      "messageCount": 6,
+      "messageChars": 859,
+      "usage": {
+        "prompt_tokens": 1102,
+        "completion_tokens": 157,
+        "total_tokens": 1259
+      },
+      "toolCalls": 1,
+      "contentChars": 0
+    },
+    {
+      "index": 4,
+      "durationMs": 2385,
+      "messageCount": 8,
+      "messageChars": 1450,
+      "usage": {
+        "prompt_tokens": 1228,
+        "completion_tokens": 48,
+        "total_tokens": 1276
+      },
+      "toolCalls": 0,
+      "contentChars": 85
+    }
+  ],
+  "tools": [
+    {
+      "index": 1,
+      "name": "grep",
+      "args": {
+        "text": "load("
+      },
+      "resultChars": 40,
+      "resultLines": 1,
+      "resultHead": "load.mjs:4: export function load(file) {",
+      "elapsedMs": 1925
+    },
+    {
+      "index": 2,
+      "name": "read",
+      "args": {
+        "path": "load.mjs"
+      },
+      "resultChars": 125,
+      "resultLines": 7,
+      "resultHead": "import { readFileSync } from \"node:fs\";",
+      "elapsedMs": 3719
+    },
+    {
+      "index": 3,
+      "name": "edit",
+      "args": {
+        "path": "load.mjs",
+        "old_string": "export function load(file) {\n  return readFileSync(file, \"utf8\");\n}",
+        "new_string": "export function load(file) {\n  try {\n    return readFileSync(file, \"utf8\");\n  } catch (error) {\n    if (error.code === \"ENOENT\") {\n      return null;\n    }\n    throw error;\n  }\n}"
+      },
+      "resultChars": 33,
+      "resultLines": 1,
+      "resultHead": "edited load.mjs (125 → 236 chars)",
+      "elapsedMs": 7399,
+      "file": {
+        "path": "load.mjs",
+        "beforeBytes": 141,
+        "afterBytes": 252,
+        "deltaBytes": 111,
+        "beforeSha256": "2fe8a5ed9341df55",
+        "afterSha256": "2f2857cfa52126c4"
+      }
+    }
+  ]
+}

@@ -1,0 +1,294 @@
+{
+  "date": "2026-11-05",
+  "ref": "stability-2026-11-04",
+  "commit": "4edd0e4ab004e184d280a95c17e41690fd58c644",
+  "model": "hy3",
+  "rounds": 3,
+  "aggregate": {
+    "passed": 60,
+    "total": 60
+  },
+  "medians": {
+    "requests": 114,
+    "toolCalls": 114,
+    "tokens": 172050,
+    "elapsed": 107.1
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-05T01:53:45.311Z",
+      "passed": 20,
+      "total": 20,
+      "requests": 114,
+      "toolCalls": 114,
+      "tokens": 189487,
+      "elapsed": 107.1,
+      "failures": []
+    },
+    {
+      "round": 2,
+      "at": "2026-11-05T01:55:09.698Z",
+      "passed": 20,
+      "total": 20,
+      "requests": 95,
+      "toolCalls": 97,
+      "tokens": 129831,
+      "elapsed": 84.2,
+      "failures": []
+    },
+    {
+      "round": 3,
+      "at": "2026-11-05T01:57:13.542Z",
+      "passed": 20,
+      "total": 20,
+      "requests": 117,
+      "toolCalls": 115,
+      "tokens": 172050,
+      "elapsed": 123.7,
+      "failures": []
+    }
+  ],
+  "perTask": [
+    {
+      "name": "01-add-health-route",
+      "tokens": [
+        3663,
+        4768,
+        3674
+      ],
+      "min": 3663,
+      "max": 4768,
+      "spread": 1.3,
+      "failures": []
+    },
+    {
+      "name": "02-fix-failing-test",
+      "tokens": [
+        5264,
+        5177,
+        5188
+      ],
+      "min": 5177,
+      "max": 5264,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "03-rename-function",
+      "tokens": [
+        6826,
+        6913,
+        6728
+      ],
+      "min": 6728,
+      "max": 6913,
+      "spread": 1.03,
+      "failures": []
+    },
+    {
+      "name": "04-create-doc",
+      "tokens": [
+        3667,
+        3756,
+        3651
+      ],
+      "min": 3651,
+      "max": 3756,
+      "spread": 1.03,
+      "failures": []
+    },
+    {
+      "name": "05-extract-constant",
+      "tokens": [
+        3948,
+        3984,
+        4727
+      ],
+      "min": 3948,
+      "max": 4727,
+      "spread": 1.2,
+      "failures": []
+    },
+    {
+      "name": "06-guard-missing-file",
+      "tokens": [
+        51609,
+        4681,
+        8407
+      ],
+      "min": 4681,
+      "max": 51609,
+      "spread": 11.03,
+      "failures": []
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "tokens": [
+        6478,
+        12542,
+        6250
+      ],
+      "min": 6250,
+      "max": 12542,
+      "spread": 2.01,
+      "failures": []
+    },
+    {
+      "name": "08-extract-duplication",
+      "tokens": [
+        5017,
+        5014,
+        20483
+      ],
+      "min": 5014,
+      "max": 20483,
+      "spread": 4.09,
+      "failures": []
+    },
+    {
+      "name": "09-update-readme",
+      "tokens": [
+        3573,
+        3586,
+        3582
+      ],
+      "min": 3573,
+      "max": 3586,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "10-delete-dead-code",
+      "tokens": [
+        7777,
+        8093,
+        10180
+      ],
+      "min": 7777,
+      "max": 10180,
+      "spread": 1.31,
+      "failures": []
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "tokens": [
+        4651,
+        4617,
+        20263
+      ],
+      "min": 4617,
+      "max": 20263,
+      "spread": 4.39,
+      "failures": []
+    },
+    {
+      "name": "12-add-input-validation",
+      "tokens": [
+        4647,
+        4594,
+        4595
+      ],
+      "min": 4594,
+      "max": 4647,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "13-callback-to-promise",
+      "tokens": [
+        30140,
+        22524,
+        17781
+      ],
+      "min": 17781,
+      "max": 30140,
+      "spread": 1.7,
+      "failures": []
+    },
+    {
+      "name": "14-fix-sort-order",
+      "tokens": [
+        4515,
+        4492,
+        4493
+      ],
+      "min": 4492,
+      "max": 4515,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "15-merge-defaults",
+      "tokens": [
+        4552,
+        4607,
+        5994
+      ],
+      "min": 4552,
+      "max": 5994,
+      "spread": 1.32,
+      "failures": []
+    },
+    {
+      "name": "16-handle-bad-json",
+      "tokens": [
+        4710,
+        4665,
+        4639
+      ],
+      "min": 4639,
+      "max": 4710,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "17-write-missing-test",
+      "tokens": [
+        6134,
+        5161,
+        6319
+      ],
+      "min": 5161,
+      "max": 6319,
+      "spread": 1.22,
+      "failures": []
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "tokens": [
+        4470,
+        3378,
+        3349
+      ],
+      "min": 3349,
+      "max": 4470,
+      "spread": 1.33,
+      "failures": []
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "tokens": [
+        4937,
+        4948,
+        6500
+      ],
+      "min": 4937,
+      "max": 6500,
+      "spread": 1.32,
+      "failures": []
+    },
+    {
+      "name": "20-fix-email-regex",
+      "tokens": [
+        22909,
+        12331,
+        25247
+      ],
+      "min": 12331,
+      "max": 25247,
+      "spread": 2.05,
+      "failures": []
+    }
+  ]
+}
