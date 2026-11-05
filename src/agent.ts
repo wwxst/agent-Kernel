@@ -44,6 +44,8 @@ export const DEFAULT_SYSTEM_PROMPT = [
   "Never claim to have run a command or test that you did not run. If you cannot verify something, say so explicitly.",
   // 完成后用一小段总结收尾，然后停止调用工具。
   "Reply with a short summary when done, then stop calling tools.",
+  // 每次只跑一条 shell 命令、用简单语法；不要用竖线串联命令，也不要换着引号写。
+  "Run one shell command per call with simple syntax; do not use | to sequence commands or alternate quoting.",
 ].join("\n");
 
 /**

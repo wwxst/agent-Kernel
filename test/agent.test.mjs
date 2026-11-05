@@ -442,8 +442,9 @@ test("token 统计：请求失败且没有 usage 时记为未知，不丢账", a
   assert.equal(agent.stats.usage.totalTokens, 0);
 });
 
-test("系统提示词：关键歧义可以问，禁止编造验证结果", () => {
+test("系统提示词：关键歧义可以问，禁止编造验证结果，shell 一次一条", () => {
   assert.match(DEFAULT_SYSTEM_PROMPT, /Ask when an ambiguity affects correctness/);
   assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command or test that you did not run/);
+  assert.match(DEFAULT_SYSTEM_PROMPT, /Run one shell command per call with simple syntax/);
   assert.equal(DEFAULT_SYSTEM_PROMPT.includes("Do not ask questions"), false);
 });
