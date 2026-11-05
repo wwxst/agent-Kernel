@@ -185,7 +185,7 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }) 
   await cp(path.join(taskDir, "files"), workdir, { recursive: true });
 
   const llm = new Llm({ baseUrl, apiKey, model });
-  // 评测是受信任的宿主：显式 full-access，而不是依赖「不注入就不检查」的默认。
+  // 评测是受信任的宿主：显式 full-access，不再依赖任何“漏传即不检查”的默认。
   const permission = new Permission("full-access");
   const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })), {
     permission,

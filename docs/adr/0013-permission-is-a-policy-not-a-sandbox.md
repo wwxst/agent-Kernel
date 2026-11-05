@@ -6,7 +6,7 @@ Permission v0.1 给 agent 三档模式：`read-only` 只放行 `read` / `ls` / `
 
 - 检查点在 `ToolRegistry.execute()`：参数校验之后、`tool.run()` 之前。拒绝不执行工具，返回一条 `ERROR: permission denied: …` 的 **Tool result**，模型下一轮可以自己换做法。
 - 权限按工具名分档，不看参数。路径是否越界仍由 `Workspace` 的路径守卫判断；两层各管一件事。
-- 权限由宿主显式注入：`ToolRegistry` 构造时必须传 `permission: Permission | null`；漏传、`undefined`、非法值直接抛错；`null` 只表示宿主主动声明不检查。CLI 传 `workspace-write`，评测传 `full-access`。
+- 权限由宿主显式注入：`ToolRegistry` 构造时必须传 `permission: Permission | null`；漏传、`undefined`、非法值直接抛错；`null` 只表示宿主主动声明不检查。CLI 默认 `workspace-write`（`--permission` 可覆盖），评测显式传 `full-access`。
 - 模型提示由 `permissionPrompt(mode)` 生成，CLI 把它拼进唯一的 system 消息；Agent 每次请求前原地刷新，`/permission` 切换后下一次请求立即生效，不追加新的 system 消息。它只指导模型，放行/拒绝仍由 `ToolRegistry` 强制执行。`read-only` 的提示会明确覆盖基础提示里的工具清单，避免两套规则看起来互相矛盾。
 - 审批提示懒创建 readline：没有 `shell` 调用的任务不进入终端 raw mode，Ctrl-C 仍走原取消链；REPL 里如果任务运行时已经排着下一行输入，这次 `shell` 会被拒绝，那一行留给下一轮，避免把任务当成审批答案。
 - 审批等待用 `askWithSignal` 把 `AbortSignal`、readline 的 `close` 和正常回答一起收口：Ctrl-C 立即结束等待并走取消链，EOF 明确按拒绝处理，不会停在 `question()` 上。

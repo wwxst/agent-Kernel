@@ -310,22 +310,28 @@ test("ToolRegistry：permission: null 是显式关闭权限检查", async () => 
   assert.equal(await registry.execute(call("write")), "write ran");
 });
 
-test("ToolRegistry：漏传 options 或传 null 在构造阶段报错", () => {
+test("ToolRegistry：漏传 options 在构造阶段报错", () => {
   assert.throws(
     () => new ToolRegistry([tool("write")]),
     /ToolRegistry: options are required/,
   );
+});
+
+test("ToolRegistry：第二参数传 null 在构造阶段报错", () => {
   assert.throws(
     () => new ToolRegistry([tool("write")], null),
-    /ToolRegistry: options are required/,
+    /ToolRegistry: options must be an object; got null/,
   );
 });
 
-test("ToolRegistry：permission 字段缺失或 undefined 在构造阶段报错", () => {
+test("ToolRegistry：permission 字段缺失在构造阶段报错", () => {
   assert.throws(
     () => new ToolRegistry([tool("write")], {}),
     /ToolRegistry: options\.permission is required/,
   );
+});
+
+test("ToolRegistry：permission: undefined 在构造阶段报错", () => {
   assert.throws(
     () => new ToolRegistry([tool("write")], { permission: undefined }),
     /ToolRegistry: options\.permission must be a Permission instance or null, got undefined/,

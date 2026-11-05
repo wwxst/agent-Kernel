@@ -8,17 +8,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
 import { ChatResponseError } from "../src/errors.ts";
-import { ToolRegistry } from "../src/tool-registry.ts";
-import { callTool, createScriptedChat, echoTool, finalReply } from "./support/harness.mjs";
+import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */
 function roles(messages) {
   return messages.map((message) => message.role);
-}
-
-/** 这些用例只测循环，不测权限；显式 null 表示宿主主动关闭权限检查。 */
-function makeRegistry(tools) {
-  return new ToolRegistry(tools, { permission: null });
 }
 
 test("一轮工具调用：结果在下一轮请求前入栈，且带对了 tool_call_id", async () => {
@@ -137,7 +131,7 @@ test("系统提示词：默认放一条 system 消息，也可以整条替换", 
 test("系统提示词：函数在每次请求前求值，切换后不重复 system 消息", async () => {
   const chat = createScriptedChat([finalReply("first"), finalReply("second")]);
   let prompt = "prompt: read-only";
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]), systemPrompt: () => prompt });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]), systemPrompt: () => prompt });
 
   await agent.run("first");
   prompt = "prompt: full-access";
@@ -166,7 +160,7 @@ test("系统提示词：同一个 Run 的后续 Step 也使用最新提示", asy
       return { message: finalReply("done") };
     },
   };
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), systemPrompt: () => prompt });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), systemPrompt: () => prompt });
 
   await agent.run("task");
 

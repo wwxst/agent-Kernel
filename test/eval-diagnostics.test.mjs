@@ -6,8 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { Agent } from "../src/agent.ts";
-import { ToolRegistry } from "../src/tool-registry.ts";
 import { createEvalDiagnostics } from "../eval/diagnostics.mjs";
+import { makeRegistry } from "./support/harness.mjs";
 
 test("诊断：记录每次请求的 usage、工具结果和逐工具的文件变化", async () => {
   const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
@@ -39,7 +39,7 @@ test("诊断：记录每次请求的 usage、工具结果和逐工具的文件�
     },
   };
 
-  const tools = new ToolRegistry([{
+  const tools = makeRegistry([{
     name: "write_file",
     description: "Write a test file.",
     parameters: {
@@ -54,7 +54,7 @@ test("诊断：记录每次请求的 usage、工具结果和逐工具的文件�
       await writeFile(path.join(workdir, args.path), args.content, "utf8");
       return "wrote " + args.content.length + " chars to " + args.path;
     },
-  }], { permission: null });
+  }]);
 
   try {
     const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });
@@ -128,12 +128,12 @@ test("诊断：脱敏像密钥的参数，并摘要超长字符串", async () =>
       return { message: { role: "assistant", content: "done" } };
     },
   };
-  const tools = new ToolRegistry([{
+  const tools = makeRegistry([{
     name: "inspect_args",
     description: "Accept test arguments.",
     parameters: { type: "object", properties: {} },
     run: async () => "ok",
-  }], { permission: null });
+  }]);
 
   try {
     const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });

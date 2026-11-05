@@ -9,7 +9,7 @@
  *
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
-import { describeError } from "./errors.ts";
+import { describeError, describeValue } from "./errors.ts";
 import { Permission } from "./permission.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
 
@@ -20,17 +20,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 把非法值写进错误文案：null 是合法值，这里只处理真正不合法的东西。 */
-function showValue(value: unknown): string {
-  if (value === undefined) return "undefined";
-  if (typeof value === "string") return `"${value}"`;
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
-}
-
 /**
  * 权限策略必须在装配阶段显式选择，不能靠「漏传参数」静默关闭。
  *
@@ -38,9 +27,12 @@ function showValue(value: unknown): string {
  * 但缺少 options、缺少 permission 字段、undefined、字符串、对象等一律报错，
  * 这样「忘了注入」会变成启动失败，而不是一次看起来成功的无策略执行。
  */
-function assertPermissionOption(options: unknown): Permission | null {
-  if (!isRecord(options)) {
+function resolvePermissionOption(options: unknown): Permission | null {
+  if (options === undefined) {
     throw new Error("ToolRegistry: options are required; pass { permission: Permission | null }");
+  }
+  if (!isRecord(options)) {
+    throw new Error(`ToolRegistry: options must be an object; got ${describeValue(options)}`);
   }
   if (!Object.hasOwn(options, "permission")) {
     throw new Error(
@@ -52,7 +44,7 @@ function assertPermissionOption(options: unknown): Permission | null {
   if (permission === null) return null;
   if (permission instanceof Permission) return permission;
   throw new Error(
-    `ToolRegistry: options.permission must be a Permission instance or null, got ${showValue(permission)}`,
+    `ToolRegistry: options.permission must be a Permission instance or null, got ${describeValue(permission)}`,
   );
 }
 
@@ -165,7 +157,7 @@ export class ToolRegistry {
    * options 没有默认值：权限是安全决策，必须由宿主明确选择。
    */
   constructor(tools: readonly Tool[], options: ToolRegistryOptions) {
-    const permission = assertPermissionOption(options);
+    const permission = resolvePermissionOption(options);
     const seen = new Set<string>();
     for (const tool of tools) {
       if (seen.has(tool.name)) {

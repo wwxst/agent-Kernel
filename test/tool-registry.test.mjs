@@ -4,13 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ToolRegistry } from "../src/tool-registry.ts";
-import { echoTool } from "./support/harness.mjs";
-
-/** 这个文件测注册表本身；显式 null 表示宿主主动关闭权限检查。 */
-function makeRegistry(tools) {
-  return new ToolRegistry(tools, { permission: null });
-}
+import { echoTool, makeRegistry } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */
 function call(name, rawArguments = "{}", id = "call_1") {
