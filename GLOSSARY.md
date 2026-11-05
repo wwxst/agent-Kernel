@@ -44,6 +44,22 @@ _Avoid_: function, handler, plugin
 一次 Run 里提供给模型的全部 Tool，以及把每个 Tool call 执行成一条 Tool result 的那一步。
 _Avoid_: toolbelt, toolbox, tool set
 
+**Permission**:
+宿主对一次 **Tool call** 放不放行的策略，三档：`read-only`、`workspace-write`、`full-access`。它在 **Tool registry** 的参数校验之后、执行之前检查；拒绝折成 **ERROR text**。它只约束工具调用，不改变操作系统的权限。
+_Avoid_: sandbox, isolation, ACL
+
+**Permission mode**:
+**Permission** 的当前档位。CLI 默认 `workspace-write`；`--permission` 决定起始值，REPL 的 `/permission` 切换，`/reset` 不改变它。
+_Avoid_: permission level, security level
+
+**Approval**:
+`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。
+_Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
+
+**Sandbox**:
+操作系统级隔离：容器、虚拟机、独立用户、只读挂载之类。本仓库没有实现 Sandbox；**Permission** 与 **Workspace** 的路径守卫都不是 Sandbox。
+_Avoid_: permission, workspace（这两个都不是隔离）
+
 **Tool result**:
 一次 Tool call 的文本答复，以 tool Message 回灌进 Transcript。
 _Avoid_: output, observation, response
@@ -82,6 +98,9 @@ _Avoid_: LLM, model, provider
 - **Transcript** 是 **Message** 的序列；每个 **Step** 追加一条 assistant **Message**，它可能携带多个 **Tool call**。
 - 每个 **Tool call** 恰好由一条 **Tool result** **Message** 答复，两者靠 id 配对；没有执行的调用也留一条 `not run` 结果，配对不为预算或取消让路。
 - **Tool registry** 持有 N 个 **Tool**，这些 **Tool** 只作用于一个 **Workspace**。
+- 每个 **Tool call** 在参数校验通过后先过 **Permission**；拒绝时工具不执行，结果是一条 **ERROR text**。
+- **Permission** 只约束 Tool call，不改变进程权限；**shell** 放行后与启动者同权，可以离开 **Workspace**。
+- 一个 **Session** 有一个 **Permission mode**；`/reset` 换 Agent，但不换 mode。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
 
@@ -89,3 +108,4 @@ _Avoid_: LLM, model, provider
 
 - "agent" 既指整个程序（CLI 加 Kernel），也指循环本身。本仓库里 **Kernel** 专指循环，**Run** 专指一次执行；"agent" 只作为项目名出现。
 - "error" 有两种：**ERROR text** 是回灌给模型的文本；异常（throw）只出现在 Tool 之外的宿主代码里。
+- "permission" 不是 "sandbox"：**Permission** 只决定一次 Tool call 放不放行；**Sandbox** 是操作系统级隔离，本仓库没有实现。
