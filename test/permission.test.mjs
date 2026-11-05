@@ -304,10 +304,41 @@ test("ToolRegistry：审批异常折成 ERROR，不会穿出 execute", async () 
   assert.match(result, /denied by default/);
 });
 
-test("ToolRegistry：不注入权限时保持原有行为", async () => {
-  const registry = new ToolRegistry([tool("write")]);
+test("ToolRegistry：permission: null 是显式关闭权限检查", async () => {
+  const registry = new ToolRegistry([tool("write")], { permission: null });
 
   assert.equal(await registry.execute(call("write")), "write ran");
+});
+
+test("ToolRegistry：漏传 options 或传 null 在构造阶段报错", () => {
+  assert.throws(
+    () => new ToolRegistry([tool("write")]),
+    /ToolRegistry: options are required/,
+  );
+  assert.throws(
+    () => new ToolRegistry([tool("write")], null),
+    /ToolRegistry: options are required/,
+  );
+});
+
+test("ToolRegistry：permission 字段缺失或 undefined 在构造阶段报错", () => {
+  assert.throws(
+    () => new ToolRegistry([tool("write")], {}),
+    /ToolRegistry: options\.permission is required/,
+  );
+  assert.throws(
+    () => new ToolRegistry([tool("write")], { permission: undefined }),
+    /ToolRegistry: options\.permission must be a Permission instance or null, got undefined/,
+  );
+});
+
+test("ToolRegistry：非法 permission 值在构造阶段报错", () => {
+  for (const permission of ["full-access", {}, 1, false]) {
+    assert.throws(
+      () => new ToolRegistry([tool("write")], { permission }),
+      /ToolRegistry: options\.permission must be a Permission instance or null/,
+    );
+  }
 });
 
 test("ToolRegistry：未知工具仍按未知工具报错，不会先问权限", async () => {

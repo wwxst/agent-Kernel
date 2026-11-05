@@ -54,7 +54,7 @@ test("诊断：记录每次请求的 usage、工具结果和逐工具的文件�
       await writeFile(path.join(workdir, args.path), args.content, "utf8");
       return "wrote " + args.content.length + " chars to " + args.path;
     },
-  }]);
+  }], { permission: null });
 
   try {
     const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });
@@ -133,7 +133,7 @@ test("诊断：脱敏像密钥的参数，并摘要超长字符串", async () =>
     description: "Accept test arguments.",
     parameters: { type: "object", properties: {} },
     run: async () => "ok",
-  }]);
+  }], { permission: null });
 
   try {
     const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });

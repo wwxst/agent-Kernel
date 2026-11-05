@@ -16,12 +16,17 @@ function roles(messages) {
   return messages.map((message) => message.role);
 }
 
+/** 这些用例只测循环，不测权限；显式 null 表示宿主主动关闭权限检查。 */
+function makeRegistry(tools) {
+  return new ToolRegistry(tools, { permission: null });
+}
+
 test("一轮工具调用：结果在下一轮请求前入栈，且带对了 tool_call_id", async () => {
   const chat = createScriptedChat([
     callTool("c1", "echo", { value: "a" }),
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });
 
   const reply = await agent.run("do it");
 
@@ -53,7 +58,7 @@ test("一轮多个工具调用：按模型给出的顺序串行执行", async ()
     },
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });
 
   await agent.run("do it");
 
@@ -72,7 +77,7 @@ test("工具失败不会打断循环：ERROR 文本进历史，模型继续收�
     },
   };
   const chat = createScriptedChat([callTool("c1", "boom", {}), finalReply("recovered")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([broken]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([broken]) });
 
   const reply = await agent.run("do it");
 
@@ -83,7 +88,7 @@ test("工具失败不会打断循环：ERROR 文本进历史，模型继续收�
 
 test("步数上限：模型一直要调工具时抛错，最后一批工具不执行", async () => {
   const chat = createScriptedChat([callTool("loop", "echo", { value: "x" })]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxSteps: 2 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxSteps: 2 });
 
   await assert.rejects(
     () => agent.run("never finishes"),
@@ -97,7 +102,7 @@ test("步数上限：模型一直要调工具时抛错，最后一批工具不�
 
 test("没有工具调用就立刻收尾，不会多发请求", async () => {
   const chat = createScriptedChat([finalReply("no tools needed")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });
 
   const reply = await agent.run("just answer");
 
@@ -110,7 +115,7 @@ test("onToolResult 对每条工具结果各回调一次", async () => {
   const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
   const agent = new Agent({
     llm: chat,
-    tools: new ToolRegistry([echoTool()]),
+    tools: makeRegistry([echoTool()]),
     onToolResult: (call, result) => seen.push([call.id, result]),
   });
 
@@ -121,11 +126,11 @@ test("onToolResult 对每条工具结果各回调一次", async () => {
 
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {
   const defaults = createScriptedChat([finalReply("ok")]);
-  await new Agent({ llm: defaults, tools: new ToolRegistry([]) }).run("task");
+  await new Agent({ llm: defaults, tools: makeRegistry([]) }).run("task");
   assert.equal(defaults.requests[0].messages[0].content, DEFAULT_SYSTEM_PROMPT);
 
   const custom = createScriptedChat([finalReply("ok")]);
-  await new Agent({ llm: custom, tools: new ToolRegistry([]), systemPrompt: "be terse" }).run("task");
+  await new Agent({ llm: custom, tools: makeRegistry([]), systemPrompt: "be terse" }).run("task");
   assert.equal(custom.requests[0].messages[0].content, "be terse");
 });
 
@@ -172,7 +177,7 @@ test("系统提示词：同一个 Run 的后续 Step 也使用最新提示", asy
 
 test("发给模型的工具清单只有说明书，没有 run", async () => {
   const chat = createScriptedChat([finalReply("ok")]);
-  await new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) }).run("task");
+  await new Agent({ llm: chat, tools: makeRegistry([echoTool()]) }).run("task");
 
   const [spec] = chat.requests[0].tools;
   assert.equal(spec.name, "echo");
@@ -181,7 +186,7 @@ test("发给模型的工具清单只有说明书，没有 run", async () => {
 
 test("transcript 返回深拷贝：改消息内容和嵌套的 tool_calls 都不影响内部记录", async () => {
   const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });
 
   await agent.run("task");
 
@@ -198,7 +203,7 @@ test("transcript 返回深拷贝：改消息内容和嵌套的 tool_calls 都不
 
 test("空回复不算完成：模型什么都没说时必须报错", async () => {
   const chat = createScriptedChat([finalReply("   ")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
 
   await assert.rejects(() => agent.run("task"), /model returned an empty final answer/);
 });
@@ -207,7 +212,7 @@ test("取消：信号在任务开始前已 abort 时，一次模型请求都不�
   const controller = new AbortController();
   controller.abort(new Error("stop now"));
   const chat = createScriptedChat([finalReply("never")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), signal: controller.signal });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), signal: controller.signal });
 
   await assert.rejects(() => agent.run("task"), /cancelled: stop now/);
   assert.equal(chat.requests.length, 0);
@@ -235,7 +240,7 @@ test("取消：中途 abort 后不再执行工具，剩下的调用留下 not ru
   };
   const agent = new Agent({
     llm: chat,
-    tools: new ToolRegistry([interruptAfterFirst]),
+    tools: makeRegistry([interruptAfterFirst]),
     signal: controller.signal,
   });
 
@@ -269,7 +274,7 @@ test("工具预算：一批调用会超限时整批都不执行", async () => {
       return `echo ${String(args.value)}`;
     },
   };
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([tool]), maxToolCalls: 2 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxToolCalls: 2 });
 
   await assert.rejects(
     () => agent.run("task"),
@@ -289,7 +294,7 @@ test("工具预算：跨批次累计，超限后不再启动新批次", async ()
     callTool("c2", "echo", { value: "b" }),
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxToolCalls: 1 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxToolCalls: 1 });
 
   await assert.rejects(
     () => agent.run("task"),
@@ -313,7 +318,7 @@ test("最后一步：模型仍要工具时不执行无法验证的副作用", as
     },
   };
   const chat = createScriptedChat([callTool("c1", "echo", { value: "x" }), finalReply("done")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([tool]), maxSteps: 1 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 1 });
 
   await assert.rejects(() => agent.run("task"), /step limit 1 reached after executing 0 tool call\(s\)/);
   assert.equal(ran, 0, "没有后续请求验证的工具不该执行");
@@ -322,7 +327,7 @@ test("最后一步：模型仍要工具时不执行无法验证的副作用", as
 
 test("会话：第二个 Run 继承 transcript，stats 只描述本次 Run", async () => {
   const chat = createScriptedChat([finalReply("first"), finalReply("second")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
 
   await agent.run("first task");
   await agent.run("second task");
@@ -347,7 +352,7 @@ test("会话：预算按 Run 重新计算，第二轮不继承第一轮的花费
     finalReply("second"),
   ]);
   // 一次 Run 只允许一个工具：第二轮如果继承了第一轮的计数，这里就会抛错。
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxToolCalls: 1 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxToolCalls: 1 });
 
   await agent.run("one");
   await agent.run("two");
@@ -362,7 +367,7 @@ test("会话：token 预算也只算本次 Run", async () => {
     { message: finalReply("first"), usage },
     { message: finalReply("second"), usage },
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]), maxTotalTokens: 100 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]), maxTotalTokens: 100 });
 
   await agent.run("one");
   await agent.run("two");
@@ -374,7 +379,7 @@ test("会话：token 预算也只算本次 Run", async () => {
 
 test("生命周期：并发 run() 时后一个立刻被拒绝", async () => {
   const chat = createScriptedChat([finalReply("ok")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
 
   const first = agent.run("first");
   const second = agent.run("second");
@@ -386,7 +391,7 @@ test("生命周期：并发 run() 时后一个立刻被拒绝", async () => {
 
 test("生命周期：任务失败后会话还能继续，失败的历史留在 transcript 里", async () => {
   const chat = createScriptedChat([finalReply("   "), finalReply("recovered")]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
 
   await assert.rejects(() => agent.run("fail"), /empty final answer/);
   const failedLength = agent.transcript.length;
@@ -408,7 +413,7 @@ test("token 统计：累计 prompt / completion / total 与请求数", async () 
       usage: { prompt_tokens: 50, completion_tokens: 5, total_tokens: 55 },
     },
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });
 
   await agent.run("task");
 
@@ -428,7 +433,7 @@ test("token 统计：usage 缺失时标记 unknown，不补 0", async () => {
     },
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]) });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });
 
   await agent.run("task");
 
@@ -445,7 +450,7 @@ test("token 预算：已知合计达到上限时不再发请求，也不执行�
     },
     finalReply("should not happen"),
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxTotalTokens: 100 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTotalTokens: 100 });
 
   await assert.rejects(
     () => agent.run("task"),
@@ -464,7 +469,7 @@ test("token 预算：usage 未知时只声称「已统计到多少」", async ()
       usage: { prompt_tokens: 90, completion_tokens: 10, total_tokens: 100 },
     },
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([echoTool()]), maxTotalTokens: 100 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTotalTokens: 100 });
 
   await assert.rejects(
     () => agent.run("task"),
@@ -481,7 +486,7 @@ test("token 预算：软预算 —— 最终答复顶穿上限时仍返回成功
       usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 },
     },
   ]);
-  const agent = new Agent({ llm: chat, tools: new ToolRegistry([]), maxTotalTokens: 100 });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]), maxTotalTokens: 100 });
 
   const reply = await agent.run("task");
 
@@ -500,7 +505,7 @@ test("token 统计：请求失败但带回 usage 时也要记账", async () => {
       });
     },
   };
-  const agent = new Agent({ llm, tools: new ToolRegistry([]) });
+  const agent = new Agent({ llm, tools: makeRegistry([]) });
 
   await assert.rejects(() => agent.run("task"), /invalid response/);
   assert.equal(agent.stats.requests, 1);
@@ -519,7 +524,7 @@ test("token 统计：请求失败且没有 usage 时记为未知，不丢账", a
       throw new Error("network down");
     },
   };
-  const agent = new Agent({ llm, tools: new ToolRegistry([]) });
+  const agent = new Agent({ llm, tools: makeRegistry([]) });
 
   await assert.rejects(() => agent.run("task"), /network down/);
   assert.equal(agent.stats.requests, 1);

@@ -27,9 +27,9 @@ CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是�
 | 文件 | 一句话 |
 | --- | --- |
 | `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
-| `src/errors.ts` | 错误文案兜底：`describeError()` 把任何抛出物变成一行非空文本 |
+| `src/errors.ts` | 错误文案兜底：`describeError()` 把任何抛出物变成一行非空文本；`describeValue()` 渲染非法配置值 |
 | `src/agent.ts` | 内核：循环、消息顺序、请求/工具预算、生命周期；system 提示支持函数式动态刷新 |
-| `src/tool-registry.ts` | 工具注册表：Schema 校验、按名字找工具、解析参数、权限检查、把失败折成 `ERROR` 文本 |
+| `src/tool-registry.ts` | 工具注册表：Schema 校验、按名字找工具、解析参数、显式权限注入、把失败折成 `ERROR` 文本 |
 | `src/permission.ts` | 权限策略：三档模式、`permissionPrompt` 模型指导、shell 的一次性审批、拒绝原因。只判断工具调用放不放行，不做隔离 |
 | `src/approval.ts` | 审批提示的格式化与读取：完整命令、cwd、控制字符转义，并把 `AbortSignal`、readline 关闭、正常回答一起收口 |
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫、有界读取、扫描预算与取消 |
@@ -135,6 +135,8 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 检查发生在 `ToolRegistry.execute()` 里：参数校验通过之后、`tool.run()` 之前。被拒绝的调用不会执行，结果是一条 `ERROR: permission denied: ...` 回灌给模型，模型可以在下一轮自己换个做法。
 
+`ToolRegistry` 构造时必须显式传 `permission: Permission | null`：传 `Permission` 启用策略，传 `null` 表示宿主主动关闭检查；漏传、`undefined`、字符串等非法值在装配阶段直接报错。CLI 传 `workspace-write`，评测传 `full-access`，测试按需显式传 `null` 或 `Permission`。
+
 CLI 用 `--permission <mode>`（也支持 `--permission=<mode>`）选起始模式；REPL 用 `/permission` 查看、`/permission read-only` 切换。`/reset` 只换 Agent 和 Transcript，不改变当前权限。
 
 Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一的 system 消息；`/permission` 切换后下一次请求立即生效，不会追加第二条 system 消息。这个 Prompt 只指导模型，真正的放行/拒绝仍由 `ToolRegistry` 执行。
@@ -165,13 +167,13 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-201 个用例，分十一层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
+206 个用例，分十一层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、会话生命周期、取消、token 统计、系统提示词动态刷新 |
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
-| `test/permission.test.mjs` | Permission：三档策略、`permissionPrompt`、shell 审批的每次询问与默认拒绝、ToolRegistry 的检查位置 |
+| `test/permission.test.mjs` | Permission：三档策略、`permissionPrompt`、shell 审批的每次询问与默认拒绝、ToolRegistry 的检查位置、显式 permission / null 的构造校验 |
 | `test/approval.test.mjs` | 审批读取：`askWithSignal` 的正常 / 取消 / EOF 竞态，以及多行 / 超长 / 控制字符命令和 cwd 的展示 |
 | `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |

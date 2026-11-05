@@ -10,7 +10,7 @@
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
 import { describeError } from "./errors.ts";
-import type { Permission } from "./permission.ts";
+import { Permission } from "./permission.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
@@ -18,6 +18,42 @@ const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 把非法值写进错误文案：null 是合法值，这里只处理真正不合法的东西。 */
+function showValue(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return `"${value}"`;
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * 权限策略必须在装配阶段显式选择，不能靠「漏传参数」静默关闭。
+ *
+ * `null` 是合法选择：宿主明确声明这个注册表不启用权限检查（测试、评测）。
+ * 但缺少 options、缺少 permission 字段、undefined、字符串、对象等一律报错，
+ * 这样「忘了注入」会变成启动失败，而不是一次看起来成功的无策略执行。
+ */
+function assertPermissionOption(options: unknown): Permission | null {
+  if (!isRecord(options)) {
+    throw new Error("ToolRegistry: options are required; pass { permission: Permission | null }");
+  }
+  if (!Object.hasOwn(options, "permission")) {
+    throw new Error(
+      "ToolRegistry: options.permission is required; pass a Permission instance or null to disable permissions",
+    );
+  }
+
+  const permission = options.permission;
+  if (permission === null) return null;
+  if (permission instanceof Permission) return permission;
+  throw new Error(
+    `ToolRegistry: options.permission must be a Permission instance or null, got ${showValue(permission)}`,
+  );
 }
 
 /**
@@ -108,22 +144,28 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
 
 export interface ToolRegistryOptions {
   /**
-   * 执行前的权限策略。不传 = 不检查：测试和评测会自己组装工具集（比如只有 echo），
-   * 它们不该被 CLI 的默认模式误伤。CLI 总会传一个，所以「默认 workspace-write」是 CLI 的默认。
+   * 执行前的权限策略，必须显式选择：
+   *   - `Permission` 实例：启用检查；
+   *   - `null`：宿主主动声明不启用权限检查。
+   *
+   * 漏传、`undefined`、其他类型在构造阶段直接报错；测试和评测也不能靠「忘记传」绕过。
    */
-  permission?: Permission;
+  permission: Permission | null;
 }
 
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
 
-  private readonly permission?: Permission;
+  private readonly permission: Permission | null;
 
   /**
    * 装配时就把不合法的工具挡掉：重名会让「按名字找工具」有歧义，
    * 不支持的 Schema 类型会让参数校验静默失效。两者都不该等到模型调用时才暴露。
+   *
+   * options 没有默认值：权限是安全决策，必须由宿主明确选择。
    */
-  constructor(tools: readonly Tool[], options: ToolRegistryOptions = {}) {
+  constructor(tools: readonly Tool[], options: ToolRegistryOptions) {
+    const permission = assertPermissionOption(options);
     const seen = new Set<string>();
     for (const tool of tools) {
       if (seen.has(tool.name)) {
@@ -133,7 +175,7 @@ export class ToolRegistry {
       assertSupportedSchema(tool);
     }
     this.tools = tools;
-    this.permission = options.permission;
+    this.permission = permission;
   }
 
   /** 发给模型的那一半：只有说明书，没有 run。 */
@@ -182,7 +224,7 @@ export class ToolRegistry {
     //   - 坏参数先按参数错误回给模型，别让它以为问题是「权限」；
     //   - 一个根本不会执行的调用，不值得打断用户去审批；
     //   - 拒绝时直接返回，工具代码一行都不会跑。
-    if (this.permission !== undefined) {
+    if (this.permission !== null) {
       try {
         const decision = await this.permission.check({ tool: tool.name, args });
         if (!decision.allowed) {

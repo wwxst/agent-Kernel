@@ -45,7 +45,7 @@ _Avoid_: function, handler, plugin
 _Avoid_: toolbelt, toolbox, tool set
 
 **Permission**:
-宿主对一次 **Tool call** 放不放行的策略，三档：`read-only`、`workspace-write`、`full-access`。它在 **Tool registry** 的参数校验之后、执行之前检查；拒绝折成 **ERROR text**。它只约束工具调用，不改变操作系统的权限。
+宿主对一次 **Tool call** 放不放行的策略，三档：`read-only`、`workspace-write`、`full-access`。它在 **Tool registry** 的参数校验之后、执行之前检查；拒绝折成 **ERROR text**。它只约束工具调用，不改变操作系统的权限。宿主必须显式注入 `Permission` 或 `null`（主动关闭检查），漏传不会被当成默认放行。
 _Avoid_: sandbox, isolation, ACL
 
 **Permission mode**:
