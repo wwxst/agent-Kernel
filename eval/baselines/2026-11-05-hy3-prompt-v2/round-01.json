@@ -1,0 +1,278 @@
+{
+  "at": "2026-11-05T02:21:42.671Z",
+  "model": "hy3",
+  "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+  "ok": true,
+  "passed": 20,
+  "total": 20,
+  "elapsed": 87.3,
+  "totals": {
+    "requests": 92,
+    "toolCalls": 93,
+    "tokens": 125650,
+    "unknownResponses": 0
+  },
+  "infraErrors": [],
+  "results": [
+    {
+      "name": "01-add-health-route",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 2,
+      "tokens": {
+        "prompt": 3469,
+        "completion": 259,
+        "total": 3728,
+        "unknownResponses": 0
+      },
+      "seconds": 9
+    },
+    {
+      "name": "02-fix-failing-test",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 4976,
+        "completion": 222,
+        "total": 5198,
+        "unknownResponses": 0
+      },
+      "seconds": 10
+    },
+    {
+      "name": "03-rename-function",
+      "ok": true,
+      "requests": 5,
+      "toolCalls": 8,
+      "tokens": {
+        "prompt": 6466,
+        "completion": 375,
+        "total": 6841,
+        "unknownResponses": 0
+      },
+      "seconds": 14.1
+    },
+    {
+      "name": "04-create-doc",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 3462,
+        "completion": 327,
+        "total": 3789,
+        "unknownResponses": 0
+      },
+      "seconds": 9.9
+    },
+    {
+      "name": "05-extract-constant",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4724,
+        "completion": 376,
+        "total": 5100,
+        "unknownResponses": 0
+      },
+      "seconds": 12.3
+    },
+    {
+      "name": "06-guard-missing-file",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4439,
+        "completion": 271,
+        "total": 4710,
+        "unknownResponses": 0
+      },
+      "seconds": 9.9
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 2,
+      "tokens": {
+        "prompt": 3342,
+        "completion": 242,
+        "total": 3584,
+        "unknownResponses": 0
+      },
+      "seconds": 8.3
+    },
+    {
+      "name": "08-extract-duplication",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 4,
+      "tokens": {
+        "prompt": 4795,
+        "completion": 264,
+        "total": 5059,
+        "unknownResponses": 0
+      },
+      "seconds": 10.1
+    },
+    {
+      "name": "09-update-readme",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 3416,
+        "completion": 235,
+        "total": 3651,
+        "unknownResponses": 0
+      },
+      "seconds": 7.7
+    },
+    {
+      "name": "10-delete-dead-code",
+      "ok": true,
+      "requests": 7,
+      "toolCalls": 12,
+      "tokens": {
+        "prompt": 9325,
+        "completion": 576,
+        "total": 9901,
+        "unknownResponses": 0
+      },
+      "seconds": 19.9
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4412,
+        "completion": 233,
+        "total": 4645,
+        "unknownResponses": 0
+      },
+      "seconds": 9.7
+    },
+    {
+      "name": "12-add-input-validation",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4481,
+        "completion": 205,
+        "total": 4686,
+        "unknownResponses": 0
+      },
+      "seconds": 9.7
+    },
+    {
+      "name": "13-callback-to-promise",
+      "ok": true,
+      "requests": 11,
+      "toolCalls": 15,
+      "tokens": {
+        "prompt": 19309,
+        "completion": 1081,
+        "total": 20390,
+        "unknownResponses": 0
+      },
+      "seconds": 33
+    },
+    {
+      "name": "14-fix-sort-order",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4396,
+        "completion": 234,
+        "total": 4630,
+        "unknownResponses": 0
+      },
+      "seconds": 10.6
+    },
+    {
+      "name": "15-merge-defaults",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4421,
+        "completion": 231,
+        "total": 4652,
+        "unknownResponses": 0
+      },
+      "seconds": 9.2
+    },
+    {
+      "name": "16-handle-bad-json",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4481,
+        "completion": 244,
+        "total": 4725,
+        "unknownResponses": 0
+      },
+      "seconds": 9.1
+    },
+    {
+      "name": "17-write-missing-test",
+      "ok": true,
+      "requests": 5,
+      "toolCalls": 5,
+      "tokens": {
+        "prompt": 6077,
+        "completion": 288,
+        "total": 6365,
+        "unknownResponses": 0
+      },
+      "seconds": 12.1
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "ok": true,
+      "requests": 3,
+      "toolCalls": 2,
+      "tokens": {
+        "prompt": 3287,
+        "completion": 140,
+        "total": 3427,
+        "unknownResponses": 0
+      },
+      "seconds": 7.4
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 3,
+      "tokens": {
+        "prompt": 4693,
+        "completion": 723,
+        "total": 5416,
+        "unknownResponses": 0
+      },
+      "seconds": 16.3
+    },
+    {
+      "name": "20-fix-email-regex",
+      "ok": true,
+      "requests": 9,
+      "toolCalls": 8,
+      "tokens": {
+        "prompt": 13740,
+        "completion": 1413,
+        "total": 15153,
+        "unknownResponses": 0
+      },
+      "seconds": 36.8
+    }
+  ]
+}

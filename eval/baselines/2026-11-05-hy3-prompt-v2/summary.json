@@ -1,0 +1,769 @@
+{
+  "model": "hy3",
+  "baseUrl": "http://127.0.0.1:8788/v1",
+  "tasks": 20,
+  "jobs": 4,
+  "command": "npm run eval -- --jobs 4",
+  "commits": [
+    "eac798de31b24463dba09361b8c2c551e1e114d2"
+  ],
+  "rounds": 6,
+  "generatedAt": "2026-11-05T02:28:16.580Z",
+  "overall": {
+    "taskAttempts": 120,
+    "taskPasses": 120,
+    "passRate": 100
+  },
+  "medians": {
+    "requests": 89.5,
+    "toolCalls": 85.5,
+    "prompt": 111458.5,
+    "completion": 7277.5,
+    "tokens": 118817,
+    "elapsed": 70.8
+  },
+  "tokenRange": {
+    "min": 103318,
+    "max": 125650
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-05T02:21:42.671Z",
+      "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+      "passed": 20,
+      "total": 20,
+      "requests": 92,
+      "toolCalls": 93,
+      "prompt": 117711,
+      "completion": 7939,
+      "tokens": 125650,
+      "unknown": 0,
+      "elapsed": 87.3,
+      "busy": 265.09999999999997,
+      "failures": []
+    },
+    {
+      "round": 2,
+      "at": "2026-11-05T02:23:22.470Z",
+      "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+      "passed": 20,
+      "total": 20,
+      "requests": 90,
+      "toolCalls": 91,
+      "prompt": 112633,
+      "completion": 8030,
+      "tokens": 120663,
+      "unknown": 0,
+      "elapsed": 99.6,
+      "busy": 298.30000000000007,
+      "failures": []
+    },
+    {
+      "round": 3,
+      "at": "2026-11-05T02:24:33.437Z",
+      "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+      "passed": 20,
+      "total": 20,
+      "requests": 91,
+      "toolCalls": 86,
+      "prompt": 115452,
+      "completion": 7778,
+      "tokens": 123230,
+      "unknown": 0,
+      "elapsed": 70.8,
+      "busy": 253.79999999999998,
+      "failures": []
+    },
+    {
+      "round": 4,
+      "at": "2026-11-05T02:25:41.913Z",
+      "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+      "passed": 20,
+      "total": 20,
+      "requests": 87,
+      "toolCalls": 85,
+      "prompt": 105072,
+      "completion": 6527,
+      "tokens": 111599,
+      "unknown": 0,
+      "elapsed": 68.2,
+      "busy": 239.49999999999997,
+      "failures": []
+    },
+    {
+      "round": 5,
+      "at": "2026-11-05T02:26:48.481Z",
+      "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+      "passed": 20,
+      "total": 20,
+      "requests": 82,
+      "toolCalls": 75,
+      "prompt": 96541,
+      "completion": 6777,
+      "tokens": 103318,
+      "unknown": 0,
+      "elapsed": 66.4,
+      "busy": 228.2,
+      "failures": []
+    },
+    {
+      "round": 6,
+      "at": "2026-11-05T02:27:59.503Z",
+      "commit": "eac798de31b24463dba09361b8c2c551e1e114d2",
+      "passed": 20,
+      "total": 20,
+      "requests": 89,
+      "toolCalls": 85,
+      "prompt": 110284,
+      "completion": 6687,
+      "tokens": 116971,
+      "unknown": 0,
+      "elapsed": 70.8,
+      "busy": 243,
+      "failures": []
+    }
+  ],
+  "perTask": [
+    {
+      "name": "01-add-health-route",
+      "requests": [
+        3,
+        3,
+        4,
+        4,
+        3,
+        3
+      ],
+      "tokens": [
+        3728,
+        3616,
+        4777,
+        4778,
+        3714,
+        3631
+      ],
+      "seconds": [
+        9,
+        8.1,
+        9.4,
+        9.2,
+        8.3,
+        7.6
+      ],
+      "medianTokens": 3721,
+      "min": 3616,
+      "max": 4778,
+      "spread": 1.32,
+      "failures": []
+    },
+    {
+      "name": "02-fix-failing-test",
+      "requests": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        5198,
+        5252,
+        5252,
+        5285,
+        5284,
+        5267
+      ],
+      "seconds": [
+        10,
+        9.3,
+        10.1,
+        10.6,
+        10.3,
+        9.6
+      ],
+      "medianTokens": 5259.5,
+      "min": 5198,
+      "max": 5285,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "03-rename-function",
+      "requests": [
+        5,
+        5,
+        5,
+        5,
+        5,
+        5
+      ],
+      "tokens": [
+        6841,
+        7033,
+        6844,
+        7009,
+        6841,
+        6840
+      ],
+      "seconds": [
+        14.1,
+        45.4,
+        12.5,
+        16.5,
+        14,
+        13.4
+      ],
+      "medianTokens": 6842.5,
+      "min": 6840,
+      "max": 7033,
+      "spread": 1.03,
+      "failures": []
+    },
+    {
+      "name": "04-create-doc",
+      "requests": [
+        3,
+        3,
+        4,
+        3,
+        3,
+        3
+      ],
+      "tokens": [
+        3789,
+        3726,
+        4833,
+        3717,
+        3707,
+        3695
+      ],
+      "seconds": [
+        9.9,
+        8.3,
+        10.1,
+        9.5,
+        8.2,
+        8.8
+      ],
+      "medianTokens": 3721.5,
+      "min": 3695,
+      "max": 4833,
+      "spread": 1.31,
+      "failures": []
+    },
+    {
+      "name": "05-extract-constant",
+      "requests": [
+        4,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "tokens": [
+        5100,
+        4007,
+        3994,
+        3748,
+        4045,
+        4019
+      ],
+      "seconds": [
+        12.3,
+        12.5,
+        9.4,
+        8.3,
+        10.3,
+        10.3
+      ],
+      "medianTokens": 4013,
+      "min": 3748,
+      "max": 5100,
+      "spread": 1.36,
+      "failures": []
+    },
+    {
+      "name": "06-guard-missing-file",
+      "requests": [
+        4,
+        4,
+        4,
+        5,
+        4,
+        4
+      ],
+      "tokens": [
+        4710,
+        4798,
+        4936,
+        6108,
+        4809,
+        4762
+      ],
+      "seconds": [
+        9.9,
+        10.9,
+        10.7,
+        12.3,
+        11.6,
+        11
+      ],
+      "medianTokens": 4803.5,
+      "min": 4710,
+      "max": 6108,
+      "spread": 1.3,
+      "failures": []
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "requests": [
+        3,
+        6,
+        4,
+        3,
+        4,
+        6
+      ],
+      "tokens": [
+        3584,
+        8112,
+        4936,
+        3495,
+        4913,
+        7564
+      ],
+      "seconds": [
+        8.3,
+        21.6,
+        11.1,
+        8.6,
+        11.4,
+        16.6
+      ],
+      "medianTokens": 4924.5,
+      "min": 3495,
+      "max": 8112,
+      "spread": 2.32,
+      "failures": []
+    },
+    {
+      "name": "08-extract-duplication",
+      "requests": [
+        4,
+        4,
+        5,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        5059,
+        5072,
+        7060,
+        5076,
+        5081,
+        5059
+      ],
+      "seconds": [
+        10.1,
+        10.7,
+        14.7,
+        10.7,
+        10.5,
+        11.9
+      ],
+      "medianTokens": 5074,
+      "min": 5059,
+      "max": 7060,
+      "spread": 1.4,
+      "failures": []
+    },
+    {
+      "name": "09-update-readme",
+      "requests": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3
+      ],
+      "tokens": [
+        3651,
+        3644,
+        3634,
+        3677,
+        3646,
+        3669
+      ],
+      "seconds": [
+        7.7,
+        8,
+        7,
+        7.5,
+        8.1,
+        8.8
+      ],
+      "medianTokens": 3648.5,
+      "min": 3634,
+      "max": 3677,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "10-delete-dead-code",
+      "requests": [
+        7,
+        5,
+        6,
+        6,
+        6,
+        6
+      ],
+      "tokens": [
+        9901,
+        6569,
+        7826,
+        7869,
+        8332,
+        7743
+      ],
+      "seconds": [
+        19.9,
+        14.9,
+        17.1,
+        14.1,
+        16.9,
+        15.7
+      ],
+      "medianTokens": 7847.5,
+      "min": 6569,
+      "max": 9901,
+      "spread": 1.51,
+      "failures": []
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "requests": [
+        4,
+        5,
+        4,
+        4,
+        5,
+        4
+      ],
+      "tokens": [
+        4645,
+        6188,
+        4692,
+        4737,
+        6184,
+        4695
+      ],
+      "seconds": [
+        9.7,
+        15.3,
+        10.3,
+        12.2,
+        13.6,
+        10.4
+      ],
+      "medianTokens": 4716,
+      "min": 4645,
+      "max": 6188,
+      "spread": 1.33,
+      "failures": []
+    },
+    {
+      "name": "12-add-input-validation",
+      "requests": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4686,
+        4681,
+        4691,
+        4672,
+        4735,
+        4680
+      ],
+      "seconds": [
+        9.7,
+        10.1,
+        8.4,
+        8.3,
+        9.7,
+        9.2
+      ],
+      "medianTokens": 4683.5,
+      "min": 4672,
+      "max": 4735,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "13-callback-to-promise",
+      "requests": [
+        11,
+        8,
+        12,
+        9,
+        5,
+        11
+      ],
+      "tokens": [
+        20390,
+        13246,
+        23886,
+        14590,
+        6358,
+        19450
+      ],
+      "seconds": [
+        33,
+        24.7,
+        39.5,
+        24.4,
+        13.4,
+        29.9
+      ],
+      "medianTokens": 17020,
+      "min": 6358,
+      "max": 23886,
+      "spread": 3.76,
+      "failures": []
+    },
+    {
+      "name": "14-fix-sort-order",
+      "requests": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4630,
+        4570,
+        4577,
+        4609,
+        4613,
+        4628
+      ],
+      "seconds": [
+        10.6,
+        8.9,
+        8.6,
+        10.1,
+        9.4,
+        8.2
+      ],
+      "medianTokens": 4611,
+      "min": 4570,
+      "max": 4630,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "15-merge-defaults",
+      "requests": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4652,
+        4659,
+        4693,
+        4752,
+        4626,
+        4667
+      ],
+      "seconds": [
+        9.2,
+        9.9,
+        13.3,
+        11.6,
+        9.1,
+        9.2
+      ],
+      "medianTokens": 4663,
+      "min": 4626,
+      "max": 4752,
+      "spread": 1.03,
+      "failures": []
+    },
+    {
+      "name": "16-handle-bad-json",
+      "requests": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4725,
+        4791,
+        4726,
+        4795,
+        4701,
+        4731
+      ],
+      "seconds": [
+        9.1,
+        11,
+        9.1,
+        9.8,
+        9.1,
+        9.4
+      ],
+      "medianTokens": 4728.5,
+      "min": 4701,
+      "max": 4795,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "17-write-missing-test",
+      "requests": [
+        5,
+        4,
+        5,
+        5,
+        4,
+        5
+      ],
+      "tokens": [
+        6365,
+        5100,
+        6241,
+        6258,
+        5105,
+        6304
+      ],
+      "seconds": [
+        12.1,
+        10.2,
+        10.9,
+        16.7,
+        10.8,
+        11.7
+      ],
+      "medianTokens": 6249.5,
+      "min": 5100,
+      "max": 6365,
+      "spread": 1.25,
+      "failures": []
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "requests": [
+        3,
+        3,
+        3,
+        4,
+        4,
+        3
+      ],
+      "tokens": [
+        3427,
+        3416,
+        3431,
+        4560,
+        4559,
+        3414
+      ],
+      "seconds": [
+        7.4,
+        7.3,
+        6.1,
+        8,
+        8.7,
+        6.1
+      ],
+      "medianTokens": 3429,
+      "min": 3414,
+      "max": 4560,
+      "spread": 1.34,
+      "failures": []
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "requests": [
+        4,
+        4,
+        4,
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        5416,
+        5192,
+        5290,
+        5107,
+        5243,
+        5360
+      ],
+      "seconds": [
+        16.3,
+        14.1,
+        15.8,
+        14.5,
+        14.4,
+        15.3
+      ],
+      "medianTokens": 5266.5,
+      "min": 5107,
+      "max": 5416,
+      "spread": 1.06,
+      "failures": []
+    },
+    {
+      "name": "20-fix-email-regex",
+      "requests": [
+        9,
+        10,
+        5,
+        5,
+        5,
+        5
+      ],
+      "tokens": [
+        15153,
+        16991,
+        6911,
+        6757,
+        6822,
+        6793
+      ],
+      "seconds": [
+        36.8,
+        37.1,
+        19.7,
+        16.6,
+        20.4,
+        19.9
+      ],
+      "medianTokens": 6866.5,
+      "min": 6757,
+      "max": 16991,
+      "spread": 2.51,
+      "failures": []
+    }
+  ]
+}
