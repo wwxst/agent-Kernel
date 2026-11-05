@@ -26,7 +26,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`ChatResponseError` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、权限检查、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
-| `src/permission.ts` | 三档权限策略、shell 的一次性审批、拒绝原因；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`canAskForApproval` |
+| `src/permission.ts` | 三档权限策略、shell 的一次性审批、拒绝原因；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`approvalGate` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |

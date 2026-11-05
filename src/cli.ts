@@ -26,7 +26,7 @@ import { Agent } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
-import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, canAskForApproval, isApproved, parsePermissionMode } from "./permission.ts";
+import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode } from "./permission.ts";
 import type { PermissionApprover, PermissionMode, PermissionRequest } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
@@ -211,12 +211,12 @@ interface ApprovalPrompt {
  */
 function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
   const signal = controller.signal;
-  if (!canAskForApproval(signal, hasInteractiveTerminal())) {
+  const gate = approvalGate(signal, hasInteractiveTerminal(), false);
+  if (!gate.ask) {
     return { close: () => {} };
   }
 
   let rl: ReturnType<typeof createInterface> | undefined;
-  let closed = false;
 
   const onAbort = () => rl?.close();
   signal.addEventListener("abort", onAbort, { once: true });
@@ -224,9 +224,6 @@ function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
   const open = (): ReturnType<typeof createInterface> => {
     if (rl !== undefined) return rl;
     const created = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    created.on("close", () => {
-      closed = true;
-    });
     // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT。审批期间仍然要停掉整个会话，
     // 所以显式 abort 同一个 controller，走和普通任务一样的取消链。
     created.on("SIGINT", () => {
@@ -239,7 +236,8 @@ function createApprovalPrompt(controller: AbortController): ApprovalPrompt {
 
   return {
     approve: async (request) => {
-      if (closed || !canAskForApproval(signal, true)) return false;
+      const gate = approvalGate(signal, hasInteractiveTerminal(), false);
+      if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
       // readline 在 EOF / 关闭时会 reject；让 Permission 的 catch 把原因折进拒绝文本，
       // 这里不吞异常（吞掉会误报成「用户拒绝」）。
       const answer = await open().question(formatApproval(request));
@@ -418,10 +416,8 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
   signal.addEventListener("abort", onAbort, { once: true });
 
   const approve: PermissionApprover = async (request) => {
-    if (!canAskForApproval(signal, canPrompt)) return false;
-    // 任务运行时用户可能已经打好了下一行；那一行属于 REPL，不能当成审批答案。
-    // 直接拒绝这次 shell，把行留在队列里，下一轮继续当任务读。
-    if (lines.length > 0) return false;
+    const gate = approvalGate(signal, canPrompt, lines.length > 0);
+    if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
     const answer = await nextLine(formatApproval(request));
     return answer !== null && isApproved(answer);
   };

@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_PERMISSION_MODE, Permission, canAskForApproval, isApproved, parsePermissionMode } from "../src/permission.ts";
+import { DEFAULT_PERMISSION_MODE, Permission, approvalGate, isApproved, parsePermissionMode } from "../src/permission.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 
 /** 一次权限检查的请求形状。 */
@@ -69,14 +69,25 @@ test("isApproved：只有 y / yes（大小写不敏感）算允许", () => {
   }
 });
 
-test("canAskForApproval：无 TTY 或已取消时不允许提问", () => {
+test("approvalGate：无 TTY、已取消、已有排队输入时都不提问", () => {
   const controller = new AbortController();
 
-  assert.equal(canAskForApproval(controller.signal, true), true);
-  assert.equal(canAskForApproval(controller.signal, false), false);
+  assert.deepEqual(approvalGate(controller.signal, true, false), { ask: true });
+  assert.deepEqual(approvalGate(controller.signal, false, false), {
+    ask: false,
+    reason: "no interactive terminal",
+  });
+  // 任务运行时提前打好的下一行不能被当成审批答案。
+  assert.deepEqual(approvalGate(controller.signal, true, true), {
+    ask: false,
+    reason: "next input is already queued",
+  });
 
   controller.abort();
-  assert.equal(canAskForApproval(controller.signal, true), false);
+  assert.deepEqual(approvalGate(controller.signal, true, false), {
+    ask: false,
+    reason: "task cancelled",
+  });
 });
 
 test("read-only：放行 read/ls/glob/grep，拒绝 write/edit/shell，且不触发审批", async () => {
@@ -153,6 +164,7 @@ test("workspace-write：审批抛异常按拒绝处理", async () => {
   assert.equal(result.allowed, false);
   assert.match(result.reason, /readline closed/);
   assert.match(result.reason, /denied by default/);
+  assert.doesNotMatch(result.reason, /user denied/);
 });
 
 test("workspace-write：审批被取消（AbortError）也按拒绝处理", async () => {

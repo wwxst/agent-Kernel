@@ -61,13 +61,25 @@ export function isApproved(answer: string): boolean {
 }
 
 /**
- * 审批前的前置门：没有交互终端或已经取消时，不问、直接拒绝。
+ * 审批前的前置门：没有交互终端、已经取消、或 REPL 里已有排队的下一行输入时，不问、直接拒绝。
  *
- * 抽出来不只是为了少写两个条件：它让「取消默认拒绝」有独立的测试点，
- * 不需要为了验证一个 signal 去伪造一个终端。
+ * 返回值带原因，而不是只给 boolean：调用方要把「没有提问」折进拒绝文本，
+ * 不能让模型和用户把它误读成「用户拒绝了」。抽成纯函数也让它能被单独测试，
+ * 不需要为了验证一个信号或一行排队输入去伪造终端。
  */
-export function canAskForApproval(signal: AbortSignal, interactive: boolean): boolean {
-  return interactive && !signal.aborted;
+export type ApprovalGate =
+  | { ask: true }
+  | { ask: false; reason: string };
+
+export function approvalGate(
+  signal: AbortSignal,
+  interactive: boolean,
+  pendingInput: boolean,
+): ApprovalGate {
+  if (signal.aborted) return { ask: false, reason: "task cancelled" };
+  if (!interactive) return { ask: false, reason: "no interactive terminal" };
+  if (pendingInput) return { ask: false, reason: "next input is already queued" };
+  return { ask: true };
 }
 
 /**
