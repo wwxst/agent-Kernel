@@ -1,19 +1,20 @@
 /**
  * 轻量 TUI：Claude Code 风格的聊天式终端界面。
  *
- * v0.2 的目标是「像聊天，而不是调试控制台」：顶部是项目/模型/路径，中间是用户、
+ * v0.3 的目标是「像聊天，而不是调试控制台」：顶部是项目/模型/路径，中间是用户、
  * 模型和工具调用的对话视口，底部是带分隔线的固定输入区，最下面是权限和 Session 统计。
  *
- * 渲染用绝对光标定位 + 整帧重绘：传统 Windows conhost 不实现 DECSTBM，靠滚动区域
- * 固定栏位会让回复互相覆盖；整帧重绘虽然多写几行 ANSI，但在 conhost / Windows Terminal
+ * 渲染用绝对光标定位 + 差分重绘：传统 Windows conhost 不实现 DECSTBM，靠滚动区域
+ * 固定栏位会让回复互相覆盖；只重画变化行，在 conhost / Windows Terminal
  * / xterm 上都能成立。不切 alternate screen、不引 TUI 库、不改 Agent。
  *
  * 非 TTY（管道、CI、e2e）退化成逐行输出：没有颜色和固定位置，但走同一套日志/审批逻辑。
- * 已知边界：固定布局要求终端至少 10 行、30 列；resize 会重新排版但不做历史重排；
- * 只保留最后一屏；宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
+ * 已知边界：固定布局要求终端至少 12 行、30 列；历史保留最近 2000 条逻辑行；
+ * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
 import type { Interface, Key } from "node:readline";
+import { Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
@@ -149,7 +150,11 @@ export class Tui {
 
   private readonly interactive: boolean;
 
-  private readonly layout: boolean;
+  private layout: boolean;
+
+  private readonly fixedLayoutAllowed: boolean;
+
+  private readonly terminalControls: boolean;
 
   private readonly style: Style;
 
@@ -202,8 +207,14 @@ export class Tui {
   /** 当前输入是否显示 placeholder；审批时关闭，避免把 y/N 输入当成普通聊天。 */
   private promptPlaceholder = true;
 
-  /** 正在等待 readline 输入；此时不要重画输入行，以免打断用户编辑。 */
+  /** 正在等待输入；readline 保留编辑缓存，TUI 独立绘制，不触碰输入法状态。 */
   private promptActive = false;
+
+  /** 横向滚动输入框，不让 readline 自动折行覆盖边框与状态栏。 */
+  private inputOffset = 0;
+
+  /** 待审批的原始请求不受日志上限裁剪，resize 时按当前宽度重新排版。 */
+  private approvalRequest?: PermissionRequest;
 
   /** 上一帧每行的原始内容；只写变化的行，减少流式输出时的整屏闪烁。 */
   private lastFrame: string[] = [];
@@ -241,18 +252,17 @@ export class Tui {
     this.controller = options.controller;
     this.interactive = options.interactive;
     this.permissionMode = options.permission;
+    this.terminalControls = process.env.TERM !== "dumb";
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
     const initialRows = options.rows !== undefined && options.rows > 0 ? options.rows : 24;
-    this.layout =
+    this.fixedLayoutAllowed =
       options.layout ??
-      (options.interactive &&
-        isTerminalOutput(options.output) &&
-        initialColumns >= MIN_COLUMNS &&
-        initialRows >= MIN_ROWS);
+      (options.interactive && isTerminalOutput(options.output) && this.terminalControls);
+    this.layout = this.fixedLayoutAllowed && initialColumns >= MIN_COLUMNS && initialRows >= MIN_ROWS;
 
-    this.columns = Math.max(MIN_COLUMNS, initialColumns);
-    this.rows = Math.max(MIN_ROWS, initialRows);
+    this.columns = initialColumns;
+    this.rows = initialRows;
     this.inputRow = 0;
     this.boxTopRow = 0;
     this.boxBottomRow = 0;
@@ -261,14 +271,23 @@ export class Tui {
     this.recomputeGeometry();
 
     const colorEnabled =
-      this.layout &&
+      this.fixedLayoutAllowed &&
       (options.color ??
         (process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"));
     this.style = new Style(colorEnabled, prefersRichColor());
     // Windows Terminal / VS Code 终端里用 ❯/✻；传统 conhost 退化成 >/*，避免方框。
     this.glyphs = process.platform !== "win32" || prefersRichColor() ? UNICODE_GLYPHS : ASCII_GLYPHS;
 
-    this.rl = createInterface({ input: options.input, output: options.output, terminal: options.interactive });
+    // readline 仍负责编辑/历史/信号，但它的清屏和自动换行不能写入固定区域。
+    // 这是一层输出适配器，不改 readline 的缓存，也不接管键盘或输入法。
+    const editorOutput = new Writable({
+      write: (chunk, encoding, callback) => {
+        if (this.layout) this.scheduleInputChrome();
+        else this.output.write(chunk, encoding);
+        callback();
+      },
+    });
+    this.rl = createInterface({ input: options.input, output: editorOutput, terminal: options.interactive });
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     this.rl.on("line", (line) => {
@@ -298,7 +317,7 @@ export class Tui {
       const name = key?.name?.toLowerCase();
       if (name === "pageup") this.scrollPage("up");
       else if (name === "pagedown") this.scrollPage("down");
-      // readline 处理完这次按键后会把输入框下方清掉，下一轮微任务补画边框/状态。
+      // 等 readline 处理完按键后，读取新的 line/cursor 重画输入。
       this.scheduleInputChrome();
     };
     if (options.interactive) {
@@ -313,7 +332,7 @@ export class Tui {
       this.resize(columns, rows);
     };
     this.resizeSource = options.output as NodeJS.EventEmitter;
-    if (this.layout) this.resizeSource.on("resize", this.onResize);
+    if (this.fixedLayoutAllowed) this.resizeSource.on("resize", this.onResize);
 
     this.onAbort = () => {
       this.rl.close();
@@ -344,10 +363,26 @@ export class Tui {
 
   /** 终端尺寸变化后重新排版；保持当前输入行和滚动位置。 */
   private resize(columns: number, rows: number): void {
-    if (!this.layout || this.closed) return;
+    if (!this.fixedLayoutAllowed || this.closed) return;
 
-    this.columns = Math.max(MIN_COLUMNS, columns);
-    this.rows = Math.max(MIN_ROWS, rows);
+    const hadLayout = this.layout;
+    this.columns = Math.max(1, columns);
+    this.rows = Math.max(1, rows);
+    this.layout = this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS;
+    if (!this.layout) {
+      if (hadLayout) {
+        this.output.write("\n");
+        if (this.approvalRequest !== undefined) {
+          // 降级时仍完整展示审批，不把窄窗口当成截断命令的理由。
+          this.output.write(formatApproval(this.approvalRequest, this.workspace));
+        }
+        if (this.promptActive) {
+          this.rl.setPrompt(this.promptText);
+          this.rl.prompt(true);
+        }
+      }
+      return;
+    }
     this.recomputeGeometry();
     this.scrollOffset = Math.min(this.scrollOffset, this.maxScroll());
 
@@ -391,6 +426,7 @@ export class Tui {
       return;
     }
 
+    if (!this.terminalControls) return;
     if (thinking) this.writeRaw(`${this.glyphs.assistant} Thinking...`);
     else this.writeRaw("\r\x1b[2K");
   }
@@ -400,7 +436,7 @@ export class Tui {
    *
    * 固定布局清掉 readline 的输入回显，所以写一条 `❯ task`；行式聊天默认不重复。
    */
-  beginTurn(task: string, { show = this.layout || !this.interactive }: { show?: boolean } = {}): void {
+  beginTurn(task: string, { show = this.fixedLayoutAllowed || !this.interactive }: { show?: boolean } = {}): void {
     if (this.layout) {
       this.thinking = false;
       this.commitAssistant();
@@ -412,10 +448,12 @@ export class Tui {
 
     this.setThinking(false);
     this.finishAssistant();
+    if (this.fixedLayoutAllowed && show) this.pushTask(task);
     if (!show) return;
     const lines = splitDisplayLines(task);
     lines.forEach((line, index) => {
-      this.logLine(index === 0 ? `you: ${line}` : `${" ".repeat("you: ".length)}${line}`);
+      const text = index === 0 ? `you: ${line}` : `${" ".repeat("you: ".length)}${line}`;
+      this.writeRaw(`${escapeControlCharacters(text)}${this.newline()}`);
     });
   }
 
@@ -425,6 +463,7 @@ export class Tui {
 
     if (this.layout) {
       const first = !this.assistantOpen;
+      if (first) this.pushBlank();
       this.thinking = false;
       this.assistantOpen = true;
       this.streamingText += normalizeNewlines(text);
@@ -434,6 +473,7 @@ export class Tui {
     }
 
     this.setThinking(false);
+    if (this.fixedLayoutAllowed) this.streamingText += normalizeNewlines(text);
     if (!this.assistantOpen) {
       this.writeRaw("model: ");
       this.assistantOpen = true;
@@ -478,33 +518,34 @@ export class Tui {
     }
     if (!this.assistantOpen) return;
     if (!this.assistantAtLineStart) this.writeRaw(this.newline());
+    if (this.fixedLayoutAllowed) this.commitAssistant();
     this.assistantOpen = false;
     this.assistantAtLineStart = true;
   }
 
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
   toolCall(call: ToolCall): void {
-    if (this.layout) {
-      this.thinking = false;
-      this.commitAssistant();
+    this.setThinking(false);
+    this.finishAssistant();
+    if (this.fixedLayoutAllowed) {
       const line = this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call)}`, "warning");
       this.log.push(line);
       this.pendingTools.set(call.id, line);
       this.trimLog();
-      this.renderNow();
-      return;
+      if (this.layout) {
+        this.renderNow();
+        return;
+      }
     }
 
-    this.setThinking(false);
-    this.finishAssistant();
-    this.logLine(`  → ${formatToolCall(call)}`);
+    this.writeRaw(`  → ${escapeControlCharacters(formatToolCall(call))}${this.newline()}`);
   }
 
   /** 工具结果：成功、失败、权限拒绝都在这里落一行；拒绝原因直接来自 Tool result。 */
   toolResult(call: ToolCall, result: string): void {
-    if (this.layout) {
-      this.thinking = false;
-      this.commitAssistant();
+    this.setThinking(false);
+    this.finishAssistant();
+    if (this.fixedLayoutAllowed) {
       const pending = this.pendingTools.get(call.id);
       this.pendingTools.delete(call.id);
       const lines = toolResultLines(call, result, this.glyphs)
@@ -513,13 +554,13 @@ export class Tui {
       if (index >= 0) this.log.splice(index, 1, ...lines);
       else this.log.push(...lines);
       this.trimLog();
-      this.renderNow();
-      return;
+      if (this.layout) {
+        this.renderNow();
+        return;
+      }
     }
 
-    this.setThinking(false);
-    this.finishAssistant();
-    this.logLine(`  ${formatToolResult(call, result)}`);
+    this.writeRaw(`  ${escapeControlCharacters(formatToolResult(call, result))}${this.newline()}`);
   }
 
   /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
@@ -581,31 +622,28 @@ export class Tui {
 
     this.promptText = prompt;
     this.promptPlaceholder = placeholder;
+    this.promptActive = true;
+    const answer = new Promise<string | null>((resolve) => {
+      this.waiting.push((line) => {
+        this.promptActive = false;
+        this.inputDirty = true;
+        resolve(line);
+      });
+    });
 
     if (this.layout) {
       this.inputDirty = true;
       this.renderNow();
-      this.promptActive = true;
       this.moveToInput();
-      this.rl.setPrompt(this.inputPrompt(prompt));
+      this.rl.setPrompt("");
       this.rl.prompt();
-      this.redrawInputChrome();
-      return new Promise((resolve) => {
-        this.waiting.push((line) => {
-          this.promptActive = false;
-          this.inputDirty = true;
-          resolve(line);
-        });
-      });
+      this.renderNow();
+      return answer;
     }
 
-    if (this.interactive) {
-      // 行式聊天把提示符也放到窗口最后一行，避免刚启动时停在顶部。
-      this.output.write(`\x1b[${this.rows};1H\x1b[2K`);
-    }
     this.rl.setPrompt(prompt);
     this.rl.prompt();
-    return new Promise((resolve) => this.waiting.push(resolve));
+    return answer;
   }
 
   /** v0.3 审批面板：完整 workspace 与命令放进可滚动的框，不改写、不截断。 */
@@ -620,10 +658,10 @@ export class Tui {
 
     const rawCommand = typeof request.args.command === "string" ? request.args.command : "";
     const command = rawCommand === "" ? "(empty command)" : rawCommand;
-    const commandLines = normalizeNewlines(command)
+    const commandLines = command
       .split("\n")
       .map((line) => escapeControlCharacters(line));
-    const cwd = escapeControlCharacters(normalizeNewlines(this.workspace).replace(/\n/g, "\\u000a"));
+    const cwd = escapeControlCharacters(this.workspace).replace(/\n/g, "\\u000a");
 
     const content = [
       `Workspace: ${cwd}`,
@@ -664,32 +702,35 @@ export class Tui {
     const gate = approvalGate(this.controller.signal, this.interactive, this.lines.length > 0);
     if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
 
-    let answer: string | null;
-    if (this.layout) {
-      this.thinking = false;
-      this.commitAssistant();
-      const panel = this.approvalPanelLines(request);
-      const longPanel = panel.length > this.logHeight;
+    this.setThinking(false);
+    this.finishAssistant();
+    if (this.fixedLayoutAllowed) {
       this.pushBlank();
-      // 审批面板不能被 MAX_LOG_LINES 的裁剪吃掉；先给面板腾出空间。
-      const needed = panel.length + (longPanel ? 1 : 0);
-      if (this.log.length + needed > MAX_LOG_LINES) {
-        this.log.splice(0, this.log.length + needed - MAX_LOG_LINES);
+      this.approvalRequest = request;
+      this.scrollOffset = 0;
+    }
+    let answer: string | null;
+    try {
+      if (this.layout) {
+        this.renderNow();
+        answer = await this.readLine(COMMAND_PROMPT, { placeholder: false });
+      } else {
+        const formatted = formatApproval(request, this.workspace);
+        const header = formatted.endsWith(APPROVAL_QUESTION)
+          ? formatted.slice(0, -APPROVAL_QUESTION.length)
+          : formatted;
+        // 固定布局可恢复时只回显，不把整个审批再存一份进有界日志。
+        this.writeRaw(`${header.replace(/\n$/, "")}${this.newline()}`);
+        answer = await this.readLine(APPROVAL_QUESTION);
       }
-      this.log.push(...panel);
-      if (longPanel) {
-        this.log.push({ text: "  ↑ PageUp/PageDown to review the full command", tone: "muted" });
+    } finally {
+      if (this.fixedLayoutAllowed) {
+        // 回答后才转成普通日志；等待期间必须能翻阅任意长度的完整审批。
+        this.log.push(...this.approvalPanelLines(request));
+        this.approvalRequest = undefined;
+        this.trimLog();
+        this.renderNow();
       }
-      this.trimLog();
-      this.renderNow();
-      answer = await this.readLine(COMMAND_PROMPT, { placeholder: false });
-    } else {
-      const formatted = formatApproval(request, this.workspace);
-      const header = formatted.endsWith(APPROVAL_QUESTION)
-        ? formatted.slice(0, -APPROVAL_QUESTION.length)
-        : formatted;
-      this.logLine(header.replace(/\n$/, ""), "warning");
-      answer = await this.readLine(APPROVAL_QUESTION);
     }
 
     if (answer === null) {
@@ -753,6 +794,7 @@ export class Tui {
     }
 
     this.finishAssistant();
+    if (this.fixedLayoutAllowed) this.pushLog(text, tone);
     for (const line of splitDisplayLines(text)) {
       const safe = escapeControlCharacters(line);
       this.writeRaw(`${safe}${this.newline()}`);
@@ -768,7 +810,7 @@ export class Tui {
 
   /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
   private renderNow(): void {
-    if (!this.layout || this.closed || this.promptActive) return;
+    if (!this.layout || this.closed) return;
 
     if (this.renderTimer !== undefined) {
       clearTimeout(this.renderTimer);
@@ -805,7 +847,7 @@ export class Tui {
     }
 
     rows[this.boxTopRow - 1] = this.boxTopLine(width);
-    rows[this.inputRow - 1] = "";
+    rows[this.inputRow - 1] = this.inputLine(width);
     rows[this.boxBottomRow - 1] = this.boxBottomLine(width);
     rows[this.statusRow - 1] = this.footerLine(width);
 
@@ -818,12 +860,11 @@ export class Tui {
       }
     }
     this.inputDirty = false;
-    this.drawInputRightBorder();
-    this.moveToInput();
+    this.restoreInputCursor();
   }
 
   private scheduleRender(): void {
-    if (!this.layout || this.closed || this.promptActive || this.renderScheduled) return;
+    if (!this.layout || this.closed || this.renderScheduled) return;
     this.renderScheduled = true;
     this.renderTimer = setTimeout(() => {
       this.renderScheduled = false;
@@ -850,51 +891,34 @@ export class Tui {
   /** 滚动后重画，同时保留正在编辑的输入行。 */
   private redrawKeepingInput(): void {
     if (!this.layout) return;
-    const wasPrompt = this.promptActive;
-    this.promptActive = false;
-    this.inputDirty = true;
     this.renderNow();
-    if (!wasPrompt) return;
-
-    this.restorePrompt();
   }
 
-  /** 滚动/ resize 后恢复输入行；`prompt(true)` 保留 readline 里的当前文本和光标。 */
+  /** resize 后恢复固定输入行，只改变输出 prompt，不重置编辑缓存与光标。 */
   private restorePrompt(): void {
     this.promptActive = true;
-    this.moveToInput();
-    this.rl.setPrompt(this.inputPrompt(this.promptText));
-    this.rl.prompt(true);
-    this.redrawInputChrome();
+    this.rl.setPrompt("");
+    this.renderNow();
   }
 
   /**
-   * readline 的刷新会从输入行清到屏幕底部，把输入框下边框和状态行一起擦掉。
-   * 每次 prompt/按键后补画这两行，再把光标放回 readline 的输入位置。
+   * 只展示光标附近的输入片段，完整文字仍在 readline 里；横向滚动不移动固定栏位。
    */
-  private redrawInputChrome(): void {
-    if (!this.layout || this.closed) return;
-    const width = this.contentWidth();
-    const bottom = this.boxBottomLine(width);
-    const status = this.footerLine(width);
-    this.writeRow(this.boxBottomRow, bottom);
-    this.writeRow(this.statusRow, status);
-    if (this.lastFrame.length === this.rows) {
-      this.lastFrame[this.boxBottomRow - 1] = bottom;
-      this.lastFrame[this.statusRow - 1] = status;
+  private inputLine(width: number): string {
+    const prompt = this.promptText === COMMAND_PROMPT ? `${this.glyphs.user} ` : singleLine(this.promptText);
+    const room = Math.max(1, width - 4 - displayWidth(prompt));
+    const cursor = this.rl.cursor;
+    if (cursor < this.inputOffset) this.inputOffset = cursor;
+    while (displayWidth(escapeControlCharacters(this.rl.line.slice(this.inputOffset, cursor))) >= room) {
+      this.inputOffset += (this.rl.line.codePointAt(this.inputOffset) ?? 0) > 0xffff ? 2 : 1;
     }
-    this.drawInputRightBorder();
-    this.restoreInputCursor();
-    if (this.rl.line === "") this.writePlaceholder(this.promptText);
-  }
-
-  /** 输入行右侧的竖线单独画；readline 刷新会清掉它，所以 prompt/按键后都要补。 */
-  private drawInputRightBorder(): void {
-    if (!this.layout || this.columns < MIN_COLUMNS) return;
-    const column = this.columns - 2;
-    this.output.write(
-      `\x1b[${this.inputRow};${column}H${this.style.paint("muted", this.glyphs.boxVertical)}`,
-    );
+    if (this.rl.line === "") this.inputOffset = 0;
+    const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT;
+    const text = placeholder ? ` ${PLACEHOLDER}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
+    const shown = takeByWidth(text, room);
+    return `  ${this.style.paint("accent", this.glyphs.boxVertical)} ${this.style.paint("accent", prompt)}` +
+      this.style.paint(placeholder ? "muted" : "plain", padRight(shown, room)) +
+      ` ${this.style.paint("accent", this.glyphs.boxVertical)}`;
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
@@ -902,7 +926,7 @@ export class Tui {
     const plainPrompt = this.promptText === COMMAND_PROMPT
       ? `  ${this.glyphs.boxVertical} ${this.glyphs.user} `
       : `  ${this.glyphs.boxVertical} ${singleLine(this.promptText)}`;
-    const before = this.rl.line.slice(0, this.rl.cursor);
+    const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
     const column = 1 + displayWidth(plainPrompt) + displayWidth(before);
     this.output.write(`\x1b[${this.inputRow};${column}H`);
   }
@@ -910,12 +934,13 @@ export class Tui {
   private scheduleInputChrome(): void {
     if (!this.layout || !this.promptActive || this.closed) return;
     setImmediate(() => {
-      if (this.promptActive && !this.closed) this.redrawInputChrome();
+      if (!this.closed) this.renderNow();
     });
   }
 
   private commitAssistant(): void {
     if (!this.assistantOpen) return;
+    this.pushBlank();
     for (const line of this.assistantDisplayLines()) {
       this.log.push({ text: line, tone: "assistant" });
     }
@@ -978,8 +1003,19 @@ export class Tui {
     const width = this.contentWidth();
     const wrapped: LogLine[] = [];
     for (const line of logical) {
-      for (const part of wrapLine(line.text, width)) {
+      const indent = line.text.match(/^\s*/)?.[0] ?? "";
+      const continuation = line.tone === "assistant" || line.tone === "user" ? "  " : indent;
+      const parts = wrapLine(line.text, width, continuation);
+      for (const part of parts) {
         wrapped.push({ text: part, tone: line.tone });
+      }
+    }
+    if (this.approvalRequest !== undefined) {
+      const panel = this.approvalPanelLines(this.approvalRequest);
+      wrapped.push(...panel);
+      if (panel.length > this.logHeight) {
+        // 完整命令可翻阅；不用 Unicode 箭头，传统 conhost 也能读懂。
+        wrapped.push({ text: "PageUp/PageDown: review full command", tone: "muted" });
       }
     }
     return wrapped;
@@ -1006,13 +1042,13 @@ export class Tui {
   private boxTopLine(width: number): string {
     const inner = Math.max(0, width - 2);
     const line = `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxTopRight}`;
-    return `  ${this.style.paint("muted", line)}  `;
+    return `  ${this.style.paint("accent", line)}  `;
   }
 
   private boxBottomLine(width: number): string {
     const inner = Math.max(0, width - 2);
     const line = `${this.glyphs.boxBottomLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxBottomRight}`;
-    return `  ${this.style.paint("muted", line)}  `;
+    return `  ${this.style.paint("accent", line)}  `;
   }
 
   private footerLine(width: number): string {
@@ -1031,8 +1067,13 @@ export class Tui {
 
     // 窄终端先压成短单位；还不够就丢掉滚动状态里的权限名，优先保留统计。
     if (displayWidth(left) + displayWidth(right) + 1 > width) {
-      right = this.formatSessionStats(true);
+      right = this.formatSessionStats(false);
       if (this.scrollOffset > 0) left = scrollPrefix;
+    }
+    if (displayWidth(left) + displayWidth(right) + 1 > width) {
+      const requests = formatNumber(this.stats?.requests ?? 0);
+      const lower = (this.stats?.usage.unknown ?? 0) > 0 ? ">=" : "";
+      right = `${requests}r ${lower}${formatNumber(this.stats?.usage.totalTokens ?? 0)}tok`;
     }
 
     const rightText = clip(right, Math.max(1, width));
@@ -1065,23 +1106,6 @@ export class Tui {
     if (stats.toolCalls > 0) parts.push(`${tools} tools`);
     parts.push(`${tokens} tok`);
     return parts.join(" · ");
-  }
-
-  private inputPrompt(prompt: string): string {
-    const left = `  ${this.style.paint("muted", this.glyphs.boxVertical)} `;
-    if (prompt === COMMAND_PROMPT) return `${left}${this.style.paint("accent", this.glyphs.user)} `;
-    return `${left}${this.style.paint("warning", singleLine(prompt))}`;
-  }
-
-  private writePlaceholder(prompt: string): void {
-    if (!this.layout || !this.promptPlaceholder || prompt !== COMMAND_PROMPT || this.rl.line !== "") return;
-    // 输入框内宽：去掉左右 padding、竖线和 prompt 后还剩 columns - 9 列。
-    const room = Math.max(0, this.columns - 9);
-    if (room <= 3) return;
-    // 前面留一个空格，让光标块落在空白处，而不是盖住 placeholder 的第一个字母。
-    const text = ` ${clip(PLACEHOLDER, room)}`;
-    this.output.write(this.style.paint("muted", text));
-    this.output.write(`\x1b[${displayWidth(text)}D`);
   }
 
   private contentWidth(): number {
@@ -1159,20 +1183,20 @@ class Style {
 
 const BASIC_PALETTE: Record<Tone, string> = {
   accent: "33",
-  assistant: "36",
-  user: "37",
+  assistant: "39",
+  user: "33",
   muted: "90",
   success: "32",
   error: "31",
   warning: "33",
-  info: "37",
+  info: "39",
   plain: "0",
 };
 
 const RICH_PALETTE: Record<Tone, string> = {
   accent: "38;5;215",
-  assistant: "38;5;117",
-  user: "38;5;255",
+  assistant: "39",
+  user: "38;5;215",
   muted: "38;5;244",
   success: "38;5;114",
   error: "38;5;203",
@@ -1218,7 +1242,7 @@ function splitDisplayLines(text: string): string[] {
 }
 
 /** 硬换行到视口宽度；CJK/emoji 按 2 列算，避免中文回复在 conhost 里自动换行破帧。 */
-function wrapLine(text: string, width: number): string[] {
+function wrapLine(text: string, width: number, continuation = ""): string[] {
   if (text === "") return [""];
   const safeWidth = Math.max(1, width);
   const lines: string[] = [];
@@ -1228,8 +1252,8 @@ function wrapLine(text: string, width: number): string[] {
     const charWidth = codePointWidth(char);
     if (used > 0 && used + charWidth > safeWidth) {
       lines.push(current);
-      current = "";
-      used = 0;
+      current = takeByWidth(continuation, Math.max(0, safeWidth - 2));
+      used = displayWidth(current);
     }
     current += char;
     used += charWidth;

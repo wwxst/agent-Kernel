@@ -15,6 +15,11 @@ function tick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** 取最后一次完整写入的行；验收输入框实际内容，不能只检查旧帧里出现过某个词。 */
+function lastRow(text, row) {
+  return [...text.matchAll(new RegExp(`\\x1b\\[${row};1H\\x1b\\[2K([^\\x1b]*)`, "g"))].at(-1)?.[1] ?? "";
+}
+
 /**
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
@@ -32,6 +37,8 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
   const chunks = [];
   output.on("data", (chunk) => chunks.push(String(chunk)));
 
+  const previousTerm = process.env.TERM;
+  if (interactive) process.env.TERM = "xterm-256color";
   const tui = new Tui({
     input,
     output,
@@ -45,6 +52,8 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     layout: tty,
     color,
   });
+  if (previousTerm === undefined) delete process.env.TERM;
+  else process.env.TERM = previousTerm;
 
   return {
     tui,
@@ -61,6 +70,233 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
+
+test("TUI：长输入留在单行框内，滚动和光标编辑不丢文字", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 34 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  const task = "abcdefghijklmnopqrstuvwxyz0123456789";
+  ui.input.write(task);
+  await tick();
+  assert.match(lastRow(ui.text(), 19), /6789\s*[|│]\s*$/);
+  assert.ok(lastRow(ui.text(), 19).length <= 33, "输入行不能超过终端右边界");
+  ui.input.write("\x1b[H");
+  await tick();
+  assert.match(lastRow(ui.text(), 19), /abcde/);
+  ui.input.write("X");
+  ui.input.write("\x1b[5~");
+  await tick();
+  ui.input.write("\r");
+  assert.equal(await pending, `X${task}`);
+});
+
+test("TUI：等待输入时新输出仍刷新，编辑位置和文字保持", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("draft");
+  ui.input.write("\x1b[D");
+  await tick();
+  ui.tui.logLine("new output");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), /new output/);
+  assert.match(lastRow(ui.text(), 19), /draft/);
+  ui.input.write("X\r");
+  assert.equal(await pending, "drafXt");
+});
+
+test("TUI：长正文续行保持正文缩进，工具和回复间留白", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 34 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const call = { id: "r", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file body");
+  ui.tui.finishAssistant("abcdefghijklmnopqrstuvwxyz0123456789");
+  await tick();
+  assert.equal(lastRow(ui.text(), 5).trim(), "");
+  assert.match(lastRow(ui.text(), 6), /(?:✻|\*) abcdef/);
+  assert.match(lastRow(ui.text(), 7), /^    23456789/);
+});
+
+test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo " + "a".repeat(100) + "\necho TAIL" } });
+  ui.output.columns = 34;
+  ui.output.emit("resize");
+  await tick();
+  assert.match(ui.text(), /echo TAIL/);
+  assert.match(lastRow(ui.text(), 5), /^  [|│] Workspace: C:\\work\\repo\s+[|│]$/);
+  for (let row = 4; row < 34; row++) {
+    assert.ok(lastRow(ui.text(), row).length <= 34, `第 ${row} 行不应超宽`);
+  }
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
+});
+
+test("TUI：超过日志上限的审批保留命令开头，PageUp 可以查看", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const command = "echo BEGIN\n" + "echo line\n".repeat(2100) + "echo TAIL\u001b[31m\u202e";
+  const pending = ui.tui.approve({ tool: "shell", args: { command } });
+  pending.catch(() => {});
+  assert.match(ui.text(), /echo TAIL\\u001b\[31m\\u202e/);
+  for (let index = 0; index < 210; index++) ui.input.emit("keypress", "", { name: "pageup" });
+  await tick();
+  assert.match(Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n"), /echo BEGIN/);
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
+});
+
+test("TUI：缩至窄窗口后使用逐行输出，恢复宽度后重新显示历史和草稿", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("中文draft");
+  await tick();
+  ui.output.columns = 20;
+  ui.output.rows = 8;
+  const start = ui.text().length;
+  ui.output.emit("resize");
+  ui.tui.logLine("narrow output");
+  await tick();
+  assert.doesNotMatch(ui.text().slice(start), /\x1b\[\d+;\d+H/);
+  ui.output.columns = 80;
+  ui.output.rows = 24;
+  ui.output.emit("resize");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), /narrow output/);
+  assert.match(lastRow(ui.text(), 19), /中文draft/);
+  ui.input.write("\r");
+  assert.equal(await pending, "中文draft");
+});
+
+test("TUI：窄屏状态行保留完整权限和请求/token 统计", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 34 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.setStats(session);
+  await tick();
+  assert.match(lastRow(ui.text(), 21), /workspace-write/);
+  assert.match(lastRow(ui.text(), 21), /2r 12tok/);
+  assert.ok(lastRow(ui.text(), 21).length <= 34);
+});
+
+test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重复", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.output.columns = 20;
+  ui.output.emit("resize");
+  ui.tui.beginTurn("TASK_NARROW");
+  const call = { id: "r", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "body");
+  ui.output.columns = 80;
+  ui.output.emit("resize");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), /TASK_NARROW/);
+  assert.match(lastRow(ui.text(), 6), /(?:✓|\+) Read a.txt/);
+  assert.equal(lastRow(ui.text(), 7).trim(), "");
+});
+
+test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 20, rows: 8 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.output.columns = 80;
+  ui.output.rows = 24;
+  ui.output.emit("resize");
+  ui.input.write("VISIBLE_DRAFT");
+  await tick();
+  assert.match(lastRow(ui.text(), 19), /VISIBLE_DRAFT/);
+  ui.input.write("\r");
+  assert.equal(await pending, "VISIBLE_DRAFT");
+});
+
+test("TUI：输入里的 Tab 安全显示，提交的原文保持不变", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 34 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  const task = "x\t".repeat(15);
+  ui.input.write(task);
+  await tick();
+  assert.doesNotMatch(lastRow(ui.text(), 19), /\t/);
+  assert.match(lastRow(ui.text(), 19), /\\u0009/);
+  assert.ok(lastRow(ui.text(), 19).length <= 34);
+  ui.input.write("\r");
+  assert.equal(await pending, task);
+});
+
+test("TUI：审批从窄窗口开始，放大后仍可查阅超过日志上限的开头", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 20, rows: 8 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo BEGIN\n" + "echo line\n".repeat(2100) + "echo TAIL" } });
+  pending.catch(() => {});
+  ui.output.columns = 80;
+  ui.output.rows = 24;
+  ui.output.emit("resize");
+  for (let index = 0; index < 210; index++) ui.input.emit("keypress", "", { name: "pageup" });
+  await tick();
+  assert.match(Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n"), /echo BEGIN/);
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
+});
+
+test("TUI：审批中的回车等控制字符逐字转义", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo first\r\necho next\recho tail\t\u202e" } });
+  pending.catch(() => {});
+  assert.match(ui.text(), /echo first\\u000d/);
+  assert.match(ui.text(), /echo next\\u000decho tail\\u0009\\u202e/);
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
+});
+
+test("TUI：窄屏工具事件清除 Thinking 并与流式正文分行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 20, rows: 8 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const call = { id: "r", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.setThinking(true);
+  ui.tui.toolCall(call);
+  assert.match(ui.text(), /Thinking\.\.\.\r\x1b\[2K/);
+  ui.tui.assistantDelta("I will inspect");
+  ui.tui.toolResult(call, "body");
+  assert.match(ui.text(), /model: I will inspect\n  ✓ read/);
+});
+
+test("TUI：TERM=dumb 使用逐行输出，不发送固定布局光标命令", async (t) => {
+  const previous = process.env.TERM;
+  process.env.TERM = "dumb";
+  const input = new PassThrough();
+  const output = new PassThrough();
+  output.isTTY = true;
+  const chunks = [];
+  output.on("data", (chunk) => chunks.push(String(chunk)));
+  const tui = new Tui({ input, output, model: "mock", workspace: "repo", permission: "read-only",
+    controller: new AbortController(), interactive: true, columns: 80, rows: 24 });
+  if (previous === undefined) delete process.env.TERM;
+  else process.env.TERM = previous;
+  t.after(() => { tui.close(); input.end(); });
+  tui.start();
+  tui.logLine("hello");
+  const pending = tui.readLine();
+  input.write("/exit\n");
+  assert.equal(await pending, "/exit");
+  assert.doesNotMatch(chunks.join(""), /\x1b\[\d+;\d+H/);
+});
 
 test("TUI：状态栏、运行记录、成功/拒绝分类和统计", async (t) => {
   const ui = makeTui();

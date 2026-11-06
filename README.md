@@ -156,7 +156,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 - **顶部**：项目名（左）和 model（右），下一行是 workspace 路径，再一条分隔线。
 - **对话区**：内容**从视口顶部往下**排列；用户 `❯`、模型 `✻`，工具调用先显示 `●`，结果到达后原地替换成 `✓` / `✗` / `⊘`（权限拒绝）/ `–`（未执行）。短对话下面的空白留在输入框上方，不再把历史贴到底部。
-- **输入框**：固定在有上下边框的框里，`❯` 后是占位符 `Ask anything, or type /help...`；最后留 3 行缓冲，避免传统 conhost 的窗口底边吃掉边框。
+- **输入框**：固定在有上下边框的框里，`❯` 后是占位符 `Ask anything, or type /help...`；长输入在框内横向滚动，提交原文不变；最后留 3 行缓冲，避免传统 conhost 的窗口底边吃掉边框。readline 保留编辑缓存，TUI 统一绘制，输入期间的新输出也能刷新。
 - **状态行**：在输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），右边 requests / tool calls / tokens。
 - 不切 alternate screen、不引 TUI 库；差分重绘只写变化的行，退出后 TUI 历史不会留在 scrollback 里。非 TTY（管道、CI、e2e）退化为纯逐行输出。
 
@@ -172,12 +172,12 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - Windows Terminal / VS Code 终端 / Linux 使用 `❯`、`✻`、`●`、`✓`、`✗`、`⊘`、`┌┐└┘─│`；传统 Windows conhost 退化成 `>`、`*`、`o`、`+`、`x`、`!`、`-`、`|`，不会显示方框。
 - **Thinking**：每次模型请求后显示 `✻ thinking...`；第一段正文、工具调用或错误到达时替换掉。
 - **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
-- **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、输入框和状态行。
+- **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
 - 命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态行和下一次请求同时生效。
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。
 
-已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；长行硬换行，不做横向滚动；差分重绘在慢终端上仍可能闪烁；不保留可回滚的完整历史；没有鼠标、多行输入、工具详情展开或 `/` 命令菜单。这些都不影响 Agent 的正确性，只影响显示和输入体验。
+已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标、多行输入、工具详情展开或 `/` 命令菜单。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
 
 ## 配置
 
@@ -201,7 +201,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-234 个用例，分十二层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
+248 个用例，分十二层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
