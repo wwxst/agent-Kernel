@@ -90,3 +90,5 @@
 随后按用户速度反馈，点与前置符号改为共用同一个 200ms 帧号；每帧同时变化，完整点数循环为 800ms。回归改为逐 200ms 检查点数、前置符号变化与固定耗时列，先确认旧 400ms 版本失败，再验证同步实现。
 
 同步版本重启真实 CLI 后的连续原图：[帧 A](./thinking-speed-live-a.png)、[帧 B](./thinking-speed-live-b.png)。无工具短请求已实际成功；本机 check 仍为 270 tests / 263 pass / 7 skips / 0 fail，eval 自检 20/20，新窗口 `agent-Kernel TUI fast` 留待体验。
+
+最终按用户阅读舒适度反馈，恢复固定的 `Thinking...`，仅前置符号每 200ms 变化。上面的逐点与同步版本属于迭代历史，不是当前效果。回归先确认动画点版本失败，再连续检查五帧中的三个点均静止、前置符号仍变化、耗时位置稳定；check 270 tests / 263 pass / 7 skips / 0 fail，eval 自检 20/20。重启真实 CLI 的[当前帧 A](./thinking-steady-live-a.png)、[当前帧 B](./thinking-steady-live-b.png)确认静态三点；最新体验窗口为 `agent-Kernel TUI steady`。
