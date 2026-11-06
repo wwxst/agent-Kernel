@@ -170,7 +170,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 - 自动检测颜色能力：16 色 / 256 色、`NO_COLOR`、`TERM=dumb`；无颜色终端仍靠框线和符号可读。
 - Windows Terminal / VS Code 终端 / Linux 使用 `❯`、`✻`、`●`、`✓`、`✗`、`⊘`、`┌┐└┘─│`；传统 Windows conhost 退化成 `>`、`*`、`o`、`+`、`x`、`!`、`-`、`|`，不会显示方框。
-- **Thinking**：动画符号后的点按 `Thinking` → `Thinking.` → `Thinking..` → `Thinking...` 每 400ms 循环，耗时列固定；下一行弱化显示 `Ctrl-C to cancel`。工具返回后的等待可显示本次实际收到的工具结果数。第一段正文、工具调用或错误到达时清除并停止计时。结束时显示本次实际经过时间与工具调用数，不推断模型内部思考或尚未返回的 token。
+- **Thinking**：动画符号后的点按 `Thinking` → `Thinking.` → `Thinking..` → `Thinking...` 每 200ms 与前置符号同步更新，耗时列固定；下一行弱化显示 `Ctrl-C to cancel`。工具返回后的等待可显示本次实际收到的工具结果数。第一段正文、工具调用或错误到达时清除并停止计时。结束时显示本次实际经过时间与工具调用数，不推断模型内部思考或尚未返回的 token。
 - **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
 - **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
 - 命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态行和下一次请求同时生效。

@@ -1121,9 +1121,10 @@ export class Tui {
       const elapsed = Math.max(0, Date.now() - this.thinkingStartedAt);
       // 不用带 Emoji 属性的星号（如 U+2733）：Windows 会回退成绿色方块，破坏颜色与列宽。
       const frames = this.glyphs === UNICODE_GLYPHS ? ["✻", "✶", "✢", "✦"] : ["*", "+", "-", "+"];
-      const spinner = frames[Math.floor(elapsed / 200) % frames.length];
-      // 三个点每 400ms 逐个出现；补足三列，避免后面的耗时随点数左右跳动。
-      const dots = ".".repeat(Math.floor(elapsed / 400) % 4).padEnd(3);
+      const animationFrame = Math.floor(elapsed / 200);
+      const spinner = frames[animationFrame % frames.length];
+      // 三个点与前置符号共用 200ms 帧；补足三列，避免后面的耗时左右跳动。
+      const dots = ".".repeat(animationFrame % 4).padEnd(3);
       // 只展示已收到的工具结果数，不猜测端点尚未返回的流式 token。
       const results = this.runToolResults > 0 && this.contentWidth() >= 48
         // 中文对照：{N} 个工具结果。

@@ -128,7 +128,7 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   assert.doesNotMatch(lastRow(ui.text(), 7), /Ctrl-C/);
 });
 
-test("TUI：Thinking 的三个点依次出现后循环，耗时信息不左右跳动", async (t) => {
+test("TUI：Thinking 的点与前置符号每 200ms 同步变化，耗时信息不左右跳动", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
@@ -136,12 +136,16 @@ test("TUI：Thinking 的三个点依次出现后循环，耗时信息不左右�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   const detailColumn = lastRow(ui.text(), 6).indexOf("(");
-  const phases = ["Thinking    (0s)", "Thinking.   (0s)", "Thinking..  (0s)", "Thinking... (1s)", "Thinking    (1s)"];
+  const phases = ["Thinking    (0s)", "Thinking.   (0s)", "Thinking..  (0s)", "Thinking... (0s)", "Thinking    (0s)"];
+  let previousSymbol = "";
   for (const phase of phases) {
     const line = lastRow(ui.text(), 6);
     assert.ok(line.endsWith(phase), `期望等待阶段：${phase}；实际：${line}`);
     assert.equal(line.indexOf("("), detailColumn);
-    t.mock.timers.tick(400);
+    const symbol = line.split(" ")[0];
+    assert.notEqual(symbol, previousSymbol);
+    previousSymbol = symbol;
+    t.mock.timers.tick(200);
   }
 });
 
@@ -316,7 +320,7 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   assert.match(ui.text(), /Thinking {4}\(0s\)/);
   assert.match(lastRow(ui.text(), 7), /Ctrl-C to cancel/);
   t.mock.timers.tick(2000);
-  assert.match(ui.text(), /Thinking\. {3}\(2s\)/);
+  assert.match(ui.text(), /Thinking\.\. {2}\(2s\)/);
   ui.tui.assistantDelta("hello");
   const finished = ui.text().length;
   t.mock.timers.tick(3000);

@@ -86,3 +86,7 @@
 用户要求 Thinking 后的三个点逐个出现。固定布局现在按 `Thinking` → `Thinking.` → `Thinking..` → `Thinking...` 循环，每阶段 400ms。点的位置预留三列，避免耗时信息左右跳动；正文、工具或错误到达时依然清除等待状态并停止动画。
 
 新增回归先确认旧版恒定三个点失败，再验证完整点数循环、固定耗时列及重置；现有等待清理与真实秒数断言同步调整。`npm run check`：270 tests / 263 pass / 7 platform skips / 0 fail，含 TUI 58 项；`npm run eval:check` 20/20。实际重启 CLI 请求无工具的中文短回复，连续原图捕获[一个点](./thinking-dots-live-a.png)、[两个点](./thinking-dots-live-b.png)与[循环清空](./thinking-dots-live-c.png)；没有模拟模型响应。新窗口 `agent-Kernel TUI dots` 保留供继续体验。
+
+随后按用户速度反馈，点与前置符号改为共用同一个 200ms 帧号；每帧同时变化，完整点数循环为 800ms。回归改为逐 200ms 检查点数、前置符号变化与固定耗时列，先确认旧 400ms 版本失败，再验证同步实现。
+
+同步版本重启真实 CLI 后的连续原图：[帧 A](./thinking-speed-live-a.png)、[帧 B](./thinking-speed-live-b.png)。无工具短请求已实际成功；本机 check 仍为 270 tests / 263 pass / 7 skips / 0 fail，eval 自检 20/20，新窗口 `agent-Kernel TUI fast` 留待体验。
