@@ -522,8 +522,8 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
   assert.match(text, /Shell permission/);
   assert.match(text, /Workspace: C:\\work\\repo/);
   assert.match(text, /Command:/);
-  assert.match(text, /\|\s+echo hi/);
-  assert.match(text, /\|\s+echo bye/);
+  assert.match(text, /[|│]\s+echo hi/);
+  assert.match(text, /[|│]\s+echo bye/);
   assert.match(text, /\[Y\] Allow once/);
   assert.match(text, /\[N\] Deny/);
   assert.match(text, /(?:✓|\+) Allowed once/);

@@ -48,6 +48,7 @@ Shell 审批：`npm run check` 的实际命令、实际 cwd 与允许一次/拒�
 
 - `npm run check`：strict typecheck 通过；248 tests，241 pass，7 skipped，0 fail。跳过项是 Windows 不适用的 Linux PTY / POSIX 权限测试。
 - `node --test test/tui.test.mjs`：36/36 通过。
+- 强制 `WT_SESSION=unicode-verification` 后重复运行 TUI 测试：Unicode 路径 36/36 通过。Linux CI 首轮指出旧审批断言只接受 ASCII `|`，现已改为同时接受 `│`；没有改动命令内容断言。
 - `npm run eval:check`：20/20。
 - 增加 14 项 TUI 回归，均先运行旧行为确认失败，再实现修复：长输入、编辑光标、输入期间输出、正文留白/缩进、审批 resize、超日志上限审批、窄屏降级/恢复、窄屏统计、工具去重、窄屏启动草稿、Tab、窄屏开始审批、CR/Tab/bidi 转义、窄屏 Thinking 与工具切换、`TERM=dumb`。部分相关行为共用一个用例。
 - 审批 y/yes、默认拒绝、EOF、取消和无 TTY 由原有审批/CLI 测试继续覆盖；单行 Shell 的真实允许一次和拒绝已截图。Linux/Windows CI 的最终结果以 PR 当前提交的 checks 为准。
