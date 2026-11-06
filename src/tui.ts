@@ -205,6 +205,11 @@ export class Tui {
 
   private thinkingTimer?: NodeJS.Timeout;
 
+  /** 只量测 UI 中本次 Run 的经过时间，不参与 Kernel 的预算或统计。 */
+  private runStartedAt?: number;
+
+  private runToolResults = 0;
+
   /** 历史滚动偏移：0 = 跟随最新；正数 = 向上查看旧记录。 */
   private scrollOffset = 0;
 
@@ -222,6 +227,8 @@ export class Tui {
 
   /** 横向滚动输入框，不让 readline 自动折行覆盖边框与状态栏。 */
   private inputOffset = 0;
+
+  private cursorStyleChanged = false;
 
   /** 待审批的原始请求不受日志上限裁剪，resize 时按当前宽度重新排版。 */
   private approvalRequest?: PermissionRequest;
@@ -355,6 +362,11 @@ export class Tui {
   /** 画第一帧。固定布局清屏但不切 alternate screen。 */
   start(): void {
     if (this.layout) {
+      if (prefersRichColor()) {
+        // DECSCUSR 仅影响当前终端会话；退出时恢复默认，不修改终端持久配置。
+        this.output.write("\x1b[2 q");
+        this.cursorStyleChanged = true;
+      }
       this.output.write("\x1b[2J\x1b[H");
       this.renderNow();
       this.moveToInput();
@@ -436,7 +448,7 @@ export class Tui {
         // 只量测请求等待，不推断模型内部思考，也不虚构 token 数。
         this.thinkingTimer = setInterval(() => {
           if (this.layout) this.renderNow();
-        }, 1000);
+        }, 200);
         this.thinkingTimer.unref?.();
       }
     } else {
@@ -468,6 +480,8 @@ export class Tui {
    * 固定布局清掉 readline 的输入回显，所以写一条 `❯ task`；行式聊天默认不重复。
    */
   beginTurn(task: string, { show = this.fixedLayoutAllowed || !this.interactive }: { show?: boolean } = {}): void {
+    this.runStartedAt = Date.now();
+    this.runToolResults = 0;
     if (this.layout) {
       this.stopThinking();
       this.commitAssistant();
@@ -579,6 +593,7 @@ export class Tui {
 
   /** 工具结果：成功、失败、权限拒绝都在这里落一行；拒绝原因直接来自 Tool result。 */
   toolResult(call: ToolCall, result: string): void {
+    this.runToolResults++;
     this.setThinking(false);
     this.finishAssistant();
     if (this.fixedLayoutAllowed) {
@@ -602,12 +617,19 @@ export class Tui {
   /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed }: { failed: boolean }): void {
     this.stats = session;
+    const seconds = this.runStartedAt === undefined ? undefined : Math.max(0, Math.floor((Date.now() - this.runStartedAt) / 1000));
+    this.runStartedAt = undefined;
 
     if (this.layout) {
       this.stopThinking();
       this.commitAssistant();
       if (run.tokenBudget.exceeded) {
         this.pushLog(`[budget] exceeded (limit=${run.tokenBudget.limit})`, "warning");
+      }
+      if (seconds !== undefined) {
+        const tools = run.toolCalls > 0 ? ` · ${formatNumber(run.toolCalls)} ${run.toolCalls === 1 ? "tool call" : "tool calls"}` : "";
+        // 中文对照：完成耗时 / 停止前经过 {seconds} 秒，工具数沿用实际 Run 统计。
+        this.pushLog(`${this.glyphs.assistant} ${failed ? "Stopped after" : "Worked for"} ${seconds}s${tools}`, "muted");
       }
       this.renderNow();
       return;
@@ -816,6 +838,7 @@ export class Tui {
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
 
+    if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.layout) {
       // 最后一行是缓冲行；从那里换行，shell 提示符会出现在 TUI 下方。
       this.output.write(`\x1b[${this.rows};1H`);
@@ -869,7 +892,7 @@ export class Tui {
       const focusedLength = this.approvalRequest === undefined
         ? lines.length
         : Math.min(lines.length, this.approvalPanelLines(this.approvalRequest).length + 2);
-      const gap = this.approvalRequest === undefined ? 2 : 0;
+      const gap = this.approvalRequest === undefined ? 1 : 0;
       this.logHeight = Math.min(this.logHeight, Math.max(2, focusedLength + gap));
       this.boxTopRow = LOG_TOP + this.logHeight;
       this.inputRow = this.boxTopRow + 1;
@@ -879,7 +902,7 @@ export class Tui {
 
     const rows: string[] = new Array(this.rows).fill("");
     rows[TITLE_ROW - 1] = this.titleLine(width);
-    rows[PATH_ROW - 1] = `  ${this.style.paint("muted", fitPath(singleLine(this.workspace), width))}  `;
+    rows[PATH_ROW - 1] = this.style.paint("muted", fitPath(singleLine(this.workspace), width));
     const divider = this.dividerLine(width);
     rows[TOP_DIVIDER_ROW - 1] = divider;
     const total = lines.length;
@@ -899,12 +922,12 @@ export class Tui {
       const line = visible[index];
       rows[LOG_TOP - 1 + index] = line === undefined
         ? ""
-        : `  ${this.paintLogLine(line, width)}`;
+        : this.paintLogLine(line, width);
     }
 
-    rows[this.boxTopRow - 1] = this.boxTopLine(width);
+    rows[this.boxTopRow - 1] = divider;
     rows[this.inputRow - 1] = this.inputLine(width);
-    rows[this.boxBottomRow - 1] = this.boxBottomLine(width);
+    rows[this.boxBottomRow - 1] = divider;
     rows[this.statusRow - 1] = this.footerLine(width);
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
@@ -932,8 +955,8 @@ export class Tui {
         this.style.bold(this.style.paint("assistant", text.slice(4)));
     }
     if (line.kind === "thinking") {
-      const end = text.indexOf(" · ");
-      return this.style.paint("warning", end < 0 ? text : text.slice(0, end)) +
+      const end = text.indexOf(" (");
+      return this.style.paint("accent", end < 0 ? text : text.slice(0, end)) +
         (end < 0 ? "" : this.style.paint("muted", text.slice(end)));
     }
     return this.style.paint(line.tone, text);
@@ -982,26 +1005,25 @@ export class Tui {
    */
   private inputLine(width: number): string {
     const prompt = this.promptText === COMMAND_PROMPT ? `${this.glyphs.user} ` : singleLine(this.promptText);
-    const room = Math.max(1, width - 4 - displayWidth(prompt));
+    const room = Math.max(1, width - displayWidth(prompt));
     const cursor = this.rl.cursor;
     if (cursor < this.inputOffset) this.inputOffset = cursor;
     while (displayWidth(escapeControlCharacters(this.rl.line.slice(this.inputOffset, cursor))) >= room) {
       this.inputOffset += (this.rl.line.codePointAt(this.inputOffset) ?? 0) > 0xffff ? 2 : 1;
     }
     if (this.rl.line === "") this.inputOffset = 0;
-    const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT;
+    const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT && this.log.length === 0;
     const text = placeholder ? ` ${PLACEHOLDER}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
     const shown = takeByWidth(text, room);
-    return `  ${this.paintInputBorder(this.glyphs.boxVertical)} ${this.style.paint("accent", prompt)}` +
-      this.style.paint(placeholder ? "muted" : "plain", padRight(shown, room)) +
-      ` ${this.paintInputBorder(this.glyphs.boxVertical)}`;
+    return this.style.paint("muted", prompt) +
+      this.style.paint(placeholder ? "muted" : "plain", padRight(shown, room));
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
   private restoreInputCursor(): void {
     const plainPrompt = this.promptText === COMMAND_PROMPT
-      ? `  ${this.glyphs.boxVertical} ${this.glyphs.user} `
-      : `  ${this.glyphs.boxVertical} ${singleLine(this.promptText)}`;
+      ? `${this.glyphs.user} `
+      : singleLine(this.promptText);
     const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
     const column = 1 + displayWidth(plainPrompt) + displayWidth(before);
     this.output.write(`\x1b[${this.inputRow};${column}H`);
@@ -1068,17 +1090,32 @@ export class Tui {
   }
 
   private wrappedDisplayLines(): LogLine[] {
-    const logical: LogLine[] = [...this.log];
+    const logical: LogLine[] = [];
+    const pendingLines = new Set(this.pendingTools.values());
+    for (const line of this.log) {
+      logical.push(line);
+      // 执行中提示派生自待完成工具，不写进日志；结果替换标题时不会残留一条 Running。
+      if (pendingLines.has(line) && this.approvalRequest === undefined) {
+        // 审批面板本身表示等待决定；此时不能把待授权的工具显示成正在执行。
+        // 中文对照：正在执行。
+        logical.push({ text: `    ${this.glyphs.boxBottomLeft} Running...`, tone: "muted" });
+      }
+    }
     if (this.assistantOpen) {
       for (const line of this.assistantDisplayLines()) {
         logical.push({ text: line, tone: "assistant" });
       }
     }
     if (this.thinking) {
-      const seconds = Math.max(0, Math.floor((Date.now() - this.thinkingStartedAt) / 1000));
-      // 中文对照：等待中，已经过 {seconds} 秒；Ctrl-C 取消。
-      const detail = this.contentWidth() >= 48 ? ` · ${seconds}s · Ctrl-C to cancel` : ` · ${seconds}s`;
-      logical.push({ text: `${this.glyphs.assistant} Thinking...${detail}`, tone: "warning", kind: "thinking" });
+      const elapsed = Math.max(0, Date.now() - this.thinkingStartedAt);
+      const frames = this.glyphs === UNICODE_GLYPHS ? ["✻", "✳", "✶", "✢"] : ["*", "+", "-", "+"];
+      const spinner = frames[Math.floor(elapsed / 200) % frames.length];
+      // 中文对照：等待中，已经过 {seconds} 秒；下一行弱化展示取消操作。
+      const results = this.runToolResults > 0 && this.contentWidth() >= 48
+        ? ` · ${formatNumber(this.runToolResults)} ${this.runToolResults === 1 ? "tool result" : "tool results"}` : "";
+      // 中文对照：已经收到的工具结果数；不猜测端点尚未返回的流式 token。
+      logical.push({ text: `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`, tone: "accent", kind: "thinking" });
+      logical.push({ text: `  ${this.glyphs.boxBottomLeft} Ctrl-C to cancel`, tone: "muted" });
     }
 
     const width = this.contentWidth();
@@ -1112,31 +1149,14 @@ export class Tui {
     const model = modelRoom > 0 ? clip(singleLine(this.model), modelRoom) : "";
     const gap = Math.max(1, width - displayWidth(project) - displayWidth(model));
     return (
-      `  ${this.style.bold(this.style.paint("accent", project))}` +
-      `${" ".repeat(gap)}${this.style.paint("assistant", model)}  `
+      this.style.bold(this.style.paint("accent", project)) +
+      `${" ".repeat(gap)}${this.style.paint("assistant", model)}`
     );
   }
 
   private dividerLine(width: number): string {
     const line = this.glyphs.divider.repeat(Math.max(0, width));
-    return `  ${this.style.paint("muted", line)}  `;
-  }
-
-  private boxTopLine(width: number): string {
-    const inner = Math.max(0, width - 2);
-    const line = `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxTopRight}`;
-    return `  ${this.paintInputBorder(line)}  `;
-  }
-
-  private boxBottomLine(width: number): string {
-    const inner = Math.max(0, width - 2);
-    const line = `${this.glyphs.boxBottomLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxBottomRight}`;
-    return `  ${this.paintInputBorder(line)}  `;
-  }
-
-  /** 日常输入边界退到次要层次；审批时再强调需要用户作出的决定。 */
-  private paintInputBorder(text: string): string {
-    return this.style.paint(this.approvalRequest === undefined ? "muted" : "warning", text);
+    return this.style.paint("muted", line);
   }
 
   private footerLine(width: number): string {
@@ -1168,8 +1188,8 @@ export class Tui {
     const leftText = clip(left, Math.max(1, width - displayWidth(rightText) - 1));
     const gap = Math.max(1, width - displayWidth(leftText) - displayWidth(rightText));
     return (
-      `  ${this.style.paint(this.scrollOffset > 0 ? "warning" : permissionTone, leftText)}` +
-      `${" ".repeat(gap)}${this.style.paint("muted", rightText)}  `
+      this.style.paint(this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
+      `${" ".repeat(gap)}${this.style.paint("muted", rightText)}`
     );
   }
 
@@ -1197,11 +1217,12 @@ export class Tui {
   }
 
   private contentWidth(): number {
-    return Math.max(1, this.columns - 4);
+    // 只留最右一列，防止写满末列触发终端自动折行；其余边距交给终端配置。
+    return Math.max(1, this.columns - 1);
   }
 
   private recomputeGeometry(): void {
-    // 输入框（上边框/输入行/下边框）固定在底部，权限与统计在框下方；
+    // 先算底部停靠位置（上分隔线/输入行/下分隔线）；短会话再跟随内容收紧。
     // 最后三行留缓冲，避免传统 conhost 的窗口底边吃掉状态行。
     this.statusRow = this.rows - 3;
     this.boxBottomRow = this.statusRow - 1;

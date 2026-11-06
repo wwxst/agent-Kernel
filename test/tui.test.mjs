@@ -72,6 +72,105 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
 
+test("TUI：输入区仅用两条横线，提示与正文共用左边界，中文光标保持正确", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("中文A");
+  await tick();
+  assert.equal(lastRow(ui.text(), 18), "-".repeat(79));
+  assert.match(lastRow(ui.text(), 19), /^> 中文A/);
+  assert.equal(lastRow(ui.text(), 20), "-".repeat(79));
+  assert.match(ui.text(), /\x1b\[19;8H/);
+  ui.input.write("\r");
+  assert.equal(await pending, "中文A");
+});
+
+test("TUI：已有对话后空输入仅显示提示符和光标，不重复欢迎占位文字", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("hello");
+  const pending = ui.tui.readLine();
+  await tick();
+  assert.equal(lastRow(ui.text(), 19).trimEnd(), ">");
+  ui.input.write("\r");
+  assert.equal(await pending, "");
+});
+
+test("TUI flowInput：过程小字后留一行空白再接输入横线", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.logLine("Worked for 3s");
+  assert.equal(lastRow(ui.text(), 4), "Worked for 3s");
+  assert.equal(lastRow(ui.text(), 5).trim(), "");
+  assert.equal(lastRow(ui.text(), 6), "-".repeat(79));
+});
+
+test("TUI：等待状态分层并动态换符号，首段正文到达后停止更新", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.setThinking(true);
+  const first = lastRow(ui.text(), 6);
+  assert.match(first, /Thinking\.\.\. \(0s\)/);
+  assert.match(lastRow(ui.text(), 7), /^  [└+] Ctrl-C to cancel$/);
+  t.mock.timers.tick(200);
+  assert.notEqual(lastRow(ui.text(), 6), first);
+  ui.tui.assistantDelta("hello");
+  const finished = ui.text().length;
+  t.mock.timers.tick(1000);
+  assert.equal(ui.text().length, finished);
+  assert.doesNotMatch(lastRow(ui.text(), 7), /Ctrl-C/);
+});
+
+test("TUI：工具执行中有次要状态，结果到达后替换且不残留 Running", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const call = { id: "running", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.toolCall(call);
+  assert.match(lastRow(ui.text(), 5), /^    [└+] Running\.\.\.$/);
+  ui.tui.toolResult(call, "hello");
+  await tick();
+  assert.match(lastRow(ui.text(), 5), /Received 1 line/);
+  assert.doesNotMatch(lastRow(ui.text(), 5), /Running/);
+});
+
+test("TUI：后续等待展示实际收到的工具结果数，不把它冒充流式 token", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  const call = { id: "progress", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "hello");
+  ui.tui.setThinking(true);
+  assert.match(ui.text(), /Thinking\.\.\. \(0s · 1 tool result\)/);
+});
+
+test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重新计时", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  const run = { requests: 2, toolCalls: 2, usage, tokenBudget: { exceeded: false } };
+  ui.tui.start();
+  ui.tui.beginTurn("first");
+  t.mock.timers.tick(3200);
+  ui.tui.finishAssistant("done");
+  ui.tui.finishTurn(run, session, { failed: false });
+  assert.match(ui.text(), /Worked for 3s · 2 tool calls/);
+  ui.tui.beginTurn("second");
+  t.mock.timers.tick(1000);
+  ui.tui.finishTurn({ ...run, toolCalls: 0 }, session, { failed: true });
+  assert.match(ui.text(), /Stopped after 1s/);
+  assert.doesNotMatch(ui.text(), /Stopped after 4s/);
+});
+
 test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, color: true });
   t.after(() => ui.cleanup());
@@ -81,7 +180,7 @@ test("TUI：标题标明程序和项目，用户正文与输入边界使用中�
   assert.match(ui.text(), /agent-Kernel · repo/);
   assert.match(ui.text(), /\x1b\[(?:1;39|1;38;5;255;48;5;237)m(?:❯|>) READ_ME/, "用户消息加粗；富色终端为深色背景配白字，浅色主题仍可读");
   const inputTop = ui.text().slice(ui.text().lastIndexOf("\x1b[18;1H\x1b[2K"));
-  assert.match(inputTop, /\x1b\[(?:90|38;5;244)m[┌+]/);
+  assert.match(inputTop, /\x1b\[(?:90|38;5;244)m[-─]/);
 });
 
 test("TUI：回答审批后收起已结束的面板，保留决定与工具结果", async (t) => {
@@ -159,9 +258,10 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  assert.match(ui.text(), /Thinking\.\.\. · 0s · Ctrl-C to cancel/);
+  assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
+  assert.match(lastRow(ui.text(), 7), /Ctrl-C to cancel/);
   t.mock.timers.tick(2000);
-  assert.match(ui.text(), /Thinking\.\.\. · 2s · Ctrl-C to cancel/);
+  assert.match(ui.text(), /Thinking\.\.\. \(2s\)/);
   ui.tui.assistantDelta("hello");
   const finished = ui.text().length;
   t.mock.timers.tick(3000);
@@ -208,7 +308,7 @@ test("TUI：长输入留在单行框内，滚动和光标编辑不丢文字", as
   const task = "abcdefghijklmnopqrstuvwxyz0123456789";
   ui.input.write(task);
   await tick();
-  assert.match(lastRow(ui.text(), 19), /6789\s*[|│]\s*$/);
+  assert.match(lastRow(ui.text(), 19), /6789\s*$/);
   assert.ok(lastRow(ui.text(), 19).length <= 33, "输入行不能超过终端右边界");
   ui.input.write("\x1b[H");
   await tick();
@@ -248,7 +348,7 @@ test("TUI：长正文续行保持正文缩进，工具和回复间留白", async
   assert.match(lastRow(ui.text(), 5), /Received 1 line/);
   assert.equal(lastRow(ui.text(), 6).trim(), "");
   assert.match(lastRow(ui.text(), 7), /(?:✻|\*) abcdef/);
-  assert.match(lastRow(ui.text(), 8), /^    23456789/);
+  assert.equal(lastRow(ui.text(), 8), "  56789");
 });
 
 test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", async (t) => {
@@ -260,7 +360,7 @@ test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", asy
   ui.output.emit("resize");
   await tick();
   assert.match(ui.text(), /echo TAIL/);
-  assert.match(lastRow(ui.text(), 5), /^  [|│] Workspace: C:\\work\\repo\s+[|│]$/);
+  assert.match(lastRow(ui.text(), 5), /^[|│] Workspace: C:\\work\\repo\s+[|│]$/);
   for (let row = 4; row < 34; row++) {
     assert.ok(lastRow(ui.text(), row).length <= 34, `第 ${row} 行不应超宽`);
   }
@@ -688,7 +788,7 @@ test("TUI：固定布局的工具调用从运行中原地变成成功/失败", a
   );
   assert.ok(done > running, "结果必须覆盖同一行的运行中状态");
   assert.match(lastRow(text, 4), /(?:✓|\+) Shell: echo hi/);
-  assert.match(lastRow(text, 5), /^      [└+] ok/);
+  assert.match(lastRow(text, 5), /^    [└+] ok/);
 });
 
 test("TUI：失败和未执行工具显示不同符号，原因在下一行", async (t) => {
@@ -821,7 +921,7 @@ test("TUI：中文长行按显示宽度换行，不把固定框撑破", async (t
 
   const chunks = ui.text().match(/中+/g) ?? [];
   assert.ok(chunks.length > 1, "长中文行必须被拆行");
-  assert.ok(Math.max(...chunks.map((chunk) => chunk.length)) <= 15, "每行不超过 30 显示列");
+  assert.ok(Math.max(...chunks.map((chunk) => chunk.length)) <= 16, "每行不超过 33 显示列");
 });
 
 test("TUI：颜色开关生效，无颜色终端输出纯文本", async (t) => {
@@ -855,6 +955,9 @@ test("TUI：Windows Terminal 字形路径使用 Unicode 图标", async (t) => {
 
   assert.match(ui.text(), /❯ hello/);
   assert.match(ui.text(), /✻ Thinking/);
+  assert.match(ui.text(), /\x1b\[2 q/, "现代终端输入使用块状光标");
+  ui.tui.close();
+  assert.match(ui.text(), /\x1b\[0 q/, "退出恢复终端默认光标");
 });
 
 
@@ -864,20 +967,20 @@ test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在�
 
   ui.tui.start();
   await tick();
-  assert.match(lastRow(ui.text(), 6), /[┌+]/, "空会话输入框应位于标题下方");
+  assert.match(lastRow(ui.text(), 6), /^[-─]+$/, "空会话输入横线应位于标题下方");
   assert.match(lastRow(ui.text(), 7), /Ask anything/, "空会话输入可直接看到");
   assert.match(lastRow(ui.text(), 9), /workspace-write/);
 
   ui.tui.beginTurn("hello");
   await tick();
   assert.match(lastRow(ui.text(), 4), /hello/);
-  assert.match(lastRow(ui.text(), 9), /Ask anything/, "用户提问后输入框应在对话下方");
+  assert.match(lastRow(ui.text(), 8), /^(?:❯|>)\s*$/, "用户提问后输入框应在对话下方");
   ui.tui.assistantDelta("reply");
   ui.tui.finishAssistant("");
   await tick();
   assert.match(lastRow(ui.text(), 6), /reply/);
-  assert.match(lastRow(ui.text(), 11), /Ask anything/, "模型短回复后输入框跟随内容");
-  assert.doesNotMatch(lastRow(ui.text(), 30), /Ask anything/, "短会话不能仍钉在最底部");
+  assert.match(lastRow(ui.text(), 10), /^(?:❯|>)\s*$/, "模型短回复后输入框跟随内容");
+  assert.doesNotMatch(lastRow(ui.text(), 30), /(?:❯|>)/, "短会话不能仍钉在最底部");
 });
 
 test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复聊天", async (t) => {
@@ -885,10 +988,13 @@ test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复�
   t.after(() => ui.cleanup());
   ui.tui.start();
   ui.tui.beginTurn("Run test");
+  ui.tui.toolCall({ id: "approval-flow", type: "function", function: { name: "shell", arguments: '{"command":"echo safe"}' } });
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
   await tick();
 
   const screen = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
+  assert.ok(screen.some((row) => row.includes("Shell: echo safe")), "审批上方仍应看到工具标题");
+  assert.equal(screen.some((row) => row.includes("Running...")), false, "待审批不能称作已经执行");
   const panelBottom = screen.findIndex((row, index) => index >= 4 && /^\s*[└+][─-]+[┘+]$/.test(row));
   const decision = screen.findIndex((row) => row.includes("y/N >"));
   assert.ok(panelBottom >= 0, "审批完整面板应可见");
@@ -901,7 +1007,8 @@ test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复�
   await tick();
   const after = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
   assert.equal(after.some((row) => row.includes("Allow this command?")), false, "决策后收起面板");
-  assert.ok(after.findIndex((row) => row.includes("Ask anything")) < 20, "普通输入回到对话附近");
+  const inputIndex = after.findIndex((row) => /^(?:❯|>)\s*$/.test(row));
+  assert.ok(inputIndex >= 0 && inputIndex < 20, "普通输入回到对话附近");
 });
 
 test("TUI flowInput：长会话自动停靠底部，仍可翻历史且保留草稿", async (t) => {
@@ -910,7 +1017,7 @@ test("TUI flowInput：长会话自动停靠底部，仍可翻历史且保留草�
   ui.tui.start();
   for (let i = 0; i < 40; i++) ui.tui.logLine("LINE_" + i);
   await tick();
-  assert.match(lastRow(ui.text(), 30), /Ask anything/, "长会话回到底部固定输入行");
+  assert.match(lastRow(ui.text(), 30), /^(?:❯|>)\s*$/, "长会话回到底部固定输入行");
 
   const pending = ui.tui.readLine();
   ui.input.write("draft");
