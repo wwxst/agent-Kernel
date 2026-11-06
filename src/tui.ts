@@ -239,6 +239,12 @@ export class Tui {
   /** 仅固定布局启用键盘菜单；普通 REPL/行式审批继续使用 y/N。 */
   private approvalMenuActive = false;
 
+  /** 专用菜单按键结果；与 readline 的任务输入队列完全隔离。 */
+  private approvalMenuResolve?: (decision: boolean | null) => void;
+
+  /** 仅审批时隐藏终端原生光标，退出与取消必须恢复。 */
+  private approvalCursorHidden = false;
+
   /** 审批开始后，只有允许执行或收到工具结果，才解除 Running 子行的显示抑制。 */
   private approvalBlocksRunning = false;
 
@@ -318,6 +324,9 @@ export class Tui {
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     this.rl.on("line", (line) => {
+      // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
+      // 也不能在审批结束后进入下一轮任务队列。
+      if (this.approvalMenuActive) return;
       const resolve = this.waiting.shift();
       if (resolve === undefined) {
         this.lines.push(line);
@@ -330,6 +339,7 @@ export class Tui {
       this.ended = true;
       this.promptActive = false;
       this.inputDirty = true;
+      this.approvalMenuResolve?.(null);
       for (const resolve of this.waiting.splice(0)) resolve(null);
     });
     // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT；这里仍然 abort 同一个 controller。
@@ -338,28 +348,38 @@ export class Tui {
       this.rl.close();
     });
 
-    // PageUp/PageDown 走历史滚动；readline 仍然负责输入行的编辑。
+    // 固定审批直接处理方向键/Enter/Esc，不再创建一条看不见的 readline 输入行。
+    // readline 仍负责原有的任务编辑，但审批期间产生的 line 事件被隔离。
     this.onKeypress = (_text, key) => {
-      if (!this.layout || this.closed) return;
+      if (this.closed) return;
       const name = key?.name?.toLowerCase();
 
-      if (this.approvalMenuActive && this.promptActive) {
+      if (this.approvalMenuActive) {
         if (name === "up" || name === "down") {
           this.approvalChoice = name === "up" ? "allow" : "deny";
-          // readline 会先处理方向键（可能从输入历史载入旧任务）；
-          // 菜单导航不能让历史任务变成审批输入。
           if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
-          this.renderNow();
+          if (this.layout) this.renderNow();
+          else this.writeRaw(`\n> ${this.approvalChoice === "allow" ? "1. Yes, allow once" : "2. No (default)"}\n`);
+          return;
+        }
+        if (name === "return" || name === "enter") {
+          this.approvalMenuResolve?.(this.approvalChoice === "allow");
           return;
         }
         if (name === "escape") {
-          // Esc 必须直接拒绝，不要求再按 Enter，也不能留下半行草稿。
-          if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
-          this.rl.write("n\n");
+          this.approvalMenuResolve?.(false);
           return;
         }
+        if (name === "pageup" || name === "pagedown") {
+          if (this.layout) this.scrollPage(name === "pageup" ? "up" : "down");
+          return;
+        }
+        // 审批只接受菜单按键；误输入的任意文本不改变决定、不写入下一个任务。
+        if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+        return;
       }
 
+      if (!this.layout) return;
       if (name === "pageup") this.scrollPage("up");
       else if (name === "pagedown") this.scrollPage("down");
       // 等 readline 处理完按键后，读取新的 line/cursor 重画输入。
@@ -418,8 +438,12 @@ export class Tui {
       if (hadLayout) {
         this.output.write("\n");
         if (this.approvalRequest !== undefined) {
-          // 降级时仍完整展示审批，不把窄窗口当成截断命令的理由。
-          this.output.write(formatApproval(this.approvalRequest, this.workspace));
+          // 缩小窗口时退化为逐行显示，菜单仍只接受方向键/Enter/Esc。
+          const prompt = formatApproval(this.approvalRequest, this.workspace);
+          const body = prompt.endsWith(APPROVAL_QUESTION)
+            ? prompt.slice(0, -APPROVAL_QUESTION.length) : prompt;
+          this.output.write(`${body}\nDo you want to proceed?\n  1. Yes, allow once\n> 2. No (default)\nEsc to cancel · Up/Down · Enter\n`);
+          this.setApprovalCursor(false);
         }
         if (this.promptActive) {
           this.rl.setPrompt(this.promptText);
@@ -437,6 +461,7 @@ export class Tui {
     this.lastFrame = [];
     this.lastTotalLines = 0;
     this.output.write("\x1b[2J\x1b[H");
+    if (this.approvalMenuActive) this.setApprovalCursor(true);
     this.renderNow();
     if (wasPrompt) {
       this.restorePrompt();
@@ -751,7 +776,7 @@ export class Tui {
       { text: `${this.approvalChoice === "deny" ? select : " "} 2. No (default)`,
         tone: this.approvalChoice === "deny" ? "accent" : "muted" },
       { text: "", tone: "plain" },
-      { text: "Esc to cancel · Up/Down to select · Enter to confirm", tone: "muted" },
+      { text: "Esc to cancel", tone: "muted" },
     ];
 
     const separator: LogLine = {
@@ -782,29 +807,48 @@ export class Tui {
       this.approvalMenuActive = this.layout;
       this.scrollOffset = 0;
     }
-    let answer: string | null;
+    let approved: boolean;
     try {
       if (this.layout) {
+        this.setApprovalCursor(true);
         this.renderNow();
-        // 空回车采用当前高亮选择（默认 No）；兼容直接输入 y/yes、n/no 和 1/2。
-        const menuPrompt = this.glyphs.user === ">"
-          ? "Up/Down · Enter · Esc > "
-          : "↑↓ select · Enter · Esc > ";
-        answer = await this.readLine(menuPrompt, { placeholder: false });
+        // 菜单仅处理导航按键，默认 No。没有隐形文本输入和自动记住授权。
+        const decision = await new Promise<boolean | null>((resolve) => {
+          this.approvalMenuResolve = resolve;
+          if (this.ended || this.controller.signal.aborted) resolve(null);
+        });
+        if (decision === null) {
+          throw new Error(
+            this.controller.signal.aborted
+              ? "shell approval skipped: task cancelled"
+              : "shell approval skipped: approval prompt closed",
+          );
+        }
+        approved = decision;
       } else {
         const formatted = formatApproval(request, this.workspace);
         const header = formatted.endsWith(APPROVAL_QUESTION)
           ? formatted.slice(0, -APPROVAL_QUESTION.length)
           : formatted;
-        // 固定布局可恢复时只回显，不把整个审批再存一份进有界日志。
         this.writeRaw(`${header.replace(/\n$/, "")}${this.newline()}`);
-        answer = await this.readLine(APPROVAL_QUESTION);
+        const answer = await this.readLine(APPROVAL_QUESTION);
+        if (answer === null) {
+          throw new Error(
+            this.controller.signal.aborted
+              ? "shell approval skipped: task cancelled"
+              : "shell approval skipped: approval prompt closed",
+          );
+        }
+        approved = isApproved(answer);
       }
     } finally {
+      this.approvalMenuResolve = undefined;
       if (this.fixedLayoutAllowed) {
-        // 完整审批只在等待期间展开；回答后保留决定和工具结果，避免旧面板看起来仍待授权。
         this.approvalMenuActive = false;
         this.approvalRequest = undefined;
+        // 清理 readline 对方向键、误输入和回车的内部缓冲，禁止污染下一轮任务。
+        if (!this.ended && this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+        this.setApprovalCursor(false);
         this.promptText = COMMAND_PROMPT;
         this.promptPlaceholder = true;
         this.trimLog();
@@ -812,19 +856,6 @@ export class Tui {
       }
     }
 
-    if (answer === null) {
-      // EOF/readline 关闭不是「用户拒绝」；让 Permission 折成审批通道错误。
-      throw new Error(
-        this.controller.signal.aborted
-          ? "shell approval skipped: task cancelled"
-          : "shell approval skipped: approval prompt closed",
-      );
-    }
-
-    const response = answer.trim();
-    const approved = this.fixedLayoutAllowed
-      ? response === "" ? this.approvalChoice === "allow" : response === "1" || isApproved(response)
-      : isApproved(answer);
     if (approved) this.approvalBlocksRunning = false;
     if (this.layout) {
       this.logLine(
@@ -859,6 +890,7 @@ export class Tui {
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
+    this.setApprovalCursor(false);
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.layout) {
@@ -914,7 +946,10 @@ export class Tui {
     if (this.flowInput) this.recomputeGeometry();
     const width = this.contentWidth();
     const lines = this.wrappedDisplayLines();
-    if (this.flowInput && this.scrollOffset === 0) {
+    if (this.approvalMenuActive) {
+      // 审批独占可视区域：不再为隐藏的聊天输入框与状态栏保留四行。
+      this.logHeight = Math.max(1, this.rows - LOG_TOP);
+    } else if (this.flowInput && this.scrollOffset === 0) {
       // 审批是需要就地操作的焦点面板：只为命令面板与最近两行上下文预留高度。
       // 长会话此前的日志仍留在滚动历史，不把 y/N 输入推离审批面板。
       const focusedLength = this.approvalRequest === undefined
@@ -955,10 +990,12 @@ export class Tui {
 
     // 审批菜单的 Esc 提示下方也不画聊天输入区的上边线；
     // 否则虽然删除面板收尾线，依然会看到另一条横线。
-    rows[this.boxTopRow - 1] = this.approvalRequest === undefined ? divider : "";
-    rows[this.inputRow - 1] = this.inputLine(width);
-    rows[this.boxBottomRow - 1] = divider;
-    rows[this.statusRow - 1] = this.footerLine(width);
+    if (!this.approvalMenuActive) {
+      rows[this.boxTopRow - 1] = divider;
+      rows[this.inputRow - 1] = this.inputLine(width);
+      rows[this.boxBottomRow - 1] = divider;
+      rows[this.statusRow - 1] = this.footerLine(width);
+    }
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
     for (let index = 0; index < rows.length; index++) {
@@ -969,7 +1006,14 @@ export class Tui {
       }
     }
     this.inputDirty = false;
-    this.restoreInputCursor();
+    if (!this.approvalMenuActive) this.restoreInputCursor();
+  }
+
+  /** 确保审批结束、取消或 resize 后不会把终端光标留在隐藏状态。 */
+  private setApprovalCursor(hidden: boolean): void {
+    if (!this.terminalControls || this.approvalCursorHidden === hidden) return;
+    this.output.write(hidden ? "\x1b[?25l" : "\x1b[?25h");
+    this.approvalCursorHidden = hidden;
   }
 
   private paintLogLine(line: LogLine, width: number): string {
