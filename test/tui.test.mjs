@@ -71,6 +71,41 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
 
+test("TUI：Shell 非零退出显示失败，文件中的退出码文本仍是成功读取", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const call = { id: "exit", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: 'node -e "process.exitCode=7"' }) } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "exit 7\nfailed check\nnext step");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), /(?:✗|x) Shell/);
+  assert.match(lastRow(ui.text(), 5), /exit 7/);
+  assert.match(lastRow(ui.text(), 6), /failed check/);
+  assert.match(lastRow(ui.text(), 7), /next step/);
+
+  const read = { id: "read-exit", type: "function", function: { name: "read", arguments: '{"path":"status.txt"}' } };
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "exit 7\nfailed check");
+  await tick();
+  assert.match(lastRow(ui.text(), 9), /(?:✓|\+) Read status\.txt/);
+  assert.match(lastRow(ui.text(), 10), /Received 2 lines/);
+});
+
+test("TUI：Shell 超时、取消和无退出码显示失败，正常退出保留成功", async (t) => {
+  for (const status of ["timeout after 25ms", "cancelled by signal", "exit null", "exit -1", "exit 0"]) {
+    const ui = makeTui({ interactive: true, tty: true });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    const call = { id: "status", type: "function", function: { name: "shell", arguments: '{"command":"node -e 0"}' } };
+    ui.tui.toolCall(call);
+    ui.tui.toolResult(call, `${status}\n`);
+    await tick();
+    assert.match(lastRow(ui.text(), 4), status === "exit 0" ? /(?:✓|\+) Shell/ : /(?:✗|x) Shell/, status);
+    assert.match(lastRow(ui.text(), 5), new RegExp(status));
+  }
+});
+
 test("TUI：工具名称使用中性粗体，状态单独着色，结果显示缩进子行", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, color: true });
   t.after(() => ui.cleanup());

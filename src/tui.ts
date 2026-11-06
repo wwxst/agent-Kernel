@@ -1480,7 +1480,7 @@ interface ToolResultSummary {
 }
 
 /** 把工具结果折成第一行摘要；固定布局和行式聊天共用同一套失败/拒绝判定。 */
-function summarizeToolResult(result: string): ToolResultSummary {
+function summarizeToolResult(call: ToolCall, result: string): ToolResultSummary {
   const lines = result
     .split("\n")
     .map((line) => line.trim())
@@ -1488,8 +1488,16 @@ function summarizeToolResult(result: string): ToolResultSummary {
   const first = lines[0] ?? "(no output)";
   const notRun = first.startsWith("ERROR: not run:");
   const denied = first.startsWith("ERROR: permission denied:");
-  const failed = first.startsWith("ERROR:");
-  const body = failed ? first.slice("ERROR:".length).trim() : first;
+  const error = first.startsWith("ERROR:");
+  // Shell 正常返回的文本也可能是非零退出、超时或取消；只按 ERROR 前缀会画成成功。
+  // 仅识别 Shell 的状态行，避免把文件正文里的「exit 7」误判成读取失败。
+  const shellFailed = call.function.name === "shell" && (
+    (/^exit (?:-?\d+|null)$/.test(first) && first !== "exit 0") ||
+    /^timeout after \d+ms$/.test(first) ||
+    first === "cancelled by signal"
+  );
+  const failed = error || shellFailed;
+  const body = error ? first.slice("ERROR:".length).trim() : first;
   const more = lines.length > 1 ? " …" : "";
   return { failed, denied, notRun, body, more };
 }
@@ -1547,7 +1555,7 @@ function formatToolEvent(call: ToolCall): string {
 
 /** 固定布局里的工具结果：失败/拒绝/未执行用不同符号，第一行原因放在下一行。 */
 function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs): LogLine[] {
-  const summary = summarizeToolResult(result);
+  const summary = summarizeToolResult(call, result);
   const event = formatToolEvent(call);
   if (!summary.failed) {
     const resultLines = result === "" ? [] : splitDisplayLines(result);
@@ -1582,7 +1590,7 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs): LogLin
  * 行式聊天/非 TTY 的工具结果：沿用 v0.1 的标记，避免 e2e 断言和管道输出被 UI 改动影响。
  */
 function formatToolResult(call: ToolCall, result: string): string {
-  const summary = summarizeToolResult(result);
+  const summary = summarizeToolResult(call, result);
   const label = summary.denied ? "denied" : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";
   const mark = summary.failed ? (summary.notRun ? "–" : "✗") : "✓";
   return `${mark} ${call.function.name} [${label}] ${clip(summary.body, 160)}${summary.more}`;
