@@ -159,7 +159,6 @@
  ❯ 2. No (default)
 
  Esc to cancel · Up/Down to select · Enter to confirm
- ─────────────────────────────────────────────────────
 
  ↑↓ select · Enter · Esc >
  workspace-write               2 requests · 1 tool call
