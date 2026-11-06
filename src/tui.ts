@@ -233,6 +233,12 @@ export class Tui {
   /** 待审批的原始请求不受日志上限裁剪，resize 时按当前宽度重新排版。 */
   private approvalRequest?: PermissionRequest;
 
+  /** 菜单默认拒绝：空回车不会授权；只影响 TUI，不改 Permission 策略。 */
+  private approvalChoice: "allow" | "deny" = "deny";
+
+  /** 仅固定布局启用键盘菜单；普通 REPL/行式审批继续使用 y/N。 */
+  private approvalMenuActive = false;
+
   /** 审批开始后，只有允许执行或收到工具结果，才解除 Running 子行的显示抑制。 */
   private approvalBlocksRunning = false;
 
@@ -336,6 +342,24 @@ export class Tui {
     this.onKeypress = (_text, key) => {
       if (!this.layout || this.closed) return;
       const name = key?.name?.toLowerCase();
+
+      if (this.approvalMenuActive && this.promptActive) {
+        if (name === "up" || name === "down") {
+          this.approvalChoice = name === "up" ? "allow" : "deny";
+          // readline 会先处理方向键（可能从输入历史载入旧任务）；
+          // 菜单导航不能让历史任务变成审批输入。
+          if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+          this.renderNow();
+          return;
+        }
+        if (name === "escape") {
+          // Esc 必须直接拒绝，不要求再按 Enter，也不能留下半行草稿。
+          if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+          this.rl.write("n\n");
+          return;
+        }
+      }
+
       if (name === "pageup") this.scrollPage("up");
       else if (name === "pagedown") this.scrollPage("down");
       // 等 readline 处理完按键后，读取新的 line/cursor 重画输入。
@@ -705,56 +729,42 @@ export class Tui {
     return answer;
   }
 
-  /** v0.3 审批面板：完整 workspace 与命令放进可滚动的框，不改写、不截断。 */
+  /** 完整、安全的命令展示 + 两项菜单。菜单只修改显示与输入映射，不修改权限判定。 */
   private approvalPanelLines(request: PermissionRequest): LogLine[] {
     const width = this.contentWidth();
-    if (width < 12) {
-      return formatApproval(request, this.workspace)
-        .split("\n")
-        .filter((line) => line !== "")
-        .map((line) => this.makeLogLine(line, "warning"));
-    }
-
     const rawCommand = typeof request.args.command === "string" ? request.args.command : "";
     const command = rawCommand === "" ? "(empty command)" : rawCommand;
-    const commandLines = command
-      .split("\n")
-      .map((line) => escapeControlCharacters(line));
+    const commandLines = command.split("\n").map((line) => escapeControlCharacters(line));
     const cwd = escapeControlCharacters(this.workspace).replace(/\n/g, "\\u000a");
+    const select = this.glyphs.user;
 
-    const content = [
-      `Workspace: ${cwd}`,
-      "",
-      "Command:",
-      ...commandLines.map((line) => `  ${line}`),
-      "",
-      "Allow this command?",
-      "  [Y] Allow once",
-      // 中文对照：拒绝（默认）；空输入不授权。
-      "  [N] Deny (default)",
+    const entries: Array<{ text: string; tone: Tone }> = [
+      { text: "Shell permission", tone: "warning" },
+      { text: `Workspace: ${cwd}`, tone: "muted" },
+      { text: "", tone: "plain" },
+      { text: "Command:", tone: "assistant" },
+      ...commandLines.map((line) => ({ text: `  | ${line}`, tone: "assistant" as Tone })),
+      { text: "", tone: "plain" },
+      { text: "Do you want to proceed?", tone: "assistant" },
+      { text: `${this.approvalChoice === "allow" ? select : " "} 1. Yes, allow once`,
+        tone: this.approvalChoice === "allow" ? "accent" : "muted" },
+      { text: `${this.approvalChoice === "deny" ? select : " "} 2. No (default)`,
+        tone: this.approvalChoice === "deny" ? "accent" : "muted" },
+      { text: "", tone: "plain" },
+      { text: "Esc to cancel · Up/Down to select · Enter to confirm", tone: "muted" },
     ];
-    const textWidth = Math.max(1, width - 4);
-    const panel: LogLine[] = [];
-    const title = " Shell permission ";
-    const fill = width - 3 - displayWidth(title);
-    const top = fill >= 0
-      ? `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal}${title}${this.glyphs.boxHorizontal.repeat(fill)}${this.glyphs.boxTopRight}`
-      : `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal.repeat(Math.max(0, width - 2))}${this.glyphs.boxTopRight}`;
-    panel.push({ text: top, tone: "warning" });
 
-    for (const line of content) {
-      for (const part of wrapLine(line, textWidth)) {
-        panel.push({
-          text: `${this.glyphs.boxVertical} ${padRight(part, textWidth)} ${this.glyphs.boxVertical}`,
-          tone: line.startsWith("  [") || line === "Allow this command?" ? "warning" : "assistant",
-        });
+    const separator: LogLine = {
+      text: this.glyphs.divider.repeat(Math.max(1, width)),
+      tone: "muted",
+    };
+    const panel: LogLine[] = [{ ...separator }];
+    for (const entry of entries) {
+      for (const part of wrapLine(entry.text, width)) {
+        panel.push({ text: part, tone: entry.tone });
       }
     }
-
-    panel.push({
-      text: `${this.glyphs.boxBottomLeft}${this.glyphs.boxHorizontal.repeat(Math.max(0, width - 2))}${this.glyphs.boxBottomRight}`,
-      tone: "warning",
-    });
+    panel.push({ ...separator });
     return panel;
   }
 
@@ -768,14 +778,19 @@ export class Tui {
       this.pushBlank();
       this.approvalBlocksRunning = true;
       this.approvalRequest = request;
+      this.approvalChoice = "deny";
+      this.approvalMenuActive = this.layout;
       this.scrollOffset = 0;
     }
     let answer: string | null;
     try {
       if (this.layout) {
         this.renderNow();
-        // 中文对照：y/N，明确告诉用户空输入默认拒绝。
-        answer = await this.readLine("y/N > ", { placeholder: false });
+        // 空回车采用当前高亮选择（默认 No）；兼容直接输入 y/yes、n/no 和 1/2。
+        const menuPrompt = this.glyphs.user === ">"
+          ? "Up/Down · Enter · Esc > "
+          : "↑↓ select · Enter · Esc > ";
+        answer = await this.readLine(menuPrompt, { placeholder: false });
       } else {
         const formatted = formatApproval(request, this.workspace);
         const header = formatted.endsWith(APPROVAL_QUESTION)
@@ -788,6 +803,7 @@ export class Tui {
     } finally {
       if (this.fixedLayoutAllowed) {
         // 完整审批只在等待期间展开；回答后保留决定和工具结果，避免旧面板看起来仍待授权。
+        this.approvalMenuActive = false;
         this.approvalRequest = undefined;
         this.promptText = COMMAND_PROMPT;
         this.promptPlaceholder = true;
@@ -805,7 +821,10 @@ export class Tui {
       );
     }
 
-    const approved = isApproved(answer);
+    const response = answer.trim();
+    const approved = this.fixedLayoutAllowed
+      ? response === "" ? this.approvalChoice === "allow" : response === "1" || isApproved(response)
+      : isApproved(answer);
     if (approved) this.approvalBlocksRunning = false;
     if (this.layout) {
       this.logLine(
