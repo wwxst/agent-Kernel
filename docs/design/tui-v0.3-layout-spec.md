@@ -158,14 +158,12 @@
    1. Yes, allow once
  ❯ 2. No (default)
 
- Esc to cancel · Up/Down to select · Enter to confirm
-
- ↑↓ select · Enter · Esc >
+ Esc to cancel
  workspace-write               2 requests · 1 tool call
 ~~~
 
-- 默认高亮 **2. No**。空回车按当前选中项确认，因此默认拒绝；上键选中 **1. Yes, allow once** 后再按 Enter，或明确输入 1 / y / yes，才允许本次命令。
-- 下键选中 No，Enter 拒绝；Esc 直接拒绝；**不提供永久授权 / 不再询问**。
+- 默认高亮 **2. No**。空回车按当前选中项确认，因此默认拒绝；只有上键选中 **1. Yes, allow once** 后再按 Enter，才允许本次命令。固定 TUI 不再显示文字输入行，粘贴 `1`、`y`、`yes` 不得产生隐形授权。
+- 下键选中 No，Enter 拒绝；Esc 直接拒绝；**不提供永久授权 / 不再询问**。审批期间隐藏普通聊天输入和状态栏，结束后恢复光标与原有输入；非固定布局仍使用可见的 y/N 提示。
 - 传统终端、无固定布局时继续原有逐行 y/N 提示；不得把普通输入行当成持久授权。
 
 **安全不变量：**
