@@ -192,6 +192,23 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   assert.doesNotMatch(ui.text(), /Stopped after 4s/);
 });
 
+test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条消息仍贴顶", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 0 });
+  const ui = makeTui({ interactive: true, tty: true, flowInput: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  const run = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
+  ui.tui.start();
+  ui.tui.beginTurn("first");
+  assert.match(lastRow(ui.text(), 4), /^(?:❯|>) first/);
+  ui.tui.finishAssistant("done");
+  t.mock.timers.tick(2000);
+  ui.tui.finishTurn(run, session, { failed: false });
+  ui.tui.beginTurn("second");
+  assert.match(lastRow(ui.text(), 8), /Worked for 2s/);
+  assert.equal(lastRow(ui.text(), 9), "");
+  assert.match(lastRow(ui.text(), 10), /^(?:❯|>) second/);
+});
+
 test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, color: true });
   t.after(() => ui.cleanup());

@@ -1068,6 +1068,8 @@ export class Tui {
   }
 
   private pushTask(task: string): void {
+    // 新一轮与上轮耗时/错误之间留一行；空会话和已有空行由 pushBlank 去重。
+    this.pushBlank();
     const lines = splitDisplayLines(task);
     lines.forEach((line, index) => {
       this.pushLog(index === 0 ? `${this.glyphs.user} ${line}` : `  ${line}`, "user");

@@ -74,3 +74,9 @@
 动画改为 `✻`、`✶`、`✢`、`✦` 四个文本符号，传统终端的 ASCII 帧不变。新增公共 Tui 接口回归逐帧检查，确认旧版在 U+2733 失败，修复后全部通过。`npm run check`：268 tests / 261 pass / 7 platform skips / 0 fail；TUI 56 项通过，`npm run eval:check` 20/20。
 
 [修复前原图](./spinner-emoji-before.png)与[修复后原图](./spinner-text-after.png)来自真实终端中运行的 Tui 模块。为稳定复现第二帧，临时字形探针冻结显示计时，没有发出模型请求；截图明确标注 `UI glyph probe`，不作为实际模型响应截图。源码只替换动画帧并补注释，未修改其他显示或执行逻辑。后续提交的 CI 结果记录在 PR 正文。
+
+## 补充：耗时与下一轮消息之间的留白
+
+用户实测发现 `Worked for 2s` 紧贴下一条用户消息。原因是用户消息只在末尾留空行，完成耗时写入后，下一次 Run 没有补上前置间距。现复用已有的空行去重逻辑，在追加用户消息前留一行；首条消息仍贴顶，不累计多余空行。
+
+新增公共 Tui 接口回归，旧版明确在预期空行处出现 `second` 用户消息而失败，修复后通过。实际重启 CLI，在独立测试目录先请求只回复 OK，再询问能力，两次均不调用工具；[真实第二轮等待截图](./turn-gap-live-after.png)确认耗时和下一条用户消息间有一行空白。`npm run check`：269 tests / 262 pass / 7 platform skips / 0 fail，含 TUI 57 项；`npm run eval:check` 20/20。源码只增加消息前的显示空行，不改变 Run / Session 语义。
