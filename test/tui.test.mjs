@@ -24,7 +24,7 @@ function lastRow(text, row) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -51,6 +51,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     rows,
     layout: tty,
     color,
+    flowInput,
   });
   if (previousTerm === undefined) delete process.env.TERM;
   else process.env.TERM = previousTerm;
@@ -854,4 +855,70 @@ test("TUI：Windows Terminal 字形路径使用 Unicode 图标", async (t) => {
 
   assert.match(ui.text(), /❯ hello/);
   assert.match(ui.text(), /✻ Thinking/);
+});
+
+
+test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在屏幕底部", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  await tick();
+  assert.match(lastRow(ui.text(), 6), /[┌+]/, "空会话输入框应位于标题下方");
+  assert.match(lastRow(ui.text(), 7), /Ask anything/, "空会话输入可直接看到");
+  assert.match(lastRow(ui.text(), 9), /workspace-write/);
+
+  ui.tui.beginTurn("hello");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), /hello/);
+  assert.match(lastRow(ui.text(), 9), /Ask anything/, "用户提问后输入框应在对话下方");
+  ui.tui.assistantDelta("reply");
+  ui.tui.finishAssistant("");
+  await tick();
+  assert.match(lastRow(ui.text(), 6), /reply/);
+  assert.match(lastRow(ui.text(), 11), /Ask anything/, "模型短回复后输入框跟随内容");
+  assert.doesNotMatch(lastRow(ui.text(), 30), /Ask anything/, "短会话不能仍钉在最底部");
+});
+
+test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复聊天", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("Run test");
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+  await tick();
+
+  const screen = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
+  const panelBottom = screen.findIndex((row, index) => index >= 4 && /^\s*[└+][─-]+[┘+]$/.test(row));
+  const decision = screen.findIndex((row) => row.includes("y/N >"));
+  assert.ok(panelBottom >= 0, "审批完整面板应可见");
+  assert.ok(decision >= 0, "y/N 决策输入应可见");
+  assert.ok(decision - panelBottom <= 2, "审批决定必须紧挨着命令面板");
+  assert.ok(decision < 30, "短命令审批不应沉到屏幕最底部");
+
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
+  await tick();
+  const after = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
+  assert.equal(after.some((row) => row.includes("Allow this command?")), false, "决策后收起面板");
+  assert.ok(after.findIndex((row) => row.includes("Ask anything")) < 20, "普通输入回到对话附近");
+});
+
+test("TUI flowInput：长会话自动停靠底部，仍可翻历史且保留草稿", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let i = 0; i < 40; i++) ui.tui.logLine("LINE_" + i);
+  await tick();
+  assert.match(lastRow(ui.text(), 30), /Ask anything/, "长会话回到底部固定输入行");
+
+  const pending = ui.tui.readLine();
+  ui.input.write("draft");
+  await tick();
+  assert.match(lastRow(ui.text(), 30), /draft/);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  await tick();
+  assert.match(lastRow(ui.text(), 30), /draft/, "滚动历史不覆盖输入");
+  ui.input.write("\r");
+  assert.equal(await pending, "draft");
 });
