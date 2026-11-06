@@ -337,12 +337,15 @@ test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) =
   assert.match(ui.text(), /Do you want to proceed\?/);
   assert.match(ui.text(), /1\. Yes, allow once/);
   assert.match(ui.text(), /2\. No \(default\)/);
-  assert.match(ui.text(), /Enter · Esc/);
+  assert.match(ui.text(), /Esc to cancel/);
+  assert.doesNotMatch(ui.text(), /↑↓ select · Enter · Esc >/, "审批期间没有额外文字输入行");
+  assert.match(ui.text(), /\x1b\[\?25l/, "审批期间隐藏终端光标");
   assert.match(ui.text(), /\x1b\[39m[^\x1b]*echo safe/);
   ui.input.write("\r");
   assert.equal(await pending, false);
   const finalInput = ui.text().slice(ui.text().lastIndexOf("\x1b[19;1H\x1b[2K"));
-  assert.doesNotMatch(finalInput, /Enter · Esc/, "审批结束后恢复普通聊天输入提示");
+  assert.match(ui.text(), /\x1b\[\?25h/, "审批结束必须恢复终端光标");
+  assert.doesNotMatch(finalInput, /Esc to cancel/, "审批结束后恢复普通聊天输入提示");
 });
 
 test("TUI：错误和非流式正文到达同样清除等待计时", async (t) => {
@@ -808,7 +811,7 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
     args: { command: "echo hi\necho bye" },
   });
   const beforeDecision = ui.text().length;
-  ui.input.write("y\n");
+  ui.input.write("\x1b[A\r");
 
   assert.equal(await pending, true);
   assert.match(ui.text().slice(beforeDecision), /Running\.\.\./, "允许后恢复执行中子行");
@@ -1079,12 +1082,13 @@ test("TUI flowInput：Shell 审批菜单与确认输入就近，决策后恢复�
   assert.ok(screen.some((row) => row.includes("Shell: echo safe")), "审批上方仍应看到工具标题");
   assert.equal(screen.some((row) => row.includes("Running...")), false, "待审批不能称作已经执行");
   const hint = screen.findIndex((row) => row.includes("Esc to cancel"));
-  const decision = screen.findIndex((row) => row.includes("Enter · Esc >"));
   assert.ok(hint >= 0, "审批菜单内应显示 Esc 取消提示");
-  assert.ok(decision > hint, "键盘确认输入必须在菜单提示下方");
-  assert.equal(screen[hint + 1]?.trim(), "", "Esc to cancel 下方不能再出现横线");
-  assert.ok(decision - hint <= 3, "确认输入必须紧邻菜单提示");
-  assert.ok(decision < 30, "短命令审批不应沉到屏幕最底部");
+  assert.equal(screen[hint + 1]?.trim(), "", "Esc 下方不能再出现横线");
+  assert.equal(screen.some((row) => row.includes("↑↓ select · Enter · Esc >")), false,
+    "审批期间不显示额外输入提示");
+  assert.equal(screen.some((row) => row.includes("workspace-write")), false,
+    "审批期间隐藏普通聊天状态栏");
+  assert.ok(hint < 30, "短命令审批不应沉到屏幕最底部");
 
   const beforeDecision = ui.text().length;
   ui.input.write("n\r");
@@ -1138,7 +1142,7 @@ test("TUI 审批菜单：上键选允许、下键选拒绝，Enter 只确认当�
   assert.equal(await deny, false, "下移到 No 后按 Enter 拒绝");
 });
 
-test("TUI 审批菜单：Esc 立即拒绝，空回车拒绝，数字和 y 保持显式兼容", async (t) => {
+test("TUI 审批菜单：Esc 和空回车拒绝，粘贴 y/1 不能变成隐形授权", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -1146,22 +1150,45 @@ test("TUI 审批菜单：Esc 立即拒绝，空回车拒绝，数字和 y 保持
   const escaped = ui.tui.approve({ tool: "shell", args: { command: "echo esc" } });
   escaped.catch(() => {});
   ui.input.write("\x1b");
-  assert.equal(await escaped, false, "Esc 不需要再次按 Enter");
+  assert.equal(await escaped, false, "Esc 直接拒绝");
 
   const empty = ui.tui.approve({ tool: "shell", args: { command: "echo empty" } });
   empty.catch(() => {});
   ui.input.write("\r");
-  assert.equal(await empty, false, "默认拒绝，不能空回车授权");
+  assert.equal(await empty, false, "空回车默认拒绝");
 
-  const number = ui.tui.approve({ tool: "shell", args: { command: "echo selected" } });
-  number.catch(() => {});
-  ui.input.write("1\r");
-  assert.equal(await number, true, "明确输入 1 可以允许一次");
+  for (const pasted of ["1", "y", "yes", "unknown"]) {
+    const pending = ui.tui.approve({ tool: "shell", args: { command: "echo " + pasted } });
+    pending.catch(() => {});
+    ui.input.write(pasted + "\r");
+    assert.equal(await pending, false, "隐藏的文字输入不能放行命令: " + pasted);
+  }
+  const nextTask = ui.tui.readLine();
+  ui.input.write("next task\r");
+  assert.equal(await nextTask, "next task", "审批期间的文字没有进入下一轮任务");
+});
 
-  const legacy = ui.tui.approve({ tool: "shell", args: { command: "echo y" } });
-  legacy.catch(() => {});
-  ui.input.write("yes\r");
-  assert.equal(await legacy, true, "保留旧 y/yes 输入习惯");
+test("TUI 审批菜单：固定布局直接键盘操作，不创建输入提示与聊天状态栏", async (t) => {
+  for (const flowInput of [false, true]) {
+    const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    const pending = ui.tui.approve({ tool: "shell", args: { command: "echo visual" } });
+    pending.catch(() => {});
+    await tick();
+
+    const rows = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
+    assert.ok(rows.some((row) => row.includes("Esc to cancel")));
+    assert.equal(rows.some((row) => row.includes("Ask anything")), false, "审批期间不应看到普通输入区");
+    assert.equal(rows.some((row) => row.includes("workspace-write")), false, "审批期间不显示聊天状态栏");
+    assert.equal(rows.some((row) => row.includes("↑↓ select · Enter · Esc >")), false);
+    assert.match(ui.text(), /\x1b\[\?25l/);
+
+    ui.input.write("\r");
+    assert.equal(await pending, false);
+    await tick();
+    assert.match(ui.text(), /\x1b\[\?25h/, "完成后恢复光标");
+  }
 });
 
 test("TUI 审批菜单：中文、长命令和控制字符展示保持安全，EOF 不授权", async (t) => {
@@ -1197,6 +1224,7 @@ test("TUI 审批菜单：无论底部固定或短会话跟随，Esc 下方都不
     const hint = rows.findIndex((row) => row.includes("Esc to cancel"));
     assert.ok(hint >= 0, "必须显示 Esc to cancel");
     assert.equal(rows[hint + 1]?.trim(), "", "Esc 下方无横线或输入框顶边");
+    assert.equal(rows.some((row) => row.includes("Enter · Esc >")), false, "菜单不显示输入框");
     assert.match(rows[hint - 1], /No \(default\)|^\s*$/, "取消说明紧接菜单后");
 
     ui.input.write("n\r");
