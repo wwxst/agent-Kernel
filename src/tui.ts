@@ -129,6 +129,8 @@ export interface TuiOptions {
   layout?: boolean;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
+  /** Claude Code 风格：短对话时输入框跟随消息，长对话时自动停靠底部。 */
+  flowInput?: boolean;
 }
 
 /**
@@ -155,6 +157,8 @@ export class Tui {
   private layout: boolean;
 
   private readonly fixedLayoutAllowed: boolean;
+
+  private readonly flowInput: boolean;
 
   private readonly terminalControls: boolean;
 
@@ -258,6 +262,7 @@ export class Tui {
     this.controller = options.controller;
     this.interactive = options.interactive;
     this.permissionMode = options.permission;
+    this.flowInput = options.flowInput ?? false;
     this.terminalControls = process.env.TERM !== "dumb";
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
@@ -853,14 +858,25 @@ export class Tui {
     }
     this.renderScheduled = false;
 
+    // 短对话下让输入框紧跟内容；当日志变长或用户翻看历史时，再固定到底部。
+    // 每帧先恢复最大视口，再用当前逻辑行数计算输入框位置，避免累积位移。
+    if (this.flowInput) this.recomputeGeometry();
     const width = this.contentWidth();
+    const lines = this.wrappedDisplayLines();
+    if (this.flowInput && this.scrollOffset === 0) {
+      const gap = this.approvalRequest === undefined ? 2 : 1;
+      this.logHeight = Math.min(this.logHeight, Math.max(2, lines.length + gap));
+      this.boxTopRow = LOG_TOP + this.logHeight;
+      this.inputRow = this.boxTopRow + 1;
+      this.boxBottomRow = this.inputRow + 1;
+      this.statusRow = this.boxBottomRow + 1;
+    }
+
     const rows: string[] = new Array(this.rows).fill("");
     rows[TITLE_ROW - 1] = this.titleLine(width);
     rows[PATH_ROW - 1] = `  ${this.style.paint("muted", fitPath(singleLine(this.workspace), width))}  `;
     const divider = this.dividerLine(width);
     rows[TOP_DIVIDER_ROW - 1] = divider;
-
-    const lines = this.wrappedDisplayLines();
     const total = lines.length;
     // 用户在翻历史时，新输出只增加偏移，保持当前视口内容不被拉回底部。
     if (this.scrollOffset > 0 && this.lastTotalLines > 0 && total > this.lastTotalLines) {
@@ -900,7 +916,11 @@ export class Tui {
 
   private paintLogLine(line: LogLine, width: number): string {
     const text = clip(line.text, width);
-    if (line.tone === "user") return this.style.bold(this.style.paint("user", text));
+    if (line.tone === "user") return this.style.userMessage(padRight(text, width));
+    if (line.tone === "assistant" && text.startsWith(`${this.glyphs.assistant} `)) {
+      return this.style.paint("accent", this.glyphs.assistant) +
+        this.style.paint("assistant", text.slice(this.glyphs.assistant.length));
+    }
     if (line.kind === "tool") {
       // 工具标题的四字符前缀是「两格缩进 + 单列符号 + 空格」；只有符号承担状态色。
       return this.style.paint(line.tone, text.slice(0, 4)) +
@@ -1226,11 +1246,21 @@ export class Tui {
 class Style {
   private readonly enabled: boolean;
 
+  private readonly rich: boolean;
+
   private readonly palette: Record<Tone, string>;
 
   constructor(enabled: boolean, rich: boolean) {
     this.enabled = enabled;
+    this.rich = rich;
     this.palette = rich ? RICH_PALETTE : BASIC_PALETTE;
+  }
+
+  /** 用户整行使用轻微底色，向 Claude Code 的任务条靠拢；16 色终端只加粗。 */
+  userMessage(text: string): string {
+    if (!this.enabled) return text;
+    if (!this.rich) return `\x1b[1;39m${text}\x1b[0m`;
+    return `\x1b[1;39;48;5;237m${text}\x1b[0m`;
   }
 
   paint(tone: Tone, text: string): string {
