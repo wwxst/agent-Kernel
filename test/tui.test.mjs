@@ -128,6 +128,27 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   assert.doesNotMatch(lastRow(ui.text(), 7), /Ctrl-C/);
 });
 
+test("TUI：现代终端等待动画所有帧使用文本符号，不触发彩色 emoji", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+  const previous = process.env.WT_SESSION;
+  process.env.WT_SESSION = "spinner-glyph-regression";
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => {
+    ui.cleanup();
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  });
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.setThinking(true);
+  for (let frame = 0; frame < 4; frame++) {
+    const symbol = lastRow(ui.text(), 6).split(" ")[0];
+    assert.equal([...symbol].length, 1);
+    assert.doesNotMatch(symbol, /\p{Emoji}/u, "等待符号不能被终端回退成彩色 emoji");
+    t.mock.timers.tick(200);
+  }
+});
+
 test("TUI：工具执行中有次要状态，结果到达后替换且不残留 Running", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());

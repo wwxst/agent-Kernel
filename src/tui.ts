@@ -1117,7 +1117,8 @@ export class Tui {
     }
     if (this.thinking) {
       const elapsed = Math.max(0, Date.now() - this.thinkingStartedAt);
-      const frames = this.glyphs === UNICODE_GLYPHS ? ["✻", "✳", "✶", "✢"] : ["*", "+", "-", "+"];
+      // 不用带 Emoji 属性的星号（如 U+2733）：Windows 会回退成绿色方块，破坏颜色与列宽。
+      const frames = this.glyphs === UNICODE_GLYPHS ? ["✻", "✶", "✢", "✦"] : ["*", "+", "-", "+"];
       const spinner = frames[Math.floor(elapsed / 200) % frames.length];
       // 只展示已收到的工具结果数，不猜测端点尚未返回的流式 token。
       const results = this.runToolResults > 0 && this.contentWidth() >= 48
