@@ -1078,11 +1078,12 @@ test("TUI flowInput：Shell 审批菜单与确认输入就近，决策后恢复�
   const screen = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
   assert.ok(screen.some((row) => row.includes("Shell: echo safe")), "审批上方仍应看到工具标题");
   assert.equal(screen.some((row) => row.includes("Running...")), false, "待审批不能称作已经执行");
-  const decision = screen.findIndex((row) => row.includes("Enter · Esc"));
-  const panelBottom = screen.findLastIndex((row, index) => index < decision && /^[-─]{20,}$/.test(row));
-  assert.ok(panelBottom >= 0, "审批菜单下方分隔线应可见");
-  assert.ok(decision >= 0, "菜单的键盘确认提示应可见");
-  assert.ok(decision - panelBottom <= 2, "审批决定必须紧挨着命令菜单");
+  const hint = screen.findIndex((row) => row.includes("Esc to cancel"));
+  const decision = screen.findIndex((row) => row.includes("Enter · Esc >"));
+  assert.ok(hint >= 0, "审批菜单内应显示 Esc 取消提示");
+  assert.ok(decision > hint, "键盘确认输入必须在菜单提示下方");
+  assert.equal(screen[hint + 1]?.trim(), "", "Esc to cancel 下方不能再出现横线");
+  assert.ok(decision - hint <= 3, "确认输入必须紧邻菜单提示");
   assert.ok(decision < 30, "短命令审批不应沉到屏幕最底部");
 
   const beforeDecision = ui.text().length;
@@ -1180,4 +1181,25 @@ test("TUI 审批菜单：中文、长命令和控制字符展示保持安全，E
   assert.doesNotMatch(text, /\x1b\[31m/);
   ui.input.end();
   await assert.rejects(pending, /approval prompt closed/);
+});
+
+
+test("TUI 审批菜单：无论底部固定或短会话跟随，Esc 下方都不画分隔线", async (t) => {
+  for (const flowInput of [false, true]) {
+    const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+    pending.catch(() => {});
+    await tick();
+
+    const rows = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
+    const hint = rows.findIndex((row) => row.includes("Esc to cancel"));
+    assert.ok(hint >= 0, "必须显示 Esc to cancel");
+    assert.equal(rows[hint + 1]?.trim(), "", "Esc 下方无横线或输入框顶边");
+    assert.match(rows[hint - 1], /No \(default\)|^\s*$/, "取消说明紧接菜单后");
+
+    ui.input.write("n\r");
+    assert.equal(await pending, false);
+  }
 });
