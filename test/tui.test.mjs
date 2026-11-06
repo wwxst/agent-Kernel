@@ -254,7 +254,7 @@ test("TUI：回答审批后收起已结束的面板，保留决定与工具结�
   ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
   await tick();
   const screen = Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n");
-  assert.doesNotMatch(screen, /Allow this command\?|Shell permission|\[Y\] Allow once/);
+  assert.doesNotMatch(screen, /Do you want to proceed\?|Shell permission|1\. Yes, allow once/);
   assert.match(screen, /(?:⊘|!) Denied/);
   assert.match(screen, /(?:⊘|!) Shell: echo safe/);
   assert.match(screen, /permission denied/);
@@ -327,20 +327,22 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   assert.doesNotMatch(lastRow(ui.text(), 6), /Thinking/);
 });
 
-test("TUI：Shell 审批正文中性显示，输入明确 y/N 且默认拒绝", async (t) => {
+test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, color: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
   pending.catch(() => {});
   await tick();
-  assert.match(ui.text(), /\[N\] Deny \(default\)/);
-  assert.match(ui.text(), /y\/N > /);
+  assert.match(ui.text(), /Do you want to proceed\?/);
+  assert.match(ui.text(), /1\. Yes, allow once/);
+  assert.match(ui.text(), /2\. No \(default\)/);
+  assert.match(ui.text(), /Enter · Esc/);
   assert.match(ui.text(), /\x1b\[39m[^\x1b]*echo safe/);
   ui.input.write("\r");
   assert.equal(await pending, false);
   const finalInput = ui.text().slice(ui.text().lastIndexOf("\x1b[19;1H\x1b[2K"));
-  assert.doesNotMatch(finalInput, /y\/N/, "审批结束后恢复普通聊天输入提示");
+  assert.doesNotMatch(finalInput, /Enter · Esc/, "审批结束后恢复普通聊天输入提示");
 });
 
 test("TUI：错误和非流式正文到达同样清除等待计时", async (t) => {
@@ -816,8 +818,8 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
   assert.match(text, /Command:/);
   assert.match(text, /[|│]\s+echo hi/);
   assert.match(text, /[|│]\s+echo bye/);
-  assert.match(text, /\[Y\] Allow once/);
-  assert.match(text, /\[N\] Deny/);
+  assert.match(text, /1\. Yes, allow once/);
+  assert.match(text, /2\. No \(default\)/);
   assert.match(text, /(?:✓|\+) Allowed once/);
 });
 
@@ -1063,7 +1065,7 @@ test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在�
   assert.doesNotMatch(lastRow(ui.text(), 30), /(?:❯|>)/, "短会话不能仍钉在最底部");
 });
 
-test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复聊天", async (t) => {
+test("TUI flowInput：Shell 审批菜单与确认输入就近，决策后恢复聊天", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -1075,11 +1077,11 @@ test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复�
   const screen = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
   assert.ok(screen.some((row) => row.includes("Shell: echo safe")), "审批上方仍应看到工具标题");
   assert.equal(screen.some((row) => row.includes("Running...")), false, "待审批不能称作已经执行");
-  const panelBottom = screen.findIndex((row, index) => index >= 4 && /^\s*[└+][─-]+[┘+]$/.test(row));
-  const decision = screen.findIndex((row) => row.includes("y/N >"));
-  assert.ok(panelBottom >= 0, "审批完整面板应可见");
-  assert.ok(decision >= 0, "y/N 决策输入应可见");
-  assert.ok(decision - panelBottom <= 2, "审批决定必须紧挨着命令面板");
+  const decision = screen.findIndex((row) => row.includes("Enter · Esc"));
+  const panelBottom = screen.findLastIndex((row, index) => index < decision && /^[-─]{20,}$/.test(row));
+  assert.ok(panelBottom >= 0, "审批菜单下方分隔线应可见");
+  assert.ok(decision >= 0, "菜单的键盘确认提示应可见");
+  assert.ok(decision - panelBottom <= 2, "审批决定必须紧挨着命令菜单");
   assert.ok(decision < 30, "短命令审批不应沉到屏幕最底部");
 
   const beforeDecision = ui.text().length;
@@ -1088,7 +1090,7 @@ test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复�
   assert.doesNotMatch(ui.text().slice(beforeDecision), /Running\.\.\./, "拒绝到结果回传之间也不能闪现执行中");
   await tick();
   const after = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
-  assert.equal(after.some((row) => row.includes("Allow this command?")), false, "决策后收起面板");
+  assert.equal(after.some((row) => row.includes("Do you want to proceed?")), false, "决策后收起菜单");
   const inputIndex = after.findIndex((row) => /^(?:❯|>)\s*$/.test(row));
   assert.ok(inputIndex >= 0 && inputIndex < 20, "普通输入回到对话附近");
 });
@@ -1110,4 +1112,71 @@ test("TUI flowInput：长会话自动停靠底部，仍可翻历史且保留草�
   assert.match(lastRow(ui.text(), 30), /draft/, "滚动历史不覆盖输入");
   ui.input.write("\r");
   assert.equal(await pending, "draft");
+});
+
+
+test("TUI 审批菜单：上键选允许、下键选拒绝，Enter 只确认当前选择", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const allow = ui.tui.approve({ tool: "shell", args: { command: "echo once" } });
+  allow.catch(() => {});
+  assert.match(ui.text(), /(?:❯|>) 2\. No \(default\)/);
+  ui.input.write("\x1b[A");
+  await tick();
+  assert.match(ui.text(), /(?:❯|>) 1\. Yes, allow once/);
+  ui.input.write("\r");
+  assert.equal(await allow, true, "明确上移并按 Enter 才允许一次");
+
+  const deny = ui.tui.approve({ tool: "shell", args: { command: "echo second" } });
+  deny.catch(() => {});
+  assert.match(ui.text(), /(?:❯|>) 2\. No \(default\)/, "下次审批不得继承上次允许");
+  ui.input.write("\x1b[A\x1b[B\r");
+  assert.equal(await deny, false, "下移到 No 后按 Enter 拒绝");
+});
+
+test("TUI 审批菜单：Esc 立即拒绝，空回车拒绝，数字和 y 保持显式兼容", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const escaped = ui.tui.approve({ tool: "shell", args: { command: "echo esc" } });
+  escaped.catch(() => {});
+  ui.input.write("\x1b");
+  assert.equal(await escaped, false, "Esc 不需要再次按 Enter");
+
+  const empty = ui.tui.approve({ tool: "shell", args: { command: "echo empty" } });
+  empty.catch(() => {});
+  ui.input.write("\r");
+  assert.equal(await empty, false, "默认拒绝，不能空回车授权");
+
+  const number = ui.tui.approve({ tool: "shell", args: { command: "echo selected" } });
+  number.catch(() => {});
+  ui.input.write("1\r");
+  assert.equal(await number, true, "明确输入 1 可以允许一次");
+
+  const legacy = ui.tui.approve({ tool: "shell", args: { command: "echo y" } });
+  legacy.catch(() => {});
+  ui.input.write("yes\r");
+  assert.equal(await legacy, true, "保留旧 y/yes 输入习惯");
+});
+
+test("TUI 审批菜单：中文、长命令和控制字符展示保持安全，EOF 不授权", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.approve({
+    tool: "shell",
+    args: { command: "echo 第一行\necho 第二行\x1b[31m\n" + "x".repeat(220) + "\necho TAIL" },
+  });
+  pending.catch(() => {});
+  const text = ui.text();
+  assert.match(text, /Workspace: C:\\work\\repo/);
+  assert.match(text, /echo 第一行/);
+  assert.match(text, /echo TAIL/);
+  assert.match(text, /\\u001b\[31m/);
+  assert.doesNotMatch(text, /\x1b\[31m/);
+  ui.input.end();
+  await assert.rejects(pending, /approval prompt closed/);
 });
