@@ -14,7 +14,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access` |
 | `npm run agent -- --repl` | 多轮会话：`/exit`、`/reset`、`/permission`、`/help`；需要 `.env` |
-| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | Claude Code 风格聊天式 TUI：状态/对话/底部输入、颜色与字形降级、历史滚动、resize、shell 审批；可带一个初始任务；需要 `.env` |
+| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | Claude Code 风格聊天式 TUI：对话贴顶、带框输入、状态行在下、颜色与字形降级、历史滚动、resize、审批面板；可带一个初始任务；需要 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
@@ -32,7 +32,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
-| `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话视口、底部输入与页脚、颜色/字形降级、PageUp/PageDown 历史、resize、thinking、shell 审批；不碰 Agent 循环 | `Tui`（`start`、`logError`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
+| `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、底部带边框输入、状态行在下、工具状态/审批面板、颜色/字形降级、PageUp/PageDown、resize；不碰 Agent 循环 | `Tui`（`start`、`logError`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
 | `src/cli.ts` | 组装：命令行参数 / 环境变量 → 对象图 → 跑一次、进 REPL 或进 TUI；`--permission`、`/permission`、SIGINT/SIGTERM 取消链的起点 | — |
 
 依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` / `tui` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`，`approval` 只依赖 `permission` 的类型；`tui` 只依赖 `approval` / `permission` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查），更不认识 `tui`。
@@ -47,7 +47,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
 - `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
-- `test/tui.test.mjs`：聊天式布局与页脚、工具运行/成功/失败、审批完整命令与 cwd、y/N、排队输入、thinking、颜色开关、PageUp/PageDown、resize、中文宽度；用假输入/输出流，不需要真终端。
+- `test/tui.test.mjs`：对话贴顶、输入框/状态行、工具运行/成功/失败/拒绝/未执行、审批面板完整命令与 cwd、y/N、排队输入、thinking、颜色开关、PageUp/PageDown、resize、中文宽度；用假输入/输出流，不需要真终端。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 的聊天布局/命令/统计；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
 

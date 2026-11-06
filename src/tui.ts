@@ -20,8 +20,8 @@ import { approvalGate, isApproved } from "./permission.ts";
 import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
 
-/** 固定布局至少需要：标题/路径/分隔线 + 日志 + 分隔线/输入/页脚 + 一行缓冲。 */
-const MIN_ROWS = 10;
+/** 固定布局至少需要：标题/路径/分隔线 + 日志 + 输入框 + 状态行 + 缓冲。 */
+const MIN_ROWS = 12;
 /** 太窄时顶部标题和页脚会挤成一团，退回行式聊天更可读。 */
 const MIN_COLUMNS = 30;
 
@@ -61,29 +61,53 @@ interface Glyphs {
   running: string;
   success: string;
   error: string;
+  denied: string;
+  notRun: string;
   divider: string;
   scroll: string;
+  boxTopLeft: string;
+  boxTopRight: string;
+  boxBottomLeft: string;
+  boxBottomRight: string;
+  boxHorizontal: string;
+  boxVertical: string;
 }
 
 const UNICODE_GLYPHS: Glyphs = {
   user: "❯",
   assistant: "✻",
-  running: "⋯",
+  running: "●",
   success: "✓",
   error: "✗",
+  denied: "⊘",
+  notRun: "–",
   divider: "─",
   scroll: "↑",
+  boxTopLeft: "┌",
+  boxTopRight: "┐",
+  boxBottomLeft: "└",
+  boxBottomRight: "┘",
+  boxHorizontal: "─",
+  boxVertical: "│",
 };
 
-/** 传统 conhost 的默认字体不一定有 ❯/✻/✓，宁可退化也不要在屏幕上显示方框。 */
+/** 传统 conhost 的默认字体不一定有 ❯/✻/✓/框线，宁可退化也不要在屏幕上显示方框。 */
 const ASCII_GLYPHS: Glyphs = {
   user: ">",
   assistant: "*",
-  running: "...",
+  running: "o",
   success: "+",
   error: "x",
+  denied: "!",
+  notRun: "-",
   divider: "-",
   scroll: "^",
+  boxTopLeft: "+",
+  boxTopRight: "+",
+  boxBottomLeft: "+",
+  boxBottomRight: "+",
+  boxHorizontal: "-",
+  boxVertical: "|",
 };
 
 export interface TuiOptions {
@@ -137,9 +161,11 @@ export class Tui {
 
   private inputRow: number;
 
-  private footerRow: number;
+  private boxTopRow: number;
 
-  private separatorRow: number;
+  private boxBottomRow: number;
+
+  private statusRow: number;
 
   private logHeight: number;
 
@@ -167,8 +193,14 @@ export class Tui {
   /** 历史滚动偏移：0 = 跟随最新；正数 = 向上查看旧记录。 */
   private scrollOffset = 0;
 
+  /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
+  private lastTotalLines = 0;
+
   /** 本次 readLine 的原始 prompt；滚动后重绘输入行要用。 */
   private promptText = COMMAND_PROMPT;
+
+  /** 当前输入是否显示 placeholder；审批时关闭，避免把 y/N 输入当成普通聊天。 */
+  private promptPlaceholder = true;
 
   /** 正在等待 readline 输入；此时不要重画输入行，以免打断用户编辑。 */
   private promptActive = false;
@@ -222,8 +254,9 @@ export class Tui {
     this.columns = Math.max(MIN_COLUMNS, initialColumns);
     this.rows = Math.max(MIN_ROWS, initialRows);
     this.inputRow = 0;
-    this.footerRow = 0;
-    this.separatorRow = 0;
+    this.boxTopRow = 0;
+    this.boxBottomRow = 0;
+    this.statusRow = 0;
     this.logHeight = 1;
     this.recomputeGeometry();
 
@@ -265,6 +298,8 @@ export class Tui {
       const name = key?.name?.toLowerCase();
       if (name === "pageup") this.scrollPage("up");
       else if (name === "pagedown") this.scrollPage("down");
+      // readline 处理完这次按键后会把输入框下方清掉，下一轮微任务补画边框/状态。
+      this.scheduleInputChrome();
     };
     if (options.interactive) {
       emitKeypressEvents(options.input);
@@ -320,6 +355,7 @@ export class Tui {
     this.promptActive = false;
     this.inputDirty = true;
     this.lastFrame = [];
+    this.lastTotalLines = 0;
     this.output.write("\x1b[2J\x1b[H");
     this.renderNow();
     if (wasPrompt) {
@@ -355,7 +391,7 @@ export class Tui {
       return;
     }
 
-    if (thinking) this.writeRaw(`${this.glyphs.assistant} thinking...`);
+    if (thinking) this.writeRaw(`${this.glyphs.assistant} Thinking...`);
     else this.writeRaw("\r\x1b[2K");
   }
 
@@ -451,7 +487,7 @@ export class Tui {
     if (this.layout) {
       this.thinking = false;
       this.commitAssistant();
-      const line = this.makeLogLine(`  ${this.glyphs.running} ${formatToolCall(call)}`, "warning");
+      const line = this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call)}`, "warning");
       this.log.push(line);
       this.pendingTools.set(call.id, line);
       this.trimLog();
@@ -471,11 +507,11 @@ export class Tui {
       this.commitAssistant();
       const pending = this.pendingTools.get(call.id);
       this.pendingTools.delete(call.id);
-      const raw = toolResultLine(call, result, this.glyphs);
-      const line = this.makeLogLine(raw.text, raw.tone);
+      const lines = toolResultLines(call, result, this.glyphs)
+        .map((line) => this.makeLogLine(line.text, line.tone));
       const index = pending === undefined ? -1 : this.log.indexOf(pending);
-      if (index >= 0) this.log[index] = line;
-      else this.log.push(line);
+      if (index >= 0) this.log.splice(index, 1, ...lines);
+      else this.log.push(...lines);
       this.trimLog();
       this.renderNow();
       return;
@@ -528,7 +564,10 @@ export class Tui {
    *
    * 固定布局先把当前帧画好，再把光标放到输入行；line 到达后由调用方写日志并重绘。
    */
-  readLine(prompt = COMMAND_PROMPT): Promise<string | null> {
+  readLine(
+    prompt = COMMAND_PROMPT,
+    { placeholder = prompt === COMMAND_PROMPT }: { placeholder?: boolean } = {},
+  ): Promise<string | null> {
     if (this.closed) return Promise.resolve(null);
 
     // 先消费已缓冲的行：管道里可能有 /exit 排着，而 readline 已经读到 EOF 并 close。
@@ -541,6 +580,7 @@ export class Tui {
     if (this.ended) return Promise.resolve(null);
 
     this.promptText = prompt;
+    this.promptPlaceholder = placeholder;
 
     if (this.layout) {
       this.inputDirty = true;
@@ -549,7 +589,7 @@ export class Tui {
       this.moveToInput();
       this.rl.setPrompt(this.inputPrompt(prompt));
       this.rl.prompt();
-      this.writePlaceholder(prompt);
+      this.redrawInputChrome();
       return new Promise((resolve) => {
         this.waiting.push((line) => {
           this.promptActive = false;
@@ -568,22 +608,90 @@ export class Tui {
     return new Promise((resolve) => this.waiting.push(resolve));
   }
 
-  /**
-   * shell 审批：先完整展示命令和实际 cwd，再读一行 y/N。
-   *
-   * 审批头进入对话区，问题放在固定输入行；无 TTY、取消、EOF、已有排队输入都按拒绝处理。
-   */
+  /** v0.3 审批面板：完整 workspace 与命令放进可滚动的框，不改写、不截断。 */
+  private approvalPanelLines(request: PermissionRequest): LogLine[] {
+    const width = this.contentWidth();
+    if (width < 12) {
+      return formatApproval(request, this.workspace)
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => this.makeLogLine(line, "warning"));
+    }
+
+    const rawCommand = typeof request.args.command === "string" ? request.args.command : "";
+    const command = rawCommand === "" ? "(empty command)" : rawCommand;
+    const commandLines = normalizeNewlines(command)
+      .split("\n")
+      .map((line) => escapeControlCharacters(line));
+    const cwd = escapeControlCharacters(normalizeNewlines(this.workspace).replace(/\n/g, "\\u000a"));
+
+    const content = [
+      `Workspace: ${cwd}`,
+      "",
+      "Command:",
+      ...commandLines.map((line) => `  ${line}`),
+      "",
+      "Allow this command?",
+      "  [Y] Allow once",
+      "  [N] Deny",
+    ];
+    const textWidth = Math.max(1, width - 4);
+    const panel: LogLine[] = [];
+    const title = " Shell permission ";
+    const fill = width - 3 - displayWidth(title);
+    const top = fill >= 0
+      ? `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal}${title}${this.glyphs.boxHorizontal.repeat(fill)}${this.glyphs.boxTopRight}`
+      : `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal.repeat(Math.max(0, width - 2))}${this.glyphs.boxTopRight}`;
+    panel.push({ text: top, tone: "warning" });
+
+    for (const line of content) {
+      for (const part of wrapLine(line, textWidth)) {
+        panel.push({
+          text: `${this.glyphs.boxVertical} ${padRight(part, textWidth)} ${this.glyphs.boxVertical}`,
+          tone: "warning",
+        });
+      }
+    }
+
+    panel.push({
+      text: `${this.glyphs.boxBottomLeft}${this.glyphs.boxHorizontal.repeat(Math.max(0, width - 2))}${this.glyphs.boxBottomRight}`,
+      tone: "warning",
+    });
+    return panel;
+  }
+
   async approve(request: PermissionRequest): Promise<boolean> {
     const gate = approvalGate(this.controller.signal, this.interactive, this.lines.length > 0);
     if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
 
-    const formatted = formatApproval(request, this.workspace);
-    const header = formatted.endsWith(APPROVAL_QUESTION)
-      ? formatted.slice(0, -APPROVAL_QUESTION.length)
-      : formatted;
-    this.logLine(header.replace(/\n$/, ""), "warning");
+    let answer: string | null;
+    if (this.layout) {
+      this.thinking = false;
+      this.commitAssistant();
+      const panel = this.approvalPanelLines(request);
+      const longPanel = panel.length > this.logHeight;
+      this.pushBlank();
+      // 审批面板不能被 MAX_LOG_LINES 的裁剪吃掉；先给面板腾出空间。
+      const needed = panel.length + (longPanel ? 1 : 0);
+      if (this.log.length + needed > MAX_LOG_LINES) {
+        this.log.splice(0, this.log.length + needed - MAX_LOG_LINES);
+      }
+      this.log.push(...panel);
+      if (longPanel) {
+        this.log.push({ text: "  ↑ PageUp/PageDown to review the full command", tone: "muted" });
+      }
+      this.trimLog();
+      this.renderNow();
+      answer = await this.readLine(COMMAND_PROMPT, { placeholder: false });
+    } else {
+      const formatted = formatApproval(request, this.workspace);
+      const header = formatted.endsWith(APPROVAL_QUESTION)
+        ? formatted.slice(0, -APPROVAL_QUESTION.length)
+        : formatted;
+      this.logLine(header.replace(/\n$/, ""), "warning");
+      answer = await this.readLine(APPROVAL_QUESTION);
+    }
 
-    const answer = await this.readLine(APPROVAL_QUESTION);
     if (answer === null) {
       // EOF/readline 关闭不是「用户拒绝」；让 Permission 折成审批通道错误。
       throw new Error(
@@ -594,7 +702,14 @@ export class Tui {
     }
 
     const approved = isApproved(answer);
-    this.logLine(`approval: ${approved ? "allowed once" : "denied"}`, approved ? "success" : "error");
+    if (this.layout) {
+      this.logLine(
+        `  ${approved ? this.glyphs.success : this.glyphs.error} ${approved ? "Allowed once" : "Denied"}`,
+        approved ? "success" : "error",
+      );
+    } else {
+      this.logLine(`approval: ${approved ? "allowed once" : "denied"}`, approved ? "success" : "error");
+    }
     return approved;
   }
 
@@ -669,23 +784,30 @@ export class Tui {
     rows[TOP_DIVIDER_ROW - 1] = divider;
 
     const lines = this.wrappedDisplayLines();
-    const maxOffset = Math.max(0, lines.length - this.logHeight);
+    const total = lines.length;
+    // 用户在翻历史时，新输出只增加偏移，保持当前视口内容不被拉回底部。
+    if (this.scrollOffset > 0 && this.lastTotalLines > 0 && total > this.lastTotalLines) {
+      this.scrollOffset += total - this.lastTotalLines;
+    }
+    this.lastTotalLines = total;
+
+    const maxOffset = Math.max(0, total - this.logHeight);
     if (this.scrollOffset > maxOffset) this.scrollOffset = maxOffset;
-    const end = lines.length - this.scrollOffset;
+    const end = total - this.scrollOffset;
     const start = Math.max(0, end - this.logHeight);
     const visible = lines.slice(start, end);
-    // 对话贴底：内容少时从输入区上方开始，而不是堆在顶部留下大片空白。
-    const padTop = Math.max(0, this.logHeight - visible.length);
+    // v0.3：对话从视口顶部开始，内容不足一屏时空白留在下方，不再贴底。
     for (let index = 0; index < this.logHeight; index++) {
-      const line = visible[index - padTop];
+      const line = visible[index];
       rows[LOG_TOP - 1 + index] = line === undefined
         ? ""
         : `  ${this.style.paint(line.tone, clip(line.text, width))}`;
     }
 
-    rows[this.footerRow - 1] = this.footerLine(width);
-    rows[this.separatorRow - 1] = divider;
+    rows[this.boxTopRow - 1] = this.boxTopLine(width);
     rows[this.inputRow - 1] = "";
+    rows[this.boxBottomRow - 1] = this.boxBottomLine(width);
+    rows[this.statusRow - 1] = this.footerLine(width);
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
     for (let index = 0; index < rows.length; index++) {
@@ -696,6 +818,7 @@ export class Tui {
       }
     }
     this.inputDirty = false;
+    this.drawInputRightBorder();
     this.moveToInput();
   }
 
@@ -742,7 +865,53 @@ export class Tui {
     this.moveToInput();
     this.rl.setPrompt(this.inputPrompt(this.promptText));
     this.rl.prompt(true);
-    this.writePlaceholder(this.promptText);
+    this.redrawInputChrome();
+  }
+
+  /**
+   * readline 的刷新会从输入行清到屏幕底部，把输入框下边框和状态行一起擦掉。
+   * 每次 prompt/按键后补画这两行，再把光标放回 readline 的输入位置。
+   */
+  private redrawInputChrome(): void {
+    if (!this.layout || this.closed) return;
+    const width = this.contentWidth();
+    const bottom = this.boxBottomLine(width);
+    const status = this.footerLine(width);
+    this.writeRow(this.boxBottomRow, bottom);
+    this.writeRow(this.statusRow, status);
+    if (this.lastFrame.length === this.rows) {
+      this.lastFrame[this.boxBottomRow - 1] = bottom;
+      this.lastFrame[this.statusRow - 1] = status;
+    }
+    this.drawInputRightBorder();
+    this.restoreInputCursor();
+    if (this.rl.line === "") this.writePlaceholder(this.promptText);
+  }
+
+  /** 输入行右侧的竖线单独画；readline 刷新会清掉它，所以 prompt/按键后都要补。 */
+  private drawInputRightBorder(): void {
+    if (!this.layout || this.columns < MIN_COLUMNS) return;
+    const column = this.columns - 2;
+    this.output.write(
+      `\x1b[${this.inputRow};${column}H${this.style.paint("muted", this.glyphs.boxVertical)}`,
+    );
+  }
+
+  /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
+  private restoreInputCursor(): void {
+    const plainPrompt = this.promptText === COMMAND_PROMPT
+      ? `  ${this.glyphs.boxVertical} ${this.glyphs.user} `
+      : `  ${this.glyphs.boxVertical} ${singleLine(this.promptText)}`;
+    const before = this.rl.line.slice(0, this.rl.cursor);
+    const column = 1 + displayWidth(plainPrompt) + displayWidth(before);
+    this.output.write(`\x1b[${this.inputRow};${column}H`);
+  }
+
+  private scheduleInputChrome(): void {
+    if (!this.layout || !this.promptActive || this.closed) return;
+    setImmediate(() => {
+      if (this.promptActive && !this.closed) this.redrawInputChrome();
+    });
   }
 
   private commitAssistant(): void {
@@ -804,7 +973,7 @@ export class Tui {
         logical.push({ text: line, tone: "assistant" });
       }
     }
-    if (this.thinking) logical.push({ text: `${this.glyphs.assistant} thinking...`, tone: "warning" });
+    if (this.thinking) logical.push({ text: `${this.glyphs.assistant} Thinking...`, tone: "warning" });
 
     const width = this.contentWidth();
     const wrapped: LogLine[] = [];
@@ -831,6 +1000,18 @@ export class Tui {
 
   private dividerLine(width: number): string {
     const line = this.glyphs.divider.repeat(Math.max(0, width));
+    return `  ${this.style.paint("muted", line)}  `;
+  }
+
+  private boxTopLine(width: number): string {
+    const inner = Math.max(0, width - 2);
+    const line = `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxTopRight}`;
+    return `  ${this.style.paint("muted", line)}  `;
+  }
+
+  private boxBottomLine(width: number): string {
+    const inner = Math.max(0, width - 2);
+    const line = `${this.glyphs.boxBottomLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxBottomRight}`;
     return `  ${this.style.paint("muted", line)}  `;
   }
 
@@ -887,13 +1068,15 @@ export class Tui {
   }
 
   private inputPrompt(prompt: string): string {
-    if (prompt === COMMAND_PROMPT) return `  ${this.style.paint("accent", this.glyphs.user)} `;
-    return `  ${this.style.paint("warning", singleLine(prompt))}`;
+    const left = `  ${this.style.paint("muted", this.glyphs.boxVertical)} `;
+    if (prompt === COMMAND_PROMPT) return `${left}${this.style.paint("accent", this.glyphs.user)} `;
+    return `${left}${this.style.paint("warning", singleLine(prompt))}`;
   }
 
   private writePlaceholder(prompt: string): void {
-    if (!this.layout || prompt !== COMMAND_PROMPT || this.rl.line !== "") return;
-    const room = Math.max(0, this.contentWidth() - 3);
+    if (!this.layout || !this.promptPlaceholder || prompt !== COMMAND_PROMPT || this.rl.line !== "") return;
+    // 输入框内宽：去掉左右 padding、竖线和 prompt 后还剩 columns - 9 列。
+    const room = Math.max(0, this.columns - 9);
     if (room <= 3) return;
     // 前面留一个空格，让光标块落在空白处，而不是盖住 placeholder 的第一个字母。
     const text = ` ${clip(PLACEHOLDER, room)}`;
@@ -906,12 +1089,13 @@ export class Tui {
   }
 
   private recomputeGeometry(): void {
-    // 控制台窗口最后 2~3 行容易被边框/滚动条吃掉。底部从上到下留：
-    // 页脚（权限/统计）、分隔线、输入行，最后三行只作缓冲。
-    this.footerRow = this.rows - 5;
-    this.separatorRow = this.rows - 4;
-    this.inputRow = this.rows - 3;
-    this.logHeight = Math.max(1, this.footerRow - LOG_TOP);
+    // 输入框（上边框/输入行/下边框）固定在底部，权限与统计在框下方；
+    // 最后三行留缓冲，避免传统 conhost 的窗口底边吃掉状态行。
+    this.statusRow = this.rows - 3;
+    this.boxBottomRow = this.statusRow - 1;
+    this.inputRow = this.boxBottomRow - 1;
+    this.boxTopRow = this.inputRow - 1;
+    this.logHeight = Math.max(1, this.boxTopRow - LOG_TOP);
   }
 
   private moveToInput(): void {
@@ -1062,6 +1246,11 @@ function clip(text: string, width: number): string {
   return `${takeByWidth(text, width - 3)}...`;
 }
 
+/** 按显示宽度补空格；框线布局里不能直接用 String.padEnd 算中文/emoji。 */
+function padRight(text: string, width: number): string {
+  return `${text}${" ".repeat(Math.max(0, width - displayWidth(text)))}`;
+}
+
 function takeByWidth(text: string, width: number): string {
   let out = "";
   let used = 0;
@@ -1203,6 +1392,7 @@ function oneLine(text: string): string {
 interface ToolResultSummary {
   failed: boolean;
   denied: boolean;
+  notRun: boolean;
   body: string;
   more: string;
 }
@@ -1214,21 +1404,84 @@ function summarizeToolResult(result: string): ToolResultSummary {
     .map((line) => line.trim())
     .filter((line) => line !== "");
   const first = lines[0] ?? "(no output)";
-  const failed = first.startsWith("ERROR:");
+  const notRun = first.startsWith("ERROR: not run:");
   const denied = first.startsWith("ERROR: permission denied:");
+  const failed = first.startsWith("ERROR:");
   const body = failed ? first.slice("ERROR:".length).trim() : first;
   const more = lines.length > 1 ? " …" : "";
-  return { failed, denied, body, more };
+  return { failed, denied, notRun, body, more };
 }
 
-/** 固定布局里的工具结果：保留工具名和参数，成功/失败用 ✓/✗ 和颜色区分。 */
-function toolResultLine(call: ToolCall, result: string, glyphs: Glyphs): LogLine {
+const TOOL_LABELS: Record<string, string> = {
+  read: "Read",
+  write: "Write",
+  edit: "Edit",
+  ls: "List",
+  glob: "Glob",
+  grep: "Grep",
+  shell: "Shell",
+};
+
+/** v0.3 的工具事件：Read README.md / Shell: npm run check，不把参数 JSON 原样刷出来。 */
+function formatToolEvent(call: ToolCall): string {
+  const name = call.function.name;
+  const label = TOOL_LABELS[name] ?? name;
+  let args: unknown;
+  try {
+    args = JSON.parse(call.function.arguments || "{}");
+  } catch {
+    return `${label} ${clip(normalizeNewlines(call.function.arguments), 120)}`.trim();
+  }
+  if (!isRecord(args)) return label;
+
+  switch (name) {
+    case "shell":
+      return typeof args.command === "string" && args.command !== ""
+        ? `${label}: ${oneLine(args.command)}`
+        : label;
+    case "read":
+    case "write":
+    case "edit":
+    case "ls":
+      return typeof args.path === "string" && args.path !== ""
+        ? `${label} ${oneLine(args.path)}`
+        : label;
+    case "glob":
+      return typeof args.pattern === "string" && args.pattern !== ""
+        ? `${label} ${oneLine(args.pattern)}`
+        : label;
+    case "grep": {
+      const pattern = typeof args.pattern === "string" ? oneLine(args.pattern) : "";
+      const path = typeof args.path === "string" ? oneLine(args.path) : "";
+      if (pattern === "") return label;
+      return path === "" ? `${label} ${pattern}` : `${label} ${pattern} in ${path}`;
+    }
+    default: {
+      const detail = toolArgumentSummary(name, call.function.arguments);
+      return detail === "" ? label : `${label} ${detail}`;
+    }
+  }
+}
+
+/** 固定布局里的工具结果：失败/拒绝/未执行用不同符号，第一行原因放在下一行。 */
+function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs): LogLine[] {
   const summary = summarizeToolResult(result);
-  const detail = summary.body === "" ? "" : ` · ${clip(summary.body, 160)}`;
-  return {
-    text: `  ${summary.failed ? glyphs.error : glyphs.success} ${formatToolCall(call)}${detail}${summary.more}`,
-    tone: summary.failed ? "error" : "success",
-  };
+  const event = formatToolEvent(call);
+  if (!summary.failed) {
+    const detail = call.function.name === "read" || summary.body === ""
+      ? ""
+      : ` · ${clip(summary.body, 160)}${summary.more}`;
+    return [{ text: `  ${glyphs.success} ${event}${detail}`, tone: "success" }];
+  }
+
+  const mark = summary.denied ? glyphs.denied : summary.notRun ? glyphs.notRun : glyphs.error;
+  const tone: Tone = summary.notRun ? "muted" : "error";
+  const lines: LogLine[] = [{ text: `  ${mark} ${event}`, tone }];
+  // 失败原因不截断：每行都放在工具事件下面，长命令/长错误交给视口换行和 PageUp。
+  for (const reason of result.split("\n").map((line) => line.trim()).filter((line) => line !== "")) {
+    lines.push({ text: `    ${reason}`, tone });
+  }
+  return lines;
 }
 
 /**
@@ -1236,8 +1489,9 @@ function toolResultLine(call: ToolCall, result: string, glyphs: Glyphs): LogLine
  */
 function formatToolResult(call: ToolCall, result: string): string {
   const summary = summarizeToolResult(result);
-  const label = summary.denied ? "denied" : summary.failed ? "failed" : "ok";
-  return `${summary.failed ? "✗" : "✓"} ${call.function.name} [${label}] ${clip(summary.body, 160)}${summary.more}`;
+  const label = summary.denied ? "denied" : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";
+  const mark = summary.failed ? (summary.notRun ? "–" : "✗") : "✓";
+  return `${mark} ${call.function.name} [${label}] ${clip(summary.body, 160)}${summary.more}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

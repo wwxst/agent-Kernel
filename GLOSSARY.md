@@ -61,16 +61,16 @@ _Avoid_: policy prompt（Policy 是 **Permission** 本身）, system rules（太
 _Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
 
 **TUI**:
-CLI 的 Claude Code 风格聊天式界面：顶部项目/模型/路径、**Run log**、底部输入与页脚。v0.2 用绝对光标定位 + 整帧重绘，不依赖 DECSTBM、不切 alternate screen、不引 TUI 库；有颜色/字形降级、PageUp/PageDown 历史滚动和 resize，只保留最后一屏。非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或 **Permission**。
+CLI 的 Claude Code 风格聊天式界面：顶部项目/模型/路径、从顶部排列的 **Run log**、底部带边框输入框和状态行。v0.3 用绝对光标定位 + 差分重绘，不依赖 DECSTBM、不切 alternate screen、不引 TUI 库；有颜色/字形降级、PageUp/PageDown 历史滚动和 resize，只保留最后一屏。非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或 **Permission**。
 _Avoid_: dashboard, full-screen app, UI framework
 
 **Status bar**:
-TUI 的状态显示；v0.2 把它拆成顶部 header（项目 / model / workspace）和底部页脚（当前 **Permission mode** + **Session** 的 requests / tool calls / tokens）。
+TUI 的状态显示；v0.3 拆成顶部 header（项目 / model / workspace）和输入框下方的状态行（当前 **Permission mode** + **Session** 的 requests / tool calls / tokens）。
 _Avoid_: header, banner
 
 **Thinking**:
 模型请求发出后、第一段正文/工具调用/错误到达前显示的状态提示（`thinking...`，Windows Terminal 下带 `✻`，conhost 下带 `*`）。它只表示等待，不代表请求成功；第一段输出会把它重绘掉。
-_Avoid_: reasoning（那是模型返回的 `reasoning_content`，v0.2 不展示）
+_Avoid_: reasoning（那是模型返回的 `reasoning_content`，v0.3 不展示）
 
 **Run log**:
 TUI 里给人看的滚动记录：模型回复、**Tool call**、**Tool result** 与拒绝原因。它不是 **Transcript** —— 它不参与下一轮请求，也不改变模型看到什么。
@@ -124,7 +124,7 @@ _Avoid_: LLM, model, provider
 - 每次 **Step** 的模型请求前，**Permission prompt** 刷新唯一的 system Message；它只负责指导，放行/拒绝仍由 **Tool registry** 执行。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
-- **TUI** 是 **Session** 的一个外壳：**Status bar** 显示项目 / model / workspace，页脚显示 **Permission mode** 和 **Session** 统计，**Run log** 显示模型回复、Tool call、Tool result 与拒绝原因；输入复用同一套 `/permission`、`/reset`、`/help`、`/exit`，固定在底部。
+- **TUI** 是 **Session** 的一个外壳：**Status bar** 显示项目 / model / workspace，输入框下方显示 **Permission mode** 和 **Session** 统计，**Run log** 显示模型回复、Tool call、Tool result 与拒绝原因；输入复用同一套 `/permission`、`/reset`、`/help`、`/exit`，固定在底部。
 - 每次 **Step** 的模型请求发出后、第一段输出前显示 **Thinking**；第一段正文、Tool call 或错误会清掉它。它不是模型的 `reasoning_content`。
 - **Run log** 不是 **Transcript**：前者只负责显示，后者才是发给模型的记忆；删掉 Run log 不会改变任何一轮请求。
 - **Approval** 在 REPL 与 TUI 里是同一个策略判断，只是问题出现的位置不同：REPL 用多行 prompt，TUI 先写运行记录再读单行 `y/N`。
