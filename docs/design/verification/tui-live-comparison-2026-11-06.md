@@ -2,6 +2,8 @@
 
 2026-11-06，Asia/Shanghai。分支 `feat/tui-v0.2`，继续 [PR #9](https://github.com/wwxst/agent-Kernel/pull/9)，不合并。
 
+后续已根据用户截图反馈、同步远端自适应输入改动继续迭代；当前输入分隔线、过程状态及最新验证见[后续实机记录](./tui-feedback-20261106/README.md)。下文保留上一轮实现与验收结果。
+
 ## 结果与修改范围
 
 实际启动本机 Claude Code 与 agent-Kernel，在独立测试目录观察界面，完成两轮 UI 修改、重启与真实窗口截图复测。只改 `src/tui.ts`、`test/tui.test.mjs` 和 UI 文档，没有修改 Kernel、LLM、Prompt、Permission、ToolRegistry、Transcript、Session 或统计逻辑，没有增加运行时依赖。
