@@ -263,7 +263,7 @@ interface AgentCallbacks {
  * signal 是这次会话唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
  * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
  *
- * `announce: false` 只给 TUI 用：状态栏已经显示模型/工作区/权限，不再往运行记录里
+ * `announce: false` 只给 TUI 用：TUI 头部/页脚已经显示模型/工作区/权限，不再往运行记录里
  * 打一遍启动 banner。
  */
 function createAgent(
@@ -536,7 +536,7 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
  *
  * TUI 是外壳，不是内核：Transcript、预算、工具配对仍由 Agent 管；审批仍由 Permission 决定。
  * `--tui` 可以带一个初始任务（先跑完再等输入），之后每一行输入是一次 Run。
- * `/reset` 换 Agent 但不换 Permission；`/permission` 切换后状态栏和下一次请求同时生效。
+ * `/reset` 换 Agent 但不换 Permission；`/permission` 切换后页脚和下一次请求同时生效。
  */
 async function tuiSession(config: Config, controller: AbortController, initialTask?: string): Promise<void> {
   const signal = controller.signal;
@@ -605,11 +605,11 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       tui.finishAssistant("");
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true });
       if (signal.aborted) {
-        tui.logLine(`[agent] cancelled: ${describeError(error)}`);
+        tui.logError(`[agent] cancelled: ${describeError(error)}`);
         return false;
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
-      tui.logLine(`[agent] turn failed: ${describeError(error)}`);
+      tui.logError(`[agent] turn failed: ${describeError(error)}`);
       return true;
     }
   };
@@ -640,7 +640,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       if (command.kind === "permission") {
         if (command.value !== undefined) {
           // 中文对照：未知权限模式 "{值}"（可用：…）
-          tui.logLine(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
+          tui.logError(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
         } else if (command.mode !== undefined) {
           permission.setMode(command.mode);
           tui.setPermission(command.mode);
@@ -652,7 +652,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       }
 
       if (input === "") continue;
-      // 固定布局会清掉 readline 的回显，Tui 自己补 `you:`；行式聊天默认不重复。
+      // 固定布局会清掉 readline 的回显，Tui 自己补 `❯ task`；行式聊天默认不重复。
       keepGoing = await runTask(input);
     }
   } finally {

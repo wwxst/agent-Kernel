@@ -12,7 +12,7 @@
 Copy-Item .env.example .env    # 填入 API_KEY；用什么模型由你决定
 npm run agent -- "给这个仓库加一个 /health 接口并写测试"
 npm run agent -- --repl        # 多轮会话：/exit 退出、/reset 清空上下文、/permission 查看或切换权限、/help 看命令
-npm run agent -- --tui         # 轻量 TUI：顶部状态栏、运行记录、shell 审批、底部输入
+npm run agent -- --tui         # Claude Code 风格聊天 TUI：顶部信息、对话、固定输入、审批
 npm run agent -- --tui "先看看这个仓库的结构"   # TUI 先跑这个任务，之后继续等输入
 npm run agent -- --permission read-only "先看看这个仓库的结构"   # 只读模式
 npm run agent -- --permission full-access "跑测试并修掉失败"     # 全部工具、不审批
@@ -36,7 +36,7 @@ CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是�
 | `src/approval.ts` | 审批提示的格式化与读取：完整命令、cwd、控制字符转义，并把 `AbortSignal`、readline 关闭、正常回答一起收口 |
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫、有界读取、扫描预算与取消 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
-| `src/tui.ts` | 轻量 TUI：固定状态栏/统计行、滚动运行记录、单行输入与 shell 审批。不碰 Agent 循环 |
+| `src/tui.ts` | Claude Code 风格 TUI：固定顶部/输入区、对话视口、颜色与字形降级、PageUp/PageDown 历史、resize、shell 审批。不碰 Agent 循环 |
 | `src/cli.ts` | 组装层：命令行参数 / 环境变量 → 对象图 → 跑一次任务、进 REPL 或进 TUI |
 
 `src/grep-worker.ts` 不算第十一个模块，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
@@ -148,29 +148,35 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 **Permission 不是 Sandbox。** 它只决定一次 Tool call 放不放行，不改变进程的操作系统权限：没有容器、没有用户切换、没有只读挂载。`workspace-write` 的 `shell` 一旦被批准，子进程就和启动它的人同权，可以 `cd ..` 走出工作区；`read` / `write` 的路径守卫拦的是模型手滑，不是恶意代码（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）。真隔离得靠容器、虚拟机、独立用户或只读挂载，不能靠 Permission 的字符串判断。取舍见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)。
 
-## 轻量 TUI v0.1
+## 轻量 TUI v0.2
 
-`npm run agent -- --tui` 在同一个 Agent / Permission 会话外面套一个轻量终端界面；`--repl` 保持原样，两者不能同时用。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。
+`npm run agent -- --tui` 在同一个 Agent / Permission 会话外面套一个 Claude Code 风格的聊天式终端界面；`--repl` 保持原样，两者不能同时用。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。
 
-TUI 用**绝对光标定位 + 整帧重绘**，不依赖 DECSTBM 滚动区域，所以传统 Windows conhost 也能固定布局：
+布局：
 
-- 第 1 行状态栏（model / workspace / permission），第 2 行统计（requests / tool_calls / tokens）。
-- 中间是日志视口：回复、工具调用、审批头都从这里往上滚。
-- **输入固定在底部**：倒数第二行是输入行，最后一行留作缓冲；回车不会把输入区顶走。
-- 不切 alternate screen、不引 TUI 库；但整帧重绘只保留最后一屏，退出后 TUI 的历史记录不会留在 scrollback 里。
-- **非 TTY**（管道、CI、e2e）：退化为纯逐行输出，没有固定位置，但走同一套日志与审批逻辑。
+- **顶部**：项目名（左）和 model（右），下一行是 workspace 路径，再一条分隔线。
+- **对话区**：用户消息用 `❯`，模型回复用 `✻`；工具调用先显示运行中（`⋯`），结果到达后原地替换成 `✓` / `✗`。内容贴底排列，避免少量消息时在输入区上方留下大片空白。
+- **页脚**：左边当前权限（`read-only` / `workspace-write` / `full-access`），右边 requests / tool calls / tokens。
+- **输入区**：页脚下方一条分隔线，再下面是固定输入行；最后留 2~3 行缓冲，避免传统 conhost 的窗口底边吃掉输入或页脚。输入为空时显示 `Ask anything, or type /help...`。
+- 不切 alternate screen、不引 TUI 库；整帧重绘只保留最后一屏，退出后 TUI 历史不会留在 scrollback 里。非 TTY（管道、CI、e2e）退化为纯逐行输出。
 
-运行记录：`you:`、`model:`、`→ tool`，以及 `✓/✗ tool [ok|failed|denied]`；权限拒绝原因直接来自 Tool result。
+外观：
 
-**Thinking**：每次模型请求发出前，日志视口最后一行显示 `thinking...`；第一段正文、第一个工具调用或错误到达时整帧重绘掉，不会留在记录里。Agent 通过 `onRequestStart` 在每次请求前通知 TUI。
+- 自动检测颜色能力：16 色 / 256 色、`NO_COLOR`、`TERM=dumb`；无颜色终端仍完整可用。
+- Windows Terminal / VS Code 终端 / Linux 使用 `❯`、`✻`、`⋯`、`✓`、`✗`、`─`；传统 Windows conhost 的字体缺少这些字形，会自动退化成 `>`、`*`、`...`、`+`、`x`、`-`，不会显示方框。
+- 推荐在 Windows Terminal 里使用 Cascadia Mono 14~16 号字体和深色主题；传统 PowerShell 窗口也能用，只是字形和颜色更保守。
 
-命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态栏和下一次请求同时生效。
+交互：
 
-`workspace-write` 下的 `shell` 审批在 TUI 里同样逐次询问：先完整打印 `[permission] shell in <cwd>`、`command:` 和逐行命令，再在固定输入行问 `allow once? [y/N]`；只有 `y` / `yes` 放行。没有 TTY 时不展示审批提示，直接按权限拒绝处理。
+- **Thinking**：每次模型请求发出后，对话区最后一行显示 `✻ thinking...`（conhost 为 `* thinking...`）；第一段正文、工具调用或错误到达时整帧重绘掉。
+- **历史滚动**：PageUp / PageDown 查看之前对话，页脚显示 `↑ N lines` / `^ N lines`；发送新任务时回到最新。
+- **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、输入行和页脚位置。
+- 命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后页脚和下一次请求同时生效。
+- `workspace-write` 下的 `shell` 审批在 TUI 里同样逐次询问：先完整展示 `[permission] shell in <cwd>`、`command:` 和逐行命令，再在固定输入行问 `allow once? [y/N]`；只有 `y` / `yes` 放行。没有 TTY 时不展示审批提示，直接按权限拒绝处理。
 
-统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。固定布局刷新第 2 行，非 TTY 在每轮结束打一行 `[stats]`。取舍见 [ADR-0014](./docs/adr/0014-tui-is-a-lightweight-shell.md)。
+统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0015](./docs/adr/0015-tui-v0.2-chat-interface.md)。
 
-已知边界：固定布局要求终端至少 6 行、20 列；终端 resize 后不会重新计算区域；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；长行硬换行而不是横向滚动；整帧重绘在慢终端上可能有闪烁；不保留 TUI 历史滚屏；没有鼠标、彩色主题或面板焦点。这些都不影响 Agent 的正确性，只影响显示。
+已知边界：固定布局要求终端至少 10 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；长行硬换行，不做横向滚动；整帧重绘在慢终端上可能有闪烁；不保留可回滚的完整历史；没有鼠标、多行输入、工具详情展开或 `/` 命令菜单。这些都不影响 Agent 的正确性，只影响显示和输入体验。
 
 ## 配置
 
@@ -194,7 +200,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-222 个用例，分十二层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
+231 个用例，分十二层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -204,9 +210,9 @@ npm run check       # typecheck + 全部测试
 | `test/approval.test.mjs` | 审批读取：`askWithSignal` 的正常 / 取消 / EOF 竞态，以及多行 / 超长 / 控制字符命令和 cwd 的展示 |
 | `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
-| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset`、`/permission` 动态提示、`--permission`、流式 mock、TUI 状态栏 / 运行记录 / 统计 / 命令 |
+| `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset`、`/permission` 动态提示、`--permission`、流式 mock、TUI 聊天布局 / 命令 / 统计 |
 | `test/cli-pty.test.mjs` | Linux PTY：审批允许 / 拒绝 / Ctrl-C / EOF，以及 REPL 审批 EOF 不冒充用户拒绝 |
-| `test/tui.test.mjs` | TUI：状态栏与运行记录、成功/失败/拒绝分类、审批完整命令与 cwd、y/N、排队输入、thinking 的显示与清除、整帧重绘固定布局 |
+| `test/tui.test.mjs` | TUI：聊天式布局/页脚、工具运行/成功/失败、审批完整命令与 cwd、y/N、排队输入、thinking、颜色开关、PageUp/PageDown、resize、中文宽度 |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
@@ -249,7 +255,7 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 - 会话持久化到磁盘：进程内的多轮 REPL / TUI 已经有了（`--repl`、`--tui`），跨进程恢复 transcript 没有做
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
-- 全屏 TUI / alternate screen、鼠标、彩色主题、面板焦点：TUI v0.1 只做固定状态栏、运行记录和单行输入（见 [ADR-0014](./docs/adr/0014-tui-is-a-lightweight-shell.md)）
+- 全屏 TUI / alternate screen、鼠标、多行输入、工具详情展开、`/` 命令菜单和 Hooks：TUI v0.2 只做固定聊天布局、颜色/字形降级、历史滚动和 resize（见 [ADR-0015](./docs/adr/0015-tui-v0.2-chat-interface.md)）
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 操作系统级隔离：Permission v0.1 只做工具调用策略（见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)），不是 Sandbox；`shell` 放行后仍是启动者的权限（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）

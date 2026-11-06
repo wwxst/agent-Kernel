@@ -19,13 +19,13 @@ function tick() {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
     output.isTTY = true;
-    output.columns = 80;
-    output.rows = 24;
+    output.columns = columns;
+    output.rows = rows;
   }
 
   const controller = new AbortController();
@@ -40,9 +40,10 @@ function makeTui({ interactive = false, tty = false } = {}) {
     permission: "workspace-write",
     controller,
     interactive,
-    columns: 80,
-    rows: 24,
+    columns,
+    rows,
     layout: tty,
+    color,
   });
 
   return {
@@ -195,7 +196,7 @@ test("TUI：审批中取消立即结束等待，不会卡在输入上", async (t
   await assert.rejects(pending, /task cancelled/);
 });
 
-test("TUI：模型请求期间显示 thinking，第一段正文前原地清掉", async (t) => {
+test("TUI：模型请求期间显示 thinking，第一段正文前整帧重绘掉", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
 
@@ -208,10 +209,9 @@ test("TUI：模型请求期间显示 thinking，第一段正文前原地清掉",
   ui.tui.finishAssistant("");
   await tick();
   const text = ui.text();
-  // 固定布局整帧重绘：最后一帧从状态行开始，里面有 model 行、没有 thinking。
-  const lastFrame = text.slice(text.lastIndexOf("\x1b[1;1H"));
-  assert.match(lastFrame, /model: hello/);
-  assert.doesNotMatch(lastFrame, /thinking/);
+  // 差分重绘只写变化的行；用最后出现的位置判断 thinking 已被替换。
+  assert.ok(text.lastIndexOf("thinking") < text.lastIndexOf("hello"), "thinking 必须在正文前消失");
+  assert.match(text, /(?:✻|\*) hello/);
 });
 
 test("TUI：行式聊天同样在回复前显示 thinking，并在正文前原地清掉", async (t) => {
@@ -231,7 +231,7 @@ test("TUI：行式聊天同样在回复前显示 thinking，并在正文前原�
   assert.match(text, /model: hello/);
 });
 
-test("TUI：TTY 布局固定顶部状态栏和统计行，输入固定在底部，不切 alternate screen", async (t) => {
+test("TUI：TTY 布局是聊天式头部、固定输入和页脚，不切 alternate screen", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
 
@@ -239,16 +239,175 @@ test("TUI：TTY 布局固定顶部状态栏和统计行，输入固定在底部�
   await tick();
   const started = ui.text();
   assert.match(started, /\x1b\[2J/);
-  assert.match(started, /\x1b\[1;1H/);
-  assert.match(started, /\x1b\[2;1H/, "统计行固定在第 2 行");
-  assert.match(started, /\x1b\[23;1H/, "输入行固定在第 23 行，最后一行留作缓冲");
-  assert.match(started, /model mock-model/);
-  assert.match(started, /permission workspace-write/);
-  assert.match(started, /requests=0 {2}tool_calls=0 {2}tokens=0/);
+  assert.match(started, /repo/);
+  assert.match(started, /mock-model/);
+  assert.match(started, /C:\\work\\repo/);
+  assert.match(started, /workspace-write/);
+  assert.match(started, /0 requests · 0 tokens/);
+  assert.match(started, /\x1b\[21;1H/, "输入行固定在倒数第三行");
+  assert.match(started, /\x1b\[19;1H/, "页脚在输入分隔线上方，最后三行留缓冲");
   assert.doesNotMatch(started, /\x1b\[3;23r/, "整帧重绘不依赖滚动区域");
   assert.doesNotMatch(started, /\x1b\[\?1049h/, "轻量 TUI 不切 alternate screen");
 
   ui.tui.close();
   await tick();
   assert.match(ui.text(), /\x1b\[24;1H/, "退出时从最后一行下方交还 shell");
+});
+
+test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行这一次", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  const pending = ui.tui.approve({
+    tool: "shell",
+    args: { command: "echo hi\necho bye" },
+  });
+  ui.input.write("y\n");
+
+  assert.equal(await pending, true);
+  await tick();
+  const text = ui.text();
+  assert.match(text, /\[permission\] shell in C:\\work\\repo/);
+  assert.match(text, /command:/);
+  assert.match(text, /\| echo hi/);
+  assert.match(text, /\| echo bye/);
+  assert.match(text, /allow once\? \[y\/N\]/);
+  assert.match(text, /approval: allowed once/);
+});
+
+test("TUI：固定布局的工具调用从运行中原地变成成功/失败", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+
+  const call = {
+    id: "tool-1",
+    type: "function",
+    function: { name: "shell", arguments: JSON.stringify({ command: "echo hi" }) },
+  };
+
+  ui.tui.start();
+  ui.tui.toolCall(call);
+  await tick();
+  assert.match(ui.text(), /(?:⋯|\.\.\.) shell echo hi/);
+
+  ui.tui.toolResult(call, "ok");
+  await tick();
+  const text = ui.text();
+  const running = Math.max(
+    text.lastIndexOf("... shell echo hi"),
+    text.lastIndexOf("⋯ shell echo hi"),
+  );
+  const done = Math.max(
+    text.lastIndexOf("+ shell echo hi"),
+    text.lastIndexOf("✓ shell echo hi"),
+  );
+  assert.ok(done > running, "结果必须覆盖同一行的运行中状态");
+  assert.match(text, /(?:✓|\+) shell echo hi · ok/);
+});
+
+test("TUI：固定布局的页脚显示权限和完整统计", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  ui.tui.setStats(session);
+  await tick();
+  const text = ui.text();
+  assert.match(text, /workspace-write/);
+  assert.match(text, /2 requests · 2 tool calls · 12 tokens/);
+});
+
+test("TUI：固定布局转义工具结果里的控制字符", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, color: false });
+  t.after(() => ui.cleanup());
+
+  const call = {
+    id: "tool-esc",
+    type: "function",
+    function: { name: "shell", arguments: JSON.stringify({ command: "echo hi" }) },
+  };
+
+  ui.tui.start();
+  ui.tui.toolResult(call, "\x1b[31mred");
+  await tick();
+  const text = ui.text();
+  assert.match(text, /\\u001b\[31mred/);
+  assert.doesNotMatch(text, /\x1b\[31mred/);
+});
+
+test("TUI：PageUp/PageDown 滚动历史，并保留输入行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 12 });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  for (let index = 0; index < 12; index++) ui.tui.logLine(`line ${index}`, "info");
+  ui.input.emit("keypress", "", { name: "pageup" });
+  await tick();
+
+  assert.match(ui.text(), /(?:↑|\^) \d+ lines · workspace-write/);
+  // 输入行仍在原位置；滚动只改日志视口。
+  assert.match(ui.text(), /\x1b\[9;1H/);
+});
+
+test("TUI：resize 后重新计算标题、输入行和页脚位置", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  ui.output.columns = 60;
+  ui.output.rows = 16;
+  ui.output.emit("resize");
+  await tick();
+
+  const text = ui.text();
+  assert.match(text, /\x1b\[13;1H/, "16 行时输入行在倒数第三行");
+  assert.match(text, /\x1b\[11;1H/, "16 行时页脚在输入分隔线上方");
+  assert.match(text, /workspace-write/);
+});
+
+test("TUI：中文长行按显示宽度换行，不把固定框撑破", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 34, rows: 12 });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  ui.tui.logLine("中".repeat(40), "info");
+  await tick();
+
+  const chunks = ui.text().match(/中+/g) ?? [];
+  assert.ok(chunks.length > 1, "长中文行必须被拆行");
+  assert.ok(Math.max(...chunks.map((chunk) => chunk.length)) <= 15, "每行不超过 30 显示列");
+});
+
+test("TUI：颜色开关生效，无颜色终端输出纯文本", async (t) => {
+  const colored = makeTui({ interactive: true, tty: true, color: true });
+  const plain = makeTui({ interactive: true, tty: true, color: false });
+  t.after(() => colored.cleanup());
+  t.after(() => plain.cleanup());
+
+  colored.tui.start();
+  plain.tui.start();
+  await tick();
+
+  assert.match(colored.text(), /\x1b\[(?:38;5;\d+|3[0-9])m/);
+  assert.doesNotMatch(plain.text(), /\x1b\[(?:38;5;\d+|3[0-9])m/);
+});
+
+test("TUI：Windows Terminal 字形路径使用 Unicode 图标", async (t) => {
+  const previous = process.env.WT_SESSION;
+  process.env.WT_SESSION = "test-session";
+  const ui = makeTui({ interactive: true, tty: true, color: true });
+  t.after(() => {
+    ui.cleanup();
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  });
+
+  ui.tui.start();
+  ui.tui.beginTurn("hello");
+  ui.tui.setThinking(true);
+  await tick();
+
+  assert.match(ui.text(), /❯ hello/);
+  assert.match(ui.text(), /✻ thinking/);
 });
