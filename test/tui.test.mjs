@@ -248,7 +248,7 @@ test("TUI：回答审批后收起已结束的面板，保留决定与工具结�
   const call = { id: "approval", type: "function", function: { name: "shell", arguments: '{"command":"echo safe"}' } };
   ui.tui.toolCall(call);
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  assert.match(ui.text(), /Allow this command\?/);
+  assert.match(ui.text(), /Do you want to proceed\?/);
   ui.input.write("n\r");
   assert.equal(await pending, false);
   ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
@@ -420,7 +420,8 @@ test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", asy
   ui.output.emit("resize");
   await tick();
   assert.match(ui.text(), /echo TAIL/);
-  assert.match(lastRow(ui.text(), 5), /^[|│] Workspace: C:\\work\\repo\s+[|│]$/);
+  assert.match(lastRow(ui.text(), 5), /^Shell permission$/);
+  assert.match(lastRow(ui.text(), 6), /^Workspace: C:\\work\\repo$/);
   for (let row = 4; row < 34; row++) {
     assert.ok(lastRow(ui.text(), row).length <= 34, `第 ${row} 行不应超宽`);
   }
