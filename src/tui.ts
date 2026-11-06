@@ -627,6 +627,7 @@ export class Tui {
         this.pushLog(`[budget] exceeded (limit=${run.tokenBudget.limit})`, "warning");
       }
       if (seconds !== undefined) {
+        // 中文对照：{N} 次工具调用；使用 Run 已返回的统计。
         const tools = run.toolCalls > 0 ? ` · ${formatNumber(run.toolCalls)} ${run.toolCalls === 1 ? "tool call" : "tool calls"}` : "";
         // 中文对照：完成耗时 / 停止前经过 {seconds} 秒，工具数沿用实际 Run 统计。
         this.pushLog(`${this.glyphs.assistant} ${failed ? "Stopped after" : "Worked for"} ${seconds}s${tools}`, "muted");
@@ -1110,11 +1111,13 @@ export class Tui {
       const elapsed = Math.max(0, Date.now() - this.thinkingStartedAt);
       const frames = this.glyphs === UNICODE_GLYPHS ? ["✻", "✳", "✶", "✢"] : ["*", "+", "-", "+"];
       const spinner = frames[Math.floor(elapsed / 200) % frames.length];
-      // 中文对照：等待中，已经过 {seconds} 秒；下一行弱化展示取消操作。
+      // 只展示已收到的工具结果数，不猜测端点尚未返回的流式 token。
       const results = this.runToolResults > 0 && this.contentWidth() >= 48
+        // 中文对照：{N} 个工具结果。
         ? ` · ${formatNumber(this.runToolResults)} ${this.runToolResults === 1 ? "tool result" : "tool results"}` : "";
-      // 中文对照：已经收到的工具结果数；不猜测端点尚未返回的流式 token。
+      // 中文对照：等待中，已经过 {seconds} 秒，以及已收到的工具结果数。
       logical.push({ text: `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`, tone: "accent", kind: "thinking" });
+      // 中文对照：Ctrl-C 取消。
       logical.push({ text: `  ${this.glyphs.boxBottomLeft} Ctrl-C to cancel`, tone: "muted" });
     }
 
