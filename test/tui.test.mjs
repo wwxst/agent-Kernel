@@ -741,13 +741,16 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
   t.after(() => ui.cleanup());
 
   ui.tui.start();
+  ui.tui.toolCall({ id: "allowed-running", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: "echo hi\necho bye" }) } });
   const pending = ui.tui.approve({
     tool: "shell",
     args: { command: "echo hi\necho bye" },
   });
+  const beforeDecision = ui.text().length;
   ui.input.write("y\n");
 
   assert.equal(await pending, true);
+  assert.match(ui.text().slice(beforeDecision), /Running\.\.\./, "允许后恢复执行中子行");
   await tick();
   const text = ui.text();
   assert.match(text, /Shell permission/);
@@ -961,6 +964,25 @@ test("TUI：Windows Terminal 字形路径使用 Unicode 图标", async (t) => {
 });
 
 
+test("TUI：现代终端窄窗口启动后放大也设置块状光标，退出恢复默认", async (t) => {
+  const previous = process.env.WT_SESSION;
+  process.env.WT_SESSION = "test-resize-session";
+  const ui = makeTui({ interactive: true, tty: true, columns: 20 });
+  t.after(() => {
+    ui.cleanup();
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  });
+  ui.tui.start();
+  assert.doesNotMatch(ui.text(), /\x1b\[2 q/);
+  ui.output.columns = 80;
+  ui.output.emit("resize");
+  await tick();
+  assert.match(ui.text(), /\x1b\[2 q/);
+  ui.tui.close();
+  assert.match(ui.text(), /\x1b\[0 q/);
+});
+
 test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在屏幕底部", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
@@ -1002,8 +1024,10 @@ test("TUI flowInput：Shell 审批面板和 y/N 输入就近，决策后恢复�
   assert.ok(decision - panelBottom <= 2, "审批决定必须紧挨着命令面板");
   assert.ok(decision < 30, "短命令审批不应沉到屏幕最底部");
 
+  const beforeDecision = ui.text().length;
   ui.input.write("n\r");
   assert.equal(await pending, false);
+  assert.doesNotMatch(ui.text().slice(beforeDecision), /Running\.\.\./, "拒绝到结果回传之间也不能闪现执行中");
   await tick();
   const after = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
   assert.equal(after.some((row) => row.includes("Allow this command?")), false, "决策后收起面板");

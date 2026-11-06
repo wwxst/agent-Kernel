@@ -233,6 +233,9 @@ export class Tui {
   /** 待审批的原始请求不受日志上限裁剪，resize 时按当前宽度重新排版。 */
   private approvalRequest?: PermissionRequest;
 
+  /** 审批开始后，只有允许执行或收到工具结果，才解除 Running 子行的显示抑制。 */
+  private approvalBlocksRunning = false;
+
   /** 上一帧每行的原始内容；只写变化的行，减少流式输出时的整屏闪烁。 */
   private lastFrame: string[] = [];
 
@@ -362,11 +365,6 @@ export class Tui {
   /** 画第一帧。固定布局清屏但不切 alternate screen。 */
   start(): void {
     if (this.layout) {
-      if (prefersRichColor()) {
-        // DECSCUSR 仅影响当前终端会话；退出时恢复默认，不修改终端持久配置。
-        this.output.write("\x1b[2 q");
-        this.cursorStyleChanged = true;
-      }
       this.output.write("\x1b[2J\x1b[H");
       this.renderNow();
       this.moveToInput();
@@ -571,6 +569,7 @@ export class Tui {
 
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
   toolCall(call: ToolCall): void {
+    this.approvalBlocksRunning = false;
     this.setThinking(false);
     this.finishAssistant();
     if (this.fixedLayoutAllowed) {
@@ -593,6 +592,7 @@ export class Tui {
 
   /** 工具结果：成功、失败、权限拒绝都在这里落一行；拒绝原因直接来自 Tool result。 */
   toolResult(call: ToolCall, result: string): void {
+    this.approvalBlocksRunning = false;
     this.runToolResults++;
     this.setThinking(false);
     this.finishAssistant();
@@ -766,6 +766,7 @@ export class Tui {
     this.finishAssistant();
     if (this.fixedLayoutAllowed) {
       this.pushBlank();
+      this.approvalBlocksRunning = true;
       this.approvalRequest = request;
       this.scrollOffset = 0;
     }
@@ -805,6 +806,7 @@ export class Tui {
     }
 
     const approved = isApproved(answer);
+    if (approved) this.approvalBlocksRunning = false;
     if (this.layout) {
       this.logLine(
         `  ${approved ? this.glyphs.success : this.glyphs.denied} ${approved ? "Allowed once" : "Denied"}`,
@@ -875,6 +877,12 @@ export class Tui {
   /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
   private renderNow(): void {
     if (!this.layout || this.closed) return;
+
+    if (!this.cursorStyleChanged && prefersRichColor()) {
+      // DECSCUSR 也覆盖窄窗口放大后首次进入布局；退出时恢复默认，不改持久配置。
+      this.output.write("\x1b[2 q");
+      this.cursorStyleChanged = true;
+    }
 
     if (this.renderTimer !== undefined) {
       clearTimeout(this.renderTimer);
@@ -1096,8 +1104,8 @@ export class Tui {
     for (const line of this.log) {
       logical.push(line);
       // 执行中提示派生自待完成工具，不写进日志；结果替换标题时不会残留一条 Running。
-      if (pendingLines.has(line) && this.approvalRequest === undefined) {
-        // 审批面板本身表示等待决定；此时不能把待授权的工具显示成正在执行。
+      if (pendingLines.has(line) && !this.approvalBlocksRunning) {
+        // 拒绝/EOF 后到工具结果回传之前也不能短暂闪现执行中。
         // 中文对照：正在执行。
         logical.push({ text: `    ${this.glyphs.boxBottomLeft} Running...`, tone: "muted" });
       }
