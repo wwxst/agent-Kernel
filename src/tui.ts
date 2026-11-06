@@ -1260,7 +1260,7 @@ class Style {
   userMessage(text: string): string {
     if (!this.enabled) return text;
     if (!this.rich) return `\x1b[1;39m${text}\x1b[0m`;
-    return `\x1b[1;39;48;5;237m${text}\x1b[0m`;
+    return `\x1b[1;38;5;255;48;5;237m${text}\x1b[0m`;
   }
 
   paint(tone: Tone, text: string): string {
