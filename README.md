@@ -162,7 +162,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 工具与审批：
 
-- 工具事件使用 `Read README.md`、`Shell: npm run check` 这类可读形式，不重复打印同一条调用。
+- 工具事件使用 `Read README.md`、`Shell: npm run check` 这类可读形式，不重复打印同一条调用；工具名称中性粗体，状态符号单独着色，缩进子行显示结果摘要与读取行数，读取截断仍有明确尾注。
 - 失败/拒绝/未执行的第一行原因放在工具事件下方，正文不截断关键原因；`read` 不把整份文件内容刷进聊天区。
 - `workspace-write` 下的 `shell` 审批显示为完整边框面板：实际 workspace、完整命令、`[Y] Allow once` / `[N] Deny`；回答在下方输入框里输入。只有 `y` / `yes` 放行，没有 TTY 时直接按权限拒绝。
 
@@ -170,12 +170,12 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 - 自动检测颜色能力：16 色 / 256 色、`NO_COLOR`、`TERM=dumb`；无颜色终端仍靠框线和符号可读。
 - Windows Terminal / VS Code 终端 / Linux 使用 `❯`、`✻`、`●`、`✓`、`✗`、`⊘`、`┌┐└┘─│`；传统 Windows conhost 退化成 `>`、`*`、`o`、`+`、`x`、`!`、`-`、`|`，不会显示方框。
-- **Thinking**：每次模型请求后显示 `✻ thinking...`；第一段正文、工具调用或错误到达时替换掉。
+- **Thinking**：每次模型请求后显示 `✻ Thinking... · Ns · Ctrl-C to cancel`；秒数是实际请求等待时间，窄屏缩短提示；第一段正文、工具调用或错误到达时清除并停止计时。
 - **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
 - **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
 - 命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态行和下一次请求同时生效。
 
-统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。
+统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 
 已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标、多行输入、工具详情展开或 `/` 命令菜单。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
 
@@ -201,7 +201,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-248 个用例，分十二层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
+252 个用例，分十二层，都不需要 API Key、不联网（其中 7 条在 Windows 上跳过：2 条平台用例 + 5 条 Linux PTY 用例）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |

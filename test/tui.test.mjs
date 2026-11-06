@@ -71,6 +71,68 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
 
+test("TUI：工具名称使用中性粗体，状态单独着色，结果显示缩进子行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, color: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const call = { id: "hierarchy", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "one\ntwo\n… [truncated 400 chars]");
+  await tick();
+  assert.match(ui.text(), /\x1b\[1m\x1b\[39mRead README\.md/);
+  assert.match(ui.text(), /(?:└|\+) Received 3 lines/);
+  assert.match(ui.text(), /… \[truncated 400 chars\]/, "摘要仍须报告读取不完整");
+  assert.doesNotMatch(ui.text(), /one\ntwo/);
+});
+
+test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后停止计时", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.setThinking(true);
+  assert.match(ui.text(), /Thinking\.\.\. · 0s · Ctrl-C to cancel/);
+  t.mock.timers.tick(2000);
+  assert.match(ui.text(), /Thinking\.\.\. · 2s · Ctrl-C to cancel/);
+  ui.tui.assistantDelta("hello");
+  const finished = ui.text().length;
+  t.mock.timers.tick(3000);
+  assert.equal(ui.text().length, finished, "正文后不再因等待计时重绘");
+  assert.doesNotMatch(lastRow(ui.text(), 6), /Thinking/);
+});
+
+test("TUI：Shell 审批正文中性显示，输入明确 y/N 且默认拒绝", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, color: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+  pending.catch(() => {});
+  await tick();
+  assert.match(ui.text(), /\[N\] Deny \(default\)/);
+  assert.match(ui.text(), /y\/N > /);
+  assert.match(ui.text(), /\x1b\[39m[^\x1b]*echo safe/);
+  ui.input.write("\r");
+  assert.equal(await pending, false);
+  const finalInput = ui.text().slice(ui.text().lastIndexOf("\x1b[19;1H\x1b[2K"));
+  assert.doesNotMatch(finalInput, /y\/N/, "审批结束后恢复普通聊天输入提示");
+});
+
+test("TUI：错误和非流式正文到达同样清除等待计时", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.setThinking(true);
+  ui.tui.logError("ERROR: offline");
+  assert.doesNotMatch(lastRow(ui.text(), 5), /Thinking/);
+  ui.tui.setThinking(true);
+  ui.tui.finishAssistant("non-stream reply");
+  const length = ui.text().length;
+  t.mock.timers.tick(2000);
+  assert.equal(ui.text().length, length);
+});
+
 test("TUI：长输入留在单行框内，滚动和光标编辑不丢文字", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, columns: 34 });
   t.after(() => ui.cleanup());
@@ -116,9 +178,10 @@ test("TUI：长正文续行保持正文缩进，工具和回复间留白", async
   ui.tui.toolResult(call, "file body");
   ui.tui.finishAssistant("abcdefghijklmnopqrstuvwxyz0123456789");
   await tick();
-  assert.equal(lastRow(ui.text(), 5).trim(), "");
-  assert.match(lastRow(ui.text(), 6), /(?:✻|\*) abcdef/);
-  assert.match(lastRow(ui.text(), 7), /^    23456789/);
+  assert.match(lastRow(ui.text(), 5), /Received 1 line/);
+  assert.equal(lastRow(ui.text(), 6).trim(), "");
+  assert.match(lastRow(ui.text(), 7), /(?:✻|\*) abcdef/);
+  assert.match(lastRow(ui.text(), 8), /^    23456789/);
 });
 
 test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", async (t) => {
@@ -203,7 +266,8 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   await tick();
   assert.match(lastRow(ui.text(), 4), /TASK_NARROW/);
   assert.match(lastRow(ui.text(), 6), /(?:✓|\+) Read a.txt/);
-  assert.equal(lastRow(ui.text(), 7).trim(), "");
+  assert.match(lastRow(ui.text(), 7), /Received 1 line/);
+  assert.equal(lastRow(ui.text(), 8).trim(), "");
 });
 
 test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
@@ -556,7 +620,8 @@ test("TUI：固定布局的工具调用从运行中原地变成成功/失败", a
     text.lastIndexOf("✓ Shell: echo hi"),
   );
   assert.ok(done > running, "结果必须覆盖同一行的运行中状态");
-  assert.match(text, /(?:✓|\+) Shell: echo hi · ok/);
+  assert.match(lastRow(text, 4), /(?:✓|\+) Shell: echo hi/);
+  assert.match(lastRow(text, 5), /^      [└+] ok/);
 });
 
 test("TUI：失败和未执行工具显示不同符号，原因在下一行", async (t) => {

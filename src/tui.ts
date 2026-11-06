@@ -54,6 +54,8 @@ type Tone =
 interface LogLine {
   text: string;
   tone: Tone;
+  /** 工具标题与暂态等待各有局部样式，不把整行都染成状态色。 */
+  kind?: "tool" | "thinking";
 }
 
 interface Glyphs {
@@ -194,6 +196,10 @@ export class Tui {
   private assistantAtLineStart = true;
 
   private thinking = false;
+
+  private thinkingStartedAt = 0;
+
+  private thinkingTimer?: NodeJS.Timeout;
 
   /** 历史滚动偏移：0 = 跟随最新；正数 = 向上查看旧记录。 */
   private scrollOffset = 0;
@@ -418,7 +424,19 @@ export class Tui {
    */
   setThinking(thinking: boolean): void {
     if (this.thinking === thinking) return;
-    this.thinking = thinking;
+    if (thinking) {
+      this.thinking = true;
+      this.thinkingStartedAt = Date.now();
+      if (this.fixedLayoutAllowed) {
+        // 只量测请求等待，不推断模型内部思考，也不虚构 token 数。
+        this.thinkingTimer = setInterval(() => {
+          if (this.layout) this.renderNow();
+        }, 1000);
+        this.thinkingTimer.unref?.();
+      }
+    } else {
+      this.stopThinking();
+    }
 
     if (!this.interactive) return;
     if (this.layout) {
@@ -431,6 +449,14 @@ export class Tui {
     else this.writeRaw("\r\x1b[2K");
   }
 
+  private stopThinking(): void {
+    this.thinking = false;
+    if (this.thinkingTimer !== undefined) {
+      clearInterval(this.thinkingTimer);
+      this.thinkingTimer = undefined;
+    }
+  }
+
   /**
    * 任务开始：把用户这一轮写进对话，并关掉上一段可能未收尾的模型回复。
    *
@@ -438,7 +464,7 @@ export class Tui {
    */
   beginTurn(task: string, { show = this.fixedLayoutAllowed || !this.interactive }: { show?: boolean } = {}): void {
     if (this.layout) {
-      this.thinking = false;
+      this.stopThinking();
       this.commitAssistant();
       this.scrollOffset = 0;
       if (show) this.pushTask(task);
@@ -464,7 +490,7 @@ export class Tui {
     if (this.layout) {
       const first = !this.assistantOpen;
       if (first) this.pushBlank();
-      this.thinking = false;
+      this.stopThinking();
       this.assistantOpen = true;
       this.streamingText += normalizeNewlines(text);
       if (first) this.renderNow();
@@ -502,6 +528,7 @@ export class Tui {
    * 没显示过（非流式或增量被漏掉）时整段补上。
    */
   finishAssistant(content: string | null = null): void {
+    if (content !== null && content.trim() !== "") this.setThinking(false);
     if (this.layout) {
       if (!this.assistantOpen && content !== null && content.trim() !== "") {
         this.assistantOpen = true;
@@ -528,7 +555,11 @@ export class Tui {
     this.setThinking(false);
     this.finishAssistant();
     if (this.fixedLayoutAllowed) {
-      const line = this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call)}`, "warning");
+      this.pushBlank();
+      const line: LogLine = {
+        ...this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call)}`, "muted"),
+        kind: "tool",
+      };
       this.log.push(line);
       this.pendingTools.set(call.id, line);
       this.trimLog();
@@ -549,7 +580,7 @@ export class Tui {
       const pending = this.pendingTools.get(call.id);
       this.pendingTools.delete(call.id);
       const lines = toolResultLines(call, result, this.glyphs)
-        .map((line) => this.makeLogLine(line.text, line.tone));
+        .map((line) => ({ ...line, ...this.makeLogLine(line.text, line.tone) }));
       const index = pending === undefined ? -1 : this.log.indexOf(pending);
       if (index >= 0) this.log.splice(index, 1, ...lines);
       else this.log.push(...lines);
@@ -568,7 +599,7 @@ export class Tui {
     this.stats = session;
 
     if (this.layout) {
-      this.thinking = false;
+      this.stopThinking();
       this.commitAssistant();
       if (run.tokenBudget.exceeded) {
         this.pushLog(`[budget] exceeded (limit=${run.tokenBudget.limit})`, "warning");
@@ -671,7 +702,8 @@ export class Tui {
       "",
       "Allow this command?",
       "  [Y] Allow once",
-      "  [N] Deny",
+      // 中文对照：拒绝（默认）；空输入不授权。
+      "  [N] Deny (default)",
     ];
     const textWidth = Math.max(1, width - 4);
     const panel: LogLine[] = [];
@@ -686,7 +718,7 @@ export class Tui {
       for (const part of wrapLine(line, textWidth)) {
         panel.push({
           text: `${this.glyphs.boxVertical} ${padRight(part, textWidth)} ${this.glyphs.boxVertical}`,
-          tone: "warning",
+          tone: line.startsWith("  [") || line === "Allow this command?" ? "warning" : "assistant",
         });
       }
     }
@@ -713,7 +745,8 @@ export class Tui {
     try {
       if (this.layout) {
         this.renderNow();
-        answer = await this.readLine(COMMAND_PROMPT, { placeholder: false });
+        // 中文对照：y/N，明确告诉用户空输入默认拒绝。
+        answer = await this.readLine("y/N > ", { placeholder: false });
       } else {
         const formatted = formatApproval(request, this.workspace);
         const header = formatted.endsWith(APPROVAL_QUESTION)
@@ -728,6 +761,8 @@ export class Tui {
         // 回答后才转成普通日志；等待期间必须能翻阅任意长度的完整审批。
         this.log.push(...this.approvalPanelLines(request));
         this.approvalRequest = undefined;
+        this.promptText = COMMAND_PROMPT;
+        this.promptPlaceholder = true;
         this.trimLog();
         this.renderNow();
       }
@@ -757,6 +792,7 @@ export class Tui {
   /** 结束 TUI：清掉监听器和定时器、提交当前回复、恢复终端。 */
   close(): void {
     if (this.closed) return;
+    this.setThinking(false);
     if (this.renderTimer !== undefined) {
       clearTimeout(this.renderTimer);
       this.renderTimer = undefined;
@@ -764,7 +800,6 @@ export class Tui {
     this.renderScheduled = false;
 
     if (this.layout) {
-      this.thinking = false;
       this.commitAssistant();
       this.renderNow();
     } else {
@@ -803,6 +838,7 @@ export class Tui {
 
   /** 红色错误行；行式聊天里和普通文本一样（颜色只属于固定布局）。 */
   logError(text: string): void {
+    this.setThinking(false);
     this.logLine(text, "error");
   }
 
@@ -843,7 +879,7 @@ export class Tui {
       const line = visible[index];
       rows[LOG_TOP - 1 + index] = line === undefined
         ? ""
-        : `  ${this.style.paint(line.tone, clip(line.text, width))}`;
+        : `  ${this.paintLogLine(line, width)}`;
     }
 
     rows[this.boxTopRow - 1] = this.boxTopLine(width);
@@ -861,6 +897,21 @@ export class Tui {
     }
     this.inputDirty = false;
     this.restoreInputCursor();
+  }
+
+  private paintLogLine(line: LogLine, width: number): string {
+    const text = clip(line.text, width);
+    if (line.kind === "tool") {
+      // 工具标题的四字符前缀是「两格缩进 + 单列符号 + 空格」；只有符号承担状态色。
+      return this.style.paint(line.tone, text.slice(0, 4)) +
+        this.style.bold(this.style.paint("assistant", text.slice(4)));
+    }
+    if (line.kind === "thinking") {
+      const end = text.indexOf(" · ");
+      return this.style.paint("warning", end < 0 ? text : text.slice(0, end)) +
+        (end < 0 ? "" : this.style.paint("muted", text.slice(end)));
+    }
+    return this.style.paint(line.tone, text);
   }
 
   private scheduleRender(): void {
@@ -998,16 +1049,23 @@ export class Tui {
         logical.push({ text: line, tone: "assistant" });
       }
     }
-    if (this.thinking) logical.push({ text: `${this.glyphs.assistant} Thinking...`, tone: "warning" });
+    if (this.thinking) {
+      const seconds = Math.max(0, Math.floor((Date.now() - this.thinkingStartedAt) / 1000));
+      // 中文对照：等待中，已经过 {seconds} 秒；Ctrl-C 取消。
+      const detail = this.contentWidth() >= 48 ? ` · ${seconds}s · Ctrl-C to cancel` : ` · ${seconds}s`;
+      logical.push({ text: `${this.glyphs.assistant} Thinking...${detail}`, tone: "warning", kind: "thinking" });
+    }
 
     const width = this.contentWidth();
     const wrapped: LogLine[] = [];
     for (const line of logical) {
       const indent = line.text.match(/^\s*/)?.[0] ?? "";
-      const continuation = line.tone === "assistant" || line.tone === "user" ? "  " : indent;
+      const continuation = line.kind === "tool" ? "    "
+        : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
       const parts = wrapLine(line.text, width, continuation);
-      for (const part of parts) {
-        wrapped.push({ text: part, tone: line.tone });
+      for (const [index, part] of parts.entries()) {
+        wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
+          kind: index === 0 ? line.kind : undefined });
       }
     }
     if (this.approvalRequest !== undefined) {
@@ -1492,15 +1550,27 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs): LogLin
   const summary = summarizeToolResult(result);
   const event = formatToolEvent(call);
   if (!summary.failed) {
-    const detail = call.function.name === "read" || summary.body === ""
-      ? ""
-      : ` · ${clip(summary.body, 160)}${summary.more}`;
-    return [{ text: `  ${glyphs.success} ${event}${detail}`, tone: "success" }];
+    const resultLines = result === "" ? [] : splitDisplayLines(result);
+    const count = resultLines.length;
+    // 中文对照：收到 {count} 行；这是工具实际返回的行数，不声称是文件总行数。
+    const detail = call.function.name === "read"
+      ? `Received ${formatNumber(count)} ${count === 1 ? "line" : "lines"}`
+      : `${clip(summary.body, 160)}${summary.more}`;
+    const lines: LogLine[] = [
+      { text: `  ${glyphs.success} ${event}`, tone: "success", kind: "tool" },
+      { text: `    ${glyphs.boxBottomLeft} ${detail}`, tone: "muted" },
+    ];
+    const last = resultLines.at(-1);
+    // read 的部分成功必须可见，不能只用行数摘要把读取上限藏掉。
+    if (call.function.name === "read" && last?.startsWith("… [")) {
+      lines.push({ text: `      ${last}`, tone: "warning" });
+    }
+    return lines;
   }
 
   const mark = summary.denied ? glyphs.denied : summary.notRun ? glyphs.notRun : glyphs.error;
-  const tone: Tone = summary.notRun ? "muted" : "error";
-  const lines: LogLine[] = [{ text: `  ${mark} ${event}`, tone }];
+  const tone: Tone = summary.notRun ? "muted" : summary.denied ? "warning" : "error";
+  const lines: LogLine[] = [{ text: `  ${mark} ${event}`, tone, kind: "tool" }];
   // 失败原因不截断：每行都放在工具事件下面，长命令/长错误交给视口换行和 PageUp。
   for (const reason of result.split("\n").map((line) => line.trim()).filter((line) => line !== "")) {
     lines.push({ text: `    ${reason}`, tone });
