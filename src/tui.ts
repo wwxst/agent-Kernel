@@ -1,16 +1,17 @@
 /**
- * 轻量 TUI：顶部状态栏、中间运行记录、底部输入区。
+ * 轻量 TUI：顶部状态栏、中间运行记录、底部固定输入区。
  *
- * 为什么不是全屏应用：TUI v0.1 的目标是「让人看清 agent 在干什么」，不是做终端框架。
- * 这里只借用 ANSI 的滚动区域（DECSTBM）：第 1 行固定状态栏，最后一行固定运行统计，
- * 中间照常滚动，输入行在滚动区域底部。不切 alternate screen、不引 TUI 库、不改 Agent。
- * 退出时恢复滚动区域，shell 的 scrollback 还在。
+ * 为什么是「整帧重绘」而不是滚屏：传统 Windows conhost 不支持 DECSTBM 滚动区域，
+ * 靠它固定栏位会让回复行互相覆盖。这里改用绝对光标定位 + 每帧重画：
+ * 第 1 行状态、第 2 行统计、中间是日志视口、倒数第二行是输入行，最后一行留空缓冲。
+ * 所有写入都落在固定行上，不靠换行滚动，所以输入区不会被回复顶走。
  *
- * 非 TTY（管道、CI、e2e）退化成逐行输出：没有光标控制，但走同一套日志方法。
- * 这样 TUI 的显示逻辑不需要真终端也能测试；审批在没有 TTY 时仍按 Permission 的规则拒绝。
+ * 这不切 alternate screen、不引 TUI 库、不改 Agent；退出后原来的 shell scrollback
+ * 仍在，但 TUI 只保留最后一屏（v0.1 不做完整历史回放）。
  *
- * 已知边界：固定布局要求终端至少 6 行、20 列；终端 resize 后不会重新计算区域；
- * 宽度按 JS 字符串长度近似，CJK / emoji 的显示宽度可能让长行提前换行。
+ * 非 TTY（管道、CI、e2e）退化成逐行输出：没有光标控制，但走同一套日志/审批逻辑。
+ * 已知边界：固定布局要求终端至少 6 行、20 列；resize 后不会重算；宽度按 JS 字符串
+ * 长度近似（CJK / emoji 可能提前换行）；长行会被硬换行而不是横向滚动。
  */
 import { createInterface } from "node:readline";
 import type { Interface } from "node:readline";
@@ -20,14 +21,24 @@ import { approvalGate, isApproved } from "./permission.ts";
 import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
 
-/** 固定布局至少需要：状态栏、统计行、一行日志/输入，再加两条缓冲。 */
+/** 固定布局至少需要：状态栏、统计行、两条日志/输入，再加缓冲行。 */
 const MIN_ROWS = 6;
 /** 太窄时逐行输出更可读，也别把状态栏裁得只剩省略号。 */
 const MIN_COLUMNS = 20;
-/** 第 2 行固定显示统计；模型思考时 thinking 写在输入行上方，不占固定行。 */
+
+const STATUS_ROW = 1;
 const STATS_ROW = 2;
+const LOG_TOP = 3;
+
+/** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
+const MAX_LOG_LINES = 2_000;
+
+/** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
+const RENDER_INTERVAL_MS = 40;
+
 const ASSISTANT_PREFIX = "model: ";
 const ASSISTANT_INDENT = "  ";
+const THINKING_TEXT = "thinking...";
 
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
@@ -37,22 +48,19 @@ export interface TuiOptions {
   permission: PermissionMode;
   /** 取消链的起点；TUI 的 Ctrl-C 和 CLI 的 SIGINT 都 abort 同一个 controller。 */
   controller: AbortController;
-  /** stdin / stdout 都是 TTY 时才有审批通道；固定布局还要求终端支持滚动区域。 */
+  /** stdin / stdout 都是 TTY 时才有审批通道和固定布局。 */
   interactive: boolean;
   columns?: number;
   rows?: number;
-  /**
-   * 是否启用固定栏位布局。生产代码通常不传，由 `terminalSupportsScrollRegion()` 判断；
-   * 测试可以显式传 true/false，不依赖当前终端。
-   */
+  /** 测试可以显式强制开关固定布局；生产代码不传。 */
   layout?: boolean;
 }
 
 /**
  * TUI 的显示与输入层。
  *
- * 它不认识 Agent：CLI 把 Agent 的回调接到这里的 `assistantDelta` / `toolCall` / `toolResult`，
- * 把 `approve` 交给 Permission。这样 TUI 只负责「怎么看、怎么问」，循环和策略仍在原来的位置。
+ * 它不认识 Agent：CLI 把 Agent 的回调接到 `assistantDelta` / `toolCall` / `toolResult`，
+ * 把 `approve` 交给 Permission。TUI 只负责「怎么看、怎么问」，循环和策略仍在原处。
  */
 export class Tui {
   private readonly output: NodeJS.WritableStream;
@@ -69,11 +77,13 @@ export class Tui {
 
   private readonly columns: number;
 
-  /** 真实终端的总行数；最后一行留作缓冲，防止被窗口边框/横向滚动条吃掉。 */
   private readonly rows: number;
 
-  /** 输入行（滚动区域底边）的位置；最后一行留空，不把窗口底边当成可写行。 */
+  /** 输入行；最后一行留空作缓冲，避免被窗口底边吃掉。 */
   private readonly inputRow: number;
+
+  /** 日志视口能放多少行。 */
+  private readonly logHeight: number;
 
   private readonly rl: Interface;
 
@@ -81,7 +91,26 @@ export class Tui {
 
   private stats?: AgentSessionStats;
 
-  /** 已读到但还没被消费的输入行。审批和任务输入共用同一个队列，谁先 await 谁拿到下一行。 */
+  /** 已经收尾的日志行（已转义、未换行）。 */
+  private readonly log: string[] = [];
+
+  /** 当前正在流式输出的模型正文；只用于显示。 */
+  private streamingText = "";
+
+  private assistantOpen = false;
+
+  private assistantAtLineStart = true;
+
+  private thinking = false;
+
+  /** 正在等待 readline 输入；此时不要重画输入行，以免打断用户编辑。 */
+  private promptActive = false;
+
+  private renderScheduled = false;
+
+  private renderTimer?: NodeJS.Timeout;
+
+  /** 已读到但还没被消费的输入行。审批和任务输入共用同一个队列。 */
   private readonly lines: string[] = [];
 
   private readonly waiting: Array<(line: string | null) => void> = [];
@@ -89,13 +118,6 @@ export class Tui {
   private ended = false;
 
   private closed = false;
-
-  private assistantOpen = false;
-
-  private assistantAtLineStart = true;
-
-  /** 是否有一次模型请求正在等第一个字；true 时输入行上方显示 thinking...。 */
-  private thinking = false;
 
   private readonly onAbort: () => void;
 
@@ -108,20 +130,18 @@ export class Tui {
     this.permissionMode = options.permission;
     this.columns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
     this.rows = options.rows !== undefined && options.rows > 0 ? options.rows : 24;
-    // 输入行固定在倒数第二行；最后一行留空作缓冲，不参与滚动。
-    // 有些控制台不接受「滚动区域底边 = 窗口最后一行」，那样会把顶部栏一起滚走。
     this.inputRow = this.rows - 1;
+    this.logHeight = this.rows - 4;
     this.layout =
       options.layout ??
       (options.interactive &&
         isTerminalOutput(options.output) &&
-        terminalSupportsScrollRegion() &&
         this.columns >= MIN_COLUMNS &&
         this.rows >= MIN_ROWS);
 
     this.rl = createInterface({ input: options.input, output: options.output, terminal: options.interactive });
 
-    // 一个 line 监听器同时服务任务输入和审批，顺序才明确：谁先 await 谁拿下一行。
+    // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     this.rl.on("line", (line) => {
       const resolve = this.waiting.shift();
       if (resolve === undefined) this.lines.push(line);
@@ -129,7 +149,7 @@ export class Tui {
     });
     this.rl.on("close", () => {
       this.ended = true;
-      // close 之后不会再有 line：所有等输入的人统一拿到 null，循环自然退出。
+      this.promptActive = false;
       for (const resolve of this.waiting.splice(0)) resolve(null);
     });
     // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT；这里仍然 abort 同一个 controller。
@@ -145,22 +165,17 @@ export class Tui {
     if (this.controller.signal.aborted) this.rl.close();
   }
 
-  /** 画初始状态栏。固定布局会清屏，但不会切 alternate screen。 */
+  /** 画第一帧。固定布局清屏但不切 alternate screen。 */
   start(): void {
     if (this.layout) {
-      // 清掉当前视口，给固定栏位一个干净起点；scrollback 不切走。
       this.output.write("\x1b[2J\x1b[H");
-      // 第 1 行状态栏、第 2 行统计固定；滚动区从第 3 行到输入行，输入行就在
-      // 回复区底部。最后一行留空，避免把窗口底边当成可写行。
-      this.output.write(`\x1b[3;${this.inputRow}r`);
-      this.drawBars();
+      this.renderNow();
       this.moveToInput();
       return;
     }
 
     if (this.interactive) {
-      // 行式聊天也先打一条紧凑状态头和统计行；它们会随历史滚走，但启动时
-      // 看起来仍是一个清楚的头部。
+      // 行式聊天也先打一条紧凑状态头和统计行。
       this.logLine(this.formatStatus());
       this.logLine(this.formatStatsLine());
       return;
@@ -174,63 +189,73 @@ export class Tui {
   /** 切换权限后刷新状态栏；真正的放行/拒绝仍由 Permission 决定。 */
   setPermission(mode: PermissionMode): void {
     this.permissionMode = mode;
-    if (this.layout) this.drawBars();
+    if (this.layout) this.renderNow();
   }
 
-  /** 更新第 2 行统计。TTY 下重画固定行；非 TTY 在每轮结束时由 finishTurn 打一行。 */
+  /** 更新统计行；非 TTY 在每轮结束时由 finishTurn 打一行。 */
   setStats(stats: AgentSessionStats): void {
     this.stats = stats;
-    if (this.layout) this.drawBars();
+    if (this.layout) this.renderNow();
   }
 
   /**
-   * 模型请求开始/结束时切换 thinking 提示。
+   * 模型请求开始/结束时切换 thinking。
    *
-   * thinking 不占固定行：它写在输入行上方，第一段正文或第一个工具调用到达时
-   * 用 `\r\x1b[2K` 原地清掉，再写 `model:` / `→ tool`。这样等待期间有反馈，
-   * 回复开始时又不会把一行 `thinking...` 留在记录里。
+   * 固定布局把 thinking 作为日志视口最后一行，第一段正文/工具调用到达时直接重绘掉；
+   * 行式聊天用 `\r\x1b[2K` 原地覆盖，不在记录里留下多余的一行。
    */
   setThinking(thinking: boolean): void {
     if (this.thinking === thinking) return;
     this.thinking = thinking;
-    if (!this.interactive) return;
 
+    if (!this.interactive) return;
     if (this.layout) {
-      if (thinking) {
-        this.moveToInput();
-        this.writeRaw("\r\x1b[2Kthinking...");
-      } else {
-        // 光标仍在输入行；清掉 thinking 那一行，后面紧接着写正文或工具调用。
-        this.writeRaw("\r\x1b[2K");
-      }
+      this.renderNow();
       return;
     }
 
-    // 行式聊天：输入行已经回车，thinking 写在它的下一行；第一段正文前原地清掉。
-    if (thinking) this.writeRaw("thinking...");
+    if (thinking) this.writeRaw(THINKING_TEXT);
     else this.writeRaw("\r\x1b[2K");
   }
 
   /**
    * 任务开始：把用户这一轮写进运行记录，并关掉上一段可能未收尾的模型回复。
    *
-   * TTY 里 readline 已经回显了输入，默认不重复写 `you:`；管道没有回显，
-   * 或者初始任务不是用户刚敲的，才用 `show: true` 补一条。
+   * 固定布局下 readline 的输入回显会被下一帧清掉，所以始终补一条 `you:`；
+   * 行式聊天里 readline 已经把输入留在历史中，默认不重复。
    */
-  beginTurn(task: string, { show = true }: { show?: boolean } = {}): void {
+  beginTurn(task: string, { show = this.layout || !this.interactive }: { show?: boolean } = {}): void {
+    if (this.layout) {
+      this.thinking = false;
+      this.commitAssistant();
+      if (show) this.pushTask(task);
+      this.renderNow();
+      return;
+    }
+
     this.setThinking(false);
     this.finishAssistant();
     if (!show) return;
     const lines = splitDisplayLines(task);
     lines.forEach((line, index) => {
-      // 续行缩进到 `you: ` 后面，避免多行任务看起来像模型输出。
       this.logLine(index === 0 ? `you: ${line}` : `${" ".repeat("you: ".length)}${line}`);
     });
   }
 
-  /** 模型正文增量。流式时直接写，不缓冲整段回复。 */
+  /** 模型正文增量。固定布局只累积、限频重绘；行式聊天直接写。 */
   assistantDelta(text: string): void {
     if (text === "") return;
+
+    if (this.layout) {
+      const first = !this.assistantOpen;
+      this.thinking = false;
+      this.assistantOpen = true;
+      this.streamingText += normalizeNewlines(text);
+      if (first) this.renderNow();
+      else this.scheduleRender();
+      return;
+    }
+
     this.setThinking(false);
     if (!this.assistantOpen) {
       this.writeRaw(ASSISTANT_PREFIX);
@@ -238,7 +263,6 @@ export class Tui {
       this.assistantAtLineStart = false;
     }
 
-    // 先把控制字符转义，再按换行写；否则模型输出里的 ESC 能改写整个状态栏。
     const safe = escapeControlCharacters(normalizeNewlines(text));
     const parts = safe.split("\n");
     for (let index = 0; index < parts.length; index++) {
@@ -257,10 +281,21 @@ export class Tui {
   }
 
   /**
-   * 收尾一段模型回复。content 是 Agent 的最终消息：流式已经显示过时只补换行，
-   * 没显示过（非流式或增量被漏掉）时整段补打一遍。
+   * 收尾一段模型回复。content 是 Agent 的最终消息：流式已经显示过时只提交缓冲，
+   * 没显示过（非流式或增量被漏掉）时整段补上。
    */
   finishAssistant(content: string | null = null): void {
+    if (this.layout) {
+      if (!this.assistantOpen && content !== null && content.trim() !== "") {
+        this.assistantOpen = true;
+        this.streamingText = normalizeNewlines(content);
+      }
+      if (!this.assistantOpen) return;
+      this.commitAssistant();
+      this.renderNow();
+      return;
+    }
+
     if (!this.assistantOpen && content !== null && content.trim() !== "") {
       this.assistantDelta(content);
     }
@@ -272,6 +307,14 @@ export class Tui {
 
   /** 工具调用开始：先写「要跑什么」，审批和长命令执行期间用户都看得见。 */
   toolCall(call: ToolCall): void {
+    if (this.layout) {
+      this.thinking = false;
+      this.commitAssistant();
+      this.pushLog(`  → ${formatToolCall(call)}`);
+      this.renderNow();
+      return;
+    }
+
     this.setThinking(false);
     this.finishAssistant();
     this.logLine(`  → ${formatToolCall(call)}`);
@@ -279,24 +322,35 @@ export class Tui {
 
   /** 工具结果：成功、失败、权限拒绝都在这里落一行；拒绝原因直接来自 Tool result。 */
   toolResult(call: ToolCall, result: string): void {
+    if (this.layout) {
+      this.thinking = false;
+      this.commitAssistant();
+      this.pushLog(`  ${formatToolResult(call, result)}`);
+      this.renderNow();
+      return;
+    }
+
+    this.setThinking(false);
     this.finishAssistant();
     this.logLine(`  ${formatToolResult(call, result)}`);
   }
 
-  /** 一轮结束：更新统计；非 TTY 打一行 [stats]，TTY 刷新第 2 行（顶穿软预算时另起一行）。 */
+  /** 一轮结束：更新统计；固定布局重画第 2 行，其余布局打一行 [stats]。 */
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed }: { failed: boolean }): void {
-    this.setThinking(false);
-    this.finishAssistant();
     this.stats = session;
+
     if (this.layout) {
-      this.drawBars();
-      // 成功返回也可能已经顶穿软预算；固定行只放数字，超限单独留一行记录。
+      this.thinking = false;
+      this.commitAssistant();
       if (run.tokenBudget.exceeded) {
-        this.logLine(`[budget] exceeded (limit=${run.tokenBudget.limit})`);
+        this.pushLog(`[budget] exceeded (limit=${run.tokenBudget.limit})`);
       }
+      this.renderNow();
       return;
     }
 
+    this.setThinking(false);
+    this.finishAssistant();
     const overBudget = run.tokenBudget.exceeded ? ` · budget exceeded (limit=${run.tokenBudget.limit})` : "";
     const outcome = failed ? " · task failed" : "";
     this.logLine(`[stats] ${formatStats(session)}${overBudget}${outcome}`);
@@ -315,8 +369,8 @@ export class Tui {
   /**
    * 读下一行。返回 null 表示 readline 已关闭（EOF / 取消）。
    *
-   * 固定布局先把光标放回输入行：日志写在滚动区域底部，正常情况下光标已经在那里，
-   * 这里再定位一次，避免上一段输出刚好停在中间列。
+   * 固定布局先把当前帧画好，再把光标放到输入行；line 到达后由调用方写日志并重绘。
+   * 这样输入行始终在底部，回复只在它上方变化。
    */
   readLine(prompt = "> "): Promise<string | null> {
     if (this.closed) return Promise.resolve(null);
@@ -328,10 +382,21 @@ export class Tui {
     if (this.ended) return Promise.resolve(null);
 
     if (this.layout) {
+      this.renderNow();
+      this.promptActive = true;
       this.moveToInput();
-    } else if (this.interactive) {
-      // 行式聊天也把输入放到窗口最后一行：否则刚启动时提示符会停在顶部，
-      // 下面留一大片空白。最后一行回车会让整屏滚动，但这就是普通聊天的行为。
+      this.rl.setPrompt(prompt);
+      this.rl.prompt();
+      return new Promise((resolve) => {
+        this.waiting.push((line) => {
+          this.promptActive = false;
+          resolve(line);
+        });
+      });
+    }
+
+    if (this.interactive) {
+      // 行式聊天把提示符也放到窗口最后一行，避免刚启动时停在顶部。
       this.output.write(`\x1b[${this.rows};1H\x1b[2K`);
     }
     this.rl.setPrompt(prompt);
@@ -342,8 +407,7 @@ export class Tui {
   /**
    * shell 审批：先完整展示命令和实际 cwd，再读一行 y/N。
    *
-   * 审批提示的头部通过运行记录打印，问题本身作为单行输入提示 —— 不把多行提示交给
-   * readline 当 prompt，避免在固定布局里算错光标位置。前置门（无 TTY、已取消、
+   * 审批头进入运行记录；问题本身放在固定输入行。前置门（无 TTY、已取消、
    * 已有排队输入）与 REPL 共用 `approvalGate`，拒绝原因也保持同一套文案。
    */
   async approve(request: PermissionRequest): Promise<boolean> {
@@ -371,23 +435,43 @@ export class Tui {
     return approved;
   }
 
-  /** 恢复终端滚动区域，把光标放到最后一行下面；可重复调用。 */
+  /** 结束 TUI：清掉定时器、提交当前回复、恢复终端；可重复调用。 */
   close(): void {
     if (this.closed) return;
-    this.setThinking(false);
+    if (this.renderTimer !== undefined) {
+      clearTimeout(this.renderTimer);
+      this.renderTimer = undefined;
+    }
+    this.renderScheduled = false;
+
+    if (this.layout) {
+      this.thinking = false;
+      this.commitAssistant();
+      this.renderNow();
+    } else {
+      this.setThinking(false);
+    }
+
     this.closed = true;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     this.rl.close();
 
     if (this.layout) {
-      this.output.write("\x1b[r");
+      // 最后一行在整帧重绘里是缓冲行；从那里换行，shell 提示符会出现在 TUI 下方。
       this.output.write(`\x1b[${this.rows};1H`);
       this.output.write("\r\n");
     }
   }
 
-  /** 写一行运行记录。所有动态文本都过 `escapeControlCharacters`，不让输出伪造界面。 */
+  /** 写一行运行记录。固定布局进入日志缓冲；行式聊天直接写。 */
   logLine(text: string): void {
+    if (this.layout) {
+      this.commitAssistant();
+      this.pushLog(text);
+      this.renderNow();
+      return;
+    }
+
     this.finishAssistant();
     for (const line of splitDisplayLines(text)) {
       const safe = escapeControlCharacters(line);
@@ -395,34 +479,103 @@ export class Tui {
     }
   }
 
-  private newline(): string {
-    return this.layout ? "\r\n" : "\n";
+  // ---- 固定布局 ----
+
+  /** 重画整帧：状态、统计、日志视口、输入行。所有写入都是绝对行，不产生滚动。 */
+  private renderNow(): void {
+    if (!this.layout || this.closed || this.promptActive) return;
+
+    if (this.renderTimer !== undefined) {
+      clearTimeout(this.renderTimer);
+      this.renderTimer = undefined;
+    }
+    this.renderScheduled = false;
+
+    this.output.write(`\x1b[${STATUS_ROW};1H\x1b[2K${this.formatStatus()}`);
+    this.output.write(`\x1b[${STATS_ROW};1H\x1b[2K${clip(this.formatStatsLine(), this.columns)}`);
+
+    const lines = this.wrappedDisplayLines();
+    const tail = lines.length > this.logHeight ? lines.slice(-this.logHeight) : lines;
+    for (let index = 0; index < this.logHeight; index++) {
+      const row = LOG_TOP + index;
+      this.output.write(`\x1b[${row};1H\x1b[2K${clip(tail[index] ?? "", this.columns)}`);
+    }
+
+    // 输入行只在没有等待输入时清空；有提示符时由 readline 自己维护。
+    this.output.write(`\x1b[${this.inputRow};1H\x1b[2K`);
   }
 
-  private writeRaw(text: string): void {
-    if (text !== "") this.output.write(text);
+  private scheduleRender(): void {
+    if (!this.layout || this.closed || this.promptActive || this.renderScheduled) return;
+    this.renderScheduled = true;
+    this.renderTimer = setTimeout(() => {
+      this.renderScheduled = false;
+      this.renderTimer = undefined;
+      this.renderNow();
+    }, RENDER_INTERVAL_MS);
+    this.renderTimer.unref?.();
+  }
+
+  /** 把正在流式的正文收进日志；只提交一次。 */
+  private commitAssistant(): void {
+    if (!this.assistantOpen) return;
+    for (const line of this.assistantDisplayLines()) this.log.push(line);
+    this.streamingText = "";
+    this.assistantOpen = false;
+    this.trimLog();
+  }
+
+  private assistantDisplayLines(): string[] {
+    const safe = escapeControlCharacters(normalizeNewlines(this.streamingText));
+    const parts = safe.split("\n");
+    const lines = [`${ASSISTANT_PREFIX}${parts[0] ?? ""}`];
+    for (let index = 1; index < parts.length; index++) {
+      lines.push(`${ASSISTANT_INDENT}${parts[index]}`);
+    }
+    return lines;
+  }
+
+  private pushTask(task: string): void {
+    const lines = splitDisplayLines(task);
+    lines.forEach((line, index) => {
+      this.pushLog(index === 0 ? `you: ${line}` : `${" ".repeat("you: ".length)}${line}`);
+    });
+  }
+
+  private pushLog(text: string): void {
+    for (const line of splitDisplayLines(text)) {
+      this.log.push(escapeControlCharacters(line));
+    }
+    this.trimLog();
+  }
+
+  private trimLog(): void {
+    const overflow = this.log.length - MAX_LOG_LINES;
+    if (overflow > 0) this.log.splice(0, overflow);
+  }
+
+  private wrappedDisplayLines(): string[] {
+    const logical = [...this.log];
+    if (this.assistantOpen) logical.push(...this.assistantDisplayLines());
+    if (this.thinking) logical.push(THINKING_TEXT);
+
+    const wrapped: string[] = [];
+    for (const line of logical) wrapped.push(...wrapLine(line, this.columns));
+    return wrapped;
   }
 
   private moveToInput(): void {
     this.output.write(`\x1b[${this.inputRow};1H`);
   }
 
-  private drawBars(): void {
-    const status = this.formatStatus();
-    const stats = clip(this.formatStatsLine(), this.columns);
-    // 保存/恢复光标：状态栏和统计行重画不能把正在写入的日志位置弄丢。
-    this.output.write(`\x1b7\x1b[1;1H\x1b[2K${status}`);
-    this.output.write(`\x1b[${STATS_ROW};1H\x1b[2K${stats}\x1b8`);
-  }
-
   private formatStatus(): string {
     const prefix = `model ${clip(singleLine(this.model), 24)} | permission ${this.permissionMode} | workspace `;
-    const room = this.columns - prefix.length;
+    const room = this.columns - displayWidth(prefix);
     const workspace = singleLine(this.workspace);
     let shown = "";
     if (room > 0) {
-      if (workspace.length <= room) shown = workspace;
-      else if (room > 3) shown = `...${workspace.slice(-(room - 3))}`;
+      if (displayWidth(workspace) <= room) shown = workspace;
+      else if (room > 3) shown = `...${tailByWidth(workspace, room - 3)}`;
     }
     return clip(prefix + shown, this.columns);
   }
@@ -431,22 +584,21 @@ export class Tui {
     if (this.stats === undefined) return "requests=0  tool_calls=0  tokens=0";
     return `requests=${this.stats.requests}  tool_calls=${this.stats.toolCalls}  tokens=${formatTokens(this.stats)}`;
   }
+
+  // ---- 行式聊天/非 TTY ----
+
+  private newline(): string {
+    return "\n";
+  }
+
+  private writeRaw(text: string): void {
+    if (text !== "") this.output.write(text);
+  }
 }
 
 /** 固定布局只在 stdout 真的是终端时启用；测试里的假输出流可以只开审批、不开布局。 */
 function isTerminalOutput(output: NodeJS.WritableStream): boolean {
   return (output as { isTTY?: boolean }).isTTY === true;
-}
-
-/**
- * 传统 Windows conhost 不实现 DECSTBM 滚动区域：用它固定顶部栏会导致回复行互相覆盖。
- * Windows Terminal / VS Code 终端 / 非 Windows 的 xterm 类终端支持；不支持时走行式聊天。
- */
-function terminalSupportsScrollRegion(): boolean {
-  if (process.platform !== "win32") return true;
-  if (process.env.WT_SESSION !== undefined && process.env.WT_SESSION !== "") return true;
-  const program = process.env.TERM_PROGRAM;
-  return program === "vscode" || program === "WezTerm";
 }
 
 function normalizeNewlines(text: string): string {
@@ -458,19 +610,109 @@ function singleLine(text: string): string {
   return escapeControlCharacters(normalizeNewlines(text).replace(/\n/g, "\\n"));
 }
 
-/** 按行展示；末尾换行不额外制造一条空记录，避免每条日志后面多一个空行。 */
+/** 按行展示；末尾换行不额外制造一条空记录。 */
 function splitDisplayLines(text: string): string[] {
   const lines = normalizeNewlines(text).split("\n");
   if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop();
   return lines;
 }
 
-/** 按字符近似裁剪；CJK / emoji 的显示宽度没有补偿，这是 v0.1 的已知边界。 */
+/** 硬换行到视口宽度；CJK/emoji 按 2 列算，避免中文回复在 conhost 里自动换行破帧。 */
+function wrapLine(text: string, width: number): string[] {
+  if (text === "") return [""];
+  const safeWidth = Math.max(1, width);
+  const lines: string[] = [];
+  let current = "";
+  let used = 0;
+  for (const char of text) {
+    const charWidth = codePointWidth(char);
+    if (used > 0 && used + charWidth > safeWidth) {
+      lines.push(current);
+      current = "";
+      used = 0;
+    }
+    current += char;
+    used += charWidth;
+  }
+  lines.push(current);
+  return lines;
+}
+
+/** 按显示宽度裁剪；宽度不够时用 `...` 收尾。 */
 function clip(text: string, width: number): string {
   if (width <= 0) return "";
-  if (text.length <= width) return text;
-  if (width <= 3) return text.slice(0, width);
-  return `${text.slice(0, width - 3)}...`;
+  if (displayWidth(text) <= width) return text;
+  if (width <= 3) return takeByWidth(text, width);
+  return `${takeByWidth(text, width - 3)}...`;
+}
+
+function takeByWidth(text: string, width: number): string {
+  let out = "";
+  let used = 0;
+  for (const char of text) {
+    const charWidth = codePointWidth(char);
+    if (used + charWidth > width) break;
+    out += char;
+    used += charWidth;
+  }
+  return out;
+}
+
+/** 从尾部保留最多 width 列，用于状态栏里截断很长的 workspace 路径。 */
+function tailByWidth(text: string, width: number): string {
+  const chars = [...text];
+  let out = "";
+  let used = 0;
+  for (let index = chars.length - 1; index >= 0; index--) {
+    const char = chars[index];
+    const charWidth = codePointWidth(char);
+    if (used + charWidth > width) break;
+    out = char + out;
+    used += charWidth;
+  }
+  return out;
+}
+
+function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text) width += codePointWidth(char);
+  return width;
+}
+
+/**
+ * 近似的终端显示宽度：CJK / 全角 / 常见 emoji 算 2，组合字符和零宽字符算 0。
+ * 不做完整的 Unicode East Asian Width 表，这是 v0.1 的已知边界。
+ */
+function codePointWidth(char: string): number {
+  const code = char.codePointAt(0) ?? 0;
+  if (code === 0) return 0;
+  if (code < 32 || (code >= 0x7f && code < 0xa0)) return 0;
+  if (
+    (code >= 0x0300 && code <= 0x036f) ||
+    (code >= 0x200b && code <= 0x200f) ||
+    (code >= 0xfe00 && code <= 0xfe0f)
+  ) {
+    return 0;
+  }
+  if (
+    code >= 0x1100 &&
+    (code <= 0x115f ||
+      code === 0x2329 ||
+      code === 0x232a ||
+      (code >= 0x2e80 && code <= 0xa4cf && code !== 0x303f) ||
+      (code >= 0xac00 && code <= 0xd7a3) ||
+      (code >= 0xf900 && code <= 0xfaff) ||
+      (code >= 0xfe10 && code <= 0xfe19) ||
+      (code >= 0xfe30 && code <= 0xfe6f) ||
+      (code >= 0xff00 && code <= 0xff60) ||
+      (code >= 0xffe0 && code <= 0xffe6) ||
+      (code >= 0x1f300 && code <= 0x1f64f) ||
+      (code >= 0x1f900 && code <= 0x1f9ff) ||
+      (code >= 0x20000 && code <= 0x3fffd))
+  ) {
+    return 2;
+  }
+  return 1;
 }
 
 function formatTokens(stats: AgentSessionStats): string {

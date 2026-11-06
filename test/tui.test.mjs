@@ -208,9 +208,10 @@ test("TUI：模型请求期间显示 thinking，第一段正文前原地清掉",
   ui.tui.finishAssistant("");
   await tick();
   const text = ui.text();
-  // thinking 行被同一行的清行序列覆盖，而不是留在记录里另起一行。
-  assert.match(text, /\r\x1b\[2K/);
-  assert.match(text, /model: hello/);
+  // 固定布局整帧重绘：最后一帧从状态行开始，里面有 model 行、没有 thinking。
+  const lastFrame = text.slice(text.lastIndexOf("\x1b[1;1H"));
+  assert.match(lastFrame, /model: hello/);
+  assert.doesNotMatch(lastFrame, /thinking/);
 });
 
 test("TUI：行式聊天同样在回复前显示 thinking，并在正文前原地清掉", async (t) => {
@@ -237,13 +238,17 @@ test("TUI：TTY 布局固定顶部状态栏和统计行，输入固定在底部�
   ui.tui.start();
   await tick();
   const started = ui.text();
-  assert.match(started, /\x1b\[3;23r/, "滚动区域应在统计行下方、输入行结束，最后一行留作缓冲");
+  assert.match(started, /\x1b\[2J/);
+  assert.match(started, /\x1b\[1;1H/);
+  assert.match(started, /\x1b\[2;1H/, "统计行固定在第 2 行");
+  assert.match(started, /\x1b\[23;1H/, "输入行固定在第 23 行，最后一行留作缓冲");
   assert.match(started, /model mock-model/);
   assert.match(started, /permission workspace-write/);
   assert.match(started, /requests=0 {2}tool_calls=0 {2}tokens=0/);
+  assert.doesNotMatch(started, /\x1b\[3;23r/, "整帧重绘不依赖滚动区域");
   assert.doesNotMatch(started, /\x1b\[\?1049h/, "轻量 TUI 不切 alternate screen");
 
   ui.tui.close();
   await tick();
-  assert.match(ui.text(), /\x1b\[r/, "退出时要恢复滚动区域");
+  assert.match(ui.text(), /\x1b\[24;1H/, "退出时从最后一行下方交还 shell");
 });

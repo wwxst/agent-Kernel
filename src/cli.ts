@@ -593,8 +593,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   }
 
   /** 跑一轮；返回 false 表示取消，循环该停了。失败但不取消时返回 true。 */
-  const runTask = async (task: string, showTask = true): Promise<boolean> => {
-    tui.beginTurn(task, { show: showTask });
+  const runTask = async (task: string, showTask?: boolean): Promise<boolean> => {
+    tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
     try {
       const reply = await agent.run(task);
       tui.finishAssistant(reply.content ?? "");
@@ -617,7 +617,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   let keepGoing = true;
   try {
     if (initialTask !== undefined && initialTask !== "") {
-      keepGoing = await runTask(initialTask);
+      keepGoing = await runTask(initialTask, true);
     }
 
     while (keepGoing && !signal.aborted) {
@@ -652,8 +652,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       }
 
       if (input === "") continue;
-      // TTY 的 readline 已经回显了这一行；管道没有回显，补一条 `you:`。
-      keepGoing = await runTask(input, !interactive);
+      // 固定布局会清掉 readline 的回显，Tui 自己补 `you:`；行式聊天默认不重复。
+      keepGoing = await runTask(input);
     }
   } finally {
     // 先写总账再退出：TUI 的日志行比固定栏位更适合作为最后的记录。

@@ -152,23 +152,25 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 `npm run agent -- --tui` 在同一个 Agent / Permission 会话外面套一个轻量终端界面；`--repl` 保持原样，两者不能同时用。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。
 
-TUI 有两种布局，按终端能力自动选：
+TUI 用**绝对光标定位 + 整帧重绘**，不依赖 DECSTBM 滚动区域，所以传统 Windows conhost 也能固定布局：
 
-- **支持 DECSTBM 滚动区域的终端**（Windows Terminal、VS Code 终端、Linux / macOS 的 xterm 类终端）：第 1 行状态栏、第 2 行统计固定，中间运行记录滚动，输入固定在底部；不切 alternate screen。
-- **传统 Windows conhost**：它不实现 DECSTBM，固定栏位会把回复行互相覆盖，所以自动退化为行式聊天 —— 启动时打印 model / workspace / permission 头，回复逐行追加，输入提示固定在窗口最后一行。状态头会随历史滚走，这是 v0.1 的取舍。
+- 第 1 行状态栏（model / workspace / permission），第 2 行统计（requests / tool_calls / tokens）。
+- 中间是日志视口：回复、工具调用、审批头都从这里往上滚。
+- **输入固定在底部**：倒数第二行是输入行，最后一行留作缓冲；回车不会把输入区顶走。
+- 不切 alternate screen、不引 TUI 库；但整帧重绘只保留最后一屏，退出后 TUI 的历史记录不会留在 scrollback 里。
 - **非 TTY**（管道、CI、e2e）：退化为纯逐行输出，没有固定位置，但走同一套日志与审批逻辑。
 
-运行记录：`you:`（管道输入没有回显时）、`model:`、`→ tool`，以及 `✓/✗ tool [ok|failed|denied]`；权限拒绝原因直接来自 Tool result。
+运行记录：`you:`、`model:`、`→ tool`，以及 `✓/✗ tool [ok|failed|denied]`；权限拒绝原因直接来自 Tool result。
 
-**Thinking**：每次模型请求发出前显示 `thinking...`；第一段正文、第一个工具调用或错误到达时原地清掉/覆盖，不会把一行 thinking 留在记录里。Agent 通过 `onRequestStart` 在每次请求前通知 TUI。
+**Thinking**：每次模型请求发出前，日志视口最后一行显示 `thinking...`；第一段正文、第一个工具调用或错误到达时整帧重绘掉，不会留在记录里。Agent 通过 `onRequestStart` 在每次请求前通知 TUI。
 
-命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态栏/下一轮和下一次请求同时生效。
+命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态栏和下一次请求同时生效。
 
-`workspace-write` 下的 `shell` 审批在 TUI 里同样逐次询问：先完整打印 `[permission] shell in <cwd>`、`command:` 和逐行命令，再在输入行问 `allow once? [y/N]`；只有 `y` / `yes` 放行。没有 TTY 时不展示审批提示，直接按权限拒绝处理。
+`workspace-write` 下的 `shell` 审批在 TUI 里同样逐次询问：先完整打印 `[permission] shell in <cwd>`、`command:` 和逐行命令，再在固定输入行问 `allow once? [y/N]`；只有 `y` / `yes` 放行。没有 TTY 时不展示审批提示，直接按权限拒绝处理。
 
-统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。固定布局下统计刷新在第 2 行，行式布局和非 TTY 在每轮结束打一行 `[stats]`。取舍见 [ADR-0014](./docs/adr/0014-tui-is-a-lightweight-shell.md)。
+统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。固定布局刷新第 2 行，非 TTY 在每轮结束打一行 `[stats]`。取舍见 [ADR-0014](./docs/adr/0014-tui-is-a-lightweight-shell.md)。
 
-已知边界：固定布局要求终端至少 6 行、20 列；终端 resize 后不会重新计算区域；宽度按 JS 字符串长度近似（CJK / emoji 可能提前换行）；传统 conhost 的状态头不是固定的，回复期间输入行会被 thinking/正文占用，下一轮提示符才回到最后一行；没有鼠标、彩色主题或面板焦点。这些都不影响 Agent 的正确性，只影响显示。
+已知边界：固定布局要求终端至少 6 行、20 列；终端 resize 后不会重新计算区域；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；长行硬换行而不是横向滚动；整帧重绘在慢终端上可能有闪烁；不保留 TUI 历史滚屏；没有鼠标、彩色主题或面板焦点。这些都不影响 Agent 的正确性，只影响显示。
 
 ## 配置
 
@@ -204,7 +206,7 @@ npm run check       # typecheck + 全部测试
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset`、`/permission` 动态提示、`--permission`、流式 mock、TUI 状态栏 / 运行记录 / 统计 / 命令 |
 | `test/cli-pty.test.mjs` | Linux PTY：审批允许 / 拒绝 / Ctrl-C / EOF，以及 REPL 审批 EOF 不冒充用户拒绝 |
-| `test/tui.test.mjs` | TUI：状态栏与运行记录、成功/失败/拒绝分类、审批完整命令与 cwd、y/N、排队输入、thinking 的显示与清除、固定布局与行式聊天退化 |
+| `test/tui.test.mjs` | TUI：状态栏与运行记录、成功/失败/拒绝分类、审批完整命令与 cwd、y/N、排队输入、thinking 的显示与清除、整帧重绘固定布局 |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
