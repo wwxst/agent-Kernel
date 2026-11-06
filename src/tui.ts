@@ -893,9 +893,10 @@ export class Tui {
 
   private writePlaceholder(prompt: string): void {
     if (!this.layout || prompt !== COMMAND_PROMPT || this.rl.line !== "") return;
-    const room = Math.max(0, this.contentWidth() - 2);
+    const room = Math.max(0, this.contentWidth() - 3);
     if (room <= 3) return;
-    const text = clip(PLACEHOLDER, room);
+    // 前面留一个空格，让光标块落在空白处，而不是盖住 placeholder 的第一个字母。
+    const text = ` ${clip(PLACEHOLDER, room)}`;
     this.output.write(this.style.paint("muted", text));
     this.output.write(`\x1b[${displayWidth(text)}D`);
   }
