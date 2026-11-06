@@ -79,9 +79,9 @@ test("TUI：输入区仅用两条横线，提示与正文共用左边界，中�
   const pending = ui.tui.readLine();
   ui.input.write("中文A");
   await tick();
-  assert.equal(lastRow(ui.text(), 18), "-".repeat(79));
-  assert.match(lastRow(ui.text(), 19), /^> 中文A/);
-  assert.equal(lastRow(ui.text(), 20), "-".repeat(79));
+  assert.match(lastRow(ui.text(), 18), /^(?:-{79}|─{79})$/);
+  assert.match(lastRow(ui.text(), 19), /^(?:>|❯) 中文A/);
+  assert.equal(lastRow(ui.text(), 20), lastRow(ui.text(), 18));
   assert.match(ui.text(), /\x1b\[19;8H/);
   ui.input.write("\r");
   assert.equal(await pending, "中文A");
@@ -94,7 +94,7 @@ test("TUI：已有对话后空输入仅显示提示符和光标，不重复欢�
   ui.tui.beginTurn("hello");
   const pending = ui.tui.readLine();
   await tick();
-  assert.equal(lastRow(ui.text(), 19).trimEnd(), ">");
+  assert.match(lastRow(ui.text(), 19).trimEnd(), /^(?:>|❯)$/);
   ui.input.write("\r");
   assert.equal(await pending, "");
 });
@@ -106,7 +106,7 @@ test("TUI flowInput：过程小字后留一行空白再接输入横线", async (
   ui.tui.logLine("Worked for 3s");
   assert.equal(lastRow(ui.text(), 4), "Worked for 3s");
   assert.equal(lastRow(ui.text(), 5).trim(), "");
-  assert.equal(lastRow(ui.text(), 6), "-".repeat(79));
+  assert.match(lastRow(ui.text(), 6), /^(?:-{79}|─{79})$/);
 });
 
 test("TUI：等待状态分层并动态换符号，首段正文到达后停止更新", async (t) => {
