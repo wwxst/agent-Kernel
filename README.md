@@ -164,7 +164,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 - 工具事件使用 `Read README.md`、`Shell: npm run check` 这类可读形式，不重复打印同一条调用；工具名称中性粗体，状态符号单独着色，缩进子行显示结果摘要与读取行数，读取截断仍有明确尾注。
 - 失败/拒绝/未执行的第一行原因放在工具事件下方，正文不截断关键原因；`read` 不把整份文件内容刷进聊天区。
-- `workspace-write` 下的 `shell` 审批在固定 TUI 里显示为 Claude Code 风格的**两项键盘菜单**：完整 workspace、原始多行命令、`1. Yes, allow once` / `2. No (default)`；上下键选择、Enter 确认、Esc 拒绝。默认高亮 No，空回车不授权；仍兼容明确输入 `y` / `yes` 或 `1` 放行本次，**没有永久授权选项**。非固定布局继续原来的 `y/N` 逐行审批；无 TTY 时直接按权限拒绝。
+- `workspace-write` 下的 `shell` 审批在固定 TUI 里使用 Claude Code 风格的**两项键盘菜单**：完整 workspace、原始多行命令、`1. Yes, allow once` / `2. No (default)`；上下键选择、Enter 确认、Esc 拒绝，默认选中 No。审批时不显示额外的文本输入框或聊天状态栏，误输入/粘贴 `y`、`1` 也不会隐形授权；菜单结果只作用于本次调用，**没有永久授权选项**。非固定布局继续原来的 `y/N` 逐行审批（只有明确输入 `y` / `yes` 才放行），无 TTY 时默认拒绝。
 
 外观与交互：
 
