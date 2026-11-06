@@ -764,7 +764,7 @@ export class Tui {
         panel.push({ text: part, tone: entry.tone });
       }
     }
-    panel.push({ ...separator });
+    // Claude Code 风格：Esc 提示下方不再追加收尾分隔线。
     return panel;
   }
 
@@ -953,7 +953,9 @@ export class Tui {
         : this.paintLogLine(line, width);
     }
 
-    rows[this.boxTopRow - 1] = divider;
+    // 审批菜单的 Esc 提示下方也不画聊天输入区的上边线；
+    // 否则虽然删除面板收尾线，依然会看到另一条横线。
+    rows[this.boxTopRow - 1] = this.approvalRequest === undefined ? divider : "";
     rows[this.inputRow - 1] = this.inputLine(width);
     rows[this.boxBottomRow - 1] = divider;
     rows[this.statusRow - 1] = this.footerLine(width);
