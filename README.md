@@ -36,7 +36,7 @@ CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是�
 | `src/approval.ts` | 审批提示的格式化与读取：完整命令、cwd、控制字符转义，并把 `AbortSignal`、readline 关闭、正常回答一起收口 |
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫、有界读取、扫描预算与取消 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
-| `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、底部带边框输入框、状态行在下、工具状态/审批面板、颜色与字形降级、PageUp/PageDown、resize。不碰 Agent 循环 |
+| `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、短会话输入框跟随内容/长会话停靠底部、工具状态/审批面板、颜色与字形降级、PageUp/PageDown、resize。不碰 Agent 循环 |
 | `src/cli.ts` | 组装层：命令行参数 / 环境变量 → 对象图 → 跑一次任务、进 REPL 或进 TUI |
 
 `src/grep-worker.ts` 不算第十一个模块，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
@@ -156,8 +156,8 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 - **顶部**：项目名（左）和 model（右），下一行是 workspace 路径，再一条分隔线。
 - **对话区**：内容**从视口顶部往下**排列；用户 `❯`、模型 `✻`，工具调用先显示 `●`，结果到达后原地替换成 `✓` / `✗` / `⊘`（权限拒绝）/ `–`（未执行）。短对话下面的空白留在输入框上方，不再把历史贴到底部。
-- **输入框**：固定在有上下边框的框里，`❯` 后是占位符 `Ask anything, or type /help...`；长输入在框内横向滚动，提交原文不变；最后留 3 行缓冲，避免传统 conhost 的窗口底边吃掉边框。readline 保留编辑缓存，TUI 统一绘制，输入期间的新输出也能刷新。
-- **状态行**：在输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），右边 requests / tool calls / tokens。
+- **输入框**：短会话紧跟当前消息，长会话自动停靠底部；始终有上下边框，`❯` 后是占位符 `Ask anything, or type /help...`；长输入在框内横向滚动，提交原文不变。readline 保留编辑缓存，TUI 统一绘制，输入期间的新输出也能刷新。
+- **状态行**：始终紧跟输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），右边 requests / tool calls / tokens。
 - 不切 alternate screen、不引 TUI 库；差分重绘只写变化的行，退出后 TUI 历史不会留在 scrollback 里。非 TTY（管道、CI、e2e）退化为纯逐行输出。
 
 工具与审批：
