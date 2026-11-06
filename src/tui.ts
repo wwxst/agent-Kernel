@@ -864,8 +864,13 @@ export class Tui {
     const width = this.contentWidth();
     const lines = this.wrappedDisplayLines();
     if (this.flowInput && this.scrollOffset === 0) {
-      const gap = this.approvalRequest === undefined ? 2 : 1;
-      this.logHeight = Math.min(this.logHeight, Math.max(2, lines.length + gap));
+      // 审批是需要就地操作的焦点面板：只为命令面板与最近两行上下文预留高度。
+      // 长会话此前的日志仍留在滚动历史，不把 y/N 输入推离审批面板。
+      const focusedLength = this.approvalRequest === undefined
+        ? lines.length
+        : Math.min(lines.length, this.approvalPanelLines(this.approvalRequest).length + 2);
+      const gap = this.approvalRequest === undefined ? 2 : 0;
+      this.logHeight = Math.min(this.logHeight, Math.max(2, focusedLength + gap));
       this.boxTopRow = LOG_TOP + this.logHeight;
       this.inputRow = this.boxTopRow + 1;
       this.boxBottomRow = this.inputRow + 1;
