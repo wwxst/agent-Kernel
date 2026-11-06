@@ -758,8 +758,7 @@ export class Tui {
       }
     } finally {
       if (this.fixedLayoutAllowed) {
-        // 回答后才转成普通日志；等待期间必须能翻阅任意长度的完整审批。
-        this.log.push(...this.approvalPanelLines(request));
+        // 完整审批只在等待期间展开；回答后保留决定和工具结果，避免旧面板看起来仍待授权。
         this.approvalRequest = undefined;
         this.promptText = COMMAND_PROMPT;
         this.promptPlaceholder = true;
@@ -780,8 +779,8 @@ export class Tui {
     const approved = isApproved(answer);
     if (this.layout) {
       this.logLine(
-        `  ${approved ? this.glyphs.success : this.glyphs.error} ${approved ? "Allowed once" : "Denied"}`,
-        approved ? "success" : "error",
+        `  ${approved ? this.glyphs.success : this.glyphs.denied} ${approved ? "Allowed once" : "Denied"}`,
+        approved ? "success" : "warning",
       );
     } else {
       this.logLine(`approval: ${approved ? "allowed once" : "denied"}`, approved ? "success" : "error");
@@ -901,6 +900,7 @@ export class Tui {
 
   private paintLogLine(line: LogLine, width: number): string {
     const text = clip(line.text, width);
+    if (line.tone === "user") return this.style.bold(this.style.paint("user", text));
     if (line.kind === "tool") {
       // 工具标题的四字符前缀是「两格缩进 + 单列符号 + 空格」；只有符号承担状态色。
       return this.style.paint(line.tone, text.slice(0, 4)) +
@@ -967,9 +967,9 @@ export class Tui {
     const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT;
     const text = placeholder ? ` ${PLACEHOLDER}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
     const shown = takeByWidth(text, room);
-    return `  ${this.style.paint("accent", this.glyphs.boxVertical)} ${this.style.paint("accent", prompt)}` +
+    return `  ${this.paintInputBorder(this.glyphs.boxVertical)} ${this.style.paint("accent", prompt)}` +
       this.style.paint(placeholder ? "muted" : "plain", padRight(shown, room)) +
-      ` ${this.style.paint("accent", this.glyphs.boxVertical)}`;
+      ` ${this.paintInputBorder(this.glyphs.boxVertical)}`;
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
@@ -1080,7 +1080,7 @@ export class Tui {
   }
 
   private titleLine(width: number): string {
-    const rawProject = singleLine(this.project);
+    const rawProject = this.project === "agent-Kernel" ? "agent-Kernel" : `agent-Kernel · ${singleLine(this.project)}`;
     const maxProject = Math.max(1, width - 2);
     const project = clip(rawProject, maxProject);
     const modelRoom = Math.max(0, width - displayWidth(project) - 1);
@@ -1100,13 +1100,18 @@ export class Tui {
   private boxTopLine(width: number): string {
     const inner = Math.max(0, width - 2);
     const line = `${this.glyphs.boxTopLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxTopRight}`;
-    return `  ${this.style.paint("accent", line)}  `;
+    return `  ${this.paintInputBorder(line)}  `;
   }
 
   private boxBottomLine(width: number): string {
     const inner = Math.max(0, width - 2);
     const line = `${this.glyphs.boxBottomLeft}${this.glyphs.boxHorizontal.repeat(inner)}${this.glyphs.boxBottomRight}`;
-    return `  ${this.style.paint("accent", line)}  `;
+    return `  ${this.paintInputBorder(line)}  `;
+  }
+
+  /** 日常输入边界退到次要层次；审批时再强调需要用户作出的决定。 */
+  private paintInputBorder(text: string): string {
+    return this.style.paint(this.approvalRequest === undefined ? "muted" : "warning", text);
   }
 
   private footerLine(width: number): string {
@@ -1242,7 +1247,7 @@ class Style {
 const BASIC_PALETTE: Record<Tone, string> = {
   accent: "33",
   assistant: "39",
-  user: "33",
+  user: "39",
   muted: "90",
   success: "32",
   error: "31",
@@ -1254,7 +1259,7 @@ const BASIC_PALETTE: Record<Tone, string> = {
 const RICH_PALETTE: Record<Tone, string> = {
   accent: "38;5;215",
   assistant: "39",
-  user: "38;5;215",
+  user: "39",
   muted: "38;5;244",
   success: "38;5;114",
   error: "38;5;203",

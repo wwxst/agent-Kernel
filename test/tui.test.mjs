@@ -71,6 +71,37 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
 
+test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, color: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("READ_ME");
+  await tick();
+  assert.match(ui.text(), /agent-Kernel · repo/);
+  assert.match(ui.text(), /\x1b\[1m\x1b\[39m(?:❯|>) READ_ME/);
+  const inputTop = ui.text().slice(ui.text().lastIndexOf("\x1b[18;1H\x1b[2K"));
+  assert.match(inputTop, /\x1b\[(?:90|38;5;244)m[┌+]/);
+});
+
+test("TUI：回答审批后收起已结束的面板，保留决定与工具结果", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const call = { id: "approval", type: "function", function: { name: "shell", arguments: '{"command":"echo safe"}' } };
+  ui.tui.toolCall(call);
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+  assert.match(ui.text(), /Allow this command\?/);
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
+  ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
+  await tick();
+  const screen = Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n");
+  assert.doesNotMatch(screen, /Allow this command\?|Shell permission|\[Y\] Allow once/);
+  assert.match(screen, /(?:⊘|!) Denied/);
+  assert.match(screen, /(?:⊘|!) Shell: echo safe/);
+  assert.match(screen, /permission denied/);
+});
+
 test("TUI：Shell 非零退出显示失败，文件中的退出码文本仍是成功读取", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());
