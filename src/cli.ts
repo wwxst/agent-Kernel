@@ -549,6 +549,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     permission: config.permission,
     controller,
     interactive,
+    // 短对话贴近输入框，内容多时再停靠底部；旧的固定布局仍可供兼容测试。
+    flowInput: true,
     columns: process.stdout.columns,
     rows: process.stdout.rows,
   });
