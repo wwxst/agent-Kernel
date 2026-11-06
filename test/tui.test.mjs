@@ -79,7 +79,7 @@ test("TUI：标题标明程序和项目，用户正文与输入边界使用中�
   ui.tui.beginTurn("READ_ME");
   await tick();
   assert.match(ui.text(), /agent-Kernel · repo/);
-  assert.match(ui.text(), /\x1b\[1;39(?:;48;5;237)?m(?:❯|>) READ_ME/, "用户消息有加粗样式，富色终端可加轻微背景");
+  assert.match(ui.text(), /\x1b\[(?:1;39|1;38;5;255;48;5;237)m(?:❯|>) READ_ME/, "用户消息加粗；富色终端为深色背景配白字，浅色主题仍可读");
   const inputTop = ui.text().slice(ui.text().lastIndexOf("\x1b[18;1H\x1b[2K"));
   assert.match(inputTop, /\x1b\[(?:90|38;5;244)m[┌+]/);
 });
