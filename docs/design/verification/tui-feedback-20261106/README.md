@@ -80,3 +80,9 @@
 用户实测发现 `Worked for 2s` 紧贴下一条用户消息。原因是用户消息只在末尾留空行，完成耗时写入后，下一次 Run 没有补上前置间距。现复用已有的空行去重逻辑，在追加用户消息前留一行；首条消息仍贴顶，不累计多余空行。
 
 新增公共 Tui 接口回归，旧版明确在预期空行处出现 `second` 用户消息而失败，修复后通过。实际重启 CLI，在独立测试目录先请求只回复 OK，再询问能力，两次均不调用工具；[真实第二轮等待截图](./turn-gap-live-after.png)确认耗时和下一条用户消息间有一行空白。`npm run check`：269 tests / 262 pass / 7 platform skips / 0 fail，含 TUI 57 项；`npm run eval:check` 20/20。源码只增加消息前的显示空行，不改变 Run / Session 语义。
+
+## 补充：Thinking 的点逐个出现
+
+用户要求 Thinking 后的三个点逐个出现。固定布局现在按 `Thinking` → `Thinking.` → `Thinking..` → `Thinking...` 循环，每阶段 400ms。点的位置预留三列，避免耗时信息左右跳动；正文、工具或错误到达时依然清除等待状态并停止动画。
+
+新增回归先确认旧版恒定三个点失败，再验证完整点数循环、固定耗时列及重置；现有等待清理与真实秒数断言同步调整。`npm run check`：270 tests / 263 pass / 7 platform skips / 0 fail，含 TUI 58 项；`npm run eval:check` 20/20。实际重启 CLI 请求无工具的中文短回复，连续原图捕获[一个点](./thinking-dots-live-a.png)、[两个点](./thinking-dots-live-b.png)与[循环清空](./thinking-dots-live-c.png)；没有模拟模型响应。新窗口 `agent-Kernel TUI dots` 保留供继续体验。

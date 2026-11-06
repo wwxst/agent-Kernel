@@ -117,7 +117,7 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   const first = lastRow(ui.text(), 6);
-  assert.match(first, /Thinking\.\.\. \(0s\)/);
+  assert.match(first, /Thinking {4}\(0s\)/);
   assert.match(lastRow(ui.text(), 7), /^  [└+] Ctrl-C to cancel$/);
   t.mock.timers.tick(200);
   assert.notEqual(lastRow(ui.text(), 6), first);
@@ -126,6 +126,23 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   t.mock.timers.tick(1000);
   assert.equal(ui.text().length, finished);
   assert.doesNotMatch(lastRow(ui.text(), 7), /Ctrl-C/);
+});
+
+test("TUI：Thinking 的三个点依次出现后循环，耗时信息不左右跳动", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.setThinking(true);
+  const detailColumn = lastRow(ui.text(), 6).indexOf("(");
+  const phases = ["Thinking    (0s)", "Thinking.   (0s)", "Thinking..  (0s)", "Thinking... (1s)", "Thinking    (1s)"];
+  for (const phase of phases) {
+    const line = lastRow(ui.text(), 6);
+    assert.ok(line.endsWith(phase), `期望等待阶段：${phase}；实际：${line}`);
+    assert.equal(line.indexOf("("), detailColumn);
+    t.mock.timers.tick(400);
+  }
 });
 
 test("TUI：现代终端等待动画所有帧使用文本符号，不触发彩色 emoji", async (t) => {
@@ -171,7 +188,7 @@ test("TUI：后续等待展示实际收到的工具结果数，不把它冒充�
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "hello");
   ui.tui.setThinking(true);
-  assert.match(ui.text(), /Thinking\.\.\. \(0s · 1 tool result\)/);
+  assert.match(ui.text(), /Thinking {4}\(0s · 1 tool result\)/);
 });
 
 test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重新计时", async (t) => {
@@ -296,10 +313,10 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
+  assert.match(ui.text(), /Thinking {4}\(0s\)/);
   assert.match(lastRow(ui.text(), 7), /Ctrl-C to cancel/);
   t.mock.timers.tick(2000);
-  assert.match(ui.text(), /Thinking\.\.\. \(2s\)/);
+  assert.match(ui.text(), /Thinking\. {3}\(2s\)/);
   ui.tui.assistantDelta("hello");
   const finished = ui.text().length;
   t.mock.timers.tick(3000);
@@ -708,7 +725,7 @@ test("TUI：模型请求期间显示 thinking，第一段正文前整帧重绘�
   ui.tui.start();
   ui.tui.setThinking(true);
   await tick();
-  assert.match(ui.text(), /Thinking\.\.\./);
+  assert.match(ui.text(), /Thinking {4}\(0s\)/);
 
   ui.tui.assistantDelta("hello");
   ui.tui.finishAssistant("");
