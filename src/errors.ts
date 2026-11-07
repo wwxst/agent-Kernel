@@ -29,6 +29,14 @@ export class ChatResponseError extends Error {
   }
 }
 
+/** 进程树停止失败：后台进程可能仍有副作用，必须结束当前 Agent Run，而非正常重试。 */
+export class ProcessCleanupError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProcessCleanupError";
+  }
+}
+
 export function describeError(error: unknown): string {
   if (error instanceof Error) {
     const message = error.message.trim();

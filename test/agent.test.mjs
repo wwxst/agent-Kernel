@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
-import { ChatResponseError } from "../src/errors.ts";
+import { ChatResponseError, ProcessCleanupError } from "../src/errors.ts";
 import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */
@@ -237,6 +237,36 @@ test("onRequestStart step 在每个 Run 从 1 重新开始，而不是累积 Ses
 
   assert.deepEqual(steps, [1, 1]);
   assert.equal(agent.sessionStats.requests, 2);
+});
+
+test("进程树清理未确认：禁止同批后续工具，记录完整配对并终止 Run", async () => {
+  let touched = false;
+  const cleanup = {
+    name: "broken_shell", description: "simulated cleanup failure",
+    parameters: { type: "object", properties: {} },
+    run: async () => { throw new ProcessCleanupError("process tree cleanup unverified"); },
+  };
+  const write = {
+    name: "write", description: "side effect",
+    parameters: { type: "object", properties: {} },
+    run: async () => { touched = true; return "wrote"; },
+  };
+  const calls = [
+    { id: "shell", type: "function", function: { name: "broken_shell", arguments: "{}" } },
+    { id: "write", type: "function", function: { name: "write", arguments: "{}" } },
+  ];
+  const chat = createScriptedChat([{ role: "assistant", content: null, tool_calls: calls }, finalReply("unsafe success")]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([cleanup, write]) });
+
+  await assert.rejects(() => agent.run("do it"), ProcessCleanupError);
+  assert.equal(touched, false, "清理未确认后严禁执行有副作用的后续工具");
+  assert.equal(chat.requests.length, 1, "清理未确认后不得继续请求模型");
+  assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "tool"]);
+  const results = agent.transcript.filter((message) => message.role === "tool");
+  assert.deepEqual(results.map((message) => message.tool_call_id), ["shell", "write"]);
+  assert.match(results[0].content, /cleanup unverified/);
+  assert.match(results[1].content, /ERROR: not run: process tree cleanup unverified/);
+  assert.equal(agent.stats.toolCalls, 1);
 });
 
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {

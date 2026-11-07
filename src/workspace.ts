@@ -21,6 +21,7 @@ import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import type { Tool } from "./types.ts";
+import { ProcessCleanupError } from "./errors.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;
@@ -83,6 +84,11 @@ function toPosix(relativePath: string): string {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+/** Windows taskkill 卡住时不能让单条 Shell 进入无限等待；超时之后只能报告清理未确认。 */
+const TASKKILL_TIMEOUT_MS = 2_000;
+/** 即使 taskkill 声称成功，后代进程持有管道时 close 也可能迟迟不来。 */
+const PROCESS_CLOSE_TIMEOUT_MS = 4_000;
 
 /**
  * POSIX 的 O_NOFOLLOW 防止校验后最后一段路径被换成符号链接。
@@ -458,6 +464,8 @@ export class Workspace {
    *
    * 超时和取消走**同一条清理路径**（stop → terminateTree）。两条路径各写一份杀进程的代码，
    * 迟早会有一条漏掉进程树；共用之后，「为什么停」只影响状态文案，不影响怎么收尾。
+   * 已知边界：Windows taskkill 失败后的直接 child.kill 不能清理全部后代；必须在有界等待后报错，
+   * 而不是把「已经尝试停止」冒充「已完成进程树清理」。
    */
   async run(command: string): Promise<string> {
     const signal = this.signal;
@@ -483,8 +491,9 @@ export class Workspace {
       let dropped = 0;
       // 第一次「为什么停」获胜：超时和取消同时发生时，不能把状态改来改去。
       let stopped: string | undefined;
-      let cleanup: Promise<void> | undefined;
+      let cleanup: Promise<boolean> | undefined;
       let settled = false;
+      let closeDeadline: ReturnType<typeof setTimeout> | undefined;
 
       const absorb = (chunk: Buffer) => {
         collected += chunk.toString();
@@ -494,20 +503,35 @@ export class Workspace {
         }
       };
 
-      const stop = (reason: string) => {
-        // 进程已经收尾之后不再补一刀：Windows 上 PID 可能已经被复用。
-        if (settled || stopped !== undefined) return;
-        stopped = reason;
-        cleanup = terminateTree(child);
-      };
-
       const timer = setTimeout(() => stop(`timeout after ${this.timeoutMs}ms`), this.timeoutMs);
       const onAbort = () => stop("cancelled by signal");
       signal?.addEventListener("abort", onAbort, { once: true });
 
       const finish = () => {
         clearTimeout(timer);
+        if (closeDeadline !== undefined) clearTimeout(closeDeadline);
         signal?.removeEventListener("abort", onAbort);
+      };
+      const rejectUnverifiedCleanup = () => {
+        if (settled) return;
+        settled = true;
+        finish();
+        // 孙进程可能仍持有 stdout/stderr；不能等 close 事件无限挂住 Agent。
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        // 中文对照：进程树清理未确认；后代进程可能仍在运行。
+        reject(new ProcessCleanupError(`process tree cleanup unverified after ${stopped ?? "stop"}; descendant processes may still be running`));
+      };
+      const stop = (reason: string) => {
+        // 进程已经收尾之后不再补一刀：Windows 上 PID 可能已经被复用。
+        if (settled || stopped !== undefined) return;
+        stopped = reason;
+        cleanup = terminateTree(child);
+        // 直接子进程 close 迟迟不来时必须有硬截止时间；不能让模型等待无限久。
+        closeDeadline = setTimeout(rejectUnverifiedCleanup, PROCESS_CLOSE_TIMEOUT_MS);
+        void cleanup.then((confirmed) => {
+          if (!confirmed) rejectUnverifiedCleanup();
+        }, rejectUnverifiedCleanup);
       };
 
       child.stdout.on("data", absorb);
@@ -524,15 +548,20 @@ export class Workspace {
         if (settled) return;
         settled = true;
         finish();
-        // 等进程树真的被杀掉再返回：先 resolve 的话，调用方会以为任务结束了，
-        // 而孙进程可能还在写文件 —— 那不叫「取消成功」。
-        void (cleanup ?? Promise.resolve()).then(() =>
+        // 先等清理结论，只有系统报告成功才给出正常的超时/取消结果。
+        // cleanup 失败由 rejectUnverifiedCleanup 直接拒绝，不允许假装进程树已清空。
+        void (cleanup ?? Promise.resolve(true)).then((confirmed) => {
+          if (!confirmed) {
+            // 中文对照：进程树清理未确认；后代进程可能仍在运行。
+            reject(new ProcessCleanupError(`process tree cleanup unverified after ${stopped ?? "stop"}; descendant processes may still be running`));
+            return;
+          }
           resolve({
             status: stopped ?? `exit ${code}`,
             output: collected,
             dropped,
-          }),
-        );
+          });
+        }, reject);
       });
     });
 
@@ -702,69 +731,79 @@ export async function fillBuffer(
 }
 
 /**
- * 杀掉整棵进程树，并在**确实清理完之后**才 resolve：Windows 上用 `taskkill /T`，POSIX 上杀进程组。
- * 只杀外层 shell 是不够的 —— Windows 上 `npm test` 这类命令会留下一串孤儿进程。
+ * 尽力停止整棵进程树，并报告是否得到系统级的成功信号。
+ * Windows 上 `taskkill /T /F` 返回 0 才算确认；启动失败、非零退出和挂起都回退
+ * 到 `child.kill()`，但它只能停止直接子进程，不能冒充「孙进程已经被清理」。
+ * POSIX 上成功向整个进程组发 SIGKILL 算确认，回退只杀外层进程算未确认。
  *
- * 两条路都可能失败（taskkill 起不来、进程组已经没了），所以都要兜底：
- * 停下来的那一刻宁可「只杀掉外层 shell」，也不能抛出一个没人接的异常把整个进程带走。
- * 返回 Promise 而不是 void，是因为调用方必须等它 —— 先 resolve 再清理，等于假取消。
- */
-/**
- * 故障注入只用于确定性覆盖 Windows taskkill 失败路径，不暴露给 WorkspaceOptions。
- * 测试在 Linux 上也能模拟 win32 的 taskkill 子进程事件，避免只靠 Windows CI 偶然触发失败。
+ * 已知边界：成功信号不等于跨平台的 OS 级孤儿进程证明；异常路径必须显式失败。
+ * 测试可注入 taskkill 的进程事件及截止时间，不修改 WorkspaceOptions 公开配置。
  */
 export function terminateTree(
   child: ChildProcess,
   options: {
     platform?: NodeJS.Platform;
-    spawnTaskkill?: (pid: number) => Pick<ChildProcess, "once">;
+    timeoutMs?: number;
+    spawnTaskkill?: (pid: number) => Pick<ChildProcess, "once"> & Partial<Pick<ChildProcess, "kill">>;
   } = {},
-): Promise<void> {
+): Promise<boolean> {
   const pid = child.pid;
-  if (pid === undefined) return Promise.resolve();
+  if (pid === undefined) return Promise.resolve(false);
 
   if ((options.platform ?? process.platform) === "win32") {
     return new Promise((resolve) => {
-      // 异常降级只能保证尝试停止直接子进程；它不等价于成功清理整个进程树。
-      const fallback = () => {
-        try {
-          child.kill();
-        } catch {
-          // 子进程可能已经退出。不要让清理失败触发未处理异常。
-        }
-      };
       let finished = false;
-      const complete = (fallbackNeeded: boolean) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      let killer: (Pick<ChildProcess, "once"> & Partial<Pick<ChildProcess, "kill">>) | undefined;
+      const complete = (confirmed: boolean) => {
         if (finished) return;
         finished = true;
-        if (fallbackNeeded) fallback();
-        resolve();
+        if (timeout !== undefined) clearTimeout(timeout);
+        if (!confirmed) {
+          try {
+            child.kill();
+          } catch {
+            // 直接子进程可能已退出，但不能因此把孙进程视为已清理。
+          }
+        }
+        resolve(confirmed);
       };
+
       try {
-        const killer = options.spawnTaskkill?.(pid) ?? spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+        killer = options.spawnTaskkill?.(pid) ?? spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
           windowsHide: true,
           stdio: "ignore",
         });
-        // Windows taskkill 启动失败和非零退出共享 fallback；'error' 后可能还会触发 'close'。
-        killer.once("error", () => complete(true));
-        killer.once("close", (code) => complete(code !== 0));
+        // 一次 taskkill 可能先发 error 后发 close；后来的事件不能推翻首次结论。
+        killer.once("error", () => complete(false));
+        killer.once("close", (code) => complete(code === 0));
+        // taskkill 的超时结果必须先固定为未确认，迟到的 close(0) 不能改写结论。
+        if (!finished) timeout = setTimeout(() => {
+          complete(false);
+          try {
+            killer?.kill?.();
+          } catch {
+            // 连 taskkill 自己都可能无法停止；已尝试回退外层进程，仍须报告未确认。
+          }
+        }, options.timeoutMs ?? TASKKILL_TIMEOUT_MS);
       } catch {
-        complete(true);
+        complete(false);
       }
     });
   }
 
   try {
-    // detached 起进程组，负号 = 整组。
+    // detached 起进程组，负号 = 整组。只有成功发出整组 kill 才报告确认。
     process.kill(-pid, "SIGKILL");
+    return Promise.resolve(true);
   } catch {
     try {
       child.kill("SIGKILL");
     } catch {
-      // PID 在进程组失败后也可能已退出，清理应当总是 settle。
+      // 子进程可能已经退出；仅杀外层进程不是完整的进程树清理。
     }
+    return Promise.resolve(false);
   }
-  return Promise.resolve();
 }
 
 /** 超时用的是这条固定消息：调用方靠它区分「正则跑太久」和真正的 worker 故障。 */

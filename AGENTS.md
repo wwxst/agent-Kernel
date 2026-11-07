@@ -24,13 +24,13 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | 文件 | 职责 | 对外接口 |
 | --- | --- | --- |
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
-| `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`describeValue(value)`、`ChatResponseError` |
+| `src/errors.ts` | 错误文案兜底、响应协议错误、进程树清理未确认的致命错误 | `describeError(error)`、`describeValue(value)`、`ChatResponseError` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期；四种展示回调（单次开始事件）异常隔离并累计诊断 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats`、`observerFailureCount` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、显式权限注入（`Permission` 或 `null`）、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/tool-result-status.ts` | 纯展示事实判断：非 Shell 的 `ERROR:` 与 Shell 的 exit / timeout / cancelled；CLI/TUI 复用，不改工具结果文本 | `isToolResultFailure` |
 | `src/permission.ts` | 三档权限策略、`permissionPrompt` 模型指导、shell 的一次性审批、审批期间撤权后的版本复验；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`approvalGate`、`permissionPrompt` |
 | `src/approval.ts` | 审批提示格式化与读取：完整命令、实际 cwd、控制字符转义；`AbortSignal` / readline close / 正常回答的竞态收口 | `formatApproval`、`askWithSignal` |
-| `src/workspace.ts` | 工作区内的文件与 shell，含真实路径复用、编辑句柄一致性、写入前取消检查及其已知竞态边界；有界读取、扫描预算、超时、取消及可单测的进程树降级 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
+| `src/workspace.ts` | 工作区内的文件与 shell，含真实路径复用、编辑句柄一致性、写入前取消检查及其已知竞态边界；有界读取、扫描预算、超时、取消、进程树清理期限与失败告警 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
 | `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、底部带边框输入、状态行在下、工具状态/审批面板、流式失败草稿失效、颜色/字形降级、PageUp/PageDown、resize；不碰 Agent 循环 | `Tui`（`start`、`logError`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
@@ -47,7 +47,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，漏传 / `undefined` / 非法 permission 在构造阶段报错，以及每个失败分支都折成文本。
 - `Permission`：三档策略、`permissionPrompt` 三档说明、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝。
 - `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
-- `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树；Windows taskkill 注入错误时仅保证尝试 fallback，不代表仍能清理孙进程。
+- `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认；fallback 只能尝试杀直接子进程，不代表孙进程已退出。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/tui.test.mjs`：对话贴顶、输入框/状态行、工具运行/成功/失败/拒绝/未执行、审批面板完整命令与 cwd、y/N、排队输入、thinking、颜色开关、PageUp/PageDown、resize、中文宽度、复杂字符输入保真、长会话及退出清理；用假输入/输出流，不需要真终端。
 - `test/cli.test.mjs`：端到端只验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 的聊天布局/命令/统计；循环细节留在单元层。

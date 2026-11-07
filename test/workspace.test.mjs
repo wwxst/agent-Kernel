@@ -24,7 +24,7 @@ test("Windows taskkill 成功：只清理一次，不错误杀掉直接子进程
   });
 
   killer.emit("close", 0);
-  await pending;
+  assert.equal(await pending, true);
   assert.equal(kills, 0);
 });
 
@@ -38,7 +38,7 @@ test("Windows taskkill 启动失败：尝试 child.kill，错误和 close 不会
 
   killer.emit("error", new Error("taskkill unavailable"));
   killer.emit("close", -1);
-  await pending;
+  assert.equal(await pending, false);
   assert.equal(kills, 1);
 });
 
@@ -47,18 +47,54 @@ test("Windows taskkill 非零退出或启动时抛错：fallback 异常也不会
   const child = { pid: 1234, kill: () => { throw new Error("already exited"); } };
   const nonzero = terminateTree(child, { platform: "win32", spawnTaskkill: () => killer });
   killer.emit("close", 1);
-  await nonzero;
-  await terminateTree(child, {
+  assert.equal(await nonzero, false);
+  assert.equal(await terminateTree(child, {
     platform: "win32",
     spawnTaskkill: () => { throw new Error("spawn unavailable"); },
-  });
+  }), false);
 });
 
 test("没有 PID：taskkill 不启动，也不调用 child.kill", async () => {
-  await terminateTree({ pid: undefined, kill: () => { throw new Error("must not kill"); } }, {
+  assert.equal(await terminateTree({ pid: undefined, kill: () => { throw new Error("must not kill"); } }, {
     platform: "win32",
     spawnTaskkill: () => { throw new Error("must not spawn"); },
+  }), false);
+});
+
+test("Windows taskkill 挂起：限定时间后停止 killer，尝试停止直接子进程，并返回清理未确认", async () => {
+  const killer = new EventEmitter();
+  let helperKills = 0;
+  let childKills = 0;
+  killer.kill = () => { helperKills++; return true; };
+  const pending = terminateTree({ pid: 4567, kill: () => { childKills++; return true; } }, {
+    platform: "win32",
+    timeoutMs: 20,
+    spawnTaskkill: () => killer,
   });
+
+  assert.equal(await pending, false, "不能将超时回退等同于整棵进程树清理成功");
+  assert.equal(helperKills, 1);
+  assert.equal(childKills, 1);
+
+  // 超时后可能还有迟到的 close / error；不能再把 false 改回 true，或重复杀进程。
+  killer.emit("close", 0);
+  killer.emit("error", new Error("late helper error"));
+  assert.equal(helperKills, 1);
+  assert.equal(childKills, 1);
+});
+
+test("Windows taskkill 挂起且 helper.kill 抛错：依然有界结束并报告未确认", async () => {
+  const killer = new EventEmitter();
+  let childKills = 0;
+  killer.kill = () => { throw new Error("helper already gone"); };
+  const result = await terminateTree({ pid: 4567, kill: () => { childKills++; return true; } }, {
+    platform: "win32",
+    timeoutMs: 20,
+    spawnTaskkill: () => killer,
+  });
+
+  assert.equal(result, false);
+  assert.equal(childKills, 1);
 });
 
 test("write 后 read 能拿回原文，父目录自动创建", async () => {
