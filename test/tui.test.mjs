@@ -1641,5 +1641,8 @@ test("TUI：Ctrl+O 按阶段依次展开详情，审批键盘优先级不变", a
   await tick();
   const earlier = screenRows(ui, 45).join("\n");
   assert.match(earlier, /Read stage0\.txt/);
-  assert.doesNotMatch(earlier, /Read stage1\.txt/);
+  assert.match(earlier, /Read stage1\.txt/, "之前展开的阶段仍保持展开");
+  ui.input.write("\x0f");
+  await tick();
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /Read stage1\.txt/, "再次选中该组后单独收起");
 });
