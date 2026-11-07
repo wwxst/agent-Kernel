@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
 import { test } from "node:test";
@@ -688,3 +688,85 @@ test(
     }
   },
 );
+
+
+test("CLI 阶段：思考、工具开始与结果、回答和完成都有真实状态", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_1", "ls", { path: "." }),
+      finalReply("all done"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir, AGENT_VOICE: "balanced" });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /◇ Preparing/);
+      assert.match(run.stdout, /✻ Thinking\.\.\. · step 1/);
+      assert.match(run.stdout, /⚙ Tool #1 · ls/);
+      assert.match(run.stdout, /↳ ls ✓/);
+      assert.match(run.stdout, /✻ Thinking\.\.\. · step 2/);
+      assert.match(run.stdout, /✎ Answering\.\.\./);
+      assert.match(run.stdout, /all done/);
+      assert.match(run.stdout, /✓ Completed · 用时 \d+秒 · 1 次工具调用/);
+      assert.ok(run.stdout.indexOf("⚙ Tool #1") < run.stdout.indexOf("↳ ls ✓"));
+      assert.ok(run.stdout.indexOf("↳ ls ✓") < run.stdout.indexOf("✓ Completed"));
+      // 模型的请求和工具调用数不因展示变化。
+      assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1/);
+      assert.equal(mock.requests.length, 2);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("CLI 台词：指定傲娇语气只修改展示，不进入模型请求", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("plain answer")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir, AGENT_VOICE: "tsundere" });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /哼，这点准备工作难不倒我/);
+      assert.match(run.stdout, /才、才不是在发呆/);
+      assert.match(run.stdout, /plain answer/);
+      assert.equal(mock.requests.length, 1);
+      assert.equal(JSON.stringify(mock.requests[0]).includes("才、才不是在发呆"), false);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("CLI 精简与详细模式：工具摘要一直可见，详细模式独立展开多行结果", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "lines.txt"), "first line\nsecond line\nthird line\n");
+    const mock = await startMock([
+      callTool("call_1", "read", { path: "lines.txt" }),
+      finalReply("compact done"),
+      callTool("call_2", "read", { path: "lines.txt" }),
+      finalReply("detailed done"),
+    ]);
+    try {
+      const compact = await runCli({ BASE_URL: mock.url, WORKDIR: workdir, AGENT_VIEW: "compact" });
+      const detailed = await runCli({ BASE_URL: mock.url, WORKDIR: workdir }, { args: ["--details", "do the task"] });
+      assert.equal(compact.code, 0, compact.stderr);
+      assert.equal(detailed.code, 0, detailed.stderr);
+      assert.match(compact.stdout, /↳ read ✓ first line/);
+      assert.doesNotMatch(compact.stdout, /┌ result/);
+      assert.match(detailed.stdout, /↳ read ✓ first line/);
+      assert.match(detailed.stdout, /┌ result/);
+      assert.match(detailed.stdout, /│ second line/);
+      assert.match(detailed.stdout, /└ end/);
+      assert.match(detailed.stdout, /detailed done/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("CLI 配置：未知语气和显示模式明确报错", async () => {
+  const voice = await runCli({ AGENT_VOICE: "unknown" });
+  assert.equal(voice.code, 1);
+  assert.match(voice.stderr, /invalid AGENT_VOICE/);
+  const view = await runCli({ AGENT_VIEW: "unknown" });
+  assert.equal(view.code, 1);
+  assert.match(view.stderr, /invalid AGENT_VIEW/);
+});

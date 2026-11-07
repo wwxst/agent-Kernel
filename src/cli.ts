@@ -17,6 +17,8 @@
  *   MAX_TOTAL_TOKENS 单次 Run 累计 token 预算，默认 500000；0 表示不限制
  *   MAX_OUTPUT_TOKENS 单次模型响应最多生成多少 token，默认 8192
  *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
+ *   AGENT_VIEW      compact / detailed；也可传 --details
+ *   AGENT_VOICE     balanced / energetic / playful / tsundere / curious / gentle / confident
  *
  * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
  */
@@ -25,6 +27,8 @@ import { createInterface } from "node:readline/promises";
 import { askWithSignal, formatApproval } from "./approval.ts";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
+import { RunPresenter } from "./cli-presenter.ts";
+import type { AgentView, AgentVoice } from "./cli-presenter.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
@@ -84,9 +88,36 @@ interface Config {
   maxOutputTokens: number;
   toolTimeoutMs: number;
   permission: PermissionMode;
+  view: AgentView;
+  voice: AgentVoice;
 }
 
-function loadConfig(permission: PermissionMode): Config {
+/** 角色语气只属于 CLI 展示；输入写错明确报错，不影响模型权限策略。 */
+function voiceFromEnv(): AgentVoice {
+  const voice = process.env.AGENT_VOICE?.trim() || "balanced";
+  switch (voice) {
+    case "balanced":
+    case "energetic":
+    case "playful":
+    case "tsundere":
+    case "curious":
+    case "gentle":
+    case "confident":
+      return voice;
+    default:
+      // 中文对照：AGENT_VOICE 的值不合法。
+      throw new Error('invalid AGENT_VOICE: "' + voice + '"');
+  }
+}
+
+function viewFromEnv(): AgentView {
+  const view = process.env.AGENT_VIEW?.trim() || "compact";
+  if (view === "compact" || view === "detailed") return view;
+  // 中文对照：AGENT_VIEW 必须是 compact 或 detailed。
+  throw new Error('invalid AGENT_VIEW: "' + view + '" (expected compact or detailed)');
+}
+
+function loadConfig(permission: PermissionMode, details: boolean): Config {
   // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
   const apiKey = firstNonEmpty(process.env.API_KEY, process.env.OPENAI_API_KEY);
   if (!apiKey) {
@@ -106,6 +137,8 @@ function loadConfig(permission: PermissionMode): Config {
     maxOutputTokens: positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192),
     toolTimeoutMs: positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000),
     permission,
+    view: details ? "detailed" : viewFromEnv(),
+    voice: voiceFromEnv(),
   };
 }
 
@@ -114,6 +147,7 @@ interface CliArgs {
   help: boolean;
   repl: boolean;
   tui: boolean;
+  details: boolean;
   permission: PermissionMode;
   task: string;
   error?: string;
@@ -129,6 +163,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
   let help = false;
   let repl = false;
   let tui = false;
+  let details = false;
   let permission: PermissionMode = DEFAULT_PERMISSION_MODE;
   const taskParts: string[] = [];
 
@@ -136,6 +171,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
     help,
     repl,
     tui,
+    details,
     permission,
     task: taskParts.join(" ").trim(),
     error,
@@ -154,6 +190,10 @@ function parseArgs(argv: readonly string[]): CliArgs {
     }
     if (arg === "--tui") {
       tui = true;
+      continue;
+    }
+    if (arg === "--details") {
+      details = true;
       continue;
     }
     if (arg === "--permission" || arg.startsWith("--permission=")) {
@@ -239,11 +279,8 @@ function createApprovalPrompt(controller: AbortController, cwd: string): Approva
   };
 }
 
-/**
- * 本轮是否已经把正文流式打印过。用模块级变量而不是 Agent 内部状态：
- * 「显示过没有」是 CLI 的事，Agent 只负责把增量交出来。
- */
-let streamedThisTurn = false;
+/** 一次只显示一个普通 CLI / REPL Run；TUI 通过 callbacks 走自己的展示层。 */
+let activePresenter: RunPresenter | undefined;
 
 /**
  * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（REPL、一次性任务）；
@@ -307,22 +344,16 @@ function createAgent(
     signal,
     // 默认实现打印每一步的工具调用，让你能「看见」循环在转；TUI 会换成运行记录里的两行。
     onRequestStart: callbacks?.onRequestStart,
+    onStepStart: (step) => {
+      if (callbacks?.onRequestStart === undefined) activePresenter?.thinking(step);
+    },
     onToolCall: callbacks?.onToolCall,
-    onToolResult:
-      callbacks?.onToolResult ??
-      ((call, result) => {
-        const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
-        console.log(`  ↳ ${call.function.name} → ${firstLine}`);
-      }),
-    // 正文增量直接写 stdout：不换行、不加前缀，让流出来的字连成一段。
-    // 第一段之前补一个换行，避免紧跟在工具结果那一行后面。
-    onDelta:
-      callbacks?.onDelta ??
-      ((text) => {
-        if (!streamedThisTurn) process.stdout.write("\n");
-        streamedThisTurn = true;
-        process.stdout.write(text);
-      }),
+    onToolStart: (call) => {
+      if (callbacks?.onToolCall === undefined) activePresenter?.toolStart(call);
+    },
+    onToolResult: callbacks?.onToolResult ?? ((call, result) => activePresenter?.toolResult(call, result)),
+    // CLI 显示在 RunPresenter；TUI 使用自己提供的流式回调。
+    onDelta: callbacks?.onDelta ?? ((text) => activePresenter?.delta(text)),
   });
 }
 
@@ -331,18 +362,21 @@ function createAgent(
  *
  * 失败时先打 usage 再抛：失败的任务同样花了 token，账单不能因为异常就消失。
  */
-async function runTurn(agent: Agent, task: string): Promise<void> {
-  streamedThisTurn = false;
+async function runTurn(agent: Agent, task: string, config: Config, signal: AbortSignal): Promise<void> {
+  const presenter = new RunPresenter(config.view, config.voice);
+  activePresenter = presenter;
+  presenter.start();
   try {
     const reply = await agent.run(task);
-    // 流式时正文已经逐字打过了；没有增量（比如纯工具调用轮）就打印最终回复。
-    if (streamedThisTurn) process.stdout.write("\n");
-    else console.log(`\n${reply.content ?? ""}`);
+    presenter.finalAnswer(reply.content ?? "");
+    presenter.finish(agent.stats.toolCalls);
     printUsage(agent.stats, { failed: false });
   } catch (error) {
-    // 失败的任务同样花了 token：账单不能因为异常就消失。
+    presenter.finish(agent.stats.toolCalls, signal.aborted, true);
     printUsage(agent.stats, { failed: true });
     throw error;
+  } finally {
+    activePresenter = undefined;
   }
 }
 
@@ -512,7 +546,7 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
       if (input === "") continue;
 
       try {
-        await runTurn(agent, input);
+        await runTurn(agent, input, config, signal);
       } catch (error) {
         if (signal.aborted) {
           console.error(`[agent] cancelled: ${describeError(error)}`);
@@ -681,10 +715,11 @@ const usage = [
   "       node src/cli.ts --repl [--permission <mode>]     # multi-turn session; /exit, /reset, /permission, /help",
   // 中文对照：node src/cli.ts --tui [--permission <模式>] 进入轻量 TUI；可带一个初始任务
   "       node src/cli.ts --tui [--permission <mode>] [task]  # lightweight TUI session",
+  "       node src/cli.ts --details \"<task>\"  # expanded tool logs",
   // 中文对照：权限模式：…（默认：…）
   `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS",
+  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE",
 ].join("\n");
 
 const cli = parseArgs(process.argv.slice(2));
@@ -711,7 +746,7 @@ if (cli.error !== undefined) {
   }
 
   try {
-    const config = loadConfig(cli.permission);
+    const config = loadConfig(cli.permission, cli.details);
     if (tuiMode) {
       await tuiSession(config, controller, cli.task === "" ? undefined : cli.task);
     } else if (replMode) {
@@ -721,7 +756,7 @@ if (cli.error !== undefined) {
       try {
         // 一次性任务同样使用会话级 Permission：审批器负责「怎么问」，Permission 负责「放不放行」。
         const permission = new Permission(config.permission, approvalPrompt.approve);
-        await runTurn(createAgent(config, controller.signal, permission), cli.task);
+        await runTurn(createAgent(config, controller.signal, permission), cli.task, config, controller.signal);
       } finally {
         approvalPrompt.close();
       }
