@@ -5,6 +5,7 @@
  * 让语气有变化而不假装知道模型在想什么。详细模式展开的是工具真实返回值。
  */
 import type { ToolCall } from "./types.ts";
+import { escapeControlCharacters } from "./approval.ts";
 import { isToolResultFailure } from "./tool-result-status.ts";
 
 const MOODS = ["energetic", "playful", "tsundere", "curious", "gentle", "confident"] as const;
@@ -124,13 +125,8 @@ function describeTarget(call: ToolCall): string {
   const args = value as Record<string, unknown>;
   const target = args.path ?? args.pattern ?? args.command;
   if (typeof target !== "string" || target.length === 0) return "";
-  const inline = target.replace(/[\x00-\x1f\x7f]/g, " ").slice(0, 90);
+  const inline = escapeControlCharacters(target).replace(/\n/g, " ").slice(0, 90);
   return " · " + inline + (target.length > 90 ? "…" : "");
-}
-
-/** 终端日志不应接受结果中的 ESC 控制序列，防止工具输出伪造状态或改写屏幕。 */
-function safeText(text: string): string {
-  return text.replace(/[\x00-\x09\x0b-\x1f\x7f]/g, " ");
 }
 
 function elapsedTime(startedAt: number): string {
@@ -171,7 +167,7 @@ export class RunPresenter {
 
   private status(label: string, scene: Scene, suffix = ""): void {
     this.closeStreamLine();
-    console.log(label + (suffix ? " · " + suffix : "") + " 丨 " + this.phrase(scene));
+    console.log(label + (suffix ? " · " + escapeControlCharacters(suffix).replace(/\n/g, " ") : "") + " 丨 " + this.phrase(scene));
   }
 
   private closeStreamLine(): void {
@@ -194,12 +190,12 @@ export class RunPresenter {
   }
 
   toolResult(call: ToolCall, result: string): void {
-    const output = safeText(result);
+    const output = escapeControlCharacters(result);
     const firstLine = output.split("\n", 1)[0] ?? "";
     const excerpt = firstLine.slice(0, 120);
     const truncated = firstLine.length > 120 || output.includes("\n");
     const failed = isToolResultFailure(call, result);
-    console.log("  ↳ " + call.function.name + (failed ? " ✗ " : " ✓ ") + excerpt + (truncated ? "…" : ""));
+    console.log("  ↳ " + escapeControlCharacters(call.function.name) + (failed ? " ✗ " : " ✓ ") + excerpt + (truncated ? "…" : ""));
 
     if (this.view === "detailed") {
       console.log("    ┌ result");
@@ -219,12 +215,12 @@ export class RunPresenter {
       this.streamOpen = true;
     }
     this.streamedCurrentStep = true;
-    process.stdout.write(text);
+    process.stdout.write(escapeControlCharacters(text));
   }
 
   finalAnswer(content: string): void {
     this.closeStreamLine();
-    if (!this.streamedCurrentStep) console.log("\n" + content);
+    if (!this.streamedCurrentStep) console.log("\n" + escapeControlCharacters(content));
   }
 
   finish(toolCalls: number, cancelled = false, failed = false): void {

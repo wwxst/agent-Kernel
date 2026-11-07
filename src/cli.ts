@@ -644,7 +644,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       return true;
     } catch (error) {
       // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
-      tui.finishAssistant("");
+      tui.discardAssistantDraft();
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true, cancelled: signal.aborted });
       if (signal.aborted) {
         tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeError(error)}`);

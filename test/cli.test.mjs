@@ -806,6 +806,28 @@ test("CLI 精简与详细模式：工具摘要一直可见，详细模式独立�
   });
 });
 
+test("CLI 模型正文与工具结果里的 ESC、bidi 字符只显示转义文本", async () => {
+  await withWorkspace(async (workdir) => {
+    const dangerous = "before" + String.fromCharCode(27) + "[31m" + String.fromCharCode(0x202e) + "spoofed";
+    await writeFile(path.join(workdir, "unsafe.txt"), dangerous + "\n");
+    const mock = await startMock([
+      callTool("call_read", "read", { path: "unsafe.txt" }),
+      finalReply(dangerous),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.doesNotMatch(run.stdout, /[\x1b\u202e]/);
+      assert.match(run.stdout, /\\u001b/);
+      assert.match(run.stdout, /\\u202e/);
+      assert.match(run.stdout, /✓ Completed/);
+      assert.equal(mock.requests.length, 2);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("CLI 配置：未知语气和显示模式明确报错", async () => {
   const voice = await runCli({ AGENT_VOICE: "unknown" });
   assert.equal(voice.code, 1);
