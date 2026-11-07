@@ -175,6 +175,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - **Thinking**：前置符号每 200ms 变化，`Thinking...` 及三个点固定显示，耗时列稳定；下一行弱化显示 `Ctrl-C to cancel`。工具返回后的等待可显示本次实际收到的工具结果数。第一段正文、工具调用或错误到达时清除并停止计时。结束时显示本次实际经过时间与工具调用数，不推断模型内部思考或尚未返回的 token。
 - **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
 - **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
+- **Slash 命令补全**：TUI 中输入 `/` 会在输入框**下方**展开当前程序实际支持的 `/help`、`/permission`、`/reset`、`/exit`、`/quit`；继续输入前缀实时筛选。方向键只移动高亮，不改变 readline 的输入历史；`Tab` 把高亮命令补全到编辑框但不执行，`Enter` 执行高亮命令，`Esc` 收起菜单且保留原输入；查询变更后可重新弹出。说明文案跟随中英文 UI 语言，不展示尚未实现的 Claude Code 命令。菜单不写入 Transcript，已有 `/permission read-only` 等参数命令照常处理。小终端最多显示可容纳的条目，支持 resize；审批菜单优先，不混用按键。
 - **权限快捷键**：在等待输入下一条任务时按 `Shift+Tab`，依次从 `read-only` → `workspace-write` → `full-access` → `read-only` 循环。进入 `full-access` 须再按一次 `Shift+Tab` 确认，Esc 或其他键取消待确认；运行中和 Shell 审批中不可用。快捷键直接更新同一个 Permission 对象，下次模型请求读取更新后的权限说明，不改变 Transcript；普通 Tab 不切模式。部分终端不能区分 Shift+Tab 时仍可使用 `/permission [mode]`。
 - 命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态行和下一次请求同时生效。
 
