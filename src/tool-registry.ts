@@ -178,8 +178,8 @@ export class ToolRegistry {
   /**
    * 按名字执行一次工具调用。
    *
-   * 这个函数刻意「永不抛异常」：工具名不存在、参数不是合法 JSON、工具自己炸了，
-   * 全部变成一段 ERROR 文本。错误是循环里的常态，不是终止条件。
+   * 普通工具失败折成 ERROR 文本，让模型继续纠正；但进程树清理未确认时，
+   * 后代进程可能还在产生副作用，必须抛 ProcessCleanupError 阻断后续工具。
    */
   async execute(call: ToolCall): Promise<string> {
     const name = call.function.name;
@@ -225,7 +225,7 @@ export class ToolRegistry {
         }
       } catch (error) {
         // Permission.check 已经把审批异常折成拒绝；这里兜的是策略模块自身的意外故障。
-        // execute 对外承诺永不抛异常，任何协作者抛错都必须在这个边界收口 —— 不是重复校验。
+        // 审批模块的普通异常仍回灌为权限拒绝；仅进程树未确认具有不可恢复语义。
         // 中文对照：ERROR: 权限被拒绝：{原因}
         return `ERROR: permission denied: ${describeError(error)}`;
       }
