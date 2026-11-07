@@ -363,12 +363,19 @@ async function runTurn(agent: Agent, task: string, config: Config, signal: Abort
   const presenter = new RunPresenter(config.view, config.voice);
   activePresenter = presenter;
   presenter.start();
+  const transcriptStart = agent.transcript.length;
   try {
     const reply = await agent.run(task);
     presenter.finalAnswer(reply.content ?? "");
     presenter.finish(agent.stats.toolCalls);
     printUsage(agent.stats, { failed: false });
   } catch (error) {
+    // 预算阻断可能已经确认模型正文；请求中断时则必须明确宣布临时增量无效。
+    const confirmed = agent.transcript.slice(transcriptStart)
+      .filter((message) => message.role === "assistant");
+    const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
+    if (latest !== undefined) presenter.confirmAssistant(latest.content);
+    else presenter.discardAssistantDraft();
     presenter.finish(agent.stats.toolCalls, signal.aborted, true);
     printUsage(agent.stats, { failed: true });
     throw error;

@@ -237,6 +237,14 @@ export class RunPresenter {
     this.streamedCurrentStep = true;
   }
 
+  /** 失败的模型请求只有临时增量、没有已确认消息时，必须声明其失效。 */
+  discardAssistantDraft(): void {
+    this.closeStreamLine();
+    if (this.streamedCurrentStep) console.log("[stream interrupted: unconfirmed text discarded]");
+    this.streamedCurrentStep = false;
+    this.streamedText = "";
+  }
+
   finalAnswer(content: string): void {
     this.confirmAssistant(content);
   }
