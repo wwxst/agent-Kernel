@@ -739,7 +739,13 @@ export class Tui {
   }
 
   private stopThinking(): void {
+    const wasThinking = this.thinking;
     this.thinking = false;
+    // 首段模型正文到达时移除等待态和俏皮短句，不能在日志末尾留下假的 Thinking。
+    if (wasThinking && this.activityState === "thinking") {
+      this.activityState = undefined;
+      this.moodText = "";
+    }
     if (this.thinkingTimer !== undefined) {
       clearInterval(this.thinkingTimer);
       this.thinkingTimer = undefined;
@@ -900,7 +906,6 @@ export class Tui {
 
     this.setThinking(false);
     this.finishAssistant();
-    if (this.fixedLayoutAllowed && show) this.pushTask(task);
     if (!show) return;
     const lines = splitDisplayLines(task);
     lines.forEach((line, index) => {
@@ -1452,7 +1457,6 @@ export class Tui {
       const prefix = text.startsWith("    ") ? 6 : 4;
       return this.style.paint(line.tone, text.slice(0, prefix)) +
         this.style.bold(this.style.paint("assistant", text.slice(prefix)));
-
     }
     if (line.kind === "thinking") {
       const end = text.indexOf(" (");
