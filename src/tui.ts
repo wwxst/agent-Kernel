@@ -998,13 +998,15 @@ export class Tui {
     this.setActivityState(moodStateForTool(call));
     const turn = this.currentTurn;
     if (this.fixedLayoutAllowed && turn !== undefined && turn.endedAt === undefined) {
-      this.pushBlank();
       let group = this.activeActivity;
       if (group === undefined) {
+        // AI 的说明与其下方的 ↳ 摘要紧邻；通用 commitAssistant 会多留一个空行。
+        if (this.log.at(-1)?.text === "" && this.log.at(-2)?.tone === "assistant") this.log.pop();
         group = { language: this.uiLanguage, tools: [], expanded: true };
         turn.groups.push(group);
         this.activeActivity = group;
-        this.log.push({ text: "", tone: "muted", kind: "activity", activity: group });
+        // 非空锚点让下一段 AI 发言自动与本阶段之间留一行。
+        this.log.push({ text: "↳", tone: "muted", kind: "activity", activity: group });
       }
       const item: ActivityTool = { call, startedAt: Date.now() };
       group.tools.push(item);
@@ -1604,6 +1606,7 @@ export class Tui {
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
         logical.push(this.turnStatusLine(line.turn));
+        logical.push({ text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" });
         continue;
       }
       if (line.kind === "activity" && line.activity !== undefined) {
