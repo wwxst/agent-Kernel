@@ -99,6 +99,7 @@ interface ActivityGroup {
   language: UiLanguage;
   tools: ActivityTool[];
   expanded: boolean;
+  finished?: boolean;
 }
 
 interface TurnActivity {
@@ -808,7 +809,9 @@ export class Tui {
     const words: string[] = [];
     for (const item of group.tools) {
       const summary = item.result === undefined ? undefined : summarizeToolResult(item.call, item.result);
-      const verb = activityVerb(item.call, group.language, summary);
+      const verb = group.finished && item.result === undefined
+        ? group.language === "zh" ? "有操作未返回结果" : "Some operations had no result"
+        : activityVerb(item.call, group.language, summary);
       if (!words.includes(verb)) words.push(verb);
     }
     if (words.length === 0) return this.uiText("Working...", "处理中...");
@@ -830,7 +833,13 @@ export class Tui {
     return { text: escapeControlCharacters(`    ${mark} ${event} ${label} · ${reason}`), tone, kind: "activity-error" };
   }
 
+  private activityUnfinishedLine(item: ActivityTool, language: UiLanguage): LogLine {
+    return { text: escapeControlCharacters(`    ${this.glyphs.notRun} ${activityEventName(item.call, language)} · ${language === "zh" ? "未收到工具结果" : "no tool result received"}`),
+      tone: "muted", kind: "activity-error" };
+  }
+
   private activityToolLines(item: ActivityTool, group: ActivityGroup): LogLine[] {
+    if (item.result === undefined && group.finished) return [this.activityUnfinishedLine(item, group.language)];
     if (item.result === undefined) {
       const title = this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted");
       title.kind = "tool";
@@ -1079,7 +1088,10 @@ export class Tui {
       this.currentTurn.endedAt = Date.now();
       this.currentTurn.outcome = cancelled ? "cancelled" : failed ? "failed" : "completed";
       // 完成后只折叠工具明细，AI 的真实阶段说明和每一段摘要仍常驻。
-      for (const group of this.currentTurn.groups) group.expanded = false;
+      for (const group of this.currentTurn.groups) {
+        group.expanded = false;
+        group.finished = true;
+      }
       this.activityFocus = -1;
       this.activeActivity = undefined;
       this.activityPending.clear();
@@ -1620,6 +1632,7 @@ export class Tui {
           for (const item of group.tools) {
             const failure = this.activityFailureLine(item, group.language);
             if (failure !== undefined) logical.push(failure);
+            else if (group.finished && item.result === undefined) logical.push(this.activityUnfinishedLine(item, group.language));
           }
         }
         continue;
