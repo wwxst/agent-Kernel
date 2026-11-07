@@ -18,6 +18,8 @@ import { Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
+import { selectMood } from "./tui-mood.ts";
+import type { MoodState } from "./tui-mood.ts";
 import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
 
@@ -81,7 +83,30 @@ interface LogLine {
   text: string;
   tone: Tone;
   /** 工具标题与暂态等待各有局部样式，不把整行都染成状态色。 */
-  kind?: "tool" | "thinking";
+  kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error";
+  activity?: ActivityGroup;
+  turn?: TurnActivity;
+}
+
+interface ActivityTool {
+  call: ToolCall;
+  startedAt: number;
+  endedAt?: number;
+  result?: string;
+}
+
+interface ActivityGroup {
+  language: UiLanguage;
+  tools: ActivityTool[];
+  expanded: boolean;
+}
+
+interface TurnActivity {
+  language: UiLanguage;
+  startedAt: number;
+  endedAt?: number;
+  outcome: "preparing" | "running" | "completed" | "failed" | "cancelled";
+  groups: ActivityGroup[];
 }
 
 interface Glyphs {
@@ -227,6 +252,26 @@ export class Tui {
 
   /** 正在运行的工具调用行：结果到达时原地替换，而不是再追一行。 */
   private readonly pendingTools = new Map<string, LogLine>();
+
+  /** 每次真实 AI 阶段说明后的工具形成一个独立组；不编造模型说明。 */
+  private readonly activityPending = new Map<string, ActivityTool>();
+
+  private currentTurn?: TurnActivity;
+
+  private activeActivity?: ActivityGroup;
+
+  /** Ctrl+O 依次查看各组，-1 表示全部收起。 */
+  private activityFocus = -1;
+
+  private activityState?: MoodState;
+
+  private moodText = "";
+
+  private moodChangedAt = 0;
+
+  private readonly recentMoods: string[] = [];
+
+  private activityTimer?: NodeJS.Timeout;
 
   /** 当前正在流式输出的模型正文；只用于显示。 */
   private streamingText = "";
@@ -431,6 +476,18 @@ export class Tui {
         }
         // 审批只接受菜单按键；误输入的任意文本不改变决定、不写入下一个任务。
         if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+        return;
+      }
+
+      // Ctrl+O 依次展开最近、上一段等日志；审批优先，绝不改变授权选择。
+      if (key?.ctrl && name === "o" && this.layout && this.currentTurn !== undefined) {
+        const groups = this.currentTurn.groups;
+        if (groups.length > 0) {
+          this.activityFocus = this.activityFocus < 0 ? groups.length - 1 : this.activityFocus - 1;
+          groups.forEach((group, index) => { group.expanded = index === this.activityFocus; });
+          this.scrollOffset = 0;
+          this.renderNow();
+        }
         return;
       }
 
@@ -656,6 +713,7 @@ export class Tui {
   setThinking(thinking: boolean): void {
     if (this.thinking === thinking) return;
     if (thinking) {
+      this.setActivityState("thinking");
       this.thinking = true;
       this.thinkingStartedAt = Date.now();
       if (this.fixedLayoutAllowed) {
@@ -688,6 +746,110 @@ export class Tui {
     }
   }
 
+  /** 从真实事件选择稳定的临时语气；每次变更状态才立即换句。 */
+  private setActivityState(state: MoodState): void {
+    if (this.activityState === state) return;
+    this.activityState = state;
+    this.moodChangedAt = Date.now();
+    this.chooseMood(state);
+    if (this.currentTurn !== undefined && state !== "preparing" && this.currentTurn.endedAt === undefined) {
+      this.currentTurn.outcome = "running";
+    }
+  }
+
+  private chooseMood(state: MoodState): void {
+    this.moodText = selectMood(state, this.uiLanguage, this.recentMoods);
+    this.recentMoods.push(this.moodText);
+    if (this.recentMoods.length > 6) this.recentMoods.shift();
+    this.moodChangedAt = Date.now();
+  }
+
+  private maybeRotateMood(): void {
+    if (this.activityState === undefined) return;
+    // 审批和错误不轮播；短工具调用只显示一条，不产生闪烁。
+    if (this.activityState === "approval" || this.activityState === "failed" ||
+        this.activityState === "completed" || this.activityState === "cancelled") return;
+    if (Date.now() - this.moodChangedAt >= 15_000) this.chooseMood(this.activityState);
+  }
+
+  private withMood(base: string, width: number): string {
+    if (this.moodText === "") return base;
+    const extra = ` │ ${this.moodText}`;
+    return displayWidth(base) + displayWidth(extra) <= width ? base + extra : base;
+  }
+
+  private turnStatusLine(turn: TurnActivity): LogLine {
+    const elapsed = Math.max(0, (turn.endedAt ?? Date.now()) - turn.startedAt);
+    const duration = formatActivityDuration(elapsed, turn.language);
+    const zh = turn.language === "zh";
+    if (turn.outcome === "completed") return {
+      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}`,
+      tone: "success",
+    };
+    if (turn.outcome === "failed" || turn.outcome === "cancelled") {
+      const outcome = turn.outcome === "failed" ? (zh ? "执行失败" : "Failed") : (zh ? "已取消" : "Cancelled");
+      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}`,
+        tone: turn.outcome === "failed" ? "error" : "muted" };
+    }
+    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}`, tone: "muted" };
+    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}`, tone: "accent" };
+  }
+
+  private activitySummary(group: ActivityGroup): string {
+    const words: string[] = [];
+    for (const item of group.tools) {
+      const summary = item.result === undefined ? undefined : summarizeToolResult(item.call, item.result);
+      const verb = activityVerb(item.call, group.language, summary);
+      if (!words.includes(verb)) words.push(verb);
+    }
+    if (words.length === 0) return this.uiText("Working...", "处理中...");
+    const count = Math.min(3, words.length);
+    return `${words.slice(0, count).join(group.language === "zh" ? "、" : ", ")}${words.length > 3 ? group.language === "zh" ? "等" : ", etc." : ""}`;
+  }
+
+  private activityFailureLine(item: ActivityTool, language: UiLanguage): LogLine | undefined {
+    if (item.result === undefined) return undefined;
+    const summary = summarizeToolResult(item.call, item.result);
+    if (!summary.failed) return undefined;
+    const event = activityEventName(item.call, language);
+    const mark = summary.denied ? this.glyphs.denied : summary.notRun ? this.glyphs.notRun : this.glyphs.error;
+    const tone: Tone = summary.notRun ? "muted" : summary.denied ? "warning" : "error";
+    const label = language === "zh"
+      ? summary.denied ? "已拒绝" : summary.notRun ? "未执行" : "失败"
+      : summary.denied ? "denied" : summary.notRun ? "not run" : "failed";
+    const reason = activityFailureReason(item.call, item.result, summary);
+    return { text: escapeControlCharacters(`    ${mark} ${event} ${label} · ${reason}`), tone, kind: "activity-error" };
+  }
+
+  private activityToolLines(item: ActivityTool, group: ActivityGroup): LogLine[] {
+    if (item.result === undefined) {
+      const title = this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted");
+      title.kind = "tool";
+      const lines = [title];
+      if (!this.approvalBlocksRunning) lines.push(this.makeLogLine(
+        `      ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, "muted"));
+      return lines;
+    }
+    const failed = this.activityFailureLine(item, group.language);
+    if (failed !== undefined) {
+      const raw = item.result.split("\n").map((line) => line.trim()).filter(Boolean);
+      const lines: LogLine[] = [failed];
+      // 摘要中错误原因始终在命令同一行；展开后再展示实际返回的原始内容。
+      for (const line of raw.slice(0, 20)) {
+        lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${line}`, "muted"));
+      }
+      if (raw.length > 20) lines.push(this.makeLogLine(`      … ${raw.length - 20} ${this.uiText("more lines in the tool result", "行原始输出未预览")}`, "muted"));
+      return lines;
+    }
+    const result = toolResultLines(item.call, item.result, this.glyphs, group.language);
+    return result.map((entry, index) => ({
+      ...this.makeLogLine(index === 0
+        ? entry.text.replace(/^  /, "    ") + ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`
+        : `  ${entry.text}`, entry.tone),
+      kind: index === 0 ? entry.kind : undefined,
+    }));
+  }
+
   /**
    * 任务开始：把用户这一轮写进对话，并关掉上一段可能未收尾的模型回复。
    *
@@ -697,6 +859,36 @@ export class Tui {
     this.uiLanguage = detectUiLanguage(task, this.uiLanguage);
     this.runStartedAt = Date.now();
     this.runToolResults = 0;
+    this.activeActivity = undefined;
+    this.activityFocus = -1;
+    this.activityPending.clear();
+    if (this.fixedLayoutAllowed) {
+      this.currentTurn = { language: this.uiLanguage, startedAt: this.runStartedAt,
+        outcome: "preparing", groups: [] };
+      // 即使任务后来失败或被取消，旧轮标题也保留独立状态，不受新轮计时影响。
+      if (this.layout) {
+        this.stopThinking();
+        this.commitAssistant();
+      }
+      if (show) this.pushTask(task);
+      this.log.push({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
+      this.trimLog();
+      this.setActivityState("preparing");
+      if (this.activityTimer !== undefined) clearInterval(this.activityTimer);
+      this.activityTimer = setInterval(() => {
+        this.maybeRotateMood();
+        if (this.layout && this.currentTurn?.endedAt === undefined) this.renderNow();
+      }, 1000);
+      this.activityTimer.unref?.();
+      if (this.layout) {
+        this.scrollOffset = 0;
+        this.renderNow();
+        return;
+      }
+    } else {
+      this.currentTurn = undefined;
+      this.setActivityState("preparing");
+    }
     if (this.layout) {
       this.stopThinking();
       this.commitAssistant();
@@ -724,7 +916,11 @@ export class Tui {
 
     if (this.layout) {
       const first = !this.assistantOpen;
-      if (first) this.pushBlank();
+      if (first) {
+        this.pushBlank();
+        // 下一段真实的 AI 发言会成为随后工具组的阶段说明；不合并到上一组。
+        this.activeActivity = undefined;
+      }
       this.stopThinking();
       this.assistantOpen = true;
       this.streamingText += normalizeNewlines(text);
@@ -766,6 +962,7 @@ export class Tui {
     if (content !== null && content.trim() !== "") this.setThinking(false);
     if (this.layout) {
       if (!this.assistantOpen && content !== null && content.trim() !== "") {
+        this.activeActivity = undefined;
         this.assistantOpen = true;
         this.streamingText = normalizeNewlines(content);
       }
@@ -790,7 +987,26 @@ export class Tui {
     this.approvalBlocksRunning = false;
     this.setThinking(false);
     this.finishAssistant();
-    if (this.fixedLayoutAllowed) {
+    this.setActivityState(moodStateForTool(call));
+    if (this.fixedLayoutAllowed && this.currentTurn?.endedAt === undefined) {
+      this.pushBlank();
+      let group = this.activeActivity;
+      if (group === undefined) {
+        group = { language: this.uiLanguage, tools: [], expanded: true };
+        this.currentTurn.groups.push(group);
+        this.activeActivity = group;
+        this.log.push({ text: "", tone: "muted", kind: "activity", activity: group });
+      }
+      const item: ActivityTool = { call, startedAt: Date.now() };
+      group.tools.push(item);
+      this.activityPending.set(call.id, item);
+      this.trimLog();
+      if (this.layout) {
+        this.renderNow();
+        return;
+      }
+    } else if (this.fixedLayoutAllowed) {
+      // 没有任务容器的测试/兼容调用仍按原来的逐行格式处理。
       this.pushBlank();
       const line: LogLine = {
         ...this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call, this.uiLanguage)}`, "muted"),
@@ -814,7 +1030,18 @@ export class Tui {
     this.runToolResults++;
     this.setThinking(false);
     this.finishAssistant();
-    if (this.fixedLayoutAllowed) {
+    const activeTool = this.activityPending.get(call.id);
+    if (activeTool !== undefined) {
+      activeTool.result = result;
+      activeTool.endedAt = Date.now();
+      this.activityPending.delete(call.id);
+      this.setActivityState(this.activityPending.size > 0 ? "running" : "working");
+      if (this.layout) {
+        this.renderNow();
+        return;
+      }
+    }
+    if (this.fixedLayoutAllowed && activeTool === undefined) {
       const pending = this.pendingTools.get(call.id);
       this.pendingTools.delete(call.id);
       const lines = toolResultLines(call, result, this.glyphs, this.uiLanguage)
@@ -833,23 +1060,30 @@ export class Tui {
   }
 
   /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
-  finishTurn(run: AgentStats, session: AgentSessionStats, { failed }: { failed: boolean }): void {
+  finishTurn(run: AgentStats, session: AgentSessionStats, { failed, cancelled = false }: { failed: boolean; cancelled?: boolean }): void {
     this.stats = session;
-    const seconds = this.runStartedAt === undefined ? undefined : Math.max(0, Math.floor((Date.now() - this.runStartedAt) / 1000));
     this.runStartedAt = undefined;
 
+    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
+      this.currentTurn.endedAt = Date.now();
+      this.currentTurn.outcome = cancelled ? "cancelled" : failed ? "failed" : "completed";
+      // 完成后只折叠工具明细，AI 的真实阶段说明和每一段摘要仍常驻。
+      for (const group of this.currentTurn.groups) group.expanded = false;
+      this.activityFocus = -1;
+      this.activeActivity = undefined;
+      this.activityPending.clear();
+    }
+    this.activityState = undefined;
+    this.moodText = "";
+    if (this.activityTimer !== undefined) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = undefined;
+    }
     if (this.layout) {
       this.stopThinking();
       this.commitAssistant();
       if (run.tokenBudget.exceeded) {
         this.pushLog(this.uiText(`[budget] exceeded (limit=${run.tokenBudget.limit})`, `[预算] 已超出限制（上限=${run.tokenBudget.limit}）`), "warning");
-      }
-      if (seconds !== undefined) {
-        // 中文对照：{N} 次工具调用；使用 Run 已返回的统计。
-        const tools = run.toolCalls > 0 ? ` · ${formatNumber(run.toolCalls)} ${this.uiText(run.toolCalls === 1 ? "tool call" : "tool calls", "次工具调用")}` : "";
-        // 中文对照：完成耗时 / 停止前经过 {seconds} 秒，工具数沿用实际 Run 统计。
-        const elapsed = this.uiText(`${failed ? "Stopped after" : "Worked for"} ${seconds}s`, `${failed ? "中止于" : "用时"} ${seconds} 秒`);
-        this.pushLog(`${this.glyphs.assistant} ${elapsed}${tools}`, "muted");
       }
       this.renderNow();
       return;
@@ -971,6 +1205,7 @@ export class Tui {
 
     this.setThinking(false);
     this.finishAssistant();
+    this.setActivityState("approval");
     if (this.fixedLayoutAllowed) {
       this.pushBlank();
       this.approvalBlocksRunning = true;
@@ -1029,6 +1264,7 @@ export class Tui {
     }
 
     if (approved) this.approvalBlocksRunning = false;
+    this.setActivityState(approved ? "running" : "working");
     if (this.layout) {
       this.logLine(
         `  ${approved ? this.glyphs.success : this.glyphs.denied} ${approved ? this.uiText("Allowed once", "已允许本次执行") : this.uiText("Denied", "已拒绝")}`,
@@ -1044,6 +1280,10 @@ export class Tui {
   close(): void {
     if (this.closed) return;
     this.setThinking(false);
+    if (this.activityTimer !== undefined) {
+      clearInterval(this.activityTimer);
+      this.activityTimer = undefined;
+    }
     if (this.renderTimer !== undefined) {
       clearTimeout(this.renderTimer);
       this.renderTimer = undefined;
@@ -1207,9 +1447,11 @@ export class Tui {
         this.style.paint("assistant", text.slice(this.glyphs.assistant.length));
     }
     if (line.kind === "tool") {
-      // 工具标题的四字符前缀是「两格缩进 + 单列符号 + 空格」；只有符号承担状态色。
-      return this.style.paint(line.tone, text.slice(0, 4)) +
-        this.style.bold(this.style.paint("assistant", text.slice(4)));
+      // 工具标题的缩进和符号仅承担状态色，其余文字保持中性。
+      const prefix = text.startsWith("    ") ? 6 : 4;
+      return this.style.paint(line.tone, text.slice(0, prefix)) +
+        this.style.bold(this.style.paint("assistant", text.slice(prefix)));
+
     }
     if (line.kind === "thinking") {
       const end = text.indexOf(" (");
@@ -1352,11 +1594,28 @@ export class Tui {
     const logical: LogLine[] = [];
     const pendingLines = new Set(this.pendingTools.values());
     for (const line of this.log) {
+      if (line.kind === "turn-status" && line.turn !== undefined) {
+        logical.push(this.turnStatusLine(line.turn));
+        continue;
+      }
+      if (line.kind === "activity" && line.activity !== undefined) {
+        const group = line.activity;
+        logical.push({ text: escapeControlCharacters(`  ${this.glyphs.boxBottomLeft} ${this.activitySummary(group)}`),
+          tone: "muted", kind: "activity" });
+        if (group.expanded) {
+          for (const item of group.tools) logical.push(...this.activityToolLines(item, group));
+        } else {
+          // 收起后异常仍然可见；不能把拒绝、错误藏进成功摘要。
+          for (const item of group.tools) {
+            const failure = this.activityFailureLine(item, group.language);
+            if (failure !== undefined) logical.push(failure);
+          }
+        }
+        continue;
+      }
       logical.push(line);
-      // 执行中提示派生自待完成工具，不写进日志；结果替换标题时不会残留一条 Running。
+      // 兼容没有 beginTurn 的旧调用；正常任务的 Running 从 ActivityGroup 派生。
       if (pendingLines.has(line) && !this.approvalBlocksRunning) {
-        // 拒绝/EOF 后到工具结果回传之前也不能短暂闪现执行中。
-        // 中文对照：正在执行。
         logical.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
       }
     }
@@ -1374,9 +1633,18 @@ export class Tui {
       const results = this.runToolResults > 0 && this.contentWidth() >= 48
         ? ` · ${formatNumber(this.runToolResults)} ${this.uiText(this.runToolResults === 1 ? "tool result" : "tool results", "个工具结果")}` : "";
       // 中文对照：等待中，已经过 {seconds} 秒，以及已收到的工具结果数。
-      logical.push({ text: `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`, tone: "accent", kind: "thinking" });
+      this.maybeRotateMood();
+      const waiting = `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`;
+      logical.push({ text: this.withMood(waiting, this.contentWidth()), tone: "accent", kind: "thinking" });
       // 中文对照：Ctrl-C 取消。
       logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
+    } else if (this.currentTurn?.endedAt === undefined && this.activityState !== undefined &&
+               this.activityState !== "preparing" && !this.assistantOpen && !this.approvalMenuActive) {
+      // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。
+      this.maybeRotateMood();
+      const status = formatActivityStateLabel(this.activityState, this.uiLanguage);
+      if (status !== "") logical.push({ text: this.withMood(
+        `  ${this.glyphs.running} ${status}`, this.contentWidth()), tone: "muted" });
     }
 
     const width = this.contentWidth();
@@ -1385,7 +1653,9 @@ export class Tui {
       const indent = line.text.match(/^\s*/)?.[0] ?? "";
       const continuation = line.kind === "tool" ? "    "
         : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
-      const parts = wrapLine(line.text, width, continuation);
+      const parts = line.kind === "activity-error" || line.kind === "activity"
+        ? [clip(line.text, width)]
+        : wrapLine(line.text, width, continuation);
       for (const [index, part] of parts.entries()) {
         wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
           kind: index === 0 ? line.kind : undefined });
@@ -1803,6 +2073,78 @@ function toolArgumentSummary(name: string, raw: string): string {
 
 function oneLine(text: string): string {
   return clip(normalizeNewlines(text).replace(/\n/g, "\\n"), 120);
+}
+
+
+/** 真实操作类型映射为自然语言；仅根据工具名及结果分类，不虚构工作进展。 */
+function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSummary): string {
+  const zh = lang === "zh";
+  const pending = summary === undefined;
+  const failed = summary?.failed === true;
+  const labels: Record<string, [string, string, string]> = {
+    read: [zh ? "已读取文件" : "Read files", zh ? "正在读取文件" : "Reading files", zh ? "尝试读取文件" : "Tried reading files"],
+    grep: [zh ? "已搜索代码" : "Searched code", zh ? "正在搜索代码" : "Searching code", zh ? "尝试搜索代码" : "Tried searching code"],
+    glob: [zh ? "已匹配文件" : "Matched files", zh ? "正在匹配文件" : "Matching files", zh ? "尝试匹配文件" : "Tried matching files"],
+    ls: [zh ? "已列出文件" : "Listed files", zh ? "正在列出文件" : "Listing files", zh ? "尝试列出文件" : "Tried listing files"],
+    write: [zh ? "已写入文件" : "Wrote files", zh ? "正在写入文件" : "Writing files", zh ? "尝试写入文件" : "Tried writing files"],
+    edit: [zh ? "已修改代码" : "Edited code", zh ? "正在修改代码" : "Editing code", zh ? "尝试修改代码" : "Tried editing code"],
+    shell: [zh ? "已执行命令" : "Ran commands", zh ? "正在执行命令" : "Running commands", zh ? "尝试执行命令" : "Tried running commands"],
+  };
+  if (call.function.name === "shell" && summary?.denied) return zh ? "请求了命令授权" : "Requested command approval";
+  if (call.function.name === "shell" && summary?.notRun) return zh ? "命令未执行" : "Command not run";
+  const words = labels[call.function.name] ?? [zh ? "已使用工具" : "Used tools",
+    zh ? "正在调用工具" : "Calling tools", zh ? "尝试调用工具" : "Tried using tools"];
+  return words[pending ? 1 : failed ? 2 : 0]!;
+}
+
+/** Shell 报错用实际命令名称，其他工具用固定标签，避免在 UI 中显示参数 JSON。 */
+function activityEventName(call: ToolCall, lang: UiLanguage): string {
+  const formatted = formatToolEvent(call, lang);
+  return call.function.name === "shell" ? formatted.replace(/^Shell: /, "") : formatted;
+}
+
+/** 只取工具实际返回的错误内容。Shell 的 exit N 优先附上其下一条输出。 */
+function activityFailureReason(call: ToolCall, result: string, summary: ToolResultSummary): string {
+  const lines = result.split("\n").map((line) => line.trim()).filter(Boolean);
+  const exitStatus = call.function.name === "shell" &&
+    (/^exit (?:-?\d+|null)$/.test(lines[0] ?? "") || /^timeout after \d+ms$/.test(lines[0] ?? ""));
+  const reason = exitStatus && lines.length > 1 ? `${summary.body} · ${lines[1]}` : summary.body;
+  return clip(reason.replace(/\s+/g, " "), 180);
+}
+
+function moodStateForTool(call: ToolCall): MoodState {
+  switch (call.function.name) {
+    case "read": case "ls": return "reading";
+    case "grep": case "glob": return "searching";
+    case "write": return "writing";
+    case "edit": return "editing";
+    case "shell": return "running";
+    default: return "working";
+  }
+}
+
+function formatActivityStateLabel(state: MoodState, lang: UiLanguage): string {
+  const labels: Record<MoodState, [string, string]> = {
+    preparing: ["Preparing...", "准备中..."],
+    thinking: ["Thinking...", "Thinking..."],
+    reading: ["Reading...", "读取中..."],
+    searching: ["Searching...", "搜索中..."],
+    editing: ["Editing...", "修改中..."],
+    writing: ["Writing...", "写入中..."],
+    running: ["Running...", "运行中..."],
+    working: ["Working...", "处理中..."],
+    approval: ["Awaiting approval", "等待授权"],
+    failed: ["Failed", "失败"],
+    completed: ["Completed", "已完成"],
+    cancelled: ["Cancelled", "已取消"],
+  };
+  return labels[state][lang === "zh" ? 1 : 0];
+}
+
+function formatActivityDuration(milliseconds: number, lang: UiLanguage): string {
+  const seconds = Math.floor(milliseconds / 1000);
+  if (lang === "zh") return seconds < 60 ? `${seconds} 秒` : `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 interface ToolResultSummary {
