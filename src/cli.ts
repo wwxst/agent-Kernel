@@ -17,6 +17,8 @@
  *   MAX_TOTAL_TOKENS 单次 Run 累计 token 预算，默认 500000；0 表示不限制
  *   MAX_OUTPUT_TOKENS 单次模型响应最多生成多少 token，默认 8192
  *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
+ *   AGENT_VIEW      compact / detailed；也可传 --details
+ *   AGENT_VOICE     balanced / energetic / playful / tsundere / curious / gentle / confident
  *
  * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
  */
@@ -24,6 +26,8 @@ import * as path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { Agent } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
+import { RunPresenter } from "./cli-presenter.ts";
+import type { AgentView, AgentVoice } from "./cli-presenter.ts";
 import { describeError } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { ToolRegistry } from "./tool-registry.ts";
@@ -75,6 +79,33 @@ interface Config {
   maxTotalTokens: number;
   maxOutputTokens: number;
   toolTimeoutMs: number;
+  view: AgentView;
+  voice: AgentVoice;
+}
+
+/** 用户可选角色语气，但每个输入都明确校验；非法值不能悄悄退回默认。 */
+function voiceFromEnv(): AgentVoice {
+  const voice = process.env.AGENT_VOICE?.trim() || "balanced";
+  switch (voice) {
+    case "balanced":
+    case "energetic":
+    case "playful":
+    case "tsundere":
+    case "curious":
+    case "gentle":
+    case "confident":
+      return voice;
+    default:
+      // 中文对照：AGENT_VOICE 的值不合法，必须是列出的语气之一。
+      throw new Error('invalid AGENT_VOICE: "' + voice + '"');
+  }
+}
+
+function viewFromEnv(): AgentView {
+  const view = process.env.AGENT_VIEW?.trim() || "compact";
+  if (view === "compact" || view === "detailed") return view;
+  // 中文对照：AGENT_VIEW 必须是 compact 或 detailed。
+  throw new Error('invalid AGENT_VIEW: "' + view + '" (expected compact or detailed)');
 }
 
 function loadConfig(): Config {
@@ -96,14 +127,13 @@ function loadConfig(): Config {
     maxTotalTokens: nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000),
     maxOutputTokens: positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192),
     toolTimeoutMs: positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000),
+    view: args.includes("--details") ? "detailed" : viewFromEnv(),
+    voice: voiceFromEnv(),
   };
 }
 
-/**
- * 本轮是否已经把正文流式打印过。用模块级变量而不是 Agent 内部状态：
- * 「显示过没有」是 CLI 的事，Agent 只负责把增量交出来。
- */
-let streamedThisTurn = false;
+// 同一进程一次只执行一个 Run；/reset 仅重建 Agent，展示状态由每轮自己的 Presenter 接管。
+let activePresenter: RunPresenter | undefined;
 
 /**
  * 组装一个 Agent。REPL 的 /reset 也走这里 —— 换一个全新的 Agent，
@@ -137,18 +167,11 @@ function createAgent(config: Config, signal: AbortSignal): Agent {
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
     signal,
-    // 打印每一步的工具调用，让你能「看见」循环在转。
-    onToolResult: (call, result) => {
-      const firstLine = (result.split("\n")[0] ?? "").slice(0, 120);
-      console.log(`  ↳ ${call.function.name} → ${firstLine}`);
-    },
-    // 正文增量直接写 stdout：不换行、不加前缀，让流出来的字连成一段。
-    // 第一段之前补一个换行，避免紧跟在工具结果那一行后面。
-    onDelta: (text) => {
-      if (!streamedThisTurn) process.stdout.write("\n");
-      streamedThisTurn = true;
-      process.stdout.write(text);
-    },
+    // 内核只通知事件：台词、分组、截断和展示模式都在 CLI Presenter，不参与模型上下文。
+    onStepStart: (step) => activePresenter?.thinking(step),
+    onToolStart: (call) => activePresenter?.toolStart(call),
+    onToolResult: (call, result) => activePresenter?.toolResult(call, result),
+    onDelta: (text) => activePresenter?.delta(text),
   });
 }
 
@@ -157,18 +180,23 @@ function createAgent(config: Config, signal: AbortSignal): Agent {
  *
  * 失败时先打 usage 再抛：失败的任务同样花了 token，账单不能因为异常就消失。
  */
-async function runTurn(agent: Agent, task: string): Promise<void> {
-  streamedThisTurn = false;
+async function runTurn(agent: Agent, task: string, config: Config, signal: AbortSignal): Promise<void> {
+  const presenter = new RunPresenter(config.view, config.voice);
+  activePresenter = presenter;
+  presenter.start();
   try {
     const reply = await agent.run(task);
-    // 流式时正文已经逐字打过了；没有增量（比如纯工具调用轮）就打印最终回复。
-    if (streamedThisTurn) process.stdout.write("\n");
-    else console.log(`\n${reply.content ?? ""}`);
+    // 每个 Step 独立统计流式正文：中间 Step 有文字、末尾没有增量时仍要打印最终答复。
+    presenter.finalAnswer(reply.content ?? "");
+    presenter.finish(agent.stats.toolCalls);
     printUsage(agent.stats, { failed: false });
   } catch (error) {
+    presenter.finish(agent.stats.toolCalls, signal.aborted, true);
     // 失败的任务同样花了 token：账单不能因为异常就消失。
     printUsage(agent.stats, { failed: true });
     throw error;
+  } finally {
+    activePresenter = undefined;
   }
 }
 
@@ -254,7 +282,7 @@ async function repl(config: Config, signal: AbortSignal): Promise<void> {
       }
 
       try {
-        await runTurn(agent, input);
+        await runTurn(agent, input, config, signal);
       } catch (error) {
         if (signal.aborted) {
           console.error(`[agent] cancelled: ${describeError(error)}`);
@@ -278,14 +306,15 @@ const usage = [
   // 中文对照：用法：node src/cli.ts "<任务>"；node src/cli.ts --repl 进入多轮会话
   'usage: node src/cli.ts "<task>"',
   "       node src/cli.ts --repl     # multi-turn session; /exit, /reset, /help",
+  "       node src/cli.ts --details \"<task>\"  # expanded tool result logs",
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS",
+  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE",
 ].join("\n");
 
 const args = process.argv.slice(2);
 const wantsHelp = args.includes("--help") || args.includes("-h");
 const replRequested = args.includes("--repl");
-const task = args.filter((arg) => arg !== "--repl").join(" ").trim();
+const task = args.filter((arg) => arg !== "--repl" && arg !== "--details").join(" ").trim();
 // 没给任务、又是在终端里直接运行：默认进 REPL。管道/CI 里没有输入，给用法更安全。
 const replMode = replRequested || (task === "" && process.stdin.isTTY === true);
 
@@ -306,7 +335,7 @@ if (wantsHelp) {
     if (replMode) {
       await repl(config, controller.signal);
     } else {
-      await runTurn(createAgent(config, controller.signal), task);
+      await runTurn(createAgent(config, controller.signal), task, config, controller.signal);
     }
   } catch (error) {
     // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。
