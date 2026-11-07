@@ -24,7 +24,7 @@ function lastRow(text, row) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, onPermissionChange } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -52,6 +52,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     layout: tty,
     color,
     flowInput,
+    onPermissionChange,
   });
   if (previousTerm === undefined) delete process.env.TERM;
   else process.env.TERM = previousTerm;
@@ -1230,4 +1231,113 @@ test("TUI 审批菜单：无论底部固定或短会话跟随，Esc 下方都不
     ui.input.write("n\r");
     assert.equal(await pending, false);
   }
+});
+
+
+test("TUI Shift+Tab：只在等待任务时切换模式，状态行展示快捷键，保留输入草稿", async (t) => {
+  const modes = [];
+  let ui;
+  ui = makeTui({
+    interactive: true, tty: true, rows: 35, flowInput: true,
+    onPermissionChange: (mode) => {
+      modes.push(mode);
+      ui.tui.setPermission(mode);
+    },
+  });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  const task = ui.tui.readLine();
+  assert.match(ui.text(), /workspace-write \(shift-tab to cycle\)/);
+  ui.input.write("draft");
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.equal(modes.length, 0, "从 workspace-write 进入 full-access 必须要求确认");
+  assert.match(ui.text(), /Confirm full-access: Shift\+Tab again/);
+
+  // 普通按键取消提权候选，不应更改用户原有草稿。
+  ui.input.write("\x1b");
+  await tick();
+  assert.equal(modes.length, 0);
+  assert.match(ui.text(), /workspace-write \(shift-tab to cycle\)/);
+
+  ui.input.write(" task\r");
+  assert.equal(await task, "draft task", "Shift+Tab 不能修改已输入的任务正文");
+});
+
+test("TUI Shift+Tab：full-access 二次确认；切换后下一次 /permission 切换可同步状态", async (t) => {
+  const modes = [];
+  let ui;
+  ui = makeTui({
+    interactive: true, tty: true, rows: 35,
+    onPermissionChange: (mode) => {
+      modes.push(mode);
+      ui.tui.setPermission(mode);
+    },
+  });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  const task = ui.tui.readLine();
+
+  // 当前默认 workspace-write：第一次进入提权待确认，第二次才生效。
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.equal(modes.length, 0);
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.deepEqual(modes, ["full-access"]);
+  assert.match(ui.text(), /full-access \(shift-tab to cycle\)/);
+
+  // full-access -> read-only -> workspace-write ->（等待提升），每次都保留三档真实状态。
+  ui.input.write("\x1b[Z");
+  await tick();
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.deepEqual(modes, ["full-access", "read-only", "workspace-write"]);
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.match(ui.text(), /Confirm full-access/);
+  // /permission 命令路径用 setPermission 同步，必须清理未确认的提升。
+  ui.tui.setPermission("read-only");
+  assert.doesNotMatch(lastRow(ui.text(), 32), /Confirm full-access/);
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.equal(modes.at(-1), "workspace-write", "手动设置后下一轮快捷键必须从新的模式开始");
+
+  ui.input.write("\r");
+  assert.equal(await task, "");
+});
+
+test("TUI Shift+Tab：审批中、模型运行中和普通 Tab 都不能改变权限", async (t) => {
+  const modes = [];
+  let ui;
+  ui = makeTui({
+    interactive: true, tty: true, rows: 35,
+    onPermissionChange: (mode) => {
+      modes.push(mode);
+      ui.tui.setPermission(mode);
+    },
+  });
+  t.after(() => ui.cleanup());
+
+  ui.tui.start();
+  ui.input.write("\x1b[Z");
+  assert.deepEqual(modes, [], "没有等待任务输入时不能切换模式");
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+  pending.catch(() => {});
+  ui.input.write("\x1b[Z");
+  await tick();
+  assert.deepEqual(modes, [], "Shell 审批期间绝不能用 Shift+Tab 改权限");
+  assert.match(ui.text(), /2\. No \(default\)/);
+  ui.input.write("\x1b");
+  assert.equal(await pending, false);
+
+  const task = ui.tui.readLine();
+  ui.input.write("\t");
+  await tick();
+  assert.deepEqual(modes, [], "普通 Tab 不是 Shift+Tab");
+  ui.input.write("\r");
+  await task;
 });
