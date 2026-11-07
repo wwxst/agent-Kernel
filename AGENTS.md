@@ -24,7 +24,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | 文件 | 职责 | 对外接口 |
 | --- | --- | --- |
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
-| `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`describeValue(value)`、`ChatResponseError` |
+| `src/errors.ts` | 错误文案兜底、响应协议错误、进程树清理未确认的致命错误 | `describeError(error)`、`describeValue(value)`、`ChatResponseError` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期；四种展示回调（单次开始事件）异常隔离并累计诊断 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats`、`observerFailureCount` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、显式权限注入（`Permission` 或 `null`）、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/tool-result-status.ts` | 纯展示事实判断：非 Shell 的 `ERROR:` 与 Shell 的 exit / timeout / cancelled；CLI/TUI 复用，不改工具结果文本 | `isToolResultFailure` |

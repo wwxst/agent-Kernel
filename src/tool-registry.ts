@@ -9,7 +9,7 @@
  *
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
-import { describeError, describeValue } from "./errors.ts";
+import { describeError, describeValue, ProcessCleanupError } from "./errors.ts";
 import { Permission } from "./permission.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
 
@@ -234,6 +234,8 @@ export class ToolRegistry {
     try {
       return await tool.run(args);
     } catch (error) {
+      // 进程树尚可能在运行：这是不可恢复的宿主故障，不能当作普通工具错误继续执行。
+      if (error instanceof ProcessCleanupError) throw error;
       // 中文对照：ERROR: {原因}
       return `ERROR: ${describeError(error)}`;
     }

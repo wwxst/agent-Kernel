@@ -21,6 +21,7 @@ import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import type { Tool } from "./types.ts";
+import { ProcessCleanupError } from "./errors.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;
@@ -519,7 +520,7 @@ export class Workspace {
         child.stdout?.destroy();
         child.stderr?.destroy();
         // 中文对照：进程树清理未确认；后代进程可能仍在运行。
-        reject(new Error(`process tree cleanup unverified after ${stopped ?? "stop"}; descendant processes may still be running`));
+        reject(new ProcessCleanupError(`process tree cleanup unverified after ${stopped ?? "stop"}; descendant processes may still be running`));
       };
       const stop = (reason: string) => {
         // 进程已经收尾之后不再补一刀：Windows 上 PID 可能已经被复用。
@@ -552,7 +553,7 @@ export class Workspace {
         void (cleanup ?? Promise.resolve(true)).then((confirmed) => {
           if (!confirmed) {
             // 中文对照：进程树清理未确认；后代进程可能仍在运行。
-            reject(new Error(`process tree cleanup unverified after ${stopped ?? "stop"}; descendant processes may still be running`));
+            reject(new ProcessCleanupError(`process tree cleanup unverified after ${stopped ?? "stop"}; descendant processes may still be running`));
             return;
           }
           resolve({

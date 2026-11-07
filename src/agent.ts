@@ -22,7 +22,7 @@
  * 「谁重置 transcript、失败后算不算已消费、并发调用怎么排队」，那是一整套会话管理，
  * 不在当前范围内。显式拒绝比隐式继承便宜得多。
  */
-import { ChatResponseError } from "./errors.ts";
+import { ChatResponseError, ProcessCleanupError } from "./errors.ts";
 import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "./types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 
@@ -495,7 +495,19 @@ export class Agent {
         // 「要跑了」先于「跑完了」：TUI 靠这个回调把工具调用写进运行记录，
         // 长命令执行期间也看得见它在干什么。这里没有 await，不会给取消留出新的缝隙。
         this.notifyObserver(this.onToolCall, call);
-        const result = await this.tools.execute(call);
+        let result: string;
+        try {
+          result = await this.tools.execute(call);
+        } catch (error) {
+          if (!(error instanceof ProcessCleanupError)) throw error;
+          // 整棵进程树未确认停止：记录当前调用的错误并跳过整批剩余工具，不能继续写文件。
+          this.runToolCalls++;
+          this.sessionToolCalls++;
+          this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
+          this.notifyObserver(this.onToolResult, call, `ERROR: ${error.message}`);
+          this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
+          throw error;
+        }
         this.runToolCalls++;
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));

@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { ProcessCleanupError } from "../src/errors.ts";
 import { echoTool, makeRegistry } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */
@@ -74,6 +75,15 @@ test("execute：空 arguments 当作空对象", async () => {
 
   assert.equal(await registry.execute(call("record", "")), "ok {}");
   assert.deepEqual(seen, [{}]);
+});
+
+test("进程树清理未确认不可折成可恢复 ERROR：传播不可恢复异常", async () => {
+  const registry = makeRegistry([{
+    name: "shell", description: "test",
+    parameters: { type: "object", properties: {} },
+    run: async () => { throw new ProcessCleanupError("cleanup unverified"); },
+  }]);
+  await assert.rejects(() => registry.execute(call("shell")), ProcessCleanupError);
 });
 
 test("execute：工具抛 Error 折成 ERROR 文本", async () => {
