@@ -549,6 +549,12 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     permission: config.permission,
     controller,
     interactive,
+    // Shift+Tab 只发起模式切换；Permission 是唯一的执行授权源。
+    // Agent 每次请求动态读取此 Permission，因此下一轮模型提示自动同步。
+    onPermissionChange: (mode) => {
+      permission.setMode(mode);
+      tui.setPermission(mode);
+    },
     // 短对话贴近输入框，内容多时再停靠底部；旧的固定布局仍可供兼容测试。
     flowInput: true,
     columns: process.stdout.columns,
