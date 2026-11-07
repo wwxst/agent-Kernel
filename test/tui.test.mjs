@@ -1255,8 +1255,9 @@ test("TUI Shift+Tab：只在等待任务时切换模式，状态行展示快捷�
   assert.equal(modes.length, 0, "从 workspace-write 进入 full-access 必须要求确认");
   assert.match(ui.text(), /Confirm full-access: Shift\+Tab again/);
 
-  // 普通按键取消提权候选，不应更改用户原有草稿。
-  ui.input.write("\x1b");
+  // 显式触发 Esc 按键事件，避免把流式 ESC 前缀与紧随的空格合并成 Meta+Space。
+  // 这里测试的是按键处理器是否保留 readline 草稿，而不是解析器的序列超时。
+  ui.input.emit("keypress", "", { name: "escape", sequence: "\x1b" });
   await tick();
   assert.equal(modes.length, 0);
   assert.match(ui.text(), /workspace-write \(shift-tab to cycle\)/);
