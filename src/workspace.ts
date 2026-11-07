@@ -411,8 +411,11 @@ export class Workspace {
     const source = options.fixed === true ? escapeRegExp(pattern) : pattern;
     assertValidPattern(source, flags);
 
-    // 不再沿模型传入的可变链接别名遍历；从经过 realpath 校验的物理目录开始。
-    const start = await this.assertInsideWorkspace(this.resolve(requested), requested);
+    // grep 是读取已有目录，不是 write 的创建路径：起点必须真实存在。
+    // 先 realpath 再校验，不能在别名短暂消失时退回到“最近存在的父目录”，
+    // 否则别名重建为指向外部时，后续 opendir 会在工作区外遍历。
+    const existing = await realpath(this.resolve(requested));
+    const start = await this.assertInsideWorkspace(existing, requested);
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
