@@ -157,6 +157,10 @@ export interface AgentOptions {
    * 循环不再发起新的模型请求或工具调用，正在跑的 shell 由 Workspace 收掉进程树。
    */
   signal?: AbortSignal;
+  /** 即将发起本轮模型请求：只通知展示层，不改消息或预算。 */
+  onStepStart?: (step: number) => void;
+  /** 即将执行一条工具调用：展示真实的“执行中”，与结果回调配对。 */
+  onToolStart?: (call: ToolCall) => void;
   /** 每次工具执行完的回调，用来打印进度；Agent 本身不直接 console.log。 */
   onToolResult?: (call: ToolCall, result: string) => void;
   /**
@@ -173,6 +177,8 @@ export class Agent {
   private readonly maxToolCalls: number;
   private readonly maxTotalTokens?: number;
   private readonly signal?: AbortSignal;
+  private readonly onStepStart?: (step: number) => void;
+  private readonly onToolStart?: (call: ToolCall) => void;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
 
   private readonly onDelta?: (text: string) => void;
@@ -213,6 +219,8 @@ export class Agent {
     this.maxToolCalls = options.maxToolCalls ?? 60;
     this.maxTotalTokens = options.maxTotalTokens;
     this.signal = options.signal;
+    this.onStepStart = options.onStepStart;
+    this.onToolStart = options.onToolStart;
     this.onToolResult = options.onToolResult;
     this.onDelta = options.onDelta;
 
@@ -373,6 +381,7 @@ export class Agent {
       this.stopIfBudgetExhausted();
       this.runRequests++;
       this.sessionRequests++;
+      this.onStepStart?.(step);
       let response: ChatResponse;
       try {
         response = await this.llm.chat(this.messages, this.tools.definitions, { onDelta: this.onDelta });
@@ -430,6 +439,7 @@ export class Agent {
         // 取消可能正好发生在两次调用之间：剩下的调用不再启动，但每条都要留下结果。
         this.stopIfCancelled(calls.slice(index));
         const call = calls[index];
+        this.onToolStart?.(call);
         const result = await this.tools.execute(call);
         this.runToolCalls++;
         this.sessionToolCalls++;

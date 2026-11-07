@@ -29,6 +29,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
 | `src/cli.ts` | 组装：环境变量 → 对象图 → 跑一次或进 REPL；SIGINT/SIGTERM 取消链的起点 | — |
+| `src/cli-presenter.ts` | 仅 CLI 展示：阶段、角色台词、工具日志明细；不修改 Transcript | `RunPresenter` |
 
 依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），不被其他模块反向依赖；`agent` 不认识 `workspace`。
 
