@@ -1014,6 +1014,11 @@ export class Tui {
         this.streamingText = confirmed;
         this.assistantOpen = confirmed !== "";
       }
+      // 确认无正文时也要重画，否则屏幕最后一帧仍保留已丢弃的草稿。
+      if (!this.assistantOpen) {
+        this.renderNow();
+        return;
+      }
       this.finishAssistant();
       return;
     }
