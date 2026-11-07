@@ -613,11 +613,11 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       tui.finishAssistant("");
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true });
       if (signal.aborted) {
-        tui.logError(`[agent] cancelled: ${describeError(error)}`);
+        tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeError(error)}`);
         return false;
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
-      tui.logError(`[agent] turn failed: ${describeError(error)}`);
+      tui.logError(`${tui.uiText("[agent] turn failed:", "[agent] 任务失败：")} ${describeError(error)}`);
       return true;
     }
   };
@@ -636,25 +636,28 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 
       if (command.kind === "exit") break;
       if (command.kind === "help") {
-        tui.logLine(REPL_HELP);
+        tui.logLine(tui.helpText(PERMISSION_MODE_LIST));
         continue;
       }
       if (command.kind === "reset") {
         agent = newAgent();
-        tui.logLine("(session reset)");
+        tui.logLine(tui.uiText("(session reset)", "（会话已重置）"));
         tui.setStats(agent.sessionStats);
         continue;
       }
       if (command.kind === "permission") {
         if (command.value !== undefined) {
           // 中文对照：未知权限模式 "{值}"（可用：…）
-          tui.logError(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
+          tui.logError(tui.uiText(
+            `unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`,
+            `未知权限模式 "${command.value}"（可选：${PERMISSION_MODE_LIST}）`,
+          ));
         } else if (command.mode !== undefined) {
           permission.setMode(command.mode);
           tui.setPermission(command.mode);
-          tui.logLine(`permission: ${permission.mode}`);
+          tui.logLine(tui.uiText(`permission: ${permission.mode}`, `权限：${permission.mode}`));
         } else {
-          tui.logLine(`permission: ${permission.mode}`);
+          tui.logLine(tui.uiText(`permission: ${permission.mode}`, `权限：${permission.mode}`));
         }
         continue;
       }
