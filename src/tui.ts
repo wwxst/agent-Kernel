@@ -40,6 +40,15 @@ const RENDER_INTERVAL_MS = 40;
 const PLACEHOLDER = "Ask anything, or type /help...";
 const COMMAND_PROMPT = "> ";
 
+/** 仅列出 CLI 已实现的 Slash 命令，保持现有 parseSessionCommand 语义。 */
+const SLASH_COMMANDS = [
+  { command: "/help", en: "Show available commands", zh: "查看可用命令" },
+  { command: "/permission", en: "View or switch permission mode", zh: "查看或切换权限模式" },
+  { command: "/reset", en: "Clear the current conversation", zh: "重置当前会话" },
+  { command: "/exit", en: "Exit agent-Kernel", zh: "退出 agent-Kernel" },
+  { command: "/quit", en: "Exit (alias of /exit)", zh: "退出（/exit 的别名）" },
+] as const;
+
 export type UiLanguage = "zh" | "en";
 
 /** 只根据用户任务正文选界面语言；忽略代码片段、URL、路径和文件名。 */
@@ -255,6 +264,15 @@ export class Tui {
   /** 横向滚动输入框，不让 readline 自动折行覆盖边框与状态栏。 */
   private inputOffset = 0;
 
+  /** Slash 菜单只在编辑命令前缀时显示；Esc 关闭后直到文本改变前保持关闭。 */
+  private slashDismissed = false;
+
+  private slashSelected = 0;
+
+  private slashDraft = "";
+
+  private slashDraftCursor = 0;
+
   private cursorStyleChanged = false;
 
   /** 待审批的原始请求不受日志上限裁剪，resize 时按当前宽度重新排版。 */
@@ -355,12 +373,21 @@ export class Tui {
       // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
       // 也不能在审批结束后进入下一轮任务队列。
       if (this.approvalMenuActive) return;
+      // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
+      const candidates = this.slashMenuCandidates(line);
+      const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
+        ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
+        : line;
+      this.slashDismissed = false;
+      this.slashSelected = 0;
+      this.slashDraft = "";
+      this.slashDraftCursor = 0;
       const resolve = this.waiting.shift();
       if (resolve === undefined) {
-        this.lines.push(line);
+        this.lines.push(submitted);
         this.inputDirty = true;
       } else {
-        resolve(line);
+        resolve(submitted);
       }
     });
     this.rl.on("close", () => {
@@ -432,6 +459,41 @@ export class Tui {
         if (this.layout) this.renderNow();
       }
 
+      if (this.layout && this.promptActive && this.promptText === COMMAND_PROMPT) {
+        // 方向键已被 readline 预处理；这里恢复菜单打开前的文本，防止载入输入历史。
+        const items = this.slashMenuCandidates(this.slashDraft);
+        const active = !this.slashDismissed && items.length > 0;
+        if (active && (name === "up" || name === "down")) {
+          this.slashSelected = (this.slashSelected + (name === "down" ? 1 : -1) + items.length) % items.length;
+          this.setEditorLine(this.slashDraft, this.slashDraftCursor);
+          this.renderNow();
+          return;
+        }
+        if (active && name === "tab" && !key?.shift) {
+          const chosen = items[Math.min(this.slashSelected, items.length - 1)]!;
+          this.setEditorLine(chosen.command);
+          this.slashDraft = chosen.command;
+          this.slashDraftCursor = chosen.command.length;
+          this.slashDismissed = true;
+          this.renderNow();
+          return;
+        }
+        if (active && name === "escape") {
+          this.setEditorLine(this.slashDraft, this.slashDraftCursor);
+          this.slashDismissed = true;
+          this.renderNow();
+          return;
+        }
+        if (this.rl.line !== this.slashDraft) {
+          this.slashDraft = this.rl.line;
+          this.slashDraftCursor = this.rl.cursor;
+          this.slashSelected = 0;
+          this.slashDismissed = false;
+        } else {
+          this.slashDraftCursor = this.rl.cursor;
+        }
+      }
+
       if (!this.layout) return;
       if (name === "pageup") this.scrollPage("up");
       else if (name === "pagedown") this.scrollPage("down");
@@ -457,6 +519,44 @@ export class Tui {
     };
     this.controller.signal.addEventListener("abort", this.onAbort, { once: true });
     if (this.controller.signal.aborted) this.rl.close();
+  }
+
+  /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
+  private slashMenuCandidates(line: string): readonly (typeof SLASH_COMMANDS)[number][] {
+    if (!/^\\/[^\\s]*$/.test(line)) return [];
+    return SLASH_COMMANDS.filter((item) => item.command.startsWith(line));
+  }
+
+  /** 固定布局下至多显示五项；小窗口至少给日志与输入留出一行。 */
+  private slashMenuItems(): readonly (typeof SLASH_COMMANDS)[number][] {
+    if (!this.layout || !this.promptActive || this.promptText !== COMMAND_PROMPT ||
+        this.approvalMenuActive || this.slashDismissed) return [];
+    const candidates = this.slashMenuCandidates(this.rl.line);
+    return candidates;
+  }
+
+  /** 显式恢复 readline 编辑缓存（不创建历史记录）。 */
+  private setEditorLine(text: string, cursor = text.length): void {
+    this.rl.write(null, { ctrl: true, name: "a" });
+    this.rl.write(null, { ctrl: true, name: "k" });
+    this.rl.write(text);
+    for (let i = 0; i < [...text.slice(cursor)].length; i++) {
+      this.rl.write(null, { name: "left" });
+    }
+    this.inputDirty = true;
+  }
+
+  /** 候选菜单的显示宽度按终端字符列计算，选中项使用强调色。 */
+  private slashMenuLine(item: (typeof SLASH_COMMANDS)[number], selected: boolean, width: number): string {
+    const prefix = selected ? this.glyphs.user : " ";
+    const nameWidth = Math.min(18, Math.max(12, width - 1));
+    const name = padRight(` ${item.command}`, nameWidth);
+    const description = this.uiLanguage === "zh" ? item.zh : item.en;
+    const available = Math.max(0, width - displayWidth(prefix) - displayWidth(name));
+    const plain = prefix + name + takeByWidth(description, available);
+    return selected
+      ? this.style.paint("accent", prefix + name) + this.style.paint("assistant", takeByWidth(description, available))
+      : this.style.paint("muted", clip(plain, width));
   }
 
   /** 画第一帧。固定布局清屏但不切 alternate screen。 */
@@ -1015,7 +1115,9 @@ export class Tui {
 
     // 短对话下让输入框紧跟内容；当日志变长或用户翻看历史时，再固定到底部。
     // 每帧先恢复最大视口，再用当前逻辑行数计算输入框位置，避免累积位移。
-    if (this.flowInput) this.recomputeGeometry();
+    const slashCandidates = this.slashMenuItems();
+    const menuRows = Math.min(slashCandidates.length, Math.max(0, this.rows - 11), 5);
+    this.recomputeGeometry(menuRows);
     const width = this.contentWidth();
     const lines = this.wrappedDisplayLines();
     if (this.approvalMenuActive) {
@@ -1032,7 +1134,7 @@ export class Tui {
       this.boxTopRow = LOG_TOP + this.logHeight;
       this.inputRow = this.boxTopRow + 1;
       this.boxBottomRow = this.inputRow + 1;
-      this.statusRow = this.boxBottomRow + 1;
+      this.statusRow = this.boxBottomRow + menuRows + 1;
     }
 
     const rows: string[] = new Array(this.rows).fill("");
@@ -1066,6 +1168,15 @@ export class Tui {
       rows[this.boxTopRow - 1] = divider;
       rows[this.inputRow - 1] = this.inputLine(width);
       rows[this.boxBottomRow - 1] = divider;
+      if (menuRows > 0) {
+        const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
+          Math.max(0, slashCandidates.length - menuRows));
+        for (let i = 0; i < menuRows; i++) {
+          const index = first + i;
+          rows[this.boxBottomRow + i] = this.slashMenuLine(
+            slashCandidates[index]!, index === this.slashSelected, width);
+        }
+      }
       rows[this.statusRow - 1] = this.footerLine(width);
     }
 
@@ -1378,11 +1489,11 @@ export class Tui {
     return Math.max(1, this.columns - 1);
   }
 
-  private recomputeGeometry(): void {
-    // 先算底部停靠位置（上分隔线/输入行/下分隔线）；短会话再跟随内容收紧。
+  private recomputeGeometry(menuRows = 0): void {
+    // 菜单占用输入框下方的位置；它不进入会话日志和统计状态。
     // 最后三行留缓冲，避免传统 conhost 的窗口底边吃掉状态行。
     this.statusRow = this.rows - 3;
-    this.boxBottomRow = this.statusRow - 1;
+    this.boxBottomRow = this.statusRow - menuRows - 1;
     this.inputRow = this.boxBottomRow - 1;
     this.boxTopRow = this.inputRow - 1;
     this.logHeight = Math.max(1, this.boxTopRow - LOG_TOP);
