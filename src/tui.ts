@@ -523,7 +523,7 @@ export class Tui {
 
   /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
   private slashMenuCandidates(line: string): readonly (typeof SLASH_COMMANDS)[number][] {
-    if (!/^\\/[^\\s]*$/.test(line)) return [];
+    if (!/^\/[^\s]*$/.test(line)) return [];
     return SLASH_COMMANDS.filter((item) => item.command.startsWith(line));
   }
 
