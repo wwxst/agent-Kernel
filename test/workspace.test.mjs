@@ -3,13 +3,63 @@
  * 所以它们必须在接口上被验证 —— 不碰私有的 resolve/truncate。
  */
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fillBuffer, Workspace } from "../src/workspace.ts";
+import { fillBuffer, terminateTree, Workspace } from "../src/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
+
+test("Windows taskkill 成功：只清理一次，不错误杀掉直接子进程", async () => {
+  const killer = new EventEmitter();
+  let kills = 0;
+  const pending = terminateTree({ pid: 1234, kill: () => { kills++; return true; } }, {
+    platform: "win32",
+    spawnTaskkill: (pid) => {
+      assert.equal(pid, 1234);
+      return killer;
+    },
+  });
+
+  killer.emit("close", 0);
+  await pending;
+  assert.equal(kills, 0);
+});
+
+test("Windows taskkill 启动失败：尝试 child.kill，错误和 close 不会重复执行", async () => {
+  const killer = new EventEmitter();
+  let kills = 0;
+  const pending = terminateTree({ pid: 1234, kill: () => { kills++; return true; } }, {
+    platform: "win32",
+    spawnTaskkill: () => killer,
+  });
+
+  killer.emit("error", new Error("taskkill unavailable"));
+  killer.emit("close", -1);
+  await pending;
+  assert.equal(kills, 1);
+});
+
+test("Windows taskkill 非零退出或启动时抛错：fallback 异常也不会中断清理", async () => {
+  const killer = new EventEmitter();
+  const child = { pid: 1234, kill: () => { throw new Error("already exited"); } };
+  const nonzero = terminateTree(child, { platform: "win32", spawnTaskkill: () => killer });
+  killer.emit("close", 1);
+  await nonzero;
+  await terminateTree(child, {
+    platform: "win32",
+    spawnTaskkill: () => { throw new Error("spawn unavailable"); },
+  });
+});
+
+test("没有 PID：taskkill 不启动，也不调用 child.kill", async () => {
+  await terminateTree({ pid: undefined, kill: () => { throw new Error("must not kill"); } }, {
+    platform: "win32",
+    spawnTaskkill: () => { throw new Error("must not spawn"); },
+  });
+});
 
 test("write 后 read 能拿回原文，父目录自动创建", async () => {
   await withWorkspace(async (root) => {

@@ -56,7 +56,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 `src/grep-worker.ts` 不算第十一个模块，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
 
 `agent.ts` 不认识 `workspace.ts`：循环只管「问模型、执行调用、塞回结果」，工具怎么实现的它不关心。
-它也不认识 `tui.ts`：TUI 只是把 Agent 的回调接到显示层，循环本身不知道有没有界面。这就是为什么换模型、换工具集、换交互壳，循环一行都不用改。
+它也不认识 `tui.ts`：TUI 只是把 Agent 的回调接到显示层，循环本身不知道有没有界面。这就是为什么换模型、换工具集、换交互壳，循环一行都不用改。展示观察者精简为四个：`onRequestStart(step)`（每个 Run 从 1 计）、`onToolCall(call)`、`onToolResult(call, result)`、`onDelta(text)`；原先重复的 `onStepStart` / `onToolStart` 已移除，外部调用方需要迁移。
 
 命令、代码地图、测试放哪见 [AGENTS.md](./AGENTS.md)；怎么写代码（注释风格、模块形状、命名、错误处理）见 [CODING_STANDARDS.md](./CODING_STANDARDS.md)。
 
@@ -138,6 +138,8 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 `grep` 支持**正则**（JavaScript 语法，逐行匹配），但匹配不跑在主线程：每条正则在 `grep-worker.ts` 的线程里执行，主线程只守 2 秒的匹配预算，超时就 `terminate`，把整个线程连同指数级回溯一起扔掉。这样「输入不能让 agent 卡死」仍然成立，而模型拿回了 `a.*b` 这类能力——第一阶段的字面搜索是当时没有 worker 的权宜之计。代价是每次 grep 多一个线程的启动开销，以及结果可能因预算而部分缺失（尾注会明确写 `regex stopped after 2000ms`）。要搜 `a.b`、`([` 这种字面文本，传 `fixed: true` 就能关掉正则解释。取舍记在 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)。
 
+Windows `taskkill /T` 失败时，会尽力调用 `child.kill()` 停掉直接子进程；这不是整棵进程树成功清理的保证。自动故障注入只证明降级路径不崩溃、只触发一次，不能代替真实 Windows 故障环境验收。
+
 还有一条更根本的：**`shell` 不受路径守卫约束**——命令里写 `cd ..`、`cat ../x` 照样能出去，进程权限跟启动它的人一样。这套路径守卫是「防模型手滑」的边界，不是安全边界；真隔离得靠容器、独立用户或只读挂载。见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)。
 
 ## 权限（Permission v0.1）
@@ -196,7 +198,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 
-已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标和多行输入。`Ctrl+O` 以键盘浏览活动组；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
+已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标和多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+O` 以键盘浏览活动组；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
 
 ## 配置
 
@@ -228,11 +230,11 @@ npm run check       # typecheck + 全部测试
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/permission.test.mjs` | Permission：三档策略、`permissionPrompt`、shell 审批的每次询问与默认拒绝、ToolRegistry 的检查位置、显式 permission / null 的构造校验 |
 | `test/approval.test.mjs` | 审批读取：`askWithSignal` 的正常 / 取消 / EOF 竞态，以及多行 / 超长 / 控制字符命令和 cwd 的展示 |
-| `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树 |
+| `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树和 Windows taskkill 错误/非零退出故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset`、`/permission` 动态提示、`--permission`、流式 mock、TUI 聊天布局 / 命令 / 统计 |
 | `test/cli-pty.test.mjs` | Linux PTY：审批允许 / 拒绝 / Ctrl-C / EOF，以及 REPL 审批 EOF 不冒充用户拒绝 |
-| `test/tui.test.mjs` | TUI：原有审批安全、聊天布局、思考动画、终端降级；新增生命周期状态、AI 阶段分组、三类摘要上限、错误同行、Ctrl+O 展开、中英文角色文案 |
+| `test/tui.test.mjs` | TUI：审批安全、聊天布局、思考动画、终端降级、生命周期与工具活动；组合 Unicode / IME 一次上屏、长会话滚动及关闭后资源清理 |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
