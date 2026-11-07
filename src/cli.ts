@@ -288,7 +288,7 @@ let activePresenter: RunPresenter | undefined;
  */
 interface AgentCallbacks {
   onRequestStart?: (step: number) => void;
-  onToolCall?: (call: ToolCall) => void;
+  onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
   onToolResult?: (call: ToolCall, result: string) => void;
   onDelta?: (text: string) => void;
 }
@@ -344,7 +344,10 @@ function createAgent(
     signal,
     // 每次模型请求/工具调用只有一个开始通知；CLI 和 TUI 共享事实，展示实现仍各自负责。
     onRequestStart: callbacks?.onRequestStart ?? ((step) => activePresenter?.thinking(step)),
-    onToolCall: callbacks?.onToolCall ?? ((call) => activePresenter?.toolStart(call)),
+    onToolCall: callbacks?.onToolCall ?? ((call, content) => {
+      activePresenter?.confirmAssistant(content);
+      activePresenter?.toolStart(call);
+    }),
     onToolResult: callbacks?.onToolResult ?? ((call, result) => activePresenter?.toolResult(call, result)),
     // CLI 显示在 RunPresenter；TUI 使用自己提供的流式回调。
     onDelta: callbacks?.onDelta ?? ((text) => activePresenter?.delta(text)),
@@ -606,7 +609,9 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       toolStartedInLatestResponse = false;
       tui.setThinking(true);
     },
-    onToolCall: (call) => {
+    onToolCall: (call, confirmedContent) => {
+      // 同一条 assistant 可以带多个工具；只确认一次阶段说明，不能重复展示。
+      if (!toolStartedInLatestResponse) tui.confirmAssistant(confirmedContent);
       toolStartedInLatestResponse = true;
       tui.toolCall(call);
       if (current !== undefined) tui.setStats(current.sessionStats);
@@ -641,7 +646,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
     try {
       const reply = await agent.run(task);
-      tui.finishAssistant(reply.content ?? "");
+      tui.confirmAssistant(reply.content);
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: false });
       return true;
     } catch (error) {
@@ -653,7 +658,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
       if (latest?.content?.trim()) {
         // onToolCall 已提交该段正文时不要重复提交；预算阻断的调用则还没有这一事件。
-        if (!toolStartedInLatestResponse) tui.finishAssistant(latest.content);
+        if (!toolStartedInLatestResponse) tui.confirmAssistant(latest.content);
       } else {
         tui.discardAssistantDraft();
       }

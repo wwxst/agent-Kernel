@@ -19,6 +19,7 @@ import type { Dir } from "node:fs";
 import { lstat, mkdir, opendir, open, realpath, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import type { Tool } from "./types.ts";
 import { ProcessCleanupError } from "./errors.ts";
@@ -495,8 +496,12 @@ export class Workspace {
       let settled = false;
       let closeDeadline: ReturnType<typeof setTimeout> | undefined;
 
-      const absorb = (chunk: Buffer) => {
-        collected += chunk.toString();
+      // stdout/stderr 各有自己的 UTF-8 解码状态：一个汉字的三个字节可能跨两个 data 事件。
+      // 直接 chunk.toString() 会把它拆成替换字符；两个流也不能共用一个 decoder。
+      const stdoutDecoder = new StringDecoder("utf8");
+      const stderrDecoder = new StringDecoder("utf8");
+      const absorbText = (text: string) => {
+        collected += text;
         if (collected.length > MAX_OUTPUT_CHARS) {
           dropped += collected.length - MAX_OUTPUT_CHARS;
           collected = collected.slice(0, MAX_OUTPUT_CHARS);
@@ -534,8 +539,10 @@ export class Workspace {
         }, rejectUnverifiedCleanup);
       };
 
-      child.stdout.on("data", absorb);
-      child.stderr.on("data", absorb);
+      child.stdout.on("data", (chunk: Buffer) => absorbText(stdoutDecoder.write(chunk)));
+      child.stderr.on("data", (chunk: Buffer) => absorbText(stderrDecoder.write(chunk)));
+      child.stdout.on("end", () => absorbText(stdoutDecoder.end()));
+      child.stderr.on("end", () => absorbText(stderrDecoder.end()));
 
       child.on("error", (error) => {
         if (settled) return;

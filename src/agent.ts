@@ -165,7 +165,7 @@ export interface AgentOptions {
    *
    * 不会为被预算/取消跳过的调用触发 —— 那些调用没有执行，不能假装它们开始过。
    */
-  onToolCall?: (call: ToolCall) => void;
+  onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
   /**
    * 每次模型请求**发出前**的唯一回调：step 从 1 开始，每个 Run 重新计数。
    * CLI 使用 step 展示阶段，TUI 只需知道开始思考；不能为一次请求重复发送通知。
@@ -187,7 +187,7 @@ export class Agent {
   private readonly maxTotalTokens?: number;
   private readonly signal?: AbortSignal;
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
-  private readonly onToolCall?: (call: ToolCall) => void;
+  private readonly onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
   private readonly onRequestStart?: (step: number) => void;
 
   private readonly onDelta?: (text: string) => void;
@@ -499,7 +499,7 @@ export class Agent {
         // 「要跑了」先于「跑完了」：TUI 靠这个回调把工具调用写进运行记录，
         // 长命令执行期间也看得见它在干什么。这里没有 await，不会给取消留出新的缝隙。
         // 观察者只收到副本：改动工具名、JSON 参数或 id 都不能改变真实调用和消息配对。
-        this.notifyObserver(this.onToolCall, structuredClone(call));
+        this.notifyObserver(this.onToolCall, structuredClone(call), message.content);
         // 同步回调若触发取消，也不能在同一个事件循环内继续启动工具。
         this.stopIfCancelled(calls.slice(index));
         let result: string;

@@ -948,7 +948,7 @@ export class Tui {
     }
 
     this.setThinking(false);
-    if (this.fixedLayoutAllowed) this.streamingText += normalizeNewlines(text);
+    this.streamingText += normalizeNewlines(text);
     if (!this.assistantOpen) {
       this.writeRaw(this.uiText("model: ", "模型："));
       this.assistantOpen = true;
@@ -998,6 +998,37 @@ export class Tui {
     if (this.fixedLayoutAllowed) this.commitAssistant();
     this.assistantOpen = false;
     this.assistantAtLineStart = true;
+    this.streamingText = "";
+  }
+
+  /**
+   * 用已经确认的模型消息校对流式增量。固定布局可原地改正，行式模式无法
+   * 撤回已写字节，必须追加明确的更正提示与权威正文，而不是悄悄忽略差异。
+   * 与 finishAssistant() 不同：null 表示模型确认没有正文，不是“未知正文”。
+   */
+  confirmAssistant(content: string | null): void {
+    const confirmed = normalizeNewlines(content ?? "");
+    if (this.layout) {
+      if (this.streamingText !== confirmed || (!this.assistantOpen && confirmed !== "")) {
+        if (!this.assistantOpen && confirmed !== "") this.activeActivity = undefined;
+        this.streamingText = confirmed;
+        this.assistantOpen = confirmed !== "";
+      }
+      this.finishAssistant();
+      return;
+    }
+
+    if (this.assistantOpen && this.streamingText !== confirmed) {
+      if (!this.assistantAtLineStart) this.writeRaw(this.newline());
+      this.writeRaw(`${this.uiText("[stream corrected: confirmed message follows]", "【流式正文已更正：以下为确认消息】")}${this.newline()}`);
+      if (confirmed !== "") this.writeRaw(`${this.uiText("model (confirmed): ", "模型（已确认）：")}${escapeControlCharacters(confirmed)}${this.newline()}`);
+      this.assistantOpen = false;
+      this.assistantAtLineStart = true;
+      this.streamingText = "";
+      return;
+    }
+    if (!this.assistantOpen && confirmed !== "") this.assistantDelta(confirmed);
+    this.finishAssistant();
   }
 
   /**

@@ -151,6 +151,7 @@ export class RunPresenter {
   private toolCalls = 0;
   private streamOpen = false;
   private streamedCurrentStep = false;
+  private streamedText = "";
 
   constructor(view: AgentView, voice: AgentVoice) {
     this.view = view;
@@ -181,6 +182,7 @@ export class RunPresenter {
 
   thinking(step: number): void {
     this.streamedCurrentStep = false;
+    this.streamedText = "";
     this.status("✻ Thinking...", this.toolCalls === 0 ? "thinking" : "reviewing", "step " + step);
   }
 
@@ -215,12 +217,28 @@ export class RunPresenter {
       this.streamOpen = true;
     }
     this.streamedCurrentStep = true;
+    this.streamedText += text;
     process.stdout.write(escapeControlCharacters(text));
   }
 
-  finalAnswer(content: string): void {
+  /** 已确认回复覆盖流式草稿；行式 CLI 不能撤回旧字节，只能显式更正。 */
+  confirmAssistant(content: string | null): void {
+    const finalText = content ?? "";
     this.closeStreamLine();
-    if (!this.streamedCurrentStep) console.log("\n" + escapeControlCharacters(content));
+    if (this.streamedCurrentStep) {
+      if (this.streamedText !== finalText) {
+        console.log("[stream corrected: confirmed message follows]");
+        if (finalText !== "") console.log(escapeControlCharacters(finalText));
+      }
+    } else if (finalText !== "") {
+      console.log("\n" + escapeControlCharacters(finalText));
+    }
+    this.streamedText = finalText;
+    this.streamedCurrentStep = true;
+  }
+
+  finalAnswer(content: string): void {
+    this.confirmAssistant(content);
   }
 
   finish(toolCalls: number, cancelled = false, failed = false): void {
