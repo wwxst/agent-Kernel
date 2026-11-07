@@ -1605,7 +1605,7 @@ export class Tui {
       }
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
-        logical.push({ text: escapeControlCharacters(`  ${this.glyphs.boxBottomLeft} ${this.activitySummary(group)}`),
+        logical.push({ text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
           tone: "muted", kind: "activity" });
         if (group.expanded) {
           for (const item of group.tools) logical.push(...this.activityToolLines(item, group));
