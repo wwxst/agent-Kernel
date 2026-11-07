@@ -9,7 +9,8 @@
  *
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
-import { describeError } from "./errors.ts";
+import { describeError, describeValue } from "./errors.ts";
+import { Permission } from "./permission.ts";
 import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
@@ -17,6 +18,34 @@ const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 权限策略必须在装配阶段显式选择，不能靠「漏传参数」静默关闭。
+ *
+ * `null` 是合法选择：宿主明确声明这个注册表不启用权限检查（测试、评测）。
+ * 但缺少 options、缺少 permission 字段、undefined、字符串、对象等一律报错，
+ * 这样「忘了注入」会变成启动失败，而不是一次看起来成功的无策略执行。
+ */
+function resolvePermissionOption(options: unknown): Permission | null {
+  if (options === undefined) {
+    throw new Error("ToolRegistry: options are required; pass { permission: Permission | null }");
+  }
+  if (!isRecord(options)) {
+    throw new Error(`ToolRegistry: options must be an object; got ${describeValue(options)}`);
+  }
+  if (!Object.hasOwn(options, "permission")) {
+    throw new Error(
+      "ToolRegistry: options.permission is required; pass a Permission instance or null to disable permissions",
+    );
+  }
+
+  const permission = options.permission;
+  if (permission === null) return null;
+  if (permission instanceof Permission) return permission;
+  throw new Error(
+    `ToolRegistry: options.permission must be a Permission instance or null, got ${describeValue(permission)}`,
+  );
 }
 
 /**
@@ -105,14 +134,30 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
   return undefined;
 }
 
+export interface ToolRegistryOptions {
+  /**
+   * 执行前的权限策略，必须显式选择：
+   *   - `Permission` 实例：启用检查；
+   *   - `null`：宿主主动声明不启用权限检查。
+   *
+   * 漏传、`undefined`、其他类型在构造阶段直接报错；测试和评测也不能靠「忘记传」绕过。
+   */
+  permission: Permission | null;
+}
+
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
+
+  private readonly permission: Permission | null;
 
   /**
    * 装配时就把不合法的工具挡掉：重名会让「按名字找工具」有歧义，
    * 不支持的 Schema 类型会让参数校验静默失效。两者都不该等到模型调用时才暴露。
+   *
+   * options 没有默认值：权限是安全决策，必须由宿主明确选择。
    */
-  constructor(tools: readonly Tool[]) {
+  constructor(tools: readonly Tool[], options: ToolRegistryOptions) {
+    const permission = resolvePermissionOption(options);
     const seen = new Set<string>();
     for (const tool of tools) {
       if (seen.has(tool.name)) {
@@ -122,6 +167,7 @@ export class ToolRegistry {
       assertSupportedSchema(tool);
     }
     this.tools = tools;
+    this.permission = permission;
   }
 
   /** 发给模型的那一半：只有说明书，没有 run。 */
@@ -164,6 +210,25 @@ export class ToolRegistry {
     if (problem !== undefined) {
       // 中文对照：ERROR: 参数不合法：{原因}
       return `ERROR: invalid arguments: ${problem}`;
+    }
+
+    // 权限检查放在参数校验之后、run 之前：
+    //   - 坏参数先按参数错误回给模型，别让它以为问题是「权限」；
+    //   - 一个根本不会执行的调用，不值得打断用户去审批；
+    //   - 拒绝时直接返回，工具代码一行都不会跑。
+    if (this.permission !== null) {
+      try {
+        const decision = await this.permission.check({ tool: tool.name, args });
+        if (!decision.allowed) {
+          // 中文对照：ERROR: 权限被拒绝：{原因}
+          return `ERROR: permission denied: ${decision.reason}`;
+        }
+      } catch (error) {
+        // Permission.check 已经把审批异常折成拒绝；这里兜的是策略模块自身的意外故障。
+        // execute 对外承诺永不抛异常，任何协作者抛错都必须在这个边界收口 —— 不是重复校验。
+        // 中文对照：ERROR: 权限被拒绝：{原因}
+        return `ERROR: permission denied: ${describeError(error)}`;
+      }
     }
 
     try {

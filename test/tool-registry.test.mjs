@@ -4,8 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ToolRegistry } from "../src/tool-registry.ts";
-import { echoTool } from "./support/harness.mjs";
+import { echoTool, makeRegistry } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */
 function call(name, rawArguments = "{}", id = "call_1") {
@@ -30,7 +29,7 @@ function recordingTool() {
 }
 
 test("definitions：只投影说明书字段，run 不外泄", () => {
-  const registry = new ToolRegistry([echoTool()]);
+  const registry = makeRegistry([echoTool()]);
 
   const [definition] = registry.definitions;
 
@@ -39,13 +38,13 @@ test("definitions：只投影说明书字段，run 不外泄", () => {
 });
 
 test("execute：命中工具就执行它", async () => {
-  const registry = new ToolRegistry([echoTool()]);
+  const registry = makeRegistry([echoTool()]);
 
   assert.equal(await registry.execute(call("echo", JSON.stringify({ value: "hi" }))), "echo hi");
 });
 
 test("execute：未知工具返回 ERROR，并列出可用工具", async () => {
-  const registry = new ToolRegistry([echoTool()]);
+  const registry = makeRegistry([echoTool()]);
 
   const result = await registry.execute(call("rm_rf", "{}"));
 
@@ -54,7 +53,7 @@ test("execute：未知工具返回 ERROR，并列出可用工具", async () => {
 });
 
 test("execute：坏 JSON 返回 ERROR，而不是抛异常", async () => {
-  const registry = new ToolRegistry([echoTool()]);
+  const registry = makeRegistry([echoTool()]);
 
   const result = await registry.execute(call("echo", "{not valid json"));
 
@@ -62,7 +61,7 @@ test("execute：坏 JSON 返回 ERROR，而不是抛异常", async () => {
 });
 
 test("execute：参数不是 JSON 对象时返回 ERROR", async () => {
-  const registry = new ToolRegistry([echoTool()]);
+  const registry = makeRegistry([echoTool()]);
 
   assert.match(await registry.execute(call("echo", "[]")), /arguments must be a JSON object/);
   assert.match(await registry.execute(call("echo", "42")), /arguments must be a JSON object/);
@@ -71,14 +70,14 @@ test("execute：参数不是 JSON 对象时返回 ERROR", async () => {
 
 test("execute：空 arguments 当作空对象", async () => {
   const { tool, seen } = recordingTool();
-  const registry = new ToolRegistry([tool]);
+  const registry = makeRegistry([tool]);
 
   assert.equal(await registry.execute(call("record", "")), "ok {}");
   assert.deepEqual(seen, [{}]);
 });
 
 test("execute：工具抛 Error 折成 ERROR 文本", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "boom",
       description: "fails",
@@ -93,7 +92,7 @@ test("execute：工具抛 Error 折成 ERROR 文本", async () => {
 });
 
 test("execute：工具抛非 Error 也能折成文本", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "weird",
       description: "throws a string",
@@ -109,7 +108,7 @@ test("execute：工具抛非 Error 也能折成文本", async () => {
 
 test("execute：缺少必填参数直接报错，不会带着空值去执行工具", async () => {
   const received = [];
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "write",
       description: "write a file",
@@ -132,7 +131,7 @@ test("execute：缺少必填参数直接报错，不会带着空值去执行工�
 });
 
 test("execute：参数类型不对也直接报错", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "read",
       description: "read a file",
@@ -152,7 +151,7 @@ test("execute：参数类型不对也直接报错", async () => {
 
 test("execute：参数齐全才真的执行", async () => {
   const received = [];
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "write",
       description: "write a file",
@@ -175,7 +174,7 @@ test("execute：参数齐全才真的执行", async () => {
 });
 
 test("execute：空错误消息也不能变成空的 ERROR", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "boom",
       description: "throws an Error with no message",
@@ -190,7 +189,7 @@ test("execute：空错误消息也不能变成空的 ERROR", async () => {
 });
 
 test("execute：抛空字符串也有兜底文案", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "boom",
       description: "throws a blank string",
@@ -205,7 +204,7 @@ test("execute：抛空字符串也有兜底文案", async () => {
 });
 
 test("execute：抛 undefined 也有兜底文案", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "boom",
       description: "throws undefined",
@@ -225,51 +224,51 @@ function schemaTool(parameters) {
 }
 
 test("注册：重名工具直接拒绝", () => {
-  assert.throws(() => new ToolRegistry([echoTool(), echoTool()]), /duplicate tool name "echo"/);
+  assert.throws(() => makeRegistry([echoTool(), echoTool()]), /duplicate tool name "echo"/);
 });
 
 test("注册：声明 array / object 参数直接拒绝（校验器不懂它们）", () => {
   assert.throws(
-    () => new ToolRegistry([schemaTool({ type: "object", properties: { tags: { type: "array" } } })]),
+    () => makeRegistry([schemaTool({ type: "object", properties: { tags: { type: "array" } } })]),
     /parameter "tags" has unsupported type "array"/,
   );
   assert.throws(
-    () => new ToolRegistry([schemaTool({ type: "object", properties: { cfg: { type: "object" } } })]),
+    () => makeRegistry([schemaTool({ type: "object", properties: { cfg: { type: "object" } } })]),
     /parameter "cfg" has unsupported type "object"/,
   );
 });
 
 test("注册：parameters 必须是 object schema", () => {
   assert.throws(
-    () => new ToolRegistry([schemaTool({ type: "array", properties: {} })]),
+    () => makeRegistry([schemaTool({ type: "array", properties: {} })]),
     /parameters\.type must be "object"/,
   );
   assert.throws(
-    () => new ToolRegistry([schemaTool({ properties: {} })]),
+    () => makeRegistry([schemaTool({ properties: {} })]),
     /parameters\.type must be "object"/,
   );
 });
 
 test("注册：required 必须声明在 properties 里，且是字符串数组", () => {
   assert.throws(
-    () => new ToolRegistry([schemaTool({ type: "object", properties: { a: { type: "string" } }, required: ["b"] })]),
+    () => makeRegistry([schemaTool({ type: "object", properties: { a: { type: "string" } }, required: ["b"] })]),
     /required parameter "b" is not declared/,
   );
   assert.throws(
-    () => new ToolRegistry([schemaTool({ type: "object", properties: {}, required: "a" })]),
+    () => makeRegistry([schemaTool({ type: "object", properties: {}, required: "a" })]),
     /parameters\.required must be an array of strings/,
   );
 });
 
 test("注册：每个参数都必须声明受支持的类型", () => {
   assert.throws(
-    () => new ToolRegistry([schemaTool({ type: "object", properties: { a: {} } })]),
+    () => makeRegistry([schemaTool({ type: "object", properties: { a: {} } })]),
     /parameter "a" must declare a type/,
   );
 });
 
 test("execute：number 参数拒绝 Infinity，boolean 参数拒绝字符串", async () => {
-  const registry = new ToolRegistry([
+  const registry = makeRegistry([
     {
       name: "num",
       description: "number",

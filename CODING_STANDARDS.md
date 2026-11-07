@@ -39,6 +39,7 @@
 | `tool_calls`、`Tool`、`ToolRegistry` | **function calling** |
 | `shell` 工具 | **bash** —— 跑命令的那个工具 |
 | `Workspace` | 文件工具的工作区根目录，**不是安全边界**（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)） |
+| `Permission` | **策略**，不是 **Sandbox**：只决定一次 Tool call 放不放行（见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)） |
 
 写法就是一句判断句：`// 这就是 agent loop：教科书里那个 while (true)，外加一道步数闸门。` 不要写成「本系统的 XXX 模块负责……」。
 

@@ -7,6 +7,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { ToolRegistry } from "../../src/tool-registry.ts";
 
 /** 「模型要调工具」的一条 assistant 消息。 */
 export function callTool(id, name, args) {
@@ -53,6 +54,14 @@ export function echoTool() {
     parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
     run: async (args) => `echo ${String(args.value)}`,
   };
+}
+
+/**
+ * 测试里只关心循环/注册表本身，不关心权限；显式 null 表示宿主主动关闭检查。
+ * ToolRegistry 要求显式传 permission，这个夹具把选择集中在一处。
+ */
+export function makeRegistry(tools) {
+  return new ToolRegistry(tools, { permission: null });
 }
 
 /** 每个用例一个临时工作区，跑完就删。 */

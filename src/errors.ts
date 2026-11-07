@@ -58,3 +58,23 @@ export function describeError(error: unknown): string {
 
   return `Unknown error (${typeof error})`;
 }
+
+/**
+ * 把任意值渲染成一行可读文本，用于「这个值不合法」的错误文案。
+ *
+ * 和 `describeError` 不同：这里不猜异常，只忠实展示值本身；字符串带引号，
+ * `undefined`、`NaN` 这类值不会被 JSON.stringify 悄悄变成 `null`。
+ */
+export function describeValue(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return `"${value}"`;
+  if (typeof value === "object" && value !== null) {
+    try {
+      const json = JSON.stringify(value);
+      if (json !== undefined) return json;
+    } catch {
+      // 循环引用、BigInt 之类：序列化失败，落到 String。
+    }
+  }
+  return String(value);
+}
