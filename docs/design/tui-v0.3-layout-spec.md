@@ -223,6 +223,28 @@
 - 普通运行日志不应写进固定输入区域，避免覆盖正在编辑的命令。
 - 保留真实会话语义：/permission、/reset、/help、/exit 继续有效。
 
+## 6.2 Slash 命令补全（2026-11-07）
+
+用户在空闲的聊天输入框键入 `/` 时，紧贴输入框下方显示命令列表，顺序是 `/help`、`/permission`、`/reset`、`/exit`、`/quit`。所有命令均为已经实现的 CLI 命令；不实现或显示 Claude Code 的 `/compact`、`/branch` 等额外功能。
+
+~~~text
+─────────────────────────────────────────────────
+❯ /
+─────────────────────────────────────────────────
+❯ /help           Show available commands
+  /permission     View or switch permission mode
+  /reset          Clear the current conversation
+  /exit           Exit agent-Kernel
+  /quit           Exit (alias of /exit)
+workspace-write                     0 requests · 0 tokens
+~~~
+
+- 输入如 `/per` 实时筛选；上下键改变选中项；`Tab` 只补全到输入框、不执行；`Enter` 提交当前高亮的命令；`Esc` 只关闭菜单并保留草稿；输入发生改变可重新展开。
+- 使用现有 readline 编辑缓冲；菜单方向键不能覆盖历史任务，不能改动已有输入草稿，不向模型或 Transcript 添加菜单行。
+- 命令带参数（如 `/permission read-only`）时关闭候选列表并按原来的命令解析执行；未知命令不被改写。
+- 列表跟随中英文 UI 显示描述，但命令名称、执行逻辑不翻译。
+- 布局在小屏幕和窗口 resize 下保留标题、输入、状态及有限菜单条目，不覆盖 Shell 审批。无 TTY/非固定布局沿用原有逐行输入。
+
 ## 6.1 中英文自动适配（2026-11-07）
 
 - TUI 启动时界面默认为英文；每次用户提交自然语言任务后自动检测该任务的主要语言（中文 / 英文），作为后续界面文案的语言，直到下一次有可判断语言的用户任务。Slash 命令、工具结果与模型输出不触发语言变化。
