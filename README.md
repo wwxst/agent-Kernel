@@ -36,7 +36,8 @@ CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是�
 | `src/approval.ts` | 审批提示的格式化与读取：完整命令、cwd、控制字符转义，并把 `AbortSignal`、readline 关闭、正常回答一起收口 |
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫、有界读取、扫描预算与取消 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
-| `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、短会话输入框跟随内容/长会话停靠底部、工具状态/审批面板、颜色与字形降级、PageUp/PageDown、resize。不碰 Agent 循环 |
+| `src/tui.ts` | TUI：聊天布局、任务前/中/结束状态、真实 AI 阶段说明与工具活动分组、工具失败同行展示、Ctrl+O 活动详情、审批与终端降级；不触碰 Agent Loop |
+| `src/tui-mood.ts` | 状态驱动的中英文角色短句库：元气、调皮、好奇、温柔为主，少量傲娇/天然；临时展示、不写 Transcript |
 | `src/cli.ts` | 组装层：命令行参数 / 环境变量 → 对象图 → 跑一次任务、进 REPL 或进 TUI |
 
 `src/grep-worker.ts` 不算第十一个模块，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
@@ -155,7 +156,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 布局：
 
 - **顶部**：项目名（左）和 model（右），下一行是 workspace 路径，再一条分隔线。
-- **对话区**：内容**从视口顶部往下**排列；用户 `❯`、模型 `✻`，工具调用先显示 `●`，结果到达后原地替换成 `✓` / `✗` / `⊘`（权限拒绝）/ `–`（未执行）。工具执行期间附弱化的 `Running...` 子行，待审批时由完整审批面板表示等待。短会话输入区紧跟消息，大块空白留在输入区下方。
+- **对话区**：内容从视口顶部向下排列；用户 `❯`、模型真实发言 `✻`。每轮任务在用户输入下方显示固定位置的生命周期标题（准备执行 → 正在执行 + 已用时 → 已完成/执行失败/已取消 + 实际耗时）。模型真实输出的阶段性说明按原文保留，随后发生的工具调用合并为该阶段下方的独立 `↳` 摘要；未输出阶段说明时不伪造模型发言。短会话输入框跟随内容，长会话靠底部。
 - **输入框**：短会话紧跟当前消息，长会话自动停靠底部；用两条灰色横线划分输入区域，与正文共享左边缘。空会话显示占位符 `Ask anything, or type /help...`，开始对话后只保留提示符和光标。长输入横向滚动，提交原文不变。readline 保留编辑缓存，TUI 统一绘制，输入期间的新输出也能刷新。
 - **状态行**：始终紧跟输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），有空间时显示 `(shift-tab to cycle)`，右边 requests / tool calls / tokens。
 - **中英文自动适配**：TUI 默认使用英文；每次用户提交自然语言任务时，根据任务主要语言切换界面自带的工具标签、审批菜单、统计、状态和命令帮助。路径、代码片段、文件名不作为语言识别依据；混合输入按中文字符数与英文单词数判断；无语言内容时沿用上一轮语言。不翻译模型回复、Shell 命令、工具实际返回内容或权限模式 ID（`read-only` 等）。**`Thinking...` 永远保持英文、动画和计时逻辑不变。** 不增加运行时依赖。
@@ -164,15 +165,15 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 工具与审批：
 
-- 工具事件使用 `Read README.md`、`Shell: npm run check` 这类可读形式，不重复打印同一条调用；工具名称中性粗体，状态符号单独着色，缩进子行显示结果摘要与读取行数，读取截断仍有明确尾注。
-- 失败/拒绝/未执行的第一行原因放在工具事件下方，正文不截断关键原因；`read` 不把整份文件内容刷进聊天区。
+- **工具活动**：读取/搜索/修改/执行命令等真实工具事件按出现顺序归入当前阶段；每段的简短摘要最多显示 **3 种不同操作**，有第 4 种时在末尾加「等」（英文 `etc.`），不显示成功/失败次数总账。运行中展开当前组以便看到具体文件、命令、耗时和结果；结束后自动折叠工具细节，但保留每一段真实 AI 发言及摘要。`Ctrl+O` 从最近一段开始向前循环，分别切换各组明细；再次选中该段可单独收起，历史轮次中尚保留的组也可查看。
+- **失败/拒绝/未执行**：正常任务中的首条错误摘要与具体命令**同行**（例如 `✗ npm run check 失败 · exit 1 · TypeScript 类型检查未通过`）；即使活动组已经折叠，仍保留失败行。展开后可预览实际返回的原始错误文本；错误原因不由界面猜测。权限拒绝绝不标成已执行；不把读取文件的原始正文整份刷进摘要。
 - `workspace-write` 下的 `shell` 审批在固定 TUI 里使用 Claude Code 风格的**两项键盘菜单**：完整 workspace、原始多行命令、`1. Yes, allow once` / `2. No (default)`；上下键选择、Enter 确认、Esc 拒绝，默认选中 No。审批时不显示额外的文本输入框或聊天状态栏，误输入/粘贴 `y`、`1` 也不会隐形授权；菜单结果只作用于本次调用，**没有永久授权选项**。非固定布局继续原来的 `y/N` 逐行审批（只有明确输入 `y` / `yes` 才放行），无 TTY 时默认拒绝。
 
 外观与交互：
 
 - 自动检测颜色能力：16 色 / 256 色、`NO_COLOR`、`TERM=dumb`；无颜色终端仍靠框线和符号可读。
 - Windows Terminal / VS Code 终端 / Linux 使用 `❯`、`✻`、`●`、`✓`、`✗`、`⊘`、`┌┐└┘─│`；传统 Windows conhost 退化成 `>`、`*`、`o`、`+`、`x`、`!`、`-`、`|`，不会显示方框。
-- **Thinking**：前置符号每 200ms 变化，`Thinking...` 及三个点固定显示，耗时列稳定；下一行弱化显示 `Ctrl-C to cancel`。工具返回后的等待可显示本次实际收到的工具结果数。第一段正文、工具调用或错误到达时清除并停止计时。结束时显示本次实际经过时间与工具调用数，不推断模型内部思考或尚未返回的 token。
+- **实时状态与角色语气**：`Thinking...` 保留英文、200ms 文本符号动画和真实计时；读取/搜索/编辑/写入/运行命令等状态只由真实 Agent 回调与工具名驱动。状态右侧 `│` 后显示一条轻快、略带傲娇的中英文短句，按状态和人格元素加权抽取，避开最近重复；持续约 15 秒才可能更换。短句不是模型思考内容，不增加 API 请求，也**不写入执行历史或最终回复**。窄屏时隐藏短句；审批和失败只展示明确、可信的操作信息，不能用俏皮话掩盖授权或错误。
 - **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
 - **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
 - **Slash 命令补全**：TUI 中输入 `/` 会在输入框**下方**展开当前程序实际支持的 `/help`、`/permission`、`/reset`、`/exit`、`/quit`；继续输入前缀实时筛选。方向键只移动高亮，不改变 readline 的输入历史；`Tab` 把高亮命令补全到编辑框但不执行，`Enter` 执行高亮命令，`Esc` 收起菜单且保留原输入；查询变更后可重新弹出。说明文案跟随中英文 UI 语言，不展示尚未实现的 Claude Code 命令。菜单不写入 Transcript，已有 `/permission read-only` 等参数命令照常处理。小终端最多显示可容纳的条目，支持 resize；审批菜单优先，不混用按键。
@@ -181,7 +182,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 
-已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标、多行输入、工具详情展开或 `/` 命令菜单。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
+已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width 表；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标和多行输入。`Ctrl+O` 以键盘浏览活动组；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
 
 ## 配置
 
@@ -217,7 +218,7 @@ npm run check       # typecheck + 全部测试
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset`、`/permission` 动态提示、`--permission`、流式 mock、TUI 聊天布局 / 命令 / 统计 |
 | `test/cli-pty.test.mjs` | Linux PTY：审批允许 / 拒绝 / Ctrl-C / EOF，以及 REPL 审批 EOF 不冒充用户拒绝 |
-| `test/tui.test.mjs` | TUI：对话贴顶、输入框/状态行、工具运行/成功/失败/拒绝/未执行、审批面板完整命令与 cwd、y/N、thinking、颜色开关、PageUp/PageDown、resize、中文宽度 |
+| `test/tui.test.mjs` | TUI：原有审批安全、聊天布局、思考动画、终端降级；新增生命周期状态、AI 阶段分组、三类摘要上限、错误同行、Ctrl+O 展开、中英文角色文案 |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
@@ -260,7 +261,7 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 - 会话持久化到磁盘：进程内的多轮 REPL / TUI 已经有了（`--repl`、`--tui`），跨进程恢复 transcript 没有做
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
-- 全屏 TUI / alternate screen、鼠标、多行输入、工具详情展开、`/` 命令菜单和 Hooks：TUI v0.3 只做顶部对话、带框输入、状态行、工具状态和可滚动审批面板（见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)）
+- 全屏 TUI / alternate screen、鼠标、多行输入和 Hooks 尚未做；当前 TUI 提供顶部对话、输入区、滚动审批面板、Ctrl+O 活动明细及 `/` Slash 自动补全（见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)）。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 操作系统级隔离：Permission v0.1 只做工具调用策略（见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)），不是 Sandbox；`shell` 放行后仍是启动者的权限（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）
