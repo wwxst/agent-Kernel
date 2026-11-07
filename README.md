@@ -157,7 +157,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - **顶部**：项目名（左）和 model（右），下一行是 workspace 路径，再一条分隔线。
 - **对话区**：内容**从视口顶部往下**排列；用户 `❯`、模型 `✻`，工具调用先显示 `●`，结果到达后原地替换成 `✓` / `✗` / `⊘`（权限拒绝）/ `–`（未执行）。工具执行期间附弱化的 `Running...` 子行，待审批时由完整审批面板表示等待。短会话输入区紧跟消息，大块空白留在输入区下方。
 - **输入框**：短会话紧跟当前消息，长会话自动停靠底部；用两条灰色横线划分输入区域，与正文共享左边缘。空会话显示占位符 `Ask anything, or type /help...`，开始对话后只保留提示符和光标。长输入横向滚动，提交原文不变。readline 保留编辑缓存，TUI 统一绘制，输入期间的新输出也能刷新。
-- **状态行**：始终紧跟输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），右边 requests / tool calls / tokens。
+- **状态行**：始终紧跟输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），有空间时显示 `(shift-tab to cycle)`，右边 requests / tool calls / tokens。
 - 不切 alternate screen、不引 TUI 库；差分重绘只写变化的行，退出后 TUI 历史不会留在 scrollback 里。非 TTY（管道、CI、e2e）退化为纯逐行输出。
 
 工具与审批：
@@ -173,6 +173,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - **Thinking**：前置符号每 200ms 变化，`Thinking...` 及三个点固定显示，耗时列稳定；下一行弱化显示 `Ctrl-C to cancel`。工具返回后的等待可显示本次实际收到的工具结果数。第一段正文、工具调用或错误到达时清除并停止计时。结束时显示本次实际经过时间与工具调用数，不推断模型内部思考或尚未返回的 token。
 - **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
 - **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
+- **权限快捷键**：在等待输入下一条任务时按 `Shift+Tab`，依次从 `read-only` → `workspace-write` → `full-access` → `read-only` 循环。进入 `full-access` 须再按一次 `Shift+Tab` 确认，Esc 或其他键取消待确认；运行中和 Shell 审批中不可用。快捷键直接更新同一个 Permission 对象，下次模型请求读取更新后的权限说明，不改变 Transcript；普通 Tab 不切模式。部分终端不能区分 Shift+Tab 时仍可使用 `/permission [mode]`。
 - 命令与 REPL 相同：`/exit`、`/reset`、`/permission [mode]`、`/help`。`/reset` 换 Agent，不换 Permission；`/permission` 切换后状态行和下一次请求同时生效。
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
