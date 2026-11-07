@@ -612,7 +612,8 @@ export class Tui {
     if (!show) return;
     const lines = splitDisplayLines(task);
     lines.forEach((line, index) => {
-      const text = index === 0 ? `you: ${line}` : `${" ".repeat("you: ".length)}${line}`;
+      const label = this.uiText("you: ", "用户：");
+      const text = index === 0 ? `${label}${line}` : `${" ".repeat(displayWidth(label))}${line}`;
       this.writeRaw(`${escapeControlCharacters(text)}${this.newline()}`);
     });
   }
@@ -635,7 +636,7 @@ export class Tui {
     this.setThinking(false);
     if (this.fixedLayoutAllowed) this.streamingText += normalizeNewlines(text);
     if (!this.assistantOpen) {
-      this.writeRaw("model: ");
+      this.writeRaw(this.uiText("model: ", "模型："));
       this.assistantOpen = true;
       this.assistantAtLineStart = false;
     }
@@ -728,7 +729,7 @@ export class Tui {
       }
     }
 
-    this.writeRaw(`  ${escapeControlCharacters(formatToolResult(call, result))}${this.newline()}`);
+    this.writeRaw(`  ${escapeControlCharacters(formatToolResult(call, result, this.uiLanguage))}${this.newline()}`);
   }
 
   /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
@@ -756,18 +757,20 @@ export class Tui {
 
     this.setThinking(false);
     this.finishAssistant();
-    const overBudget = run.tokenBudget.exceeded ? ` · budget exceeded (limit=${run.tokenBudget.limit})` : "";
-    const outcome = failed ? " · task failed" : "";
-    this.logLine(`[stats] ${formatStats(session)}${overBudget}${outcome}`);
+    const overBudget = run.tokenBudget.exceeded
+      ? this.uiText(` · budget exceeded (limit=${run.tokenBudget.limit})`, ` · 预算超限（上限=${run.tokenBudget.limit}）`) : "";
+    const outcome = failed ? this.uiText(" · task failed", " · 任务失败") : "";
+    this.logLine(`${this.uiText("[stats]", "[统计]")} ${formatStats(session, this.uiLanguage)}${overBudget}${outcome}`);
   }
 
   /** 进程级总账：跨 Run 累计，和每轮的 [stats] 是两个口径。 */
   sessionSummary(session: AgentSessionStats): void {
-    const lower = session.usage.unknown > 0 ? "at least " : "";
-    const text =
-      `[session] runs=${session.runs} requests=${session.requests} tool_calls=${session.toolCalls} ` +
-      `tokens=${lower}${session.usage.totalTokens} (prompt=${lower}${session.usage.promptTokens} ` +
-      `completion=${lower}${session.usage.completionTokens})`;
+    const lower = session.usage.unknown > 0 ? this.uiText("at least ", "至少 ") : "";
+    const text = this.uiLanguage === "zh"
+      ? `[会话] ${session.runs} 轮 · ${session.requests} 次请求 · ${session.toolCalls} 次工具调用 · tokens=${lower}${session.usage.totalTokens} (prompt=${lower}${session.usage.promptTokens} completion=${lower}${session.usage.completionTokens})`
+      : `[session] runs=${session.runs} requests=${session.requests} tool_calls=${session.toolCalls} ` +
+        `tokens=${lower}${session.usage.totalTokens} (prompt=${lower}${session.usage.promptTokens} ` +
+        `completion=${lower}${session.usage.completionTokens})`;
     if (this.layout) {
       this.commitAssistant();
       this.pushLog(text, "muted");
@@ -1407,8 +1410,10 @@ export class Tui {
   }
 
   private formatStatsLine(): string {
-    if (this.stats === undefined) return "requests=0  tool_calls=0  tokens=0";
-    return `requests=${this.stats.requests}  tool_calls=${this.stats.toolCalls}  tokens=${formatTokens(this.stats)}`;
+    if (this.stats === undefined) return this.uiText("requests=0  tool_calls=0  tokens=0", "请求=0  工具调用=0  tokens=0");
+    return this.uiLanguage === "zh"
+      ? `请求=${this.stats.requests}  工具调用=${this.stats.toolCalls}  tokens=${formatTokens(this.stats)}`
+      : `requests=${this.stats.requests}  tool_calls=${this.stats.toolCalls}  tokens=${formatTokens(this.stats)}`;
   }
 
   // ---- 行式聊天/非 TTY ----
@@ -1632,9 +1637,12 @@ function formatTokens(stats: AgentSessionStats): string {
   return `${stats.usage.unknown > 0 ? "at least " : ""}${stats.usage.totalTokens}`;
 }
 
-function formatStats(stats: AgentSessionStats): string {
-  const unknown =
-    stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} request(s) without usage` : "";
+function formatStats(stats: AgentSessionStats, language: UiLanguage = "en"): string {
+  if (language === "zh") {
+    const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} 次请求缺少用量数据` : "";
+    return `请求=${stats.requests} 工具调用=${stats.toolCalls} tokens=${formatTokens(stats)}${unknown}`;
+  }
+  const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} request(s) without usage` : "";
   return `requests=${stats.requests} tool_calls=${stats.toolCalls} tokens=${formatTokens(stats)}${unknown}`;
 }
 
@@ -1717,20 +1725,15 @@ function summarizeToolResult(call: ToolCall, result: string): ToolResultSummary 
   return { failed, denied, notRun, body, more };
 }
 
-const TOOL_LABELS: Record<string, string> = {
-  read: "Read",
-  write: "Write",
-  edit: "Edit",
-  ls: "List",
-  glob: "Glob",
-  grep: "Grep",
-  shell: "Shell",
+const TOOL_LABELS: Record<UiLanguage, Record<string, string>> = {
+  en: { read: "Read", write: "Write", edit: "Edit", ls: "List", glob: "Glob", grep: "Grep", shell: "Shell" },
+  zh: { read: "读取", write: "写入", edit: "编辑", ls: "列出", glob: "匹配文件", grep: "搜索", shell: "Shell" },
 };
 
 /** v0.3 的工具事件：Read README.md / Shell: npm run check，不把参数 JSON 原样刷出来。 */
-function formatToolEvent(call: ToolCall): string {
+function formatToolEvent(call: ToolCall, language: UiLanguage = "en"): string {
   const name = call.function.name;
-  const label = TOOL_LABELS[name] ?? name;
+  const label = TOOL_LABELS[language][name] ?? name;
   let args: unknown;
   try {
     args = JSON.parse(call.function.arguments || "{}");
@@ -1759,7 +1762,7 @@ function formatToolEvent(call: ToolCall): string {
       const pattern = typeof args.pattern === "string" ? oneLine(args.pattern) : "";
       const path = typeof args.path === "string" ? oneLine(args.path) : "";
       if (pattern === "") return label;
-      return path === "" ? `${label} ${pattern}` : `${label} ${pattern} in ${path}`;
+      return path === "" ? `${label} ${pattern}` : `${label} ${pattern} ${language === "zh" ? "于" : "in"} ${path}`;
     }
     default: {
       const detail = toolArgumentSummary(name, call.function.arguments);
@@ -1769,15 +1772,17 @@ function formatToolEvent(call: ToolCall): string {
 }
 
 /** 固定布局里的工具结果：失败/拒绝/未执行用不同符号，第一行原因放在下一行。 */
-function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs): LogLine[] {
+function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, language: UiLanguage = "en"): LogLine[] {
   const summary = summarizeToolResult(call, result);
-  const event = formatToolEvent(call);
+  const event = formatToolEvent(call, language);
   if (!summary.failed) {
     const resultLines = result === "" ? [] : splitDisplayLines(result);
     const count = resultLines.length;
     // 中文对照：收到 {count} 行；这是工具实际返回的行数，不声称是文件总行数。
     const detail = call.function.name === "read"
-      ? `Received ${formatNumber(count)} ${count === 1 ? "line" : "lines"}`
+      ? language === "zh"
+        ? `收到 ${formatNumber(count)} 行`
+        : `Received ${formatNumber(count)} ${count === 1 ? "line" : "lines"}`
       : `${clip(summary.body, 160)}${summary.more}`;
     const lines: LogLine[] = [
       { text: `  ${glyphs.success} ${event}`, tone: "success", kind: "tool" },
@@ -1804,9 +1809,11 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs): LogLin
 /**
  * 行式聊天/非 TTY 的工具结果：沿用 v0.1 的标记，避免 e2e 断言和管道输出被 UI 改动影响。
  */
-function formatToolResult(call: ToolCall, result: string): string {
+function formatToolResult(call: ToolCall, result: string, language: UiLanguage = "en"): string {
   const summary = summarizeToolResult(call, result);
-  const label = summary.denied ? "denied" : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";
+  const label = language === "zh"
+    ? summary.denied ? "已拒绝" : summary.notRun ? "未运行" : summary.failed ? "失败" : "成功"
+    : summary.denied ? "denied" : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";
   const mark = summary.failed ? (summary.notRun ? "–" : "✗") : "✓";
   return `${mark} ${call.function.name} [${label}] ${clip(summary.body, 160)}${summary.more}`;
 }
