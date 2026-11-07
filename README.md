@@ -130,7 +130,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 叫 `shell` 而不是 `bash`：实现是 `spawn(command, { shell: true })`，真正由哪个 shell 解释取决于平台，叫 `bash` 就是承诺了没做到的事。这个取舍记在 [ADR-0005](./docs/adr/0005-name-tools-after-the-ecosystem.md)。
 
-路径统一过工作区的路径守卫：`../`、绝对路径、跨盘符都会被拒绝；解析之后还会再比一次**真实路径**，所以符号链接、junction 指向工作区外时同样会被拒绝。错误变成 `ERROR: path escapes workspace` 回灌给模型。
+路径统一过工作区的路径守卫：`../`、绝对路径、跨盘符都会被拒绝；解析之后还会再比一次**真实路径**，所以符号链接、junction 指向工作区外时同样会被拒绝。错误变成 `ERROR: path escapes workspace` 回灌给模型。文件读写使用校验后的真实路径，编辑通过同一个句柄读写；写入/编辑在提交修改前复查取消信号，POSIX 文件打开也避免跟随末端符号链接。**已知边界：这不能完全消除恶意并发替换父目录的 TOCTOU 竞态，Windows 不支持同样的末端链接打开标志；仍应按 Trusted Local Agent 使用。**
 
 已知边界：`glob` 只认 `*`、`**`、`?` 三种通配，`{}`、`[]` 按字面匹配（这是刻意的，见下）；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中，单次最多访问 20 000 个目录项，符号链接不跟随；`read` 最多读 32 KB，`grep` 按字节读到 1 MB 为止、超出的文件跳过，`edit` 不接受超过 2 MB 的文件（读不全就拒绝，绝不拿半截内容覆盖），`ls` 最多展示 500 条、扫到 20 000 项就停。`grep` 的正则匹配另有 2 秒预算（只算匹配时间，不算读文件），超时会杀掉匹配线程并标注结果不完整。目录用 `opendir` 边读边收，预算限制的是真正读了多少项，而不是 `readdir` 之后切了多少项；所有截断、跳过、没搜完的统计都保留在结果末尾，不会被结果自己的长度上限吃掉。扫描提前停手时会明说 `results may be incomplete`，不会声称拿到了全局排序结果。
 
@@ -158,7 +158,7 @@ CLI 用 `--permission <mode>`（也支持 `--permission=<mode>`）选起始模�
 
 Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一的 system 消息；`/permission` 切换后下一次请求立即生效，不会追加第二条 system 消息。这个 Prompt 只指导模型，真正的放行/拒绝仍由 `ToolRegistry` 执行。
 
-`workspace-write` 下的 `shell` 每次都要人工确认：输入 `y` / `yes` 允许这一次，其他输入（包括空行）都拒绝。审批界面完整展示待执行命令与实际 cwd：多行命令逐行加 `|` 前缀，控制字符与 bidi 控制字符转义，不折叠换行、不截断尾部。没有 TTY、取消、审批通道异常都按拒绝处理；无 TTY 时不会去读 stdin，避免把管道里的下一行任务当成审批答案。审批等待同时绑定 `AbortSignal` 与 readline 的 `close`：Ctrl-C 会立即结束等待并走取消链（退出码 130），EOF 会明确结束等待并按拒绝处理，不会卡在 `question()` 上。REPL 和审批共用同一个 readline，并按顺序一次只等一行；如果任务运行期间已经排着下一行输入，这次 shell 会被拒绝，那一行留给下一轮任务，不会被当成审批答案。
+`workspace-write` 下的 `shell` 每次都要人工确认：输入 `y` / `yes` 允许这一次，其他输入（包括空行）都拒绝。**如果等待审批期间切换过权限（即使随后切回），本次批准会作废，必须重新请求授权。**审批界面完整展示待执行命令与实际 cwd：多行命令逐行加 `|` 前缀，控制字符与 bidi 控制字符转义，不折叠换行、不截断尾部。没有 TTY、取消、审批通道异常都按拒绝处理；无 TTY 时不会去读 stdin，避免把管道里的下一行任务当成审批答案。审批等待同时绑定 `AbortSignal` 与 readline 的 `close`：Ctrl-C 会立即结束等待并走取消链（退出码 130），EOF 会明确结束等待并按拒绝处理，不会卡在 `question()` 上。REPL 和审批共用同一个 readline，并按顺序一次只等一行；如果任务运行期间已经排着下一行输入，这次 shell 会被拒绝，那一行留给下一轮任务，不会被当成审批答案。
 
 **Permission 不是 Sandbox。** 它只决定一次 Tool call 放不放行，不改变进程的操作系统权限：没有容器、没有用户切换、没有只读挂载。`workspace-write` 的 `shell` 一旦被批准，子进程就和启动它的人同权，可以 `cd ..` 走出工作区；`read` / `write` 的路径守卫拦的是模型手滑，不是恶意代码（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）。真隔离得靠容器、虚拟机、独立用户或只读挂载，不能靠 Permission 的字符串判断。取舍见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)。
 

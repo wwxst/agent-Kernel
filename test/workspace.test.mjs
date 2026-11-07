@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -17,6 +17,70 @@ test("write 后 read 能拿回原文，父目录自动创建", async () => {
 
     assert.equal(await workspace.write("nested/dir/hello.txt", "hello\n"), "wrote 6 chars to nested/dir/hello.txt");
     assert.equal(await workspace.read("nested/dir/hello.txt"), "hello\n");
+  });
+});
+
+test("取消时 write 尚在校验路径：不创建文件也不提交内容", async () => {
+  await withWorkspace(async (root) => {
+    const controller = new AbortController();
+    const workspace = new Workspace({ root, signal: controller.signal });
+
+    const writing = workspace.write("nested/aborted.txt", "should-not-be-written");
+    controller.abort(new Error("stop"));
+    await assert.rejects(writing, /cancelled before file write/);
+    await assert.rejects(() => readFile(path.join(root, "nested", "aborted.txt")), /ENOENT/);
+  });
+});
+
+test("取消时 edit 尚在异步校验：原文件内容保持不变", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "safe.txt"), "before\n");
+    const controller = new AbortController();
+    const workspace = new Workspace({ root, signal: controller.signal });
+
+    const editing = workspace.edit("safe.txt", "before", "after");
+    controller.abort(new Error("stop"));
+    await assert.rejects(editing, /cancelled before file write/);
+    assert.equal(await readFile(path.join(root, "safe.txt"), "utf8"), "before\n");
+  });
+});
+
+test("工作区内部的符号链接别名仍可读写编辑，使用真实目标路径", async () => {
+  await withWorkspace(async (root) => {
+    await mkdir(path.join(root, "real"));
+    await symlink(path.join(root, "real"), path.join(root, "alias"), "junction");
+    const workspace = new Workspace({ root });
+
+    await workspace.write("alias/note.txt", "hello\n");
+    assert.equal(await workspace.read("alias/note.txt"), "hello\n");
+    await workspace.edit("alias/note.txt", "hello", "world");
+
+    assert.equal(await readFile(path.join(root, "real", "note.txt"), "utf8"), "world\n");
+  });
+});
+
+test("写入期间链接别名被改向工作区外：不得修改外部文件", async () => {
+  await withWorkspace(async (root) => {
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-race-outside-"));
+    const inner = path.join(root, "real");
+    const alias = path.join(root, "alias");
+    await mkdir(inner);
+    await writeFile(path.join(outside, "note.txt"), "untouched\n");
+    await symlink(inner, alias, "junction");
+    const workspace = new Workspace({ root });
+
+    try {
+      const pending = workspace.write("alias/note.txt", "inside only\n");
+      // 在异步路径校验与真正写入的窗口切换别名；允许操作拒绝或写入原真实目录。
+      await unlink(alias);
+      await symlink(outside, alias, "junction");
+      await pending.catch((error) => {
+        assert.match(String(error), /path escapes workspace|ENOENT|ELOOP/);
+      });
+      assert.equal(await readFile(path.join(outside, "note.txt"), "utf8"), "untouched\n");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 

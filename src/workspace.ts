@@ -14,8 +14,10 @@
  */
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { constants } from "node:fs";
 import type { Dir } from "node:fs";
-import { lstat, mkdir, opendir, open, realpath, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, opendir, open, realpath, stat } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
 import { Worker } from "node:worker_threads";
 import type { Tool } from "./types.ts";
@@ -81,6 +83,13 @@ function toPosix(relativePath: string): string {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+
+/**
+ * POSIX 的 O_NOFOLLOW 防止校验后最后一段路径被换成符号链接。
+ * Windows 不支持此 open 标志，因此依赖真实路径与再次校验。
+ * 已知边界：恶意并发替换父目录仍需要 OS 级隔离或 dirfd/openat 系列 API 才能彻底封闭。
+ */
+const NO_FOLLOW_FILE = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
 
 export interface WorkspaceOptions {
   /** 工作区根目录，必须是绝对路径。文件工具的相对路径都相对它解析 —— 它不是安全边界（见 ADR-0008）。 */
@@ -150,8 +159,7 @@ export class Workspace {
    * 就能把进程撑爆。上限必须落在「读进来多少」，而不是「返回多少」。
    */
   async read(requested: string): Promise<string> {
-    const file = this.resolve(requested);
-    await this.assertInsideWorkspace(file, requested);
+    const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
 
     const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
     const cut = truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
@@ -160,10 +168,22 @@ export class Workspace {
 
   /** 创建或覆盖文件，父目录自动补齐。返回一行给模型看的结果摘要。 */
   async write(requested: string, content: string): Promise<string> {
-    const file = this.resolve(requested);
-    await this.assertInsideWorkspace(file, requested);
+    // 先换成真实路径：工作区里的别名链接后来被替换，也不再沿原别名进行写入。
+    const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
+    this.stopIfCancelledBeforeWrite();
     await mkdir(path.dirname(file), { recursive: true });
-    await writeFile(file, content, "utf8");
+    const target = await this.assertInsideWorkspace(file, requested);
+    this.stopIfCancelledBeforeWrite();
+
+    // 不在 open 时截断；打开句柄后还有一次取消检查，POSIX 同时拒绝末端链接替换。
+    const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | NO_FOLLOW_FILE);
+    try {
+      this.stopIfCancelledBeforeWrite();
+      await handle.truncate(0);
+      await handle.writeFile(content, "utf8");
+    } finally {
+      await handle.close();
+    }
     return `wrote ${content.length} chars to ${requested}`;
   }
 
@@ -177,53 +197,55 @@ export class Workspace {
    * 不归一，「看起来一模一样」的片段会找不到；归一之后写入仍沿用文件自己的行尾。
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
-    const file = this.resolve(requested);
-    await this.assertInsideWorkspace(file, requested);
+    const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
     if (oldString === "") {
       // 中文对照：old_string 不能是空串。
       throw new Error("old_string must not be empty");
     }
 
-    // 编辑要整文件读进来做替换，所以先划一条上限：
-    // 超过它的文件不该走 edit，让模型改用 shell，或者干脆拆开处理。
-    // preserveBom：edit 会把文本写回，BOM 必须留在文件里；read/grep 只展示，默认剥掉。
-    const { text: before, truncated } = await readTextUpTo(
-      file,
-      MAX_EDIT_FILE_BYTES,
-      Buffer.alloc(MAX_EDIT_FILE_BYTES + 1),
-      { preserveBom: true },
-    );
-    if (truncated) {
-      // 中文对照：文件超过 {n} 字节，太大，不适合整文件编辑；请改用 shell。
-      throw new Error(`file is larger than ${MAX_EDIT_FILE_BYTES} bytes; edit it through shell instead`);
-    }
+    // 用同一文件句柄完成读取与写回：末端路径在两次操作之间换成链接，
+    // 也不会把原文件的内容意外写到另一文件。真正修改前仍要检查取消。
+    const handle = await open(file, constants.O_RDWR | NO_FOLLOW_FILE);
+    try {
+      // 编辑要整文件读进来做替换，因此保留上限和 BOM。
+      const { text: before, truncated } = await readTextUpToHandle(
+        handle,
+        MAX_EDIT_FILE_BYTES,
+        Buffer.alloc(MAX_EDIT_FILE_BYTES + 1),
+        { preserveBom: true },
+      );
+      if (truncated) {
+        // 中文对照：文件超过 {n} 字节，太大，不适合整文件编辑；请改用 shell。
+        throw new Error(`file is larger than ${MAX_EDIT_FILE_BYTES} bytes; edit it through shell instead`);
+      }
 
-    const toStyle = (text: string) =>
-      before.includes("\r\n") ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
+      const toStyle = (text: string) =>
+        before.includes("\r\n") ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
 
-    const needle = toStyle(oldString);
-    // 按 1 个字符推进地数：重叠的命中（比如 "aaa" 里的 "aa"）也要算进来，
-    // 否则「唯一命中」的判断会漏掉重叠，替换掉第一个就算成功。
-    let occurrences = 0;
-    for (let at = before.indexOf(needle); at !== -1; at = before.indexOf(needle, at + 1)) {
-      occurrences++;
-    }
-    if (occurrences === 0) {
-      // 中文对照：在 {文件} 里找不到 old_string。
-      throw new Error(`old_string not found in ${requested}`);
-    }
-    if (occurrences > 1) {
-      // 中文对照：old_string 在 {文件} 里出现了 {n} 次；把上下文写长一点再试。
-      throw new Error(`old_string appears ${occurrences} times in ${requested}; include more surrounding text`);
-    }
+      const needle = toStyle(oldString);
+      // 按 1 个字符推进地数，重叠的命中也算进来：避免改错片段。
+      let occurrences = 0;
+      for (let at = before.indexOf(needle); at !== -1; at = before.indexOf(needle, at + 1)) {
+        occurrences++;
+      }
+      if (occurrences === 0) {
+        throw new Error(`old_string not found in ${requested}`);
+      }
+      if (occurrences > 1) {
+        throw new Error(`old_string appears ${occurrences} times in ${requested}; include more surrounding text`);
+      }
 
-    const at = before.indexOf(needle);
-    const after = before.slice(0, at) + toStyle(newString) + before.slice(at + needle.length);
-    await writeFile(file, after, "utf8");
-    // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
-    return `edited ${requested} (${before.length} → ${after.length} chars)`;
+      const at = before.indexOf(needle);
+      const after = before.slice(0, at) + toStyle(newString) + before.slice(at + needle.length);
+      this.stopIfCancelledBeforeWrite();
+      await handle.truncate(0);
+      await handle.writeFile(after, "utf8");
+      // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
+      return `edited ${requested} (${before.length} → ${after.length} chars)`;
+    } finally {
+      await handle.close();
+    }
   }
-
   /**
    * 列目录：类型、字节数、名称，按行排好。
    *
@@ -235,8 +257,7 @@ export class Workspace {
    * 模型会把「没列出来」当成「不存在」。
    */
   async list(requested: string): Promise<string> {
-    const dir = this.resolve(requested);
-    await this.assertInsideWorkspace(dir, requested);
+    const dir = await this.assertInsideWorkspace(this.resolve(requested), requested);
 
     const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
     let scanned = 0;
@@ -547,7 +568,7 @@ export class Workspace {
    * 目标还不存在时（比如 write 新文件），沿父目录一路往上找第一个存在的路径再比 ——
    * 谁想在链接目录里新建文件，也一样得先过这道关。
    */
-  private async assertInsideWorkspace(absolute: string, requested: string): Promise<void> {
+  private async assertInsideWorkspace(absolute: string, requested: string): Promise<string> {
     const rootReal = await this.realRoot();
 
     let probe = absolute;
@@ -577,6 +598,15 @@ export class Workspace {
       // 中文对照：路径跑出了工作区：{原始路径}
       throw new Error(`path escapes workspace: ${requested}`);
     }
+
+    // 已存在的路径返回 realpath；尚未创建的文件拼回最接近的真实父目录。
+    // 后续 I/O 使用此路径，而不是再解析模型原始传入的链接别名。
+    return path.resolve(real, path.relative(probe, absolute));
+  }
+
+  /** 最后的副作用提交点必须重新读取 signal，不能只在 Run/Tool 开始时检查。 */
+  private stopIfCancelledBeforeWrite(): void {
+    if (this.signal?.aborted) throw new Error("cancelled before file write");
   }
 
   /** 工作区根目录的真实路径，只算一次。 */
@@ -617,24 +647,32 @@ async function readTextUpTo(
   buffer: Buffer,
   options: { preserveBom?: boolean } = {},
 ): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
-  const handle = await open(file, "r");
+  const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE);
   try {
-    const bytesRead = await fillBuffer(
-      (target, offset, length, position) => handle.read(target, offset, length, position),
-      buffer,
-    );
-    const truncated = bytesRead > limit;
-    // 截断点可能正好切在一个多字节字符中间：stream 模式把不完整的那截留在解码器里，
-    // 不吐一个 U+FFFD 出来冒充「文件里真的有这个字符」。
-    // TextDecoder 默认会把开头的 BOM 吃掉；edit 需要保留它，否则写回时会静默改掉编码标记。
-    const text = new TextDecoder("utf-8", { ignoreBOM: options.preserveBom === true }).decode(
-      buffer.subarray(0, Math.min(bytesRead, limit)),
-      { stream: truncated },
-    );
-    return { text, truncated, bytesRead };
+    return await readTextUpToHandle(handle, limit, buffer, options);
   } finally {
     await handle.close();
   }
+}
+
+/** edit 读写复用一个已校验的文件句柄，杜绝读完后再次按路径打开另一个文件。 */
+async function readTextUpToHandle(
+  handle: FileHandle,
+  limit: number,
+  buffer: Buffer,
+  options: { preserveBom?: boolean } = {},
+): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
+  const bytesRead = await fillBuffer(
+    (target, offset, length, position) => handle.read(target, offset, length, position),
+    buffer,
+  );
+  const truncated = bytesRead > limit;
+  // TextDecoder 默认剥开头的 BOM；edit 需要保留它。
+  const text = new TextDecoder("utf-8", { ignoreBOM: options.preserveBom === true }).decode(
+    buffer.subarray(0, Math.min(bytesRead, limit)),
+    { stream: truncated },
+  );
+  return { text, truncated, bytesRead };
 }
 
 /**
