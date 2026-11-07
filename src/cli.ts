@@ -300,7 +300,7 @@ interface AgentCallbacks {
  * signal 是这次会话唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
  * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
  *
- * `announce: false` 只给 TUI 用：状态栏已经显示模型/工作区/权限，不再往运行记录里
+ * `announce: false` 只给 TUI 用：TUI 头部/页脚已经显示模型/工作区/权限，不再往运行记录里
  * 打一遍启动 banner。
  */
 function createAgent(
@@ -570,7 +570,7 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
  *
  * TUI 是外壳，不是内核：Transcript、预算、工具配对仍由 Agent 管；审批仍由 Permission 决定。
  * `--tui` 可以带一个初始任务（先跑完再等输入），之后每一行输入是一次 Run。
- * `/reset` 换 Agent 但不换 Permission；`/permission` 切换后状态栏和下一次请求同时生效。
+ * `/reset` 换 Agent 但不换 Permission；`/permission` 切换后页脚和下一次请求同时生效。
  */
 async function tuiSession(config: Config, controller: AbortController, initialTask?: string): Promise<void> {
   const signal = controller.signal;
@@ -583,6 +583,14 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     permission: config.permission,
     controller,
     interactive,
+    // Shift+Tab 只发起模式切换；Permission 是唯一的执行授权源。
+    // Agent 每次请求动态读取此 Permission，因此下一轮模型提示自动同步。
+    onPermissionChange: (mode) => {
+      permission.setMode(mode);
+      tui.setPermission(mode);
+    },
+    // 短对话贴近输入框，内容多时再停靠底部；旧的固定布局仍可供兼容测试。
+    flowInput: true,
     columns: process.stdout.columns,
     rows: process.stdout.rows,
   });
@@ -637,13 +645,13 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     } catch (error) {
       // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
       tui.finishAssistant("");
-      tui.finishTurn(agent.stats, agent.sessionStats, { failed: true });
+      tui.finishTurn(agent.stats, agent.sessionStats, { failed: true, cancelled: signal.aborted });
       if (signal.aborted) {
-        tui.logLine(`[agent] cancelled: ${describeError(error)}`);
+        tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeError(error)}`);
         return false;
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
-      tui.logLine(`[agent] turn failed: ${describeError(error)}`);
+      tui.logError(`${tui.uiText("[agent] turn failed:", "[agent] 任务失败：")} ${describeError(error)}`);
       return true;
     }
   };
@@ -662,31 +670,34 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 
       if (command.kind === "exit") break;
       if (command.kind === "help") {
-        tui.logLine(REPL_HELP);
+        tui.logLine(tui.helpText(PERMISSION_MODE_LIST));
         continue;
       }
       if (command.kind === "reset") {
         agent = newAgent();
-        tui.logLine("(session reset)");
+        tui.logLine(tui.uiText("(session reset)", "（会话已重置）"));
         tui.setStats(agent.sessionStats);
         continue;
       }
       if (command.kind === "permission") {
         if (command.value !== undefined) {
           // 中文对照：未知权限模式 "{值}"（可用：…）
-          tui.logLine(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
+          tui.logError(tui.uiText(
+            `unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`,
+            `未知权限模式 "${command.value}"（可选：${PERMISSION_MODE_LIST}）`,
+          ));
         } else if (command.mode !== undefined) {
           permission.setMode(command.mode);
           tui.setPermission(command.mode);
-          tui.logLine(`permission: ${permission.mode}`);
+          tui.logLine(tui.uiText(`permission: ${permission.mode}`, `权限：${permission.mode}`));
         } else {
-          tui.logLine(`permission: ${permission.mode}`);
+          tui.logLine(tui.uiText(`permission: ${permission.mode}`, `权限：${permission.mode}`));
         }
         continue;
       }
 
       if (input === "") continue;
-      // 固定布局会清掉 readline 的回显，Tui 自己补 `you:`；行式聊天默认不重复。
+      // 固定布局会清掉 readline 的回显，Tui 自己补 `❯ task`；行式聊天默认不重复。
       keepGoing = await runTask(input);
     }
   } finally {
