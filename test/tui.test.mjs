@@ -123,15 +123,15 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  const first = lastRow(ui.text(), 7);
+  const first = lastRow(ui.text(), 8);
   assert.match(first, /Thinking\.\.\. \(0s\)/);
-  assert.match(lastRow(ui.text(), 8), /^  [└+] Ctrl-C to cancel$/);
+  assert.match(lastRow(ui.text(), 9), /^  [└+] Ctrl-C to cancel$/);
   t.mock.timers.tick(200);
-  assert.notEqual(lastRow(ui.text(), 7), first);
+  assert.notEqual(lastRow(ui.text(), 8), first);
   ui.tui.assistantDelta("hello");
   t.mock.timers.tick(1000);
-  assert.match(lastRow(ui.text(), 7), /hello/);
-  assert.doesNotMatch(lastRow(ui.text(), 8), /Ctrl-C/);
+  assert.match(lastRow(ui.text(), 8), /hello/);
+  assert.doesNotMatch(lastRow(ui.text(), 9), /Ctrl-C/);
 });
 
 test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息不左右跳动", async (t) => {
@@ -141,10 +141,10 @@ test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  const detailColumn = lastRow(ui.text(), 7).indexOf("(");
+  const detailColumn = lastRow(ui.text(), 8).indexOf("(");
   let previousSymbol = "";
   for (let frame = 0; frame < 5; frame++) {
-    const line = lastRow(ui.text(), 7);
+    const line = lastRow(ui.text(), 8);
     assert.match(line, /Thinking\.\.\. \(0s\)(?: │ .+)?$/);
     assert.equal(line.indexOf("("), detailColumn);
     const symbol = line.split(" ")[0];
@@ -168,7 +168,7 @@ test("TUI：现代终端等待动画所有帧使用文本符号，不触发彩�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   for (let frame = 0; frame < 4; frame++) {
-    const symbol = lastRow(ui.text(), 7).split(" ")[0];
+    const symbol = lastRow(ui.text(), 8).split(" ")[0];
     assert.equal([...symbol].length, 1);
     assert.doesNotMatch(symbol, /\p{Emoji}/u, "等待符号不能被终端回退成彩色 emoji");
     t.mock.timers.tick(200);
@@ -214,8 +214,8 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   ui.tui.beginTurn("second");
   t.mock.timers.tick(1000);
   ui.tui.finishTurn({ ...run, toolCalls: 0 }, session, { failed: true });
-  assert.match(lastRow(ui.text(), 11), /Failed · after 1s/);
-  assert.doesNotMatch(lastRow(ui.text(), 11), /after 4s/);
+  assert.match(lastRow(ui.text(), 12), /Failed · after 1s/);
+  assert.doesNotMatch(lastRow(ui.text(), 12), /after 4s/);
 });
 
 test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条消息仍贴顶", async (t) => {
@@ -231,8 +231,8 @@ test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条�
   ui.tui.finishTurn(run, session, { failed: false });
   ui.tui.beginTurn("second");
   assert.match(lastRow(ui.text(), 6), /Completed · in 2s/);
-  assert.equal(lastRow(ui.text(), 8), "");
-  assert.match(lastRow(ui.text(), 9), /^(?:❯|>) second/);
+  assert.equal(lastRow(ui.text(), 9), "");
+  assert.match(lastRow(ui.text(), 10), /^(?:❯|>) second/);
 });
 
 test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
@@ -323,13 +323,13 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
-  assert.match(lastRow(ui.text(), 8), /Ctrl-C to cancel/);
+  assert.match(lastRow(ui.text(), 9), /Ctrl-C to cancel/);
   t.mock.timers.tick(2000);
   assert.match(ui.text(), /Thinking\.\.\. \(2s\)/);
   ui.tui.assistantDelta("hello");
   t.mock.timers.tick(3000);
-  assert.match(lastRow(ui.text(), 7), /hello/);
-  assert.doesNotMatch(lastRow(ui.text(), 7), /Thinking/, "正文后不再残留等待态");
+  assert.match(lastRow(ui.text(), 8), /hello/);
+  assert.doesNotMatch(lastRow(ui.text(), 8), /Thinking/, "正文后不再残留等待态");
 });
 
 test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) => {
@@ -501,9 +501,9 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   ui.output.emit("resize");
   await tick();
   assert.match(lastRow(ui.text(), 4), /TASK_NARROW/);
-  assert.match(lastRow(ui.text(), 7), /已读取文件|Read files/);
-  assert.match(lastRow(ui.text(), 8), /(?:✓|\+) Read a.txt/);
-  assert.match(lastRow(ui.text(), 9), /Received 1 line/);
+  assert.match(lastRow(ui.text(), 8), /已读取文件|Read files/);
+  assert.match(lastRow(ui.text(), 9), /(?:✓|\+) Read a.txt/);
+  assert.match(lastRow(ui.text(), 10), /Received 1 line/);
 });
 
 test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
@@ -1065,12 +1065,12 @@ test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在�
   ui.tui.beginTurn("hello");
   await tick();
   assert.match(lastRow(ui.text(), 4), /hello/);
-  assert.match(lastRow(ui.text(), 9), /^(?:❯|>)\s*$/, "用户提问后输入框应在对话下方");
+  assert.match(lastRow(ui.text(), 10), /^(?:❯|>)\s*$/, "用户提问后输入框应在对话下方");
   ui.tui.assistantDelta("reply");
   ui.tui.finishAssistant("");
   await tick();
-  assert.match(lastRow(ui.text(), 7), /reply/);
-  assert.match(lastRow(ui.text(), 11), /^(?:❯|>)\s*$/, "模型短回复后输入框跟随内容");
+  assert.match(lastRow(ui.text(), 8), /reply/);
+  assert.match(lastRow(ui.text(), 12), /^(?:❯|>)\s*$/, "模型短回复后输入框跟随内容");
   assert.doesNotMatch(lastRow(ui.text(), 30), /(?:❯|>)/, "短会话不能仍钉在最底部");
 });
 
