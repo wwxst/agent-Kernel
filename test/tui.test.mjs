@@ -1597,7 +1597,7 @@ test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示�
   assert.match(result, /再查看修复结果/);
   assert.match(result, /已读取文件、已搜索代码、已修改代码等/);
   assert.match(result, /(?:↳|\+) 已读取文件/);
-  assert.equal((result.match(/(?:↳|\+) /g) ?? []).length, 2, "每段阶段说明各自保留摘要（兼容 Windows ASCII 降级）");
+  assert.equal((result.match(/^  (?:↳|\+) 已/gm) ?? []).length, 2, "只计活动摘要，避免把 Windows 的 + 完成符号算进去");
   assert.match(result, /最终结果已经整理好/);
   assert.doesNotMatch(result, /Read package\.json/, "结束后默认折叠工具明细");
 });
