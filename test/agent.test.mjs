@@ -269,6 +269,68 @@ test("进程树清理未确认：禁止同批后续工具，记录完整配对�
   assert.equal(agent.stats.toolCalls, 1);
 });
 
+test("展示回调可改自己的工具对象，不能篡改执行参数或 transcript 配对", async () => {
+  let executed = "";
+  const tool = {
+    ...echoTool(),
+    run: async (args) => { executed = String(args.value); return "ok"; },
+  };
+  const agent = new Agent({
+    llm: createScriptedChat([callTool("stable-id", "echo", { value: "original" }), finalReply("done")]),
+    tools: makeRegistry([tool]),
+    onToolCall: (call) => {
+      call.id = "spoof-id";
+      call.function.name = "unknown";
+      call.function.arguments = JSON.stringify({ value: "tampered" });
+    },
+    onToolResult: (call) => { call.id = "changed-after-run"; },
+  });
+
+  const reply = await agent.run("do it");
+  assert.equal(reply.content, "done");
+  assert.equal(executed, "original");
+  const assistant = agent.transcript.find((message) => message.role === "assistant" && message.tool_calls?.length);
+  const result = agent.transcript.find((message) => message.role === "tool");
+  assert.equal(assistant.tool_calls[0].id, "stable-id");
+  assert.equal(assistant.tool_calls[0].function.arguments, '{"value":"original"}');
+  assert.equal(result.tool_call_id, "stable-id");
+  assert.equal(result.content, "ok");
+});
+
+test("模型在取消后仍返回完整答案：只记实际 usage，不提交成功的 assistant", async () => {
+  const controller = new AbortController();
+  const client = { async chat() {
+    controller.abort(new Error("user canceled"));
+    return { message: finalReply("should not succeed"), usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 } };
+  } };
+  const agent = new Agent({ llm: client, tools: makeRegistry([]), signal: controller.signal });
+
+  await assert.rejects(() => agent.run("do it"), /cancelled/);
+  assert.equal(agent.stats.requests, 1);
+  assert.equal(agent.stats.usage.totalTokens, 5);
+  assert.deepEqual(roles(agent.transcript), ["system", "user"]);
+});
+
+test("onToolCall 回调触发取消：工具不执行，调用与结果仍配对", async () => {
+  const controller = new AbortController();
+  let executed = false;
+  const tool = {
+    ...echoTool(),
+    run: async () => { executed = true; return "unexpected"; },
+  };
+  const agent = new Agent({
+    llm: createScriptedChat([callTool("c1", "echo", { value: "x" })]),
+    tools: makeRegistry([tool]),
+    signal: controller.signal,
+    onToolCall: () => controller.abort(new Error("stop now")),
+  });
+
+  await assert.rejects(() => agent.run("task"), /cancelled/);
+  assert.equal(executed, false);
+  assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool"]);
+  assert.match(agent.transcript.at(-1).content, /ERROR: not run: task cancelled/);
+});
+
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {
   const defaults = createScriptedChat([finalReply("ok")]);
   await new Agent({ llm: defaults, tools: makeRegistry([]) }).run("task");

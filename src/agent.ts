@@ -431,6 +431,8 @@ export class Agent {
       this.refreshSystemPrompt();
       // 请求真正发出前给 TUI 一个「开始思考」的信号；失败/取消也要由调用方清掉。
       this.notifyObserver(this.onRequestStart, step);
+      // 展示回调可能同步触发取消，不能在取消后继续提交模型请求。
+      this.stopIfCancelled();
       this.runRequests++;
       this.sessionRequests++;
       let response: ChatResponse;
@@ -448,9 +450,11 @@ export class Agent {
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：
       //    带 tool_calls 的 assistant 消息必须排在对应的 tool 结果之前，
       //    否则下一轮请求会被 API 拒绝（结果找不到「上家」）。
+      // 已产生的账单仍须记录，但取消后返回的成功响应不应进入 Transcript。
+      this.recordUsage(response.usage);
+      this.stopIfCancelled();
       const message = response.message;
       this.messages.push(message);
-      this.recordUsage(response.usage);
 
       const calls = message.tool_calls ?? [];
       if (calls.length === 0) {
@@ -494,7 +498,10 @@ export class Agent {
         const call = calls[index];
         // 「要跑了」先于「跑完了」：TUI 靠这个回调把工具调用写进运行记录，
         // 长命令执行期间也看得见它在干什么。这里没有 await，不会给取消留出新的缝隙。
-        this.notifyObserver(this.onToolCall, call);
+        // 观察者只收到副本：改动工具名、JSON 参数或 id 都不能改变真实调用和消息配对。
+        this.notifyObserver(this.onToolCall, structuredClone(call));
+        // 同步回调若触发取消，也不能在同一个事件循环内继续启动工具。
+        this.stopIfCancelled(calls.slice(index));
         let result: string;
         try {
           result = await this.tools.execute(call);
@@ -504,14 +511,14 @@ export class Agent {
           this.runToolCalls++;
           this.sessionToolCalls++;
           this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
-          this.notifyObserver(this.onToolResult, call, `ERROR: ${error.message}`);
+          this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
           throw error;
         }
         this.runToolCalls++;
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
-        this.notifyObserver(this.onToolResult, call, result);
+        this.notifyObserver(this.onToolResult, structuredClone(call), result);
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
