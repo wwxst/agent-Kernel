@@ -140,6 +140,9 @@ export function approvalGate(
 export class Permission {
   private current: PermissionMode;
 
+  /** 每次实际切换权限都递增：审批期间撤权后即使切回来，旧批准也不能复活。 */
+  private modeVersion = 0;
+
   private readonly approve?: PermissionApprover;
 
   constructor(mode: PermissionMode = DEFAULT_PERMISSION_MODE, approve?: PermissionApprover) {
@@ -152,7 +155,10 @@ export class Permission {
   }
 
   setMode(mode: PermissionMode): void {
-    this.current = mode;
+    if (this.current !== mode) {
+      this.current = mode;
+      this.modeVersion++;
+    }
   }
 
   /**
@@ -201,8 +207,15 @@ export class Permission {
       };
     }
 
+    // 审批是异步的：等待用户回答时，别处可能把 workspace-write 改成 read-only。
+    // 记住版本而非仅检查最终模式：切走再切回，也必须重新请求授权。
+    const approvedUnderVersion = this.modeVersion;
     try {
-      if ((await this.approve(request)) === true) return { allowed: true };
+      const approved = await this.approve(request);
+      if (this.modeVersion !== approvedUnderVersion || this.current !== "workspace-write") {
+        return { allowed: false, reason: "permission mode changed during approval; denied" };
+      }
+      if (approved === true) return { allowed: true };
       return { allowed: false, reason: `user denied tool "${SHELL_TOOL}"` };
     } catch (error) {
       // 审批通道自己坏了（readline 关闭、TTY 消失）也按拒绝处理：
