@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui } from "../src/tui.ts";
+import { Tui, detectUiLanguage } from "../src/tui.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
 function tick() {
@@ -1341,4 +1341,85 @@ test("TUI Shift+Tab：审批中、模型运行中和普通 Tab 都不能改变�
   assert.deepEqual(modes, [], "普通 Tab 不是 Shift+Tab");
   ui.input.write("\r");
   await task;
+});
+
+
+test("TUI 语言识别：忽略路径、文件名和代码，按最近一次用户任务自动判断", () => {
+  assert.equal(detectUiLanguage("请读取 README.md 并总结这个仓库"), "zh");
+  assert.equal(detectUiLanguage("请检查 src/agent.ts 并修复问题"), "zh");
+  assert.equal(detectUiLanguage("Summarize the README.md in English, please"), "en");
+  assert.equal(detectUiLanguage("Explain the Chinese 中文 words quickly"), "en");
+  assert.equal(detectUiLanguage("请使用 TypeScript 进行修改"), "zh");
+  assert.equal(detectUiLanguage("123?!", "zh"), "zh", "无可判断语言时保持上一次用户语言");
+});
+
+test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Thinking 始终是英文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  ui.tui.beginTurn("请读取 README.md 并总结仓库");
+  assert.match(ui.text(), /0 次请求 · 0 tokens/);
+  ui.tui.setThinking(true);
+  assert.match(ui.text(), /Thinking\.\.\. \(0s\)/, "Thinking... 必须保持英文不变");
+  assert.match(ui.text(), /Ctrl-C 取消/);
+
+  const read = { id: "localized-read", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } };
+  ui.tui.toolCall(read);
+  assert.match(ui.text(), /读取 README\.md/);
+  ui.tui.toolResult(read, "line 1\nline 2");
+  assert.match(ui.text(), /收到 2 行/);
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+  pending.catch(() => {});
+  assert.match(ui.text(), /Shell 权限审批/);
+  assert.match(ui.text(), /工作目录： C:\\work\\repo/);
+  assert.match(ui.text(), /命令：/);
+  assert.match(ui.text(), /是否允许执行？/);
+  assert.match(ui.text(), /1\. 是，仅允许本次/);
+  assert.match(ui.text(), /2\. 否（默认）/);
+  assert.match(ui.text(), /Esc 取消/);
+  assert.match(ui.text(), /echo safe/, "Shell 命令保持原文");
+  ui.input.write("\r");
+  assert.equal(await pending, false);
+  assert.match(ui.text(), /已拒绝/);
+
+  ui.tui.beginTurn("Please read README.md and summarize this project in English");
+  assert.match(ui.text(), /0 requests · 0 tokens/);
+  assert.equal(ui.tui.uiText("Allowed once", "已允许本次执行"), "Allowed once");
+  ui.tui.setThinking(true);
+  assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
+  assert.match(ui.text(), /Ctrl-C to cancel/);
+
+  const englishRead = { ...read, id: "english-read" };
+  ui.tui.toolCall(englishRead);
+  ui.tui.toolResult(englishRead, "one\ntwo");
+  assert.match(ui.text(), /Read README\.md/);
+  assert.match(ui.text(), /Received 2 lines/);
+});
+
+test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 /permission 反馈改变语言", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  ui.tui.beginTurn("请检查这个文件并解释错误");
+  const modelReply = "The model answered in English: Hello, world!";
+  ui.tui.assistantDelta(modelReply);
+  ui.tui.finishAssistant(modelReply);
+  assert.match(ui.text(), /The model answered in English: Hello, world!/, "不得翻译模型回复");
+
+  const call = { id: "localized-error", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "ERROR: file not found: missing.txt");
+  assert.match(ui.text(), /file not found: missing\.txt/, "工具错误必须原样保留");
+
+  assert.equal(ui.tui.uiText("permission: workspace-write", "权限：workspace-write"), "权限：workspace-write");
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /命令：\/exit/);
+  ui.tui.setPermission("read-only");
+  assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
+
+  ui.tui.beginTurn("Please explain the error in English");
+  assert.equal(ui.tui.uiText("permission: read-only", "权限：read-only"), "permission: read-only");
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /commands: \/exit/);
 });
