@@ -709,26 +709,48 @@ export async function fillBuffer(
  * 停下来的那一刻宁可「只杀掉外层 shell」，也不能抛出一个没人接的异常把整个进程带走。
  * 返回 Promise 而不是 void，是因为调用方必须等它 —— 先 resolve 再清理，等于假取消。
  */
-function terminateTree(child: ChildProcess): Promise<void> {
+/**
+ * 故障注入只用于确定性覆盖 Windows taskkill 失败路径，不暴露给 WorkspaceOptions。
+ * 测试在 Linux 上也能模拟 win32 的 taskkill 子进程事件，避免只靠 Windows CI 偶然触发失败。
+ */
+export function terminateTree(
+  child: ChildProcess,
+  options: {
+    platform?: NodeJS.Platform;
+    spawnTaskkill?: (pid: number) => Pick<ChildProcess, "once">;
+  } = {},
+): Promise<void> {
   const pid = child.pid;
   if (pid === undefined) return Promise.resolve();
 
-  if (process.platform === "win32") {
+  if ((options.platform ?? process.platform) === "win32") {
     return new Promise((resolve) => {
-      // 不监听 'error' 的话，spawn 失败会变成未处理事件；非零退出则说明没杀成。
-      // 两种情况都回落到 child.kill()，至少把外层 shell 收掉。
-      const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-        windowsHide: true,
-        stdio: "ignore",
-      });
-      killer.on("error", () => {
-        child.kill();
+      // 异常降级只能保证尝试停止直接子进程；它不等价于成功清理整个进程树。
+      const fallback = () => {
+        try {
+          child.kill();
+        } catch {
+          // 子进程可能已经退出。不要让清理失败触发未处理异常。
+        }
+      };
+      let finished = false;
+      const complete = (fallbackNeeded: boolean) => {
+        if (finished) return;
+        finished = true;
+        if (fallbackNeeded) fallback();
         resolve();
-      });
-      killer.on("close", (code) => {
-        if (code !== 0) child.kill();
-        resolve();
-      });
+      };
+      try {
+        const killer = options.spawnTaskkill?.(pid) ?? spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore",
+        });
+        // Windows taskkill 启动失败和非零退出共享 fallback；'error' 后可能还会触发 'close'。
+        killer.once("error", () => complete(true));
+        killer.once("close", (code) => complete(code !== 0));
+      } catch {
+        complete(true);
+      }
     });
   }
 
@@ -736,7 +758,11 @@ function terminateTree(child: ChildProcess): Promise<void> {
     // detached 起进程组，负号 = 整组。
     process.kill(-pid, "SIGKILL");
   } catch {
-    child.kill("SIGKILL");
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      // PID 在进程组失败后也可能已退出，清理应当总是 settle。
+    }
   }
   return Promise.resolve();
 }

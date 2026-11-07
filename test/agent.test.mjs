@@ -104,7 +104,7 @@ test("没有工具调用就立刻收尾，不会多发请求", async () => {
   assert.equal(chat.requests.length, 1);
 });
 
-test("所有展示回调同步抛错：两条工具仍执行并完整配对，模型可继续收尾", async () => {
+test("四种展示回调同步抛错：两条工具仍执行并完整配对，模型可继续收尾", async () => {
   const scripted = createScriptedChat([
     {
       role: "assistant",
@@ -131,9 +131,7 @@ test("所有展示回调同步抛错：两条工具仍执行并完整配对，�
     llm: chat,
     tools: makeRegistry([echoTool()]),
     onRequestStart: broken,
-    onStepStart: broken,
     onToolCall: broken,
-    onToolStart: broken,
     onToolResult: broken,
     onDelta: broken,
   });
@@ -143,7 +141,7 @@ test("所有展示回调同步抛错：两条工具仍执行并完整配对，�
   assert.equal(reply.content, "recovered");
   assert.equal(agent.stats.requests, 2);
   assert.equal(agent.stats.toolCalls, 2);
-  assert.equal(agent.observerFailureCount, 12);
+  assert.equal(agent.observerFailureCount, 8, "每个请求/工具开始仅通知一次");
   assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "tool", "assistant"]);
   assert.deepEqual(
     agent.transcript.filter((message) => message.role === "tool").map((message) => [message.tool_call_id, message.content]),
@@ -214,7 +212,7 @@ test("onRequestStart 在每个 Step 的模型请求前各回调一次", async ()
   const agent = new Agent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
-    onRequestStart: () => events.push("request"),
+    onRequestStart: (step) => events.push(`request:${step}`),
     onToolCall: () => events.push("tool"),
     onToolResult: () => events.push("result"),
   });
@@ -222,7 +220,23 @@ test("onRequestStart 在每个 Step 的模型请求前各回调一次", async ()
   await agent.run("do it");
 
   // 第一个 Step 请求后调工具，第二个 Step 再请求一次。
-  assert.deepEqual(events, ["request", "tool", "result", "request"]);
+  assert.deepEqual(events, ["request:1", "tool", "result", "request:2"]);
+});
+
+test("onRequestStart step 在每个 Run 从 1 重新开始，而不是累积 Session 请求数", async () => {
+  const steps = [];
+  const chat = createScriptedChat([finalReply("one"), finalReply("two")]);
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([]),
+    onRequestStart: (step) => steps.push(step),
+  });
+
+  await agent.run("first");
+  await agent.run("second");
+
+  assert.deepEqual(steps, [1, 1]);
+  assert.equal(agent.sessionStats.requests, 2);
 });
 
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {

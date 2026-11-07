@@ -1677,6 +1677,56 @@ test("TUI：Ctrl+O 按阶段依次展开详情，审批键盘优先级不变", a
   assert.doesNotMatch(screenRows(ui, 45).join("\n"), /Read stage1\.txt/, "再次选中该组后单独收起");
 });
 
+test("TUI：组合字符、ZWJ emoji 与日文 IME 一次性提交保持输入原文，resize 不丢字", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, columns: 108, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  // IME 上屏是连续的一段文本，而不一定是逐键 ASCII；这里验证 readline 与 TUI 缓存协作。
+  const input = "日本語e\u0301👨‍👩‍👧🇯🇵";
+  const pending = ui.tui.readLine();
+  ui.input.write(input);
+  await tick();
+  assert.match(screenRows(ui, 35).join("\n"), /日本語e\u0301👨‍👩‍👧🇯🇵/);
+
+  // 光标恢复/窗口重排不得更改实际提交文本；精确字形宽度仍取决于终端。
+  ui.output.columns = 90;
+  ui.output.emit("resize");
+  await tick();
+  ui.input.write("\r");
+  assert.equal(await pending, input);
+  ui.tui.beginTurn(input);
+  ui.tui.assistantDelta("answer: " + input);
+  ui.tui.finishAssistant();
+  assert.match(screenRows(ui, 35).join("\n"), /日本語e\u0301👨‍👩‍👧🇯🇵/);
+});
+
+test("TUI：长会话超过 2000 条逻辑行后仍展示最新内容，退出恢复监听器与光标", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 100, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  for (let turn = 0; turn < 80; turn++) {
+    ui.tui.beginTurn("task-" + turn);
+    const chunk = Array.from({ length: 28 }, (_, line) => "turn-" + turn + "-line-" + line).join("\n");
+    ui.tui.assistantDelta(chunk);
+    ui.tui.finishAssistant();
+    ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
+      session, { failed: false });
+  }
+
+  const rows = screenRows(ui, 40).join("\n");
+  assert.match(rows, /turn-79-line-27/, "最新任务尾部必须可见");
+  assert.doesNotMatch(rows, /turn-0-line-0/, "最早的日志不能挤走当前内容");
+  assert.equal(ui.output.listenerCount("resize"), 1);
+  ui.tui.close();
+  assert.equal(ui.output.listenerCount("resize"), 0, "关闭后必须移除 resize 监听器");
+  const length = ui.text().length;
+  ui.output.emit("resize");
+  await tick();
+  assert.equal(ui.text().length, length, "关闭后 resize 不能重绘");
+});
+
 test("TUI：取消时尚未返回的工具不能在历史中继续显示运行中", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());

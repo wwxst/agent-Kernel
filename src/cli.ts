@@ -287,7 +287,7 @@ let activePresenter: RunPresenter | undefined;
  * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
  */
 interface AgentCallbacks {
-  onRequestStart?: () => void;
+  onRequestStart?: (step: number) => void;
   onToolCall?: (call: ToolCall) => void;
   onToolResult?: (call: ToolCall, result: string) => void;
   onDelta?: (text: string) => void;
@@ -342,15 +342,9 @@ function createAgent(
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
     signal,
-    // 默认实现打印每一步的工具调用，让你能「看见」循环在转；TUI 会换成运行记录里的两行。
-    onRequestStart: callbacks?.onRequestStart,
-    onStepStart: (step) => {
-      if (callbacks?.onRequestStart === undefined) activePresenter?.thinking(step);
-    },
-    onToolCall: callbacks?.onToolCall,
-    onToolStart: (call) => {
-      if (callbacks?.onToolCall === undefined) activePresenter?.toolStart(call);
-    },
+    // 每次模型请求/工具调用只有一个开始通知；CLI 和 TUI 共享事实，展示实现仍各自负责。
+    onRequestStart: callbacks?.onRequestStart ?? ((step) => activePresenter?.thinking(step)),
+    onToolCall: callbacks?.onToolCall ?? ((call) => activePresenter?.toolStart(call)),
     onToolResult: callbacks?.onToolResult ?? ((call, result) => activePresenter?.toolResult(call, result)),
     // CLI 显示在 RunPresenter；TUI 使用自己提供的流式回调。
     onDelta: callbacks?.onDelta ?? ((text) => activePresenter?.delta(text)),
