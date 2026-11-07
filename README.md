@@ -28,6 +28,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 
 - 默认 **compact**：每条工具一行摘要，按模型 Step 连续排列，方便快速扫过。
 - `npm run agent -- --details "任务"`：**detailed** 模式，每条工具结果单独展开多行；超过 4000 字符会标明省略字符数。也可在 `.env` 设 `AGENT_VIEW=detailed`。
+- CLI 与 TUI 都会将 Shell 非零退出、超时、取消标为工具失败；模型若随后修复并给出有效答复，整轮 Run 仍可成功。Agent 的展示回调为尽力通知，异常不影响执行或 Transcript 配对；累计次数可通过 `observerFailureCount` 诊断。
 - `AGENT_VOICE=balanced`（默认）轮换元气、调皮、傲娇、好奇、温柔、可靠六类短句；也可以设 `energetic` / `playful` / `tsundere` / `curious` / `gentle` / `confident` 固定语气。台词随阶段变化，不是定时随机冒泡。
 
 终端本身没有可点击折叠组件，因此这里用 **compact/detailed 两种视图** 替代网页里的逐条点击展开；详细模式的日志同样有长度上限。
@@ -50,6 +51,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/tui-mood.ts` | 状态驱动的中英文角色短句库：元气、调皮、好奇、温柔为主，少量傲娇/天然；临时展示、不写 Transcript |
 | `src/cli.ts` | 组装层：命令行参数 / 环境变量 → 对象图 → 跑一次任务、进 REPL 或进 TUI |
 | `src/cli-presenter.ts` | CLI 展示：执行阶段、动态台词、工具日志精简/详细视图；不写入 Transcript |
+| `src/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
 
 `src/grep-worker.ts` 不算第十一个模块，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
 

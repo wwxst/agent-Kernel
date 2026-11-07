@@ -200,6 +200,9 @@ export class Agent {
 
   private readonly onDelta?: (text: string) => void;
 
+  /** 展示观察者失败的累计次数；不参与 Agent 执行、Transcript 或 token 统计。 */
+  private observerFailures = 0;
+
   /** 本次 Run 已经执行的工具调用数；Tool call budget 按它算，也用它写「部分执行」的失败报告。 */
   private runToolCalls = 0;
 
@@ -272,6 +275,31 @@ export class Agent {
     if (this.signal?.aborted !== true) return;
     this.skipCalls(pending, "task cancelled");
     throw cancellationError(this.signal);
+  }
+
+  /**
+   * 展示回调属于旁路观察者，不能决定 Agent Loop 是否继续。
+   * 同步抛错和意外返回的 rejected Promise 都只计入诊断；不把 UI 故障伪装成工具失败。
+   * 不等待 Promise：等待展示回调会让用户界面的慢操作改变工具的执行时机。
+   */
+  private notifyObserver<T extends unknown[]>(callback: ((...args: T) => void) | undefined, ...args: T): void {
+    if (callback === undefined) return;
+    try {
+      const returned: unknown = callback(...args);
+      if (returned !== null && (typeof returned === "object" || typeof returned === "function") &&
+          "then" in returned && typeof returned.then === "function") {
+        void Promise.resolve(returned).catch(() => {
+          this.observerFailures++;
+        });
+      }
+    } catch {
+      this.observerFailures++;
+    }
+  }
+
+  /** 累计展示回调失败数；可供宿主诊断，但绝不污染模型消息或工具结果。 */
+  get observerFailureCount(): number {
+    return this.observerFailures;
   }
 
   /** 没有执行的调用也要留下一条结果：明确写「没跑」，而不是让它们凭空消失。 */
@@ -412,13 +440,15 @@ export class Agent {
       // 每次请求前重新求值：/permission 切换后，下一次请求必须看到新规则。
       this.refreshSystemPrompt();
       // 请求真正发出前给 TUI 一个「开始思考」的信号；失败/取消也要由调用方清掉。
-      this.onRequestStart?.();
+      this.notifyObserver(this.onRequestStart);
       this.runRequests++;
       this.sessionRequests++;
-      this.onStepStart?.(step);
+      this.notifyObserver(this.onStepStart, step);
       let response: ChatResponse;
       try {
-        response = await this.llm.chat(this.messages, this.tools.definitions, { onDelta: this.onDelta });
+        response = await this.llm.chat(this.messages, this.tools.definitions, {
+          onDelta: this.onDelta === undefined ? undefined : (text) => this.notifyObserver(this.onDelta, text),
+        });
       } catch (error) {
         // 请求已经发出去：响应非法但带回 usage 时精确记账，否则记未知。
         // 不记的话，失败请求的成本会从统计里凭空消失。
@@ -475,13 +505,13 @@ export class Agent {
         const call = calls[index];
         // 「要跑了」先于「跑完了」：TUI 靠这个回调把工具调用写进运行记录，
         // 长命令执行期间也看得见它在干什么。这里没有 await，不会给取消留出新的缝隙。
-        this.onToolCall?.(call);
-        this.onToolStart?.(call);
+        this.notifyObserver(this.onToolCall, call);
+        this.notifyObserver(this.onToolStart, call);
         const result = await this.tools.execute(call);
         this.runToolCalls++;
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
-        this.onToolResult?.(call, result);
+        this.notifyObserver(this.onToolResult, call, result);
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。

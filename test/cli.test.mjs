@@ -690,6 +690,50 @@ test(
 );
 
 
+test("CLI Shell 非零退出显示失败，但模型处理错误后整个 Run 仍可完成", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call_shell", "shell", { command: 'node -e "process.exit(7)"' }),
+      finalReply("handled shell failure"),
+    ]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, WORKDIR: workdir },
+        { args: ["--permission", "full-access", "do the task"] },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /↳ shell ✗ exit 7/);
+      assert.doesNotMatch(run.stdout, /↳ shell ✓/);
+      assert.match(run.stdout, /✓ Completed/);
+      assert.match(run.stdout, /handled shell failure/);
+      assert.equal(mock.requests.length, 2);
+      const result = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.equal(result.tool_call_id, "call_shell");
+      assert.match(result.content, /^exit 7\n/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("CLI 读取以 exit 7 开头的文件仍显示成功，不把正文当成 Shell 状态", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "status.txt"), "exit 7\nordinary file content\n");
+    const mock = await startMock([
+      callTool("call_read", "read", { path: "status.txt" }),
+      finalReply("file read done"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /↳ read ✓ exit 7/);
+      assert.match(run.stdout, /✓ Completed/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("CLI 阶段：思考、工具开始与结果、回答和完成都有真实状态", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
