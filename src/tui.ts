@@ -260,7 +260,7 @@ export class Tui {
 
   private activeActivity?: ActivityGroup;
 
-  /** Ctrl+O 依次查看各组，-1 表示全部收起。 */
+  /** Ctrl+O 的当前浏览位置；各组展开状态彼此独立。 */
   private activityFocus = -1;
 
   private activityState?: MoodState;
@@ -479,12 +479,15 @@ export class Tui {
         return;
       }
 
-      // Ctrl+O 依次展开最近、上一段等日志；审批优先，绝不改变授权选择。
+      // Ctrl+O 依次切换最近、上一段等组的展开状态；已有展开项不会被强制收起。
+      // 从已保留的日志锚点收集组，因而上一轮任务的活动也能查看。
       if (key?.ctrl && name === "o" && this.layout && this.currentTurn !== undefined) {
-        const groups = this.currentTurn.groups;
+        const groups = this.log.flatMap((line) =>
+          line.kind === "activity" && line.activity !== undefined ? [line.activity] : []);
         if (groups.length > 0) {
-          this.activityFocus = this.activityFocus < 0 ? groups.length - 1 : this.activityFocus - 1;
-          groups.forEach((group, index) => { group.expanded = index === this.activityFocus; });
+          this.activityFocus = this.activityFocus <= 0 ? groups.length - 1 : this.activityFocus - 1;
+          const group = groups[this.activityFocus]!;
+          group.expanded = !group.expanded;
           this.scrollOffset = 0;
           this.renderNow();
         }
