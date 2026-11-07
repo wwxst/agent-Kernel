@@ -20,7 +20,7 @@ const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = path.join(projectRoot, "src", "cli.ts");
 
 /** 启动 mock 服务，按脚本回放模型的响应；请求次数超出脚本时重复最后一条。 */
-async function startMock(script, { usage } = {}) {
+async function startMock(script, { usage, interruptAtTurn } = {}) {
   const requests = [];
   let turn = 0;
 
@@ -29,13 +29,20 @@ async function startMock(script, { usage } = {}) {
     request.on("data", (chunk) => (body += chunk));
     request.on("end", () => {
       requests.push(JSON.parse(body));
-      const message = script[Math.min(turn++, script.length - 1)];
+      const currentTurn = turn++;
+      const message = script[Math.min(currentTurn, script.length - 1)];
 
       // CLI 走流式：把同一条 message 包装成 SSE，让端到端测试也经过真实的解析路径。
       if (JSON.parse(body).stream === true) {
         response.writeHead(200, { "content-type": "text/event-stream" });
         const frame = (delta, finish_reason = null, extra = {}) =>
           `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason }], ...extra })}\n\n`;
+        // 先吐合法增量再给损坏的帧：验证请求失败时正文尚未被 Agent 确认。
+        if (currentTurn === interruptAtTurn) {
+          response.write(frame({ content: "UNCONFIRMED_SECOND_REQUEST" }));
+          response.end("data: {broken-json}\n\n");
+          return;
+        }
         // 一条完整的 delta 就够 CLI 用；分片拼装由 llm.test.mjs 单独覆盖。
         response.write(frame({ ...message }));
         response.write(frame({}, message.tool_calls?.length ? "tool_calls" : "stop"));
@@ -473,6 +480,73 @@ test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
   });
 });
 
+test("TUI：最后一步模型已确认说明但工具未执行，保留正文并标注 Run 失败", async () => {
+  await withWorkspace(async (workdir) => {
+    const response = callTool("pending_read", "read", { path: "unread.txt" });
+    response.content = "CONFIRMED_STEP_EXPLANATION";
+    const mock = await startMock([response]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, WORKDIR: workdir, MAX_STEPS: "1" },
+        { args: ["--tui", "inspect"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /model: CONFIRMED_STEP_EXPLANATION/);
+      assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
+      assert.match(run.stdout, /turn failed: step limit 1 reached/);
+      assert.match(run.stdout, /were not run/);
+      assert.equal(mock.requests.length, 1);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：有效响应随后触发 Token 预算，也保留已确认说明", async () => {
+  await withWorkspace(async (workdir) => {
+    const response = callTool("pending_read", "read", { path: "unread.txt" });
+    response.content = "CONFIRMED_TOKEN_EXPLANATION";
+    const mock = await startMock([response], {
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    });
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, WORKDIR: workdir, MAX_STEPS: "3", MAX_TOTAL_TOKENS: "2" },
+        { args: ["--tui", "inspect"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /model: CONFIRMED_TOKEN_EXPLANATION/);
+      assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
+      assert.match(run.stdout, /turn failed: token budget 2 reached/);
+      assert.equal(mock.requests.length, 1);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：前一次说明已确认但下一次流式失败，只撤销新请求的草稿", async () => {
+  await withWorkspace(async (workdir) => {
+    const response = callTool("read_1", "read", { path: "missing.txt" });
+    response.content = "CONFIRMED_FIRST_STEP";
+    const mock = await startMock([response, finalReply("not reached")], { interruptAtTurn: 1 });
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, WORKDIR: workdir },
+        { args: ["--tui", "inspect"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /model: CONFIRMED_FIRST_STEP/);
+      assert.equal((run.stdout.match(/model: CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
+      assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
+      assert.match(run.stdout, /unconfirmed text discarded/);
+      assert.equal(mock.requests.length, 2);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
@@ -800,6 +874,28 @@ test("CLI 精简与详细模式：工具摘要一直可见，详细模式独立�
       assert.match(detailed.stdout, /│ second line/);
       assert.match(detailed.stdout, /└ end/);
       assert.match(detailed.stdout, /detailed done/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("CLI 模型正文与工具结果里的 ESC、bidi 字符只显示转义文本", async () => {
+  await withWorkspace(async (workdir) => {
+    const dangerous = "before" + String.fromCharCode(27) + "[31m" + String.fromCharCode(0x202e) + "spoofed";
+    await writeFile(path.join(workdir, "unsafe.txt"), dangerous + "\n");
+    const mock = await startMock([
+      callTool("call_read", "read", { path: "unsafe.txt" }),
+      finalReply(dangerous),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.doesNotMatch(run.stdout, /[\x1b\u202e]/);
+      assert.match(run.stdout, /\\u001b/);
+      assert.match(run.stdout, /\\u202e/);
+      assert.match(run.stdout, /✓ Completed/);
+      assert.equal(mock.requests.length, 2);
     } finally {
       await mock.close();
     }

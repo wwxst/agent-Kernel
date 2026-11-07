@@ -598,6 +598,36 @@ test("TUI：TERM=dumb 使用逐行输出，不发送固定布局光标命令", a
   assert.doesNotMatch(chunks.join(""), /\x1b\[\d+;\d+H/);
 });
 
+test("TUI 固定布局：流式响应失败时撤销未确认正文，但保留失败状态", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.assistantDelta("UNCONFIRMED_RESPONSE_42");
+
+  assert.match(screenRows(ui).join("\n"), /UNCONFIRMED_RESPONSE_42/);
+  ui.tui.discardAssistantDraft();
+  ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
+    session, { failed: true });
+
+  const current = screenRows(ui).join("\n");
+  assert.doesNotMatch(current, /UNCONFIRMED_RESPONSE_42/);
+  assert.match(current, /unconfirmed text discarded/);
+  assert.match(current, /Failed/);
+});
+
+test("TUI 行式输出：已写出的流式片段不能撤回，但明确标记其未确认", async (t) => {
+  const ui = makeTui();
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.assistantDelta("UNCONFIRMED_LINE");
+  ui.tui.discardAssistantDraft();
+
+  assert.match(ui.text(), /UNCONFIRMED_LINE/);
+  assert.match(ui.text(), /\[stream interrupted: unconfirmed text discarded\]/);
+});
+
 test("TUI：状态栏、运行记录、成功/拒绝分类和统计", async (t) => {
   const ui = makeTui();
   t.after(() => ui.cleanup());

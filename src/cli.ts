@@ -605,9 +605,15 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 
   // Agent 在回调创建时还没赋值，但回调只会在 run() 期间触发；用 current 拿最新实例的账。
   let current: Agent | undefined;
+  // 工具开始展示时会把本次 assistant 段落提交到运行记录；Run 后续失败不能重复补写。
+  let toolStartedInLatestResponse = false;
   const callbacks: AgentCallbacks = {
-    onRequestStart: () => tui.setThinking(true),
+    onRequestStart: () => {
+      toolStartedInLatestResponse = false;
+      tui.setThinking(true);
+    },
     onToolCall: (call) => {
+      toolStartedInLatestResponse = true;
       tui.toolCall(call);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
@@ -636,6 +642,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 
   /** 跑一轮；返回 false 表示取消，循环该停了。失败但不取消时返回 true。 */
   const runTask = async (task: string, showTask?: boolean): Promise<boolean> => {
+    // Transcript 跨多个 Run 累积；只检查当前 Run 的响应，不把先前的正式回复当成新草稿。
+    const transcriptStart = agent.transcript.length;
     tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
     try {
       const reply = await agent.run(task);
@@ -643,8 +651,19 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: false });
       return true;
     } catch (error) {
+      // 每次模型请求至多写入一条确认的 assistant 消息；请求计数也包含流式失败的请求。
+      // 数量相等说明最后一次响应已写入 Transcript，预算后置失败不应抹去其真实正文。
+      // 数量不等说明最新响应仍未确认，必须丢弃其临时增量，不能复用先前请求的正文。
+      const confirmed = agent.transcript.slice(transcriptStart)
+        .filter((message) => message.role === "assistant");
+      const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
+      if (latest?.content?.trim()) {
+        // onToolCall 已提交该段正文时不要重复提交；预算阻断的调用则还没有这一事件。
+        if (!toolStartedInLatestResponse) tui.finishAssistant(latest.content);
+      } else {
+        tui.discardAssistantDraft();
+      }
       // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
-      tui.finishAssistant("");
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true, cancelled: signal.aborted });
       if (signal.aborted) {
         tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeError(error)}`);

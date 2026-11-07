@@ -1000,6 +1000,31 @@ export class Tui {
     this.assistantAtLineStart = true;
   }
 
+  /**
+   * 本轮模型请求失败时，流式增量还不是经过最终响应确认的消息。
+   * 固定布局可以撤销草稿；行式终端无法收回已输出字节，必须追加明显的失效声明。
+   * 已提交的上一阶段说明不受影响，工具活动和 Transcript 也不从展示层修改。
+   */
+  discardAssistantDraft(): void {
+    if (!this.assistantOpen) return;
+    const warning = this.uiText(
+      "[stream interrupted: unconfirmed text discarded]",
+      "【流式响应中断：未确认正文已丢弃】",
+    );
+    this.streamingText = "";
+    this.assistantOpen = false;
+
+    if (this.layout) {
+      this.pushLog(warning, "warning");
+      this.renderNow();
+      return;
+    }
+
+    if (!this.assistantAtLineStart) this.writeRaw(this.newline());
+    this.writeRaw(`${escapeControlCharacters(warning)}${this.newline()}`);
+    this.assistantAtLineStart = true;
+  }
+
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
   toolCall(call: ToolCall): void {
     this.approvalBlocksRunning = false;

@@ -93,7 +93,7 @@ export interface AgentUsage {
 export interface AgentStats {
   /** 本次 Run 发出去的模型请求数（失败的请求也算一次尝试）。 */
   requests: number;
-  /** 本次 Run 真正执行的工具调用数；Tool call budget 按这个数算。 */
+  /** 本次 Run 已处理的工具调用数：含校验失败和权限拒绝，不含因预算跳过的调用。 */
   toolCalls: number;
   usage: AgentUsage;
   /**
@@ -133,7 +133,7 @@ export interface AgentOptions {
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
   maxSteps?: number;
   /**
-   * 一次任务最多执行多少次工具调用。默认 60。
+   * 一次任务最多处理多少次工具调用。默认 60；权限拒绝和参数错误也消耗此额度。
    *
    * 为什么和 maxSteps 分开：`maxSteps` 数的是「问了模型几次」，一次模型回复可以要 3 个工具，
    * 所以 30 步最多能跑 90 次工具。两个预算各管一件事，不能用一个数字假装管住另一个。
@@ -203,7 +203,7 @@ export class Agent {
   /** 展示观察者失败的累计次数；不参与 Agent 执行、Transcript 或 token 统计。 */
   private observerFailures = 0;
 
-  /** 本次 Run 已经执行的工具调用数；Tool call budget 按它算，也用它写「部分执行」的失败报告。 */
+  /** 已经过 ToolRegistry 的调用次数，含拒绝与校验失败，预算跳过不计；供限额与失败报告使用。 */
   private runToolCalls = 0;
 
   /** 本次 Run 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
