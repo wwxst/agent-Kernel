@@ -1423,3 +1423,114 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 
   assert.equal(ui.tui.uiText("permission: read-only", "权限：read-only"), "permission: read-only");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /commands: \/exit/);
 });
+
+
+test("TUI Slash：输入 / 显示真实命令菜单，输入 /per 筛选，Enter 执行选中项", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const task = ui.tui.readLine();
+
+  ui.input.write("/");
+  await tick();
+  let rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.ok(rows.some((row) => row.includes("/help") && row.includes("Show available commands")));
+  assert.ok(rows.some((row) => row.includes("/permission") && row.includes("View or switch permission mode")));
+  assert.ok(rows.some((row) => row.includes("/reset")));
+  assert.ok(rows.some((row) => row.includes("/exit")));
+  assert.ok(rows.some((row) => row.includes("/quit")));
+  assert.equal(rows.some((row) => row.includes("/branch") || row.includes("/compact")), false, "不显示未实现命令");
+
+  ui.input.write("per");
+  await tick();
+  rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.ok(rows.some((row) => row.includes("/permission")));
+  assert.equal(rows.some((row) => row.includes("/help")), false, "实时筛选移除其他命令");
+
+  ui.input.write("\r");
+  assert.equal(await task, "/permission", "Enter 直接提交高亮补全后的命令");
+});
+
+test("TUI Slash：上下键只移动高亮，不会载入历史命令；Tab 补全但不执行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const old = ui.tui.readLine();
+  ui.input.write("previous task\r");
+  assert.equal(await old, "previous task");
+
+  const task = ui.tui.readLine();
+  ui.input.write("/");
+  await tick();
+  ui.input.write("\x1b[B");
+  await tick();
+  assert.ok(ui.text().includes("/permission"));
+  ui.input.write("\t");
+  await tick();
+  const rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.ok(rows.some((row) => /(?:❯|>) \/permission/.test(row)), "Tab 将选中命令填入编辑行");
+  assert.equal(rows.some((row) => row.includes("View or switch permission mode")), false, "补全后关闭候选菜单");
+
+  ui.input.write("\r");
+  assert.equal(await task, "/permission", "方向键不能替换成上一条历史任务");
+});
+
+test("TUI Slash：Esc 关闭菜单但保留输入，修改前缀后重新打开；未知命令保持原样", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const task = ui.tui.readLine();
+
+  ui.input.write("/h");
+  await tick();
+  assert.match(ui.text(), /Show available commands/);
+  ui.input.emit("keypress", "", { name: "escape", sequence: "\x1b" });
+  await tick();
+  const hidden = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.equal(hidden.some((row) => row.includes("Show available commands")), false);
+  assert.ok(hidden.some((row) => /(?:❯|>) \/h/.test(row)), "Esc 不清空输入");
+
+  ui.input.write("e");
+  await tick();
+  assert.match(ui.text(), /Show available commands/, "修改查询后重新展示菜单");
+  ui.input.write("lp\r");
+  assert.equal(await task, "/help", "明确输入的命令按原语义提交");
+
+  const task2 = ui.tui.readLine();
+  ui.input.write("/unknown\r");
+  assert.equal(await task2, "/unknown", "不识别的命令不被菜单改写");
+});
+
+test("TUI Slash：中文菜单跟随最近任务语言；输入参数/审批时不显示候选；窗口缩放不越界", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 35, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查这个项目");
+  const task = ui.tui.readLine();
+
+  ui.input.write("/");
+  await tick();
+  let rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.ok(rows.some((row) => row.includes("/help") && row.includes("查看可用命令")));
+
+  ui.output.rows = 13;
+  ui.output.columns = 40;
+  ui.output.emit("resize");
+  await tick();
+  rows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.ok(rows.some((row) => row.includes("/help")), "小终端仍保留至少一项菜单");
+  ui.input.write("permission read-only");
+  await tick();
+  rows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.equal(rows.some((row) => row.includes("查看或切换权限模式")), false, "命令参数不会弹菜单");
+
+  ui.input.write("\r");
+  assert.equal(await task, "/permission read-only");
+
+  const approval = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
+  approval.catch(() => {});
+  assert.doesNotMatch(ui.text().slice(-1500), /查看可用命令/, "Shell 审批优先于 Slash 菜单");
+  ui.input.write("\r");
+  assert.equal(await approval, false);
+});
