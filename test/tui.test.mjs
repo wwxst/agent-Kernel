@@ -1530,7 +1530,9 @@ test("TUI Slash：中文菜单跟随最近任务语言；输入参数/审批时�
 
   const approval = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
   approval.catch(() => {});
-  assert.doesNotMatch(ui.text().slice(-1500), /查看可用命令/, "Shell 审批优先于 Slash 菜单");
+  const approvalRows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
+  assert.equal(approvalRows.some((row) => row.includes("查看可用命令")), false,
+    "Shell 审批应在当前终端画面中隐藏 Slash 菜单，历史 ANSI 输出不计入");
   ui.input.write("\r");
   assert.equal(await approval, false);
 });
