@@ -416,6 +416,7 @@ export class Workspace {
     // 否则别名重建为指向外部时，后续 opendir 会在工作区外遍历。
     const existing = await realpath(this.resolve(requested));
     const start = await this.assertInsideWorkspace(existing, requested);
+    const rootReal = await this.realRoot();
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
@@ -473,7 +474,8 @@ export class Workspace {
           for (const lineNumber of lineNumbers) {
             const line = lines[lineNumber - 1].trim();
             hits.push({
-              file: toPosix(path.relative(this.root, file)),
+              // 物理扫描路径必须相对物理 root，Windows 的临时目录别名不能变成 ../../...。
+              file: toPosix(path.relative(rootReal, file)),
               line: lineNumber,
               // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
               text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
