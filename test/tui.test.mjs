@@ -1646,3 +1646,17 @@ test("TUI：Ctrl+O 按阶段依次展开详情，审批键盘优先级不变", a
   await tick();
   assert.doesNotMatch(screenRows(ui, 45).join("\n"), /Read stage1\.txt/, "再次选中该组后单独收起");
 });
+
+test("TUI：取消时尚未返回的工具不能在历史中继续显示运行中", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查并运行命令");
+  const call = { id: "pending-cancel", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true, cancelled: true });
+  const screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /已取消 · 用时/);
+  assert.match(screen, /未收到工具结果/);
+  assert.doesNotMatch(screen, /正在执行命令|运行中\.\.\./);
+});
