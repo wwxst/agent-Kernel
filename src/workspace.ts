@@ -13,10 +13,11 @@
  * 两个模块各管一个决定，改的时候不会互相牵动。
  */
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
-import type { Dir } from "node:fs";
-import { lstat, mkdir, opendir, open, realpath, stat } from "node:fs/promises";
+import type { Dir, Stats } from "node:fs";
+import { lstat, mkdir, opendir, open, realpath, rename, stat, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -173,35 +174,80 @@ export class Workspace {
     return this.clip(text, cut);
   }
 
-  /** 创建或覆盖文件，父目录自动补齐。返回一行给模型看的结果摘要。 */
+  /**
+   * 临时文件写完并 fsync 后才 rename：写入中断不能先把旧文件 truncate(0)。
+   * 保存原权限并在提交前检查目标身份，尽量拒绝同一文件被外部进程修改后覆盖。
+   * 已知边界：父目录并发替换仍有 TOCTOU；rename 覆盖会更换 inode / hardlink，
+   * Windows ACL / 持有句柄的语义也可能不同。这不是沙箱或完整事务。
+   */
+  private async replaceFileAtomically(
+    target: string,
+    requested: string,
+    content: string,
+    original?: Stats,
+  ): Promise<void> {
+    const temporary = path.join(path.dirname(target), `.agent-kernel-${randomUUID()}.tmp`);
+    this.stopIfCancelledBeforeWrite();
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, original?.mode ?? 0o666);
+    try {
+      try {
+        await handle.writeFile(content, "utf8");
+        if (original !== undefined) await handle.chmod(original.mode & 0o7777);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+
+      // 临时写入可能经过多轮异步 I/O；在提交点前再次复查路径、并发修改和取消。
+      const current = await this.assertInsideWorkspace(target, requested);
+      if (current !== target) throw new Error(`file target changed before commit: ${requested}`);
+      if (original !== undefined) {
+        const latest = await lstat(target);
+        if (!latest.isFile() || latest.dev !== original.dev || latest.ino !== original.ino ||
+            latest.size !== original.size || latest.mtimeMs !== original.mtimeMs) {
+          throw new Error(`file changed before commit: ${requested}`);
+        }
+      }
+      this.stopIfCancelledBeforeWrite();
+      await rename(temporary, target);
+    } finally {
+      // 出错时只清理自己的临时文件，绝不能回滚删除原文件。
+      try {
+        await unlink(temporary);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+  }
+
+  /** 创建或覆盖文件，父目录自动补齐；写入失败时保留既有文件内容。 */
   async write(requested: string, content: string): Promise<string> {
-    // 先换成真实路径：工作区里的别名链接后来被替换，也不再沿原别名进行写入。
     const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
     this.stopIfCancelledBeforeWrite();
     await mkdir(path.dirname(file), { recursive: true });
     const target = await this.assertInsideWorkspace(file, requested);
     this.stopIfCancelledBeforeWrite();
 
-    // 不在 open 时截断；打开句柄后还有一次取消检查，POSIX 同时拒绝末端链接替换。
-    const handle = await open(target, constants.O_WRONLY | constants.O_CREAT | NO_FOLLOW_FILE);
+    // 既有文件先检查可写权限，但不截断；Windows/Unix 的普通权限拒绝仍保持原语义。
+    let original: Stats | undefined;
     try {
-      this.stopIfCancelledBeforeWrite();
-      await handle.truncate(0);
-      await handle.writeFile(content, "utf8");
-    } finally {
-      await handle.close();
+      const existing = await open(target, constants.O_WRONLY | NO_FOLLOW_FILE);
+      try {
+        original = await existing.stat();
+      } finally {
+        await existing.close();
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    await this.replaceFileAtomically(target, requested, content, original);
     return `wrote ${content.length} chars to ${requested}`;
   }
 
   /**
-   * 把文件里唯一命中的一段换成另一段，返回长度变化。
-   *
-   * 为什么要求「唯一」：模型很爱给一个到处都有的片段（`return`、`}`、空行）。
-   * 替换错位置比报错贵得多 —— 报错它读一遍文件就能改；改错了可能十几轮都发现不了。
-   *
-   * 换行符做一次归一：Windows 上文件常是 CRLF，而模型吐出来的是 LF。
-   * 不归一，「看起来一模一样」的片段会找不到；归一之后写入仍沿用文件自己的行尾。
+   * 唯一命中后通过同目录临时文件原子替换；保留 BOM / CRLF 和旧文件权限。
+   * 编辑仍先用单一文件句柄读取、校验并记录身份；然后关闭句柄，便于 Windows rename。
+   * 已知边界：提交前身份复查减少并发覆盖，但不能消除复查与 rename 之间的竞态。
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
     const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
@@ -210,19 +256,20 @@ export class Workspace {
       throw new Error("old_string must not be empty");
     }
 
-    // 用同一文件句柄完成读取与写回：末端路径在两次操作之间换成链接，
-    // 也不会把原文件的内容意外写到另一文件。真正修改前仍要检查取消。
     const handle = await open(file, constants.O_RDWR | NO_FOLLOW_FILE);
+    let before: string;
+    let after: string;
+    let original: Stats;
     try {
-      // 编辑要整文件读进来做替换，因此保留上限和 BOM。
-      const { text: before, truncated } = await readTextUpToHandle(
+      original = await handle.stat();
+      const read = await readTextUpToHandle(
         handle,
         MAX_EDIT_FILE_BYTES,
         Buffer.alloc(MAX_EDIT_FILE_BYTES + 1),
         { preserveBom: true },
       );
-      if (truncated) {
-        // 中文对照：文件超过 {n} 字节，太大，不适合整文件编辑；请改用 shell。
+      before = read.text;
+      if (read.truncated) {
         throw new Error(`file is larger than ${MAX_EDIT_FILE_BYTES} bytes; edit it through shell instead`);
       }
 
@@ -230,28 +277,24 @@ export class Workspace {
         before.includes("\r\n") ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text.replace(/\r\n/g, "\n");
 
       const needle = toStyle(oldString);
-      // 按 1 个字符推进地数，重叠的命中也算进来：避免改错片段。
       let occurrences = 0;
       for (let at = before.indexOf(needle); at !== -1; at = before.indexOf(needle, at + 1)) {
         occurrences++;
       }
-      if (occurrences === 0) {
-        throw new Error(`old_string not found in ${requested}`);
-      }
+      if (occurrences === 0) throw new Error(`old_string not found in ${requested}`);
       if (occurrences > 1) {
         throw new Error(`old_string appears ${occurrences} times in ${requested}; include more surrounding text`);
       }
 
       const at = before.indexOf(needle);
-      const after = before.slice(0, at) + toStyle(newString) + before.slice(at + needle.length);
-      this.stopIfCancelledBeforeWrite();
-      await handle.truncate(0);
-      await handle.writeFile(after, "utf8");
-      // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
-      return `edited ${requested} (${before.length} → ${after.length} chars)`;
+      after = before.slice(0, at) + toStyle(newString) + before.slice(at + needle.length);
     } finally {
       await handle.close();
     }
+
+    await this.replaceFileAtomically(file, requested, after, original);
+    // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
+    return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
   /**
    * 列目录：类型、字节数、名称，按行排好。
@@ -368,8 +411,12 @@ export class Workspace {
     const source = options.fixed === true ? escapeRegExp(pattern) : pattern;
     assertValidPattern(source, flags);
 
-    const start = this.resolve(requested);
-    await this.assertInsideWorkspace(start, requested);
+    // grep 是读取已有目录，不是 write 的创建路径：起点必须真实存在。
+    // 先 realpath 再校验，不能在别名短暂消失时退回到“最近存在的父目录”，
+    // 否则别名重建为指向外部时，后续 opendir 会在工作区外遍历。
+    const existing = await realpath(this.resolve(requested));
+    const start = await this.assertInsideWorkspace(existing, requested);
+    const rootReal = await this.realRoot();
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
@@ -427,7 +474,8 @@ export class Workspace {
           for (const lineNumber of lineNumbers) {
             const line = lines[lineNumber - 1].trim();
             hits.push({
-              file: toPosix(path.relative(this.root, file)),
+              // 物理扫描路径必须相对物理 root，Windows 的临时目录别名不能变成 ../../...。
+              file: toPosix(path.relative(rootReal, file)),
               line: lineNumber,
               // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
               text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,

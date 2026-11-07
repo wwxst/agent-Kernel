@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -95,6 +95,53 @@ test("Windows taskkill 挂起且 helper.kill 抛错：依然有界结束并报�
 
   assert.equal(result, false);
   assert.equal(childKills, 1);
+});
+
+test("write：临时文件写完但提交前取消，不截断既有文件且不遗留临时文件", async () => {
+  await withWorkspace(async (root) => {
+    const file = path.join(root, "saved.txt");
+    await writeFile(file, "original");
+    let checks = 0;
+    // 精确在临时内容写完后、rename 前的取消检查触发；不用依赖定时器运气。
+    const signal = { get aborted() { return ++checks >= 4; } };
+    const workspace = new Workspace({ root, signal });
+
+    await assert.rejects(() => workspace.write("saved.txt", "new content"), /cancelled before file write/);
+    assert.ok(checks >= 4, "必须触达临时文件写完后的最终提交检查");
+    assert.equal(await readFile(file, "utf8"), "original");
+    assert.equal((await readdir(root)).some((name) => name.startsWith(".agent-kernel-")), false);
+  });
+});
+
+test("edit：临时写回后取消仍保留原内容且清理临时文件", async () => {
+  await withWorkspace(async (root) => {
+    const file = path.join(root, "saved.txt");
+    await writeFile(file, "before\n");
+    let checks = 0;
+    const signal = { get aborted() { return ++checks >= 2; } };
+    const workspace = new Workspace({ root, signal });
+
+    await assert.rejects(() => workspace.edit("saved.txt", "before", "after"), /cancelled before file write/);
+    assert.ok(checks >= 2);
+    assert.equal(await readFile(file, "utf8"), "before\n");
+    assert.equal((await readdir(root)).some((name) => name.startsWith(".agent-kernel-")), false);
+  });
+});
+
+test("原子覆盖：write/edit 保留已有文件的 POSIX 权限", {
+  skip: process.platform === "win32" && "Windows mode 不能反映完整 ACL",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const file = path.join(root, "saved.txt");
+    await writeFile(file, "before");
+    await chmod(file, 0o600);
+    const workspace = new Workspace({ root });
+    await workspace.write("saved.txt", "after");
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    await workspace.edit("saved.txt", "after", "done");
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    assert.equal(await readFile(file, "utf8"), "done");
+  });
 });
 
 test("write 后 read 能拿回原文，父目录自动创建", async () => {
@@ -809,6 +856,32 @@ test("list：扫描预算耗尽时明确说目录可能没列全", async () => {
     const result = await workspace.list(".");
 
     assert.match(result, /scan stopped after 5 entries; listing may be incomplete/);
+  });
+});
+
+test("grep：链接别名在扫描时切向工作区外，不读取外部文件", async () => {
+  await withWorkspace(async (root) => {
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-grep-race-"));
+    await mkdir(path.join(root, "real"));
+    await writeFile(path.join(root, "real", "inside.ts"), "needle inside\n");
+    await writeFile(path.join(outside, "secret.ts"), "needle EXTERNAL_SECRET\n");
+    const alias = path.join(root, "alias");
+    await symlink(path.join(root, "real"), alias, "junction");
+    const workspace = new Workspace({ root });
+    try {
+      assert.match(await workspace.grep("needle", "alias"), /real\/inside\.ts:1: needle inside/);
+      // 接管异步拒绝：切换发生在 realpath / opendir 的异步窗口，两种安全结局均可。
+      const pending = workspace.grep("needle", "alias").catch((error) => {
+        assert.match(String(error), /path escapes workspace|ENOENT|ELOOP/);
+        return "";
+      });
+      await unlink(alias);
+      await symlink(outside, alias, "junction");
+      const result = await pending;
+      assert.doesNotMatch(result, /EXTERNAL_SECRET/);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
