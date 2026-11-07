@@ -179,6 +179,53 @@ test("workspace-write：审批被取消（AbortError）也按拒绝处理", asyn
   assert.match(result.reason, /denied by default/);
 });
 
+test("异步 Shell 审批中撤权：即使用户后来批准，也不能执行工具", async () => {
+  let approve;
+  const waitingForApproval = new Promise((resolve) => { approve = resolve; });
+  const permission = new Permission("workspace-write", () => waitingForApproval);
+  let executed = 0;
+  const registry = new ToolRegistry([shellTool(async () => {
+    executed++;
+    return "executed";
+  })], { permission });
+
+  const pending = registry.execute(call("shell", JSON.stringify({ command: "echo blocked" })));
+  permission.setMode("read-only");
+  approve(true);
+  const result = await pending;
+
+  assert.match(result, /^ERROR: permission denied: permission mode changed during approval; denied$/);
+  assert.equal(executed, 0);
+  assert.equal(permission.mode, "read-only");
+});
+
+test("异步审批期间切走再切回、或切到 full-access：旧批准一律失效", async () => {
+  for (const modeChanges of [["read-only", "workspace-write"], ["full-access"]]) {
+    let approve;
+    const waitingForApproval = new Promise((resolve) => { approve = resolve; });
+    const permission = new Permission("workspace-write", () => waitingForApproval);
+    const pending = permission.check(request("shell", { command: "echo still-blocked" }));
+
+    for (const mode of modeChanges) permission.setMode(mode);
+    approve(true);
+    const result = await pending;
+
+    assert.equal(result.allowed, false);
+    assert.match(result.reason, /permission mode changed during approval/);
+  }
+});
+
+test("异步审批期间重复设置同一权限：不撤销有效的单次批准", async () => {
+  let approve;
+  const waitingForApproval = new Promise((resolve) => { approve = resolve; });
+  const permission = new Permission("workspace-write", () => waitingForApproval);
+  const pending = permission.check(request("shell", { command: "echo permitted" }));
+
+  permission.setMode("workspace-write");
+  approve(true);
+  assert.deepEqual(await pending, { allowed: true });
+});
+
 test("full-access：所有工具放行，不触发审批", async () => {
   let asked = 0;
   const permission = new Permission("full-access", () => {
