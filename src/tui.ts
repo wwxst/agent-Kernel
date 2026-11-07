@@ -22,6 +22,7 @@ import { selectMood } from "./tui-mood.ts";
 import type { MoodState } from "./tui-mood.ts";
 import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
+import { isToolResultFailure } from "./tool-result-status.ts";
 
 /** 固定布局至少需要：标题/路径/分隔线 + 日志 + 输入框 + 状态行 + 缓冲。 */
 const MIN_ROWS = 12;
@@ -2189,14 +2190,8 @@ function summarizeToolResult(call: ToolCall, result: string): ToolResultSummary 
   const notRun = first.startsWith("ERROR: not run:");
   const denied = first.startsWith("ERROR: permission denied:");
   const error = first.startsWith("ERROR:");
-  // Shell 正常返回的文本也可能是非零退出、超时或取消；只按 ERROR 前缀会画成成功。
-  // 仅识别 Shell 的状态行，避免把文件正文里的「exit 7」误判成读取失败。
-  const shellFailed = call.function.name === "shell" && (
-    (/^exit (?:-?\d+|null)$/.test(first) && first !== "exit 0") ||
-    /^timeout after \d+ms$/.test(first) ||
-    first === "cancelled by signal"
-  );
-  const failed = error || shellFailed;
+  // CLI 与 TUI 共用一次事实判断；拒绝 / 未执行仍保留各自的展示标记。
+  const failed = isToolResultFailure(call, result);
   const body = error ? first.slice("ERROR:".length).trim() : first;
   const more = lines.length > 1 ? " …" : "";
   return { failed, denied, notRun, body, more };

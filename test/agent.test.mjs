@@ -104,6 +104,74 @@ test("没有工具调用就立刻收尾，不会多发请求", async () => {
   assert.equal(chat.requests.length, 1);
 });
 
+test("所有展示回调同步抛错：两条工具仍执行并完整配对，模型可继续收尾", async () => {
+  const scripted = createScriptedChat([
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [
+        { id: "first", type: "function", function: { name: "echo", arguments: '{"value":"a"}' } },
+        { id: "second", type: "function", function: { name: "echo", arguments: '{"value":"b"}' } },
+      ],
+    },
+    finalReply("recovered"),
+  ]);
+  // 假客户端主动发送 delta：流式展示故障不应被误判为模型请求失败。
+  const chat = {
+    requests: scripted.requests,
+    async chat(messages, tools, options) {
+      options?.onDelta?.("partial");
+      return scripted.chat(messages, tools);
+    },
+  };
+  const broken = () => {
+    throw new Error("display renderer failed");
+  };
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    onRequestStart: broken,
+    onStepStart: broken,
+    onToolCall: broken,
+    onToolStart: broken,
+    onToolResult: broken,
+    onDelta: broken,
+  });
+
+  const reply = await agent.run("do it");
+
+  assert.equal(reply.content, "recovered");
+  assert.equal(agent.stats.requests, 2);
+  assert.equal(agent.stats.toolCalls, 2);
+  assert.equal(agent.observerFailureCount, 12);
+  assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "tool", "assistant"]);
+  assert.deepEqual(
+    agent.transcript.filter((message) => message.role === "tool").map((message) => [message.tool_call_id, message.content]),
+    [["first", "echo a"], ["second", "echo b"]],
+  );
+  assert.deepEqual(roles(chat.requests[1].messages), ["system", "user", "assistant", "tool", "tool"]);
+  assert.equal(JSON.stringify(chat.requests[1]).includes("display renderer failed"), false);
+});
+
+test("展示回调返回 rejected Promise：不产生未处理拒绝，工具结果仍可继续回灌", async () => {
+  const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    onToolResult: async () => {
+      throw new Error("async renderer failed");
+    },
+  });
+
+  const reply = await agent.run("do it");
+  await Promise.resolve();
+
+  assert.equal(reply.content, "done");
+  assert.equal(agent.observerFailureCount, 1);
+  assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "assistant"]);
+  assert.equal(chat.requests[1].messages[3].content, "echo a");
+});
+
 test("onToolResult 对每条工具结果各回调一次", async () => {
   const seen = [];
   const chat = createScriptedChat([callTool("c1", "echo", { value: "a" }), finalReply("done")]);

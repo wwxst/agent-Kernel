@@ -5,6 +5,7 @@
  * 让语气有变化而不假装知道模型在想什么。详细模式展开的是工具真实返回值。
  */
 import type { ToolCall } from "./types.ts";
+import { isToolResultFailure } from "./tool-result-status.ts";
 
 const MOODS = ["energetic", "playful", "tsundere", "curious", "gentle", "confident"] as const;
 export type AgentVoice = (typeof MOODS)[number] | "balanced";
@@ -197,7 +198,7 @@ export class RunPresenter {
     const firstLine = output.split("\n", 1)[0] ?? "";
     const excerpt = firstLine.slice(0, 120);
     const truncated = firstLine.length > 120 || output.includes("\n");
-    const failed = result.startsWith("ERROR:");
+    const failed = isToolResultFailure(call, result);
     console.log("  ↳ " + call.function.name + (failed ? " ✗ " : " ✓ ") + excerpt + (truncated ? "…" : ""));
 
     if (this.view === "detailed") {

@@ -25,8 +25,9 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | --- | --- | --- |
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
 | `src/errors.ts` | 错误文案兜底，以及带 usage 的响应协议错误 | `describeError(error)`、`describeValue(value)`、`ChatResponseError` |
-| `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期；system 提示支持函数式动态刷新 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats` |
+| `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期；system 提示支持函数式动态刷新；展示回调异常隔离并累计诊断 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats`、`observerFailureCount` |
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、显式权限注入（`Permission` 或 `null`）、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
+| `src/tool-result-status.ts` | 纯展示事实判断：非 Shell 的 `ERROR:` 与 Shell 的 exit / timeout / cancelled；CLI/TUI 复用，不改工具结果文本 | `isToolResultFailure` |
 | `src/permission.ts` | 三档权限策略、`permissionPrompt` 模型指导、shell 的一次性审批、拒绝原因；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`approvalGate`、`permissionPrompt` |
 | `src/approval.ts` | 审批提示格式化与读取：完整命令、实际 cwd、控制字符转义；`AbortSignal` / readline close / 正常回答的竞态收口 | `formatApproval`、`askWithSignal` |
 | `src/workspace.ts` | 工作区内的文件与 shell，含路径守卫、有界读取、扫描预算、超时与取消 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
