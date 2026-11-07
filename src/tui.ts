@@ -988,12 +988,13 @@ export class Tui {
     this.setThinking(false);
     this.finishAssistant();
     this.setActivityState(moodStateForTool(call));
-    if (this.fixedLayoutAllowed && this.currentTurn?.endedAt === undefined) {
+    const turn = this.currentTurn;
+    if (this.fixedLayoutAllowed && turn !== undefined && turn.endedAt === undefined) {
       this.pushBlank();
       let group = this.activeActivity;
       if (group === undefined) {
         group = { language: this.uiLanguage, tools: [], expanded: true };
-        this.currentTurn.groups.push(group);
+        turn.groups.push(group);
         this.activeActivity = group;
         this.log.push({ text: "", tone: "muted", kind: "activity", activity: group });
       }
