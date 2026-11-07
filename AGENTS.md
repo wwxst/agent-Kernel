@@ -34,6 +34,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
 | `src/tui.ts` | 轻量 TUI：整帧重绘固定状态栏/统计行/底部输入、日志视口、thinking 提示、shell 审批展示；不碰 Agent 循环 | `Tui`（`start`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
 | `src/cli.ts` | 组装：命令行参数 / 环境变量 → 对象图 → 跑一次、进 REPL 或进 TUI；`--permission`、`/permission`、SIGINT/SIGTERM 取消链的起点 | — |
+| `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；不改 Transcript | `RunPresenter` |
 
 依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` / `tui` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`，`approval` 只依赖 `permission` 的类型；`tui` 只依赖 `approval` / `permission` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查），更不认识 `tui`。
 
