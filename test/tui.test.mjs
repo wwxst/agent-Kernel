@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { Tui, detectUiLanguage } from "../src/tui.ts";
+import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
 function tick() {
@@ -18,6 +19,11 @@ function tick() {
 /** 取最后一次完整写入的行；验收输入框实际内容，不能只检查旧帧里出现过某个词。 */
 function lastRow(text, row) {
   return [...text.matchAll(new RegExp(`\\x1b\\[${row};1H\\x1b\\[2K([^\\x1b]*)`, "g"))].at(-1)?.[1] ?? "";
+}
+
+/** 把差分刷新过的屏幕行还原为当前画面，避免误断言历史帧。 */
+function screenRows(ui, count = 40) {
+  return Array.from({ length: count }, (_, index) => lastRow(ui.text(), index + 1));
 }
 
 /**
@@ -117,16 +123,15 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  const first = lastRow(ui.text(), 6);
+  const first = lastRow(ui.text(), 7);
   assert.match(first, /Thinking\.\.\. \(0s\)/);
-  assert.match(lastRow(ui.text(), 7), /^  [└+] Ctrl-C to cancel$/);
+  assert.match(lastRow(ui.text(), 8), /^  [└+] Ctrl-C to cancel$/);
   t.mock.timers.tick(200);
-  assert.notEqual(lastRow(ui.text(), 6), first);
+  assert.notEqual(lastRow(ui.text(), 7), first);
   ui.tui.assistantDelta("hello");
-  const finished = ui.text().length;
   t.mock.timers.tick(1000);
-  assert.equal(ui.text().length, finished);
-  assert.doesNotMatch(lastRow(ui.text(), 7), /Ctrl-C/);
+  assert.match(lastRow(ui.text(), 7), /hello/);
+  assert.doesNotMatch(lastRow(ui.text(), 8), /Ctrl-C/);
 });
 
 test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息不左右跳动", async (t) => {
@@ -136,11 +141,11 @@ test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  const detailColumn = lastRow(ui.text(), 6).indexOf("(");
+  const detailColumn = lastRow(ui.text(), 7).indexOf("(");
   let previousSymbol = "";
   for (let frame = 0; frame < 5; frame++) {
-    const line = lastRow(ui.text(), 6);
-    assert.match(line, /Thinking\.\.\. \(0s\)$/);
+    const line = lastRow(ui.text(), 7);
+    assert.match(line, /Thinking\.\.\. \(0s\)(?: │ .+)?$/);
     assert.equal(line.indexOf("("), detailColumn);
     const symbol = line.split(" ")[0];
     assert.notEqual(symbol, previousSymbol);
@@ -163,7 +168,7 @@ test("TUI：现代终端等待动画所有帧使用文本符号，不触发彩�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   for (let frame = 0; frame < 4; frame++) {
-    const symbol = lastRow(ui.text(), 6).split(" ")[0];
+    const symbol = lastRow(ui.text(), 7).split(" ")[0];
     assert.equal([...symbol].length, 1);
     assert.doesNotMatch(symbol, /\p{Emoji}/u, "等待符号不能被终端回退成彩色 emoji");
     t.mock.timers.tick(200);
@@ -205,12 +210,12 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   t.mock.timers.tick(3200);
   ui.tui.finishAssistant("done");
   ui.tui.finishTurn(run, session, { failed: false });
-  assert.match(ui.text(), /Worked for 3s · 2 tool calls/);
+  assert.match(lastRow(ui.text(), 6), /Completed · in 3s/);
   ui.tui.beginTurn("second");
   t.mock.timers.tick(1000);
   ui.tui.finishTurn({ ...run, toolCalls: 0 }, session, { failed: true });
-  assert.match(ui.text(), /Stopped after 1s/);
-  assert.doesNotMatch(ui.text(), /Stopped after 4s/);
+  assert.match(lastRow(ui.text(), 11), /Failed · after 1s/);
+  assert.doesNotMatch(lastRow(ui.text(), 11), /after 4s/);
 });
 
 test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条消息仍贴顶", async (t) => {
@@ -225,9 +230,9 @@ test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条�
   t.mock.timers.tick(2000);
   ui.tui.finishTurn(run, session, { failed: false });
   ui.tui.beginTurn("second");
-  assert.match(lastRow(ui.text(), 8), /Worked for 2s/);
-  assert.equal(lastRow(ui.text(), 9), "");
-  assert.match(lastRow(ui.text(), 10), /^(?:❯|>) second/);
+  assert.match(lastRow(ui.text(), 6), /Completed · in 2s/);
+  assert.equal(lastRow(ui.text(), 8), "");
+  assert.match(lastRow(ui.text(), 9), /^(?:❯|>) second/);
 });
 
 test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
@@ -318,14 +323,13 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
-  assert.match(lastRow(ui.text(), 7), /Ctrl-C to cancel/);
+  assert.match(lastRow(ui.text(), 8), /Ctrl-C to cancel/);
   t.mock.timers.tick(2000);
   assert.match(ui.text(), /Thinking\.\.\. \(2s\)/);
   ui.tui.assistantDelta("hello");
-  const finished = ui.text().length;
   t.mock.timers.tick(3000);
-  assert.equal(ui.text().length, finished, "正文后不再因等待计时重绘");
-  assert.doesNotMatch(lastRow(ui.text(), 6), /Thinking/);
+  assert.match(lastRow(ui.text(), 7), /hello/);
+  assert.doesNotMatch(lastRow(ui.text(), 7), /Thinking/, "正文后不再残留等待态");
 });
 
 test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) => {
@@ -497,9 +501,9 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   ui.output.emit("resize");
   await tick();
   assert.match(lastRow(ui.text(), 4), /TASK_NARROW/);
-  assert.match(lastRow(ui.text(), 6), /(?:✓|\+) Read a.txt/);
-  assert.match(lastRow(ui.text(), 7), /Received 1 line/);
-  assert.equal(lastRow(ui.text(), 8).trim(), "");
+  assert.match(lastRow(ui.text(), 7), /已读取文件|Read files/);
+  assert.match(lastRow(ui.text(), 8), /(?:✓|\+) Read a.txt/);
+  assert.match(lastRow(ui.text(), 9), /Received 1 line/);
 });
 
 test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
@@ -1061,12 +1065,12 @@ test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在�
   ui.tui.beginTurn("hello");
   await tick();
   assert.match(lastRow(ui.text(), 4), /hello/);
-  assert.match(lastRow(ui.text(), 8), /^(?:❯|>)\s*$/, "用户提问后输入框应在对话下方");
+  assert.match(lastRow(ui.text(), 9), /^(?:❯|>)\s*$/, "用户提问后输入框应在对话下方");
   ui.tui.assistantDelta("reply");
   ui.tui.finishAssistant("");
   await tick();
-  assert.match(lastRow(ui.text(), 6), /reply/);
-  assert.match(lastRow(ui.text(), 10), /^(?:❯|>)\s*$/, "模型短回复后输入框跟随内容");
+  assert.match(lastRow(ui.text(), 7), /reply/);
+  assert.match(lastRow(ui.text(), 11), /^(?:❯|>)\s*$/, "模型短回复后输入框跟随内容");
   assert.doesNotMatch(lastRow(ui.text(), 30), /(?:❯|>)/, "短会话不能仍钉在最底部");
 });
 
@@ -1535,4 +1539,107 @@ test("TUI Slash：中文菜单跟随最近任务语言；输入参数/审批时�
     "Shell 审批应在当前终端画面中隐藏 Slash 菜单，历史 ANSI 输出不计入");
   ui.input.write("\r");
   assert.equal(await approval, false);
+});
+
+test("角色语气：状态分类、中文英文独立文案与最近不重复", () => {
+  const first = selectMood("thinking", "zh", [], () => 0);
+  assert.ok(first.length > 0);
+  const next = selectMood("thinking", "zh", [first], () => 0);
+  assert.notEqual(next, first, "同一状态应避开最近展示的台词");
+  const english = selectMood("searching", "en", [], () => 0);
+  assert.match(english, /[A-Za-z]/);
+  assert.doesNotMatch(english, /[\u4E00-\u9FFF]/);
+  assert.notEqual(selectMood("approval", "zh", [], () => 0), "", "审批只使用明确的中性文案");
+});
+
+test("TUI：生命周期标题从准备到执行再到完成，不统计操作次数", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 38 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查项目");
+  assert.match(screenRows(ui, 38).join("\n"), /准备执行/);
+  ui.tui.setThinking(true);
+  assert.match(screenRows(ui, 38).join("\n"), /正在执行 · 已用时/);
+  assert.match(screenRows(ui, 38).join("\n"), /Thinking\.\.\./);
+  ui.tui.finishAssistant("检查完毕。");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  const final = screenRows(ui, 38).join("\n");
+  assert.match(final, /已完成 · 用时/);
+  assert.match(final, /检查完毕/);
+  assert.doesNotMatch(final, /\d+ 项操作|\d+ 成功|\d+ 失败/);
+});
+
+test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示等", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 55, columns: 108 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查并修改项目");
+  ui.tui.assistantDelta("先检查相关文件和代码。");
+  const calls = [
+    ["read", { path: "package.json" }, "file"],
+    ["grep", { pattern: "foo", path: "src" }, "matching"],
+    ["edit", { path: "src/config.ts", old_string: "foo", new_string: "bar" }, "updated"],
+    ["shell", { command: "npm run check" }, "exit 0"],
+  ];
+  calls.forEach(([name, args, result], index) => {
+    const call = { id: "activity-" + index, type: "function", function: { name, arguments: JSON.stringify(args) } };
+    ui.tui.toolCall(call);
+    ui.tui.toolResult(call, result);
+  });
+  ui.tui.assistantDelta("再查看修复结果。");
+  const second = { id: "activity-last", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } };
+  ui.tui.toolCall(second);
+  ui.tui.toolResult(second, "hello");
+  ui.tui.finishAssistant("最终结果已经整理好。");
+  ui.tui.finishTurn({ requests: 2, toolCalls: 5, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  const result = screenRows(ui, 55).join("\n");
+  assert.match(result, /先检查相关文件和代码/);
+  assert.match(result, /再查看修复结果/);
+  assert.match(result, /已读取文件、已搜索代码、已修改代码等/);
+  assert.match(result, /↳ 已读取文件/);
+  assert.equal((result.match(/↳ /g) ?? []).length, 2, "每段阶段说明各自保留摘要");
+  assert.match(result, /最终结果已经整理好/);
+  assert.doesNotMatch(result, /Read package\.json/, "结束后默认折叠工具明细");
+});
+
+test("TUI：失败原因与命令同行，阶段折叠仍保留真实失败", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 106 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("运行检查");
+  ui.tui.assistantDelta("接下来运行类型检查。");
+  const call = { id: "typecheck", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "exit 1\nTypeScript 类型检查未通过");
+  ui.tui.finishAssistant("发现类型检查错误，需要修复。");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  const rows = screenRows(ui, 40);
+  const failedRows = rows.filter((line) => line.includes("TypeScript 类型检查未通过"));
+  assert.equal(failedRows.length, 1);
+  assert.match(failedRows[0], /npm run check 失败 · exit 1 · TypeScript 类型检查未通过/);
+  assert.match(rows.join("\n"), /已完成 · 用时/, "Shell 失败并不代表 AI 任务失败");
+});
+
+test("TUI：Ctrl+O 按阶段依次展开详情，审批键盘优先级不变", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  for (let i = 0; i < 2; i++) {
+    ui.tui.assistantDelta("stage " + i);
+    const call = { id: String(i), type: "function", function: { name: "read", arguments: JSON.stringify({ path: "stage" + i + ".txt" }) } };
+    ui.tui.toolCall(call);
+    ui.tui.toolResult(call, "content");
+  }
+  ui.tui.finishAssistant("done");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 2, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /Read stage1\.txt/);
+  ui.input.write("\x0f"); // Ctrl+O，优先查看最近一段
+  await tick();
+  assert.match(screenRows(ui, 45).join("\n"), /Read stage1\.txt/);
+  ui.input.write("\x0f");
+  await tick();
+  const earlier = screenRows(ui, 45).join("\n");
+  assert.match(earlier, /Read stage0\.txt/);
+  assert.doesNotMatch(earlier, /Read stage1\.txt/);
 });
