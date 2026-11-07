@@ -40,6 +40,23 @@ const RENDER_INTERVAL_MS = 40;
 const PLACEHOLDER = "Ask anything, or type /help...";
 const COMMAND_PROMPT = "> ";
 
+export type UiLanguage = "zh" | "en";
+
+/** 只根据用户任务正文选界面语言；忽略代码片段、URL、路径和文件名。 */
+export function detectUiLanguage(task: string, previous: UiLanguage = "en"): UiLanguage {
+  const prose = task
+    .replace(/`[^`]*`/g, " ")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/[A-Za-z]:[\\/][^\s]+/g, " ")
+    .replace(/(?:\.{0,2}[\\/])?[^\s\\/]+(?:[\\/][^\s\\/]+)+/g, " ")
+    .replace(/\b[\w.-]+\.(?:md|tsx?|jsx?|json|py|css|html|txt|mjs|cjs)\b/gi, " ");
+  const han = [...prose.matchAll(/\p{Script=Han}/gu)].length;
+  const englishWords = [...prose.matchAll(/[A-Za-z]{2,}/g)].length;
+  if (han === 0 && englishWords === 0) return previous;
+  // 英文库名/命令往往出现在中文任务中：按汉字数与英语词数比较，而非比较字节数。
+  return han > 0 && han >= englishWords ? "zh" : "en";
+}
+
 type Tone =
   | "accent"
   | "assistant"
@@ -172,6 +189,9 @@ export class Tui {
   private readonly style: Style;
 
   private readonly glyphs: Glyphs;
+
+  /** 最近一次用户任务的主要语言；命令和模型输出不触发语言切换。 */
+  private uiLanguage: UiLanguage = "en";
 
   private columns: number;
 
@@ -367,7 +387,7 @@ export class Tui {
           this.approvalChoice = name === "up" ? "allow" : "deny";
           if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
           if (this.layout) this.renderNow();
-          else this.writeRaw(`\n> ${this.approvalChoice === "allow" ? "1. Yes, allow once" : "2. No (default)"}\n`);
+          else this.writeRaw(`\n> ${this.approvalChoice === "allow" ? this.uiText("1. Yes, allow once", "1. 是，仅允许本次") : this.uiText("2. No (default)", "2. 否（默认）")}\n`);
           return;
         }
         if (name === "return" || name === "enter") {
@@ -475,7 +495,7 @@ export class Tui {
           const prompt = formatApproval(this.approvalRequest, this.workspace);
           const body = prompt.endsWith(APPROVAL_QUESTION)
             ? prompt.slice(0, -APPROVAL_QUESTION.length) : prompt;
-          this.output.write(`${body}\nDo you want to proceed?\n  1. Yes, allow once\n> 2. No (default)\nEsc to cancel · Up/Down · Enter\n`);
+          this.output.write(`${body}\n${this.uiText("Do you want to proceed?", "是否允许执行？")}\n  ${this.uiText("1. Yes, allow once", "1. 是，仅允许本次")}\n> ${this.uiText("2. No (default)", "2. 否（默认）")}\n${this.uiText("Esc to cancel · Up/Down · Enter", "Esc 取消 · 上下键选择 · Enter 确认")}\n`);
           this.setApprovalCursor(false);
         }
         if (this.promptActive) {
@@ -499,6 +519,19 @@ export class Tui {
     if (wasPrompt) {
       this.restorePrompt();
     }
+  }
+
+  /** 只翻译 TUI 自己生成的提示；不翻译模型回复、工具参数或错误详情。 */
+  uiText(english: string, chinese: string): string {
+    return this.uiLanguage === "zh" ? chinese : english;
+  }
+
+  /** 用于 CLI 的会话命令提示，语言跟随最近一轮任务。 */
+  helpText(permissionModes: string): string {
+    return this.uiText(
+      `commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this\n          /permission [mode]  show or switch permission (${permissionModes})`,
+      `命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助\n      /permission [模式]  查看或切换权限（${permissionModes}）`,
+    );
   }
 
   /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */
@@ -561,6 +594,7 @@ export class Tui {
    * 固定布局清掉 readline 的输入回显，所以写一条 `❯ task`；行式聊天默认不重复。
    */
   beginTurn(task: string, { show = this.fixedLayoutAllowed || !this.interactive }: { show?: boolean } = {}): void {
+    this.uiLanguage = detectUiLanguage(task, this.uiLanguage);
     this.runStartedAt = Date.now();
     this.runToolResults = 0;
     if (this.layout) {
@@ -658,7 +692,7 @@ export class Tui {
     if (this.fixedLayoutAllowed) {
       this.pushBlank();
       const line: LogLine = {
-        ...this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call)}`, "muted"),
+        ...this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call, this.uiLanguage)}`, "muted"),
         kind: "tool",
       };
       this.log.push(line);
@@ -682,7 +716,7 @@ export class Tui {
     if (this.fixedLayoutAllowed) {
       const pending = this.pendingTools.get(call.id);
       this.pendingTools.delete(call.id);
-      const lines = toolResultLines(call, result, this.glyphs)
+      const lines = toolResultLines(call, result, this.glyphs, this.uiLanguage)
         .map((line) => ({ ...line, ...this.makeLogLine(line.text, line.tone) }));
       const index = pending === undefined ? -1 : this.log.indexOf(pending);
       if (index >= 0) this.log.splice(index, 1, ...lines);
@@ -707,13 +741,14 @@ export class Tui {
       this.stopThinking();
       this.commitAssistant();
       if (run.tokenBudget.exceeded) {
-        this.pushLog(`[budget] exceeded (limit=${run.tokenBudget.limit})`, "warning");
+        this.pushLog(this.uiText(`[budget] exceeded (limit=${run.tokenBudget.limit})`, `[预算] 已超出限制（上限=${run.tokenBudget.limit}）`), "warning");
       }
       if (seconds !== undefined) {
         // 中文对照：{N} 次工具调用；使用 Run 已返回的统计。
-        const tools = run.toolCalls > 0 ? ` · ${formatNumber(run.toolCalls)} ${run.toolCalls === 1 ? "tool call" : "tool calls"}` : "";
+        const tools = run.toolCalls > 0 ? ` · ${formatNumber(run.toolCalls)} ${this.uiText(run.toolCalls === 1 ? "tool call" : "tool calls", "次工具调用")}` : "";
         // 中文对照：完成耗时 / 停止前经过 {seconds} 秒，工具数沿用实际 Run 统计。
-        this.pushLog(`${this.glyphs.assistant} ${failed ? "Stopped after" : "Worked for"} ${seconds}s${tools}`, "muted");
+        const elapsed = this.uiText(`${failed ? "Stopped after" : "Worked for"} ${seconds}s`, `${failed ? "中止于" : "用时"} ${seconds} 秒`);
+        this.pushLog(`${this.glyphs.assistant} ${elapsed}${tools}`, "muted");
       }
       this.renderNow();
       return;
@@ -792,25 +827,25 @@ export class Tui {
   private approvalPanelLines(request: PermissionRequest): LogLine[] {
     const width = this.contentWidth();
     const rawCommand = typeof request.args.command === "string" ? request.args.command : "";
-    const command = rawCommand === "" ? "(empty command)" : rawCommand;
+    const command = rawCommand === "" ? this.uiText("(empty command)", "（空命令）") : rawCommand;
     const commandLines = command.split("\n").map((line) => escapeControlCharacters(line));
     const cwd = escapeControlCharacters(this.workspace).replace(/\n/g, "\\u000a");
     const select = this.glyphs.user;
 
     const entries: Array<{ text: string; tone: Tone }> = [
-      { text: "Shell permission", tone: "warning" },
-      { text: `Workspace: ${cwd}`, tone: "muted" },
+      { text: this.uiText("Shell permission", "Shell 权限审批"), tone: "warning" },
+      { text: `${this.uiText("Workspace:", "工作目录：")} ${cwd}`, tone: "muted" },
       { text: "", tone: "plain" },
-      { text: "Command:", tone: "assistant" },
+      { text: this.uiText("Command:", "命令："), tone: "assistant" },
       ...commandLines.map((line) => ({ text: `  | ${line}`, tone: "assistant" as Tone })),
       { text: "", tone: "plain" },
-      { text: "Do you want to proceed?", tone: "assistant" },
-      { text: `${this.approvalChoice === "allow" ? select : " "} 1. Yes, allow once`,
+      { text: this.uiText("Do you want to proceed?", "是否允许执行？"), tone: "assistant" },
+      { text: `${this.approvalChoice === "allow" ? select : " "} ${this.uiText("1. Yes, allow once", "1. 是，仅允许本次")}`,
         tone: this.approvalChoice === "allow" ? "accent" : "muted" },
-      { text: `${this.approvalChoice === "deny" ? select : " "} 2. No (default)`,
+      { text: `${this.approvalChoice === "deny" ? select : " "} ${this.uiText("2. No (default)", "2. 否（默认）")}`,
         tone: this.approvalChoice === "deny" ? "accent" : "muted" },
       { text: "", tone: "plain" },
-      { text: "Esc to cancel", tone: "muted" },
+      { text: this.uiText("Esc to cancel", "Esc 取消"), tone: "muted" },
     ];
 
     const separator: LogLine = {
@@ -893,11 +928,11 @@ export class Tui {
     if (approved) this.approvalBlocksRunning = false;
     if (this.layout) {
       this.logLine(
-        `  ${approved ? this.glyphs.success : this.glyphs.denied} ${approved ? "Allowed once" : "Denied"}`,
+        `  ${approved ? this.glyphs.success : this.glyphs.denied} ${approved ? this.uiText("Allowed once", "已允许本次执行") : this.uiText("Denied", "已拒绝")}`,
         approved ? "success" : "warning",
       );
     } else {
-      this.logLine(`approval: ${approved ? "allowed once" : "denied"}`, approved ? "success" : "error");
+      this.logLine(`${this.uiText("approval:", "审批：")} ${approved ? this.uiText("allowed once", "已允许本次执行") : this.uiText("denied", "已拒绝")}`, approved ? "success" : "error");
     }
     return approved;
   }
@@ -1121,7 +1156,7 @@ export class Tui {
     }
     if (this.rl.line === "") this.inputOffset = 0;
     const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT && this.log.length === 0;
-    const text = placeholder ? ` ${PLACEHOLDER}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
+    const text = placeholder ? ` ${this.uiText(PLACEHOLDER, "输入任务，或输入 /help...")}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
     const shown = takeByWidth(text, room);
     return this.style.paint("muted", prompt) +
       this.style.paint(placeholder ? "muted" : "plain", padRight(shown, room));
@@ -1208,7 +1243,7 @@ export class Tui {
       if (pendingLines.has(line) && !this.approvalBlocksRunning) {
         // 拒绝/EOF 后到工具结果回传之前也不能短暂闪现执行中。
         // 中文对照：正在执行。
-        logical.push({ text: `    ${this.glyphs.boxBottomLeft} Running...`, tone: "muted" });
+        logical.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
       }
     }
     if (this.assistantOpen) {
@@ -1223,12 +1258,11 @@ export class Tui {
       const spinner = frames[Math.floor(elapsed / 200) % frames.length];
       // 只展示已收到的工具结果数，不猜测端点尚未返回的流式 token。
       const results = this.runToolResults > 0 && this.contentWidth() >= 48
-        // 中文对照：{N} 个工具结果。
-        ? ` · ${formatNumber(this.runToolResults)} ${this.runToolResults === 1 ? "tool result" : "tool results"}` : "";
+        ? ` · ${formatNumber(this.runToolResults)} ${this.uiText(this.runToolResults === 1 ? "tool result" : "tool results", "个工具结果")}` : "";
       // 中文对照：等待中，已经过 {seconds} 秒，以及已收到的工具结果数。
       logical.push({ text: `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`, tone: "accent", kind: "thinking" });
       // 中文对照：Ctrl-C 取消。
-      logical.push({ text: `  ${this.glyphs.boxBottomLeft} Ctrl-C to cancel`, tone: "muted" });
+      logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
     }
 
     const width = this.contentWidth();
@@ -1248,7 +1282,7 @@ export class Tui {
       wrapped.push(...panel);
       if (panel.length > this.logHeight) {
         // 完整命令可翻阅；不用 Unicode 箭头，传统 conhost 也能读懂。
-        wrapped.push({ text: "PageUp/PageDown: review full command", tone: "muted" });
+        wrapped.push({ text: this.uiText("PageUp/PageDown: review full command", "PageUp/PageDown：查看完整命令"), tone: "muted" });
       }
     }
     return wrapped;
@@ -1279,13 +1313,14 @@ export class Tui {
         : this.permissionMode === "read-only"
           ? "assistant"
           : "warning";
-    const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} lines`;
+    const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} ${this.uiText("lines", "行")}`;
     const baseLabel = this.scrollOffset > 0
       ? `${scrollPrefix} · ${this.permissionMode}`
       : this.permissionMode;
-    const shortcut = this.onPermissionChange !== undefined && this.interactive ? " (shift-tab to cycle)" : "";
+    const shortcut = this.onPermissionChange !== undefined && this.interactive
+      ? this.uiText(" (shift-tab to cycle)", "（Shift+Tab 切换）") : "";
     let left = this.fullAccessConfirmationPending
-      ? "Confirm full-access: Shift+Tab again · Esc cancel"
+      ? this.uiText("Confirm full-access: Shift+Tab again · Esc cancel", "确认 full-access：再次按 Shift+Tab · Esc 取消")
       : baseLabel + shortcut;
     let right = this.formatSessionStats(width >= 60);
 
@@ -1314,23 +1349,23 @@ export class Tui {
 
   private formatSessionStats(full: boolean): string {
     const stats = this.stats;
-    if (stats === undefined) return full ? "0 requests · 0 tokens" : "0 req · 0 tok";
+    if (stats === undefined) return full ? this.uiText("0 requests · 0 tokens", "0 次请求 · 0 tokens") : this.uiText("0 req · 0 tok", "0 请求 · 0 tok");
     const requests = formatNumber(stats.requests);
     const tools = formatNumber(stats.toolCalls);
-    const lower = stats.usage.unknown > 0 ? "at least " : "";
+    const lower = stats.usage.unknown > 0 ? this.uiText("at least ", "至少 ") : "";
     const tokens = `${lower}${formatNumber(stats.usage.totalTokens)}`;
 
     if (full) {
-      const parts = [`${requests} ${stats.requests === 1 ? "request" : "requests"}`];
+      const parts = [`${requests} ${this.uiText(stats.requests === 1 ? "request" : "requests", "次请求")}`];
       if (stats.toolCalls > 0) {
-        parts.push(`${tools} ${stats.toolCalls === 1 ? "tool call" : "tool calls"}`);
+        parts.push(`${tools} ${this.uiText(stats.toolCalls === 1 ? "tool call" : "tool calls", "次工具调用")}`);
       }
       parts.push(`${tokens} tokens`);
       return parts.join(" · ");
     }
 
-    const parts = [`${requests} req`];
-    if (stats.toolCalls > 0) parts.push(`${tools} tools`);
+    const parts = [`${requests} ${this.uiText("req", "请求")}`];
+    if (stats.toolCalls > 0) parts.push(`${tools} ${this.uiText("tools", "工具")}`);
     parts.push(`${tokens} tok`);
     return parts.join(" · ");
   }
@@ -1360,7 +1395,7 @@ export class Tui {
   }
 
   private formatStatus(): string {
-    const prefix = `model ${clip(singleLine(this.model), 24)} | permission ${this.permissionMode} | workspace `;
+    const prefix = `${this.uiText("model", "模型")} ${clip(singleLine(this.model), 24)} | ${this.uiText("permission", "权限")} ${this.permissionMode} | ${this.uiText("workspace", "工作目录")} `;
     const room = this.columns - displayWidth(prefix);
     const workspace = singleLine(this.workspace);
     let shown = "";
