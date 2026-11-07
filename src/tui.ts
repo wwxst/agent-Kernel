@@ -131,6 +131,8 @@ export interface TuiOptions {
   color?: boolean;
   /** Claude Code 风格：短对话时输入框跟随消息，长对话时自动停靠底部。 */
   flowInput?: boolean;
+  /** TUI 只发出权限切换意图；CLI 负责更新真实 Permission 和模型提示。 */
+  onPermissionChange?: (mode: PermissionMode) => void;
 }
 
 /**
@@ -159,6 +161,11 @@ export class Tui {
   private readonly fixedLayoutAllowed: boolean;
 
   private readonly flowInput: boolean;
+
+  private readonly onPermissionChange?: (mode: PermissionMode) => void;
+
+  /** Shift+Tab 进入 full-access 前需要再按一次确认，误按不会提升权限。 */
+  private fullAccessConfirmationPending = false;
 
   private readonly terminalControls: boolean;
 
@@ -285,6 +292,7 @@ export class Tui {
     this.interactive = options.interactive;
     this.permissionMode = options.permission;
     this.flowInput = options.flowInput ?? false;
+    this.onPermissionChange = options.onPermissionChange;
     this.terminalControls = process.env.TERM !== "dumb";
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
@@ -379,6 +387,31 @@ export class Tui {
         return;
       }
 
+      // 只在等待下一条任务时启用，执行中/审批中不可提权。
+      // Windows Terminal / xterm 的 Shift+Tab 通常发送 CSI Z。
+      const shiftTab = name === "tab" && key?.shift === true || key?.sequence === "\x1b[Z";
+      if (shiftTab && this.promptActive && this.onPermissionChange !== undefined) {
+        if (this.fullAccessConfirmationPending) {
+          this.fullAccessConfirmationPending = false;
+          this.onPermissionChange("full-access");
+        } else {
+          const next: PermissionMode = this.permissionMode === "read-only" ? "workspace-write"
+            : this.permissionMode === "workspace-write" ? "full-access" : "read-only";
+          if (next === "full-access") {
+            this.fullAccessConfirmationPending = true;
+          } else {
+            this.onPermissionChange(next);
+          }
+        }
+        if (this.layout) this.renderNow();
+        return;
+      }
+      if (this.fullAccessConfirmationPending) {
+        // 任意其他按键撤销提权待确认，Esc 也不会提交一条任务。
+        this.fullAccessConfirmationPending = false;
+        if (this.layout) this.renderNow();
+      }
+
       if (!this.layout) return;
       if (name === "pageup") this.scrollPage("up");
       else if (name === "pagedown") this.scrollPage("down");
@@ -471,6 +504,7 @@ export class Tui {
   /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */
   setPermission(mode: PermissionMode): void {
     this.permissionMode = mode;
+    this.fullAccessConfirmationPending = false;
     if (this.layout) this.renderNow();
   }
 
@@ -1246,16 +1280,22 @@ export class Tui {
           ? "assistant"
           : "warning";
     const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} lines`;
-    let left =
-      this.scrollOffset > 0
-        ? `${scrollPrefix} · ${this.permissionMode}`
-        : this.permissionMode;
+    const baseLabel = this.scrollOffset > 0
+      ? `${scrollPrefix} · ${this.permissionMode}`
+      : this.permissionMode;
+    const shortcut = this.onPermissionChange !== undefined && this.interactive ? " (shift-tab to cycle)" : "";
+    let left = this.fullAccessConfirmationPending
+      ? "Confirm full-access: Shift+Tab again · Esc cancel"
+      : baseLabel + shortcut;
     let right = this.formatSessionStats(width >= 60);
 
-    // 窄终端先压成短单位；还不够就丢掉滚动状态里的权限名，优先保留统计。
+    // 优先保留快捷键提示和完整统计，空间不足时再逐级缩短。
     if (displayWidth(left) + displayWidth(right) + 1 > width) {
       right = this.formatSessionStats(false);
-      if (this.scrollOffset > 0) left = scrollPrefix;
+    }
+    if (displayWidth(left) + displayWidth(right) + 1 > width && !this.fullAccessConfirmationPending) {
+      left = baseLabel;
+      if (this.scrollOffset > 0 && displayWidth(left) + displayWidth(right) + 1 > width) left = scrollPrefix;
     }
     if (displayWidth(left) + displayWidth(right) + 1 > width) {
       const requests = formatNumber(this.stats?.requests ?? 0);
@@ -1267,7 +1307,7 @@ export class Tui {
     const leftText = clip(left, Math.max(1, width - displayWidth(rightText) - 1));
     const gap = Math.max(1, width - displayWidth(leftText) - displayWidth(rightText));
     return (
-      this.style.paint(this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
+      this.style.paint(this.fullAccessConfirmationPending || this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
       `${" ".repeat(gap)}${this.style.paint("muted", rightText)}`
     );
   }
