@@ -138,7 +138,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 `grep` 支持**正则**（JavaScript 语法，逐行匹配），但匹配不跑在主线程：每条正则在 `grep-worker.ts` 的线程里执行，主线程只守 2 秒的匹配预算，超时就 `terminate`，把整个线程连同指数级回溯一起扔掉。这样「输入不能让 agent 卡死」仍然成立，而模型拿回了 `a.*b` 这类能力——第一阶段的字面搜索是当时没有 worker 的权宜之计。代价是每次 grep 多一个线程的启动开销，以及结果可能因预算而部分缺失（尾注会明确写 `regex stopped after 2000ms`）。要搜 `a.b`、`([` 这种字面文本，传 `fixed: true` 就能关掉正则解释。取舍记在 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)。
 
-Windows `taskkill /T` 失败时，会尽力调用 `child.kill()` 停掉直接子进程；这不是整棵进程树成功清理的保证。自动故障注入只证明降级路径不崩溃、只触发一次，不能代替真实 Windows 故障环境验收。
+Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功。启动失败、非零退出或卡住时，尝试 `child.kill()` 停掉直接子进程，**并以错误报告「进程树清理未确认，可能仍有后代运行」**，而不是冒充清理完成。停止后的子进程管道最多等待 4 秒；如果 stdout/stderr 被残留后代持续占用，也要终止等待、明确报错。注意：Node 自带的 `child.kill()` 不能保证 Windows 孙进程退出；自动故障注入与真实 Windows 进程树超时/取消测试也不能证明所有异常环境均可回收。
 
 还有一条更根本的：**`shell` 不受路径守卫约束**——命令里写 `cd ..`、`cat ../x` 照样能出去，进程权限跟启动它的人一样。这套路径守卫是「防模型手滑」的边界，不是安全边界；真隔离得靠容器、独立用户或只读挂载。见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)。
 
@@ -230,7 +230,7 @@ npm run check       # typecheck + 全部测试
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/permission.test.mjs` | Permission：三档策略、`permissionPrompt`、shell 审批的每次询问与默认拒绝、ToolRegistry 的检查位置、显式 permission / null 的构造校验 |
 | `test/approval.test.mjs` | 审批读取：`askWithSignal` 的正常 / 取消 / EOF 竞态，以及多行 / 超长 / 控制字符命令和 cwd 的展示 |
-| `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树和 Windows taskkill 错误/非零退出故障注入 |
+| `test/workspace.test.mjs` | 路径越界、完整读取、截断、扫描预算、符号链接、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、取消进程树和 Windows taskkill 错误/非零退出/卡住故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、REPL 多轮与 `/reset`、`/permission` 动态提示、`--permission`、流式 mock、TUI 聊天布局 / 命令 / 统计 |
 | `test/cli-pty.test.mjs` | Linux PTY：审批允许 / 拒绝 / Ctrl-C / EOF，以及 REPL 审批 EOF 不冒充用户拒绝 |
