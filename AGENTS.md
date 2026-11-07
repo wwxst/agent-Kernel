@@ -35,7 +35,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
 | `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、底部带边框输入、状态行在下、工具状态/审批面板、流式失败草稿失效、颜色/字形降级、PageUp/PageDown、resize；不碰 Agent 循环 | `Tui`（`start`、`logError`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
 | `src/cli.ts` | 组装：命令行参数 / 环境变量 → 对象图 → 跑一次、进 REPL 或进 TUI；`--permission`、`/permission`、SIGINT/SIGTERM 取消链的起点 | — |
-| `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；统一转义模型与工具输出，不改 Transcript | `RunPresenter` |
+| `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；流式正文与确认回复不一致时显式更正，不改 Transcript | `RunPresenter` |
 
 依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` / `tui` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`，`approval` 只依赖 `permission` 的类型；`tui` 只依赖 `approval` / `permission` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查），更不认识 `tui`。
 

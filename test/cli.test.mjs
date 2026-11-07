@@ -152,6 +152,21 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
   });
 });
 
+test("CLI：模型流式请求中断时声明草稿失效，不冒充已确认回复", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("ignored")], { interruptAtTurn: 0 });
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.notEqual(run.code, 0);
+      assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
+      assert.match(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
+      assert.doesNotMatch(run.stdout, /model \(confirmed\): UNCONFIRMED_SECOND_REQUEST/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("越界路径：变成 ERROR 回灌，进程正常退出", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([

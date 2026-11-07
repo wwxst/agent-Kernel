@@ -79,6 +79,42 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
 
+test("TUI：已确认模型正文覆盖不一致的流式草稿，不向历史提交错误文本", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("ask");
+  ui.tui.assistantDelta("DRAFT_MISMATCH");
+  ui.tui.confirmAssistant("CONFIRMED_BODY");
+
+  const screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /CONFIRMED_BODY/);
+  assert.doesNotMatch(screen, /DRAFT_MISMATCH/);
+});
+
+test("TUI：行式模式不能收回流式字节，必须追加更正声明和权威消息", (t) => {
+  const ui = makeTui({ interactive: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.assistantDelta("DRAFT_MISMATCH");
+  ui.tui.confirmAssistant("CONFIRMED_BODY");
+
+  assert.match(ui.text(), /model: DRAFT_MISMATCH/);
+  assert.match(ui.text(), /stream corrected: confirmed message follows/);
+  assert.match(ui.text(), /model \(confirmed\): CONFIRMED_BODY/);
+});
+
+test("TUI：模型确认无正文时不得把旧流式草稿当作工具前置说明", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("ask");
+  ui.tui.assistantDelta("UNCONFIRMED");
+  ui.tui.confirmAssistant(null);
+
+  assert.doesNotMatch(screenRows(ui, 35).join("\n"), /UNCONFIRMED/);
+});
+
 test("TUI：输入区仅用两条横线，提示与正文共用左边界，中文光标保持正确", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());

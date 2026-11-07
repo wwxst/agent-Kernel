@@ -635,6 +635,18 @@ test("edit：重叠的命中也算多处，不能被当成唯一", async () => {
   });
 });
 
+test("run：stdout/stderr UTF-8 多字节被拆成独立分片仍完整解码", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    const command = 'node -e "process.stdout.write(Buffer.from([0xe4])); process.stderr.write(Buffer.from([0xe6])); setTimeout(() => { process.stdout.write(Buffer.from([0xb8,0xad])); process.stderr.write(Buffer.from([0x96,0x87])); }, 50)"';
+    const result = await workspace.run(command);
+    assert.match(result, /^exit 0/);
+    assert.match(result, /中/);
+    assert.match(result, /文/);
+    assert.doesNotMatch(result, /\uFFFD/, "不能把分片汉字变成 UTF-8 替换字符");
+  });
+});
+
 test("run：超时是独立的执行结果，不是普通的退出码", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root, timeoutMs: 300 });

@@ -331,6 +331,23 @@ test("onToolCall 回调触发取消：工具不执行，调用与结果仍配对
   assert.match(agent.transcript.at(-1).content, /ERROR: not run: task cancelled/);
 });
 
+test("onToolCall 同时传确认的模型正文，供工具前置说明纠正流式草稿", async () => {
+  const seen = [];
+  const chat = createScriptedChat([{
+    role: "assistant", content: "confirmed plan",
+    tool_calls: [
+      { id: "c1", type: "function", function: { name: "echo", arguments: '{"value":"x"}' } },
+      { id: "c2", type: "function", function: { name: "echo", arguments: '{"value":"y"}' } },
+    ],
+  }, finalReply("done")]);
+  const agent = new Agent({
+    llm: chat, tools: makeRegistry([echoTool()]),
+    onToolCall: (call, content) => seen.push([call.id, content]),
+  });
+  await agent.run("task");
+  assert.deepEqual(seen, [["c1", "confirmed plan"], ["c2", "confirmed plan"]]);
+});
+
 test("系统提示词：默认放一条 system 消息，也可以整条替换", async () => {
   const defaults = createScriptedChat([finalReply("ok")]);
   await new Agent({ llm: defaults, tools: makeRegistry([]) }).run("task");
