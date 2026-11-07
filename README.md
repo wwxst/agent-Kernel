@@ -18,6 +18,16 @@ npm run agent -- --repl        # 多轮会话：/exit 退出、/reset 清空上�
 
 CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是黑屏等一段。评测走非流式，保证跨轮对比的是同样的完整响应（见 [ADR-0012](./docs/adr/0012-streaming-is-display-only.md)）。
 
+### 执行阶段与角色台词
+
+CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answering → Completed / Failed / Cancelled**。每次模型请求有独立思考阶段，工具调用开始、返回结果会依次出现；结束时展示真实耗时、执行过的工具次数，原有 `[usage]` 账单仍保留。工具出错时标记 ✗，不会因为台词活泼就宣称任务成功。台词只是展示层文案，不进入模型提示词或 Transcript。
+
+- 默认 **compact**：每条工具一行摘要，按模型 Step 连续排列，方便快速扫过。
+- `npm run agent -- --details "任务"`：**detailed** 模式，每条工具结果单独展开多行；超过 4000 字符会标明省略字符数。也可在 `.env` 设 `AGENT_VIEW=detailed`。
+- `AGENT_VOICE=balanced`（默认）轮换元气、调皮、傲娇、好奇、温柔、可靠六类短句；也可以设 `energetic` / `playful` / `tsundere` / `curious` / `gentle` / `confident` 固定语气。台词随阶段变化，不是定时随机冒泡。
+
+终端本身没有可点击折叠组件，因此这里用 **compact/detailed 两种视图** 替代网页里的逐条点击展开；详细模式的日志同样有长度上限。
+
 ## 代码结构
 
 七个模块，依赖只有一个方向，叶子是两个不依赖任何人的模块（`types.ts`、`errors.ts`）：
@@ -31,6 +41,7 @@ CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是�
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫、有界读取、扫描预算与取消 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
 | `src/cli.ts` | 组装层：环境变量 → 对象图 → 跑一次任务 |
+| `src/cli-presenter.ts` | CLI 展示：执行阶段、动态台词、工具日志精简/详细视图；不写入 Transcript |
 
 `src/grep-worker.ts` 不算第八个模块，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
 
