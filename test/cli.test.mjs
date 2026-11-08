@@ -159,7 +159,7 @@ test("TUI：SSE 无完成标记分类为模型回复中断，英文/中文各只
       assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
       assert.doesNotMatch(run.stdout, /【流式响应中断：未确认正文已丢弃】/);
       assert.doesNotMatch(run.stdout, /model: never confirmed/);
-      assert.match(run.stdout, /requests=2/);
+      assert.match(run.stdout, /请求=2/);
     } finally {
       await mock.close();
     }
@@ -251,7 +251,9 @@ test("CLI：模型流式请求中断时声明草稿失效，不冒充已确认�
       const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
       assert.notEqual(run.code, 0);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
-      assert.match(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
+      assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
+      assert.match(run.stderr, /Invalid model response/);
+      assert.match(run.stderr, /preview text is unconfirmed/);
       assert.doesNotMatch(run.stdout, /model \(confirmed\): UNCONFIRMED_SECOND_REQUEST/);
     } finally {
       await mock.close();
@@ -646,7 +648,9 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
       assert.match(run.stdout, /model: CONFIRMED_FIRST_STEP/);
       assert.equal((run.stdout.match(/model: CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
-      assert.match(run.stdout, /unconfirmed text discarded/);
+      assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
+      assert.match(run.stdout, /Invalid model response/);
+      assert.match(run.stdout, /preview text is unconfirmed/);
       assert.equal(mock.requests.length, 2);
     } finally {
       await mock.close();

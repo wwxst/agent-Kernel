@@ -98,12 +98,12 @@ export function modelFailure(error: unknown, language: "zh" | "en"): {
       en: ["Cannot connect to model service", "Check the network, BASE_URL, and provider availability."],
     },
     stream: {
-      zh: ["模型回复中断", "已收到部分响应，但缺少完成标记；请重试或检查流式协议兼容性。"],
-      en: ["Model response interrupted", "The stream ended without a completion marker; retry or check streaming compatibility."],
+      zh: ["模型回复中断", "已收到部分响应，但缺少完成标记；之前显示的正文尚未确认。请重试或检查流式协议兼容性。"],
+      en: ["Model response interrupted", "The stream ended without a completion marker; any preview text is unconfirmed. Retry or check streaming compatibility."],
     },
     invalid: {
-      zh: ["模型响应格式异常", "服务返回的数据不符合预期，请检查接口兼容性。"],
-      en: ["Invalid model response", "The provider returned unexpected data; check API compatibility."],
+      zh: ["模型响应格式异常", "服务返回的数据不符合预期；已显示的增量内容未经确认，请检查接口兼容性。"],
+      en: ["Invalid model response", "The provider returned unexpected data; any preview text is unconfirmed. Check API compatibility."],
     },
   } as const;
   const [title, advice] = messages[kind][language];
