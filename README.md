@@ -211,8 +211,9 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 | 变量 / 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `BASE_URL` | `https://api.openai.com/v1` | 任意 OpenAI 兼容端点 |
-| `API_KEY` | — | 必填，或改用 `OPENAI_API_KEY` |
-| `MODEL` | `gpt-4o-mini` | 模型名 |
+| `API_KEY` | — | 必填，或改用 `OPENAI_API_KEY`；示例占位值 `sk-your-key-here` 会在请求前拒绝 |
+| `MODEL` | `gpt-4o-mini` | 模型名；不填写沿用默认值，不代表已验证服务连通 | 
+| `AGENT_DEMO` | 未启用 | 设为 `1` 时，仅在 TUI/CLI 标记“外部 Mock 演示”；不会启动模拟服务或跳过 API Key 校验 |
 | `WORKDIR` | 当前目录 | 文件工具的根目录（不是安全边界） |
 | `MAX_STEPS` | `30` | 单次 Run 最多请求模型多少次 |
 | `MAX_TOOL_CALLS` | `60` | 单次 Run 最多处理多少次工具调用（拒绝 / 校验失败也计数；预算跳过不计） |
@@ -220,6 +221,13 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应最多生成多少 token |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
 | `--permission` | `workspace-write` | CLI 参数（不是环境变量）：`read-only` / `workspace-write` / `full-access` |
+
+### 模型连接与错误提示
+
+- **启动前检查**：缺少 API Key、或者只填了 `.env.example` 的占位 Key，直接提示配置不完整，不显示一轮假的 Thinking / Failed，也不会发送模型请求。只配置了模型名不代表连接成功；真正的服务可用性需要请求后确认。
+- **连接失败**：401/403 提示鉴权问题、404 提醒检查模型名或接口地址（不能仅凭 404 确定原因）；网络失败、异常 HTTP 状态和 SSE 缺少完成标记分别提示，不再混为一条“模型无效”。
+- **TUI 展示**：流式草稿仍然仅是临时显示。已经能分类的模型错误会撤销草稿，显示一次明确的错误原因、操作建议以及一行技术详情，不再额外叠加“未确认正文已丢弃”。其它未知异常保留原有诊断行为。
+- **外部演示**：需要自行启动符合 OpenAI 兼容协议的 Mock HTTP 服务，设置 `BASE_URL`、`API_KEY`、`MODEL`；若要在标题中明确标识，可加 `AGENT_DEMO=1`。标记仅影响展示，**没有内置 Mock 端点，也不验证 Mock 是否已经运行**。模型名 `mock-demo` 本身并不代表已连接成功。
 
 ## 验证
 
