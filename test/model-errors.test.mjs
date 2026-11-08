@@ -23,6 +23,8 @@ test("模型错误分类：缺配置、鉴权、404、网络和 SSE 未完成各
     assert.equal(modelFailure(error, "en")?.detail, error.message, "技术错误原文保留");
     assert.ok(modelFailure(error, "zh")?.advice, "每个已识别错误都应给解决方向");
   }
+  assert.match(modelFailure(new ChatResponseError("bad stream"), "zh")?.advice ?? "", /已作废/);
+  assert.match(modelFailure(new ChatResponseError("bad stream"), "en")?.advice ?? "", /discarded/);
   assert.equal(modelFailure(new Error("tool failed"), "zh"), undefined);
 });
 

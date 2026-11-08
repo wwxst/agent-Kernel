@@ -253,7 +253,7 @@ test("CLI：模型流式请求中断时声明草稿失效，不冒充已确认�
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
       assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
       assert.match(run.stderr, /Invalid model response/);
-      assert.match(run.stderr, /preview text is unconfirmed/);
+      assert.match(run.stderr, /preview is discarded/);
       assert.doesNotMatch(run.stdout, /model \(confirmed\): UNCONFIRMED_SECOND_REQUEST/);
     } finally {
       await mock.close();
@@ -650,7 +650,7 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
       assert.match(run.stdout, /Invalid model response/);
-      assert.match(run.stdout, /preview text is unconfirmed/);
+      assert.match(run.stdout, /preview is discarded/);
       assert.equal(mock.requests.length, 2);
     } finally {
       await mock.close();
