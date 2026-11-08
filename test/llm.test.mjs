@@ -424,7 +424,12 @@ test("流式：finish_reason=length 说明被截断，必须报错", async () =>
 test("流式：连接断了、没有 finish_reason 时不能当成完整回复", async () => {
   const server = await respondWithStream([streamDelta({ content: "half" })]);
   try {
-    await assert.rejects(() => streamingClient(server.url).chat([], []), /stream ended before the model finished/);
+    await assert.rejects(
+      () => streamingClient(server.url).chat([], []),
+      (error) => error instanceof ChatResponseError &&
+        error.code === "stream_incomplete" &&
+        /stream ended before the model finished/.test(error.message),
+    );
   } finally {
     await server.close();
   }

@@ -5,7 +5,7 @@
  * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
-import { ChatResponseError, describeError } from "./errors.ts";
+import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "./errors.ts";
 import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
 
 export interface LlmOptions {
@@ -76,7 +76,9 @@ export class Llm implements ChatClient {
     tools: readonly ToolDefinition[],
     options: ChatOptions = {},
   ): Promise<ChatResponse> {
-    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -101,13 +103,18 @@ export class Llm implements ChatClient {
       // 超时后 fetch 会抛 AbortError，被上层 catch 成一次可见的失败。
       // 外部取消（Ctrl-C）也走 signal：两条路合并，fetch 不用知道是谁按的停止键。
       signal: this.signal ? AbortSignal.any([AbortSignal.timeout(this.timeoutMs), this.signal]) : AbortSignal.timeout(this.timeoutMs),
-    });
+      });
+    } catch (error) {
+      // 真正的用户取消必须保留原有取消语义，不归类成普通连接失败。
+      if (this.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      throw new ModelConnectionError(`LLM connection failed: ${describeError(error)}`);
+    }
 
     if (!response.ok) {
       // 把响应体带上：400 通常就是因为消息顺序/配对错了，错误详情很有价值。
       const detail = (await response.text()).slice(0, 500);
       // 中文对照：模型接口返回 HTTP {状态码}：{响应体}
-      throw new Error(`LLM HTTP ${response.status}: ${detail}`);
+      throw new ModelHttpError(response.status, detail);
     }
 
     if (this.stream) return this.readStreamed(response, options.onDelta);
@@ -185,7 +192,10 @@ export class Llm implements ChatClient {
     try {
       return { message: assembly.toMessage(), usage };
     } catch (error) {
-      throw new ChatResponseError(describeError(error), usage);
+      throw new ChatResponseError(
+        describeError(error), usage,
+        error instanceof ChatResponseError ? error.code : "invalid_response",
+      );
     }
   }
 }
@@ -246,7 +256,9 @@ class StreamAssembly {
   }
 
   toMessage(): Message {
-    if (this.finishReason === undefined) throw invalid("stream ended before the model finished");
+    if (this.finishReason === undefined) {
+      throw new ChatResponseError("LLM response is invalid: stream ended before the model finished", undefined, "stream_incomplete");
+    }
 
     const message: Record<string, unknown> = { role: "assistant", content: this.content };
     if (this.reasoning !== "") message.reasoning_content = this.reasoning;

@@ -1041,7 +1041,7 @@ export class Tui {
    * 固定布局可以撤销草稿；行式终端无法收回已输出字节，必须追加明显的失效声明。
    * 已提交的上一阶段说明不受影响，工具活动和 Transcript 也不从展示层修改。
    */
-  discardAssistantDraft(): void {
+  discardAssistantDraft(announce = true): void {
     if (!this.assistantOpen) return;
     const warning = this.uiText(
       "[stream interrupted: unconfirmed text discarded]",
@@ -1051,13 +1051,14 @@ export class Tui {
     this.assistantOpen = false;
 
     if (this.layout) {
-      this.pushLog(warning, "warning");
+      // 已分类的模型错误会显示一次明确原因；不要再叠加泛化的流式警告。
+      if (announce) this.pushLog(warning, "warning");
       this.renderNow();
       return;
     }
 
     if (!this.assistantAtLineStart) this.writeRaw(this.newline());
-    this.writeRaw(`${escapeControlCharacters(warning)}${this.newline()}`);
+    if (announce) this.writeRaw(`${escapeControlCharacters(warning)}${this.newline()}`);
     this.assistantAtLineStart = true;
   }
 

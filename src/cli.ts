@@ -29,7 +29,7 @@ import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { RunPresenter } from "./cli-presenter.ts";
 import type { AgentView, AgentVoice } from "./cli-presenter.ts";
-import { describeError } from "./errors.ts";
+import { ModelConfigError, describeError, modelFailure } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
@@ -81,6 +81,8 @@ interface Config {
   apiKey: string;
   baseUrl: string;
   model: string;
+  /** 仅标注外部 Mock 演示，不自动启动模拟模型或绕过模型配置。 */
+  demo: boolean;
   root: string;
   maxSteps: number;
   maxToolCalls: number;
@@ -119,16 +121,20 @@ function viewFromEnv(): AgentView {
 
 function loadConfig(permission: PermissionMode, details: boolean): Config {
   // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
-  const apiKey = firstNonEmpty(process.env.API_KEY, process.env.OPENAI_API_KEY);
+  const candidateKeys = [process.env.API_KEY, process.env.OPENAI_API_KEY];
+  const apiKey = firstNonEmpty(...candidateKeys.filter((value) =>
+    value?.trim() !== "sk-your-key-here" && value?.trim() !== "your-api-key"));
   if (!apiKey) {
-    // 中文对照：缺少 API_KEY（或 OPENAI_API_KEY）；参考 .env.example
-    throw new Error("missing API_KEY (or OPENAI_API_KEY); see .env.example");
+    // 示例占位符不是有效凭据；错误必须在 TUI 开始 Thinking 之前暴露。
+    throw new ModelConfigError("missing API_KEY (or OPENAI_API_KEY); replace the .env.example placeholder with a real key");
   }
 
   return {
     apiKey,
     baseUrl: process.env.BASE_URL ?? "https://api.openai.com/v1",
-    model: process.env.MODEL ?? "gpt-4o-mini",
+    model: process.env.MODEL?.trim() || "gpt-4o-mini",
+    // 显式演示标记仅供外部 Mock 服务展示；不提供内置模拟端点。
+    demo: process.env.AGENT_DEMO === "1",
     // 工作区根目录固定成绝对路径，后面所有相对路径都相对它解析。
     root: path.resolve(process.env.WORKDIR ?? process.cwd()),
     maxSteps: positiveIntFromEnv("MAX_STEPS", 30),
@@ -279,6 +285,13 @@ function createApprovalPrompt(controller: AbortController, cwd: string): Approva
   };
 }
 
+/** 非 TUI 错误也提供简短解决方向，原始详情保留在同一行供日志检索。 */
+function describeForUser(error: unknown): string {
+  const failure = modelFailure(error, "en");
+  return failure === undefined ? describeError(error)
+    : `${failure.title}: ${failure.advice} [detail: ${failure.detail}]`;
+}
+
 /** 一次只显示一个普通 CLI / REPL Run；TUI 通过 callbacks 走自己的展示层。 */
 let activePresenter: RunPresenter | undefined;
 
@@ -318,6 +331,7 @@ function createAgent(
     // 中文对照：工作区：… ／ 模型：… ／ 权限：… ／ 工具：…
     console.log(`workspace: ${config.root}`);
     console.log(`model:     ${config.model}`);
+    if (config.demo) console.log("mode:      demo (external mock; connection not verified)");
     console.log(`permission: ${permission.mode}`);
     console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
   }
@@ -375,7 +389,7 @@ async function runTurn(agent: Agent, task: string, config: Config, signal: Abort
       .filter((message) => message.role === "assistant");
     const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
     if (latest !== undefined) presenter.confirmAssistant(latest.content);
-    else presenter.discardAssistantDraft();
+    else presenter.discardAssistantDraft(modelFailure(error, "en") === undefined);
     presenter.finish(agent.stats.toolCalls, signal.aborted, true);
     printUsage(agent.stats, { failed: true });
     throw error;
@@ -557,7 +571,7 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
           break;
         }
         // 一轮失败不等于会话失败：这里的错误已经进过账单，继续等输入。
-        console.error(`[agent] turn failed: ${describeError(error)}`);
+        console.error(`[agent] turn failed: ${describeForUser(error)}`);
       }
     }
   } finally {
@@ -582,7 +596,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   const tui = new Tui({
     input: process.stdin,
     output: process.stdout,
-    model: config.model,
+    model: config.demo ? `${config.model} [demo: external mock]` : config.model,
     workspace: config.root,
     permission: config.permission,
     controller,
@@ -660,6 +674,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       // 每次模型请求至多写入一条确认的 assistant 消息；请求计数也包含流式失败的请求。
       // 数量相等说明最后一次响应已写入 Transcript，预算后置失败不应抹去其真实正文。
       // 数量不等说明最新响应仍未确认，必须丢弃其临时增量，不能复用先前请求的正文。
+      const failure = modelFailure(error, tui.uiText("en", "zh") === "zh" ? "zh" : "en");
       const confirmed = agent.transcript.slice(transcriptStart)
         .filter((message) => message.role === "assistant");
       const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
@@ -667,7 +682,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
         // onToolCall 已提交该段正文时不要重复提交；预算阻断的调用则还没有这一事件。
         if (!toolStartedInLatestResponse) tui.confirmAssistant(latest.content);
       } else {
-        tui.discardAssistantDraft();
+        // 已分类的模型异常在同一错误区块解释，不再叠加一条“流式未确认”警告。
+        tui.discardAssistantDraft(failure === undefined);
       }
       // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true, cancelled: signal.aborted });
@@ -676,7 +692,12 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
         return false;
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
-      tui.logError(`${tui.uiText("[agent] turn failed:", "[agent] 任务失败：")} ${describeError(error)}`);
+      if (failure !== undefined) {
+        tui.logError(`${failure.title}：${failure.advice}`);
+        tui.logLine(`${tui.uiText("Technical details", "技术详情")}：${failure.detail}`, "muted");
+      } else {
+        tui.logError(`${tui.uiText("[agent] turn failed:", "[agent] 任务失败：")} ${describeError(error)}`);
+      }
       return true;
     }
   };
@@ -744,7 +765,7 @@ const usage = [
   // 中文对照：权限模式：…（默认：…）
   `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE",
+  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE",
 ].join("\n");
 
 const cli = parseArgs(process.argv.slice(2));
@@ -790,7 +811,7 @@ if (cli.error !== undefined) {
     // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。
     const cancelled = controller.signal.aborted;
     // 中文对照：[agent] 已取消：{原因} ／ [agent] 致命错误：{原因}
-    console.error(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${describeError(error)}`);
+    console.error(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeError(error) : describeForUser(error)}`);
     // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
     // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
     process.exitCode = cancelled ? 130 : 1;

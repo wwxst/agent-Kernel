@@ -20,7 +20,7 @@ const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = path.join(projectRoot, "src", "cli.ts");
 
 /** 启动 mock 服务，按脚本回放模型的响应；请求次数超出脚本时重复最后一条。 */
-async function startMock(script, { usage, interruptAtTurn } = {}) {
+async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [], httpStatus = 200 } = {}) {
   const requests = [];
   let turn = 0;
 
@@ -32,6 +32,12 @@ async function startMock(script, { usage, interruptAtTurn } = {}) {
       const currentTurn = turn++;
       const message = script[Math.min(currentTurn, script.length - 1)];
 
+      if (httpStatus !== 200) {
+        response.writeHead(httpStatus, { "content-type": "application/json" });
+        response.end(JSON.stringify({ error: { message: "mock provider rejected request" } }));
+        return;
+      }
+
       // CLI 走流式：把同一条 message 包装成 SSE，让端到端测试也经过真实的解析路径。
       if (JSON.parse(body).stream === true) {
         response.writeHead(200, { "content-type": "text/event-stream" });
@@ -41,6 +47,11 @@ async function startMock(script, { usage, interruptAtTurn } = {}) {
         if (currentTurn === interruptAtTurn) {
           response.write(frame({ content: "UNCONFIRMED_SECOND_REQUEST" }));
           response.end("data: {broken-json}\n\n");
+          return;
+        }
+        if (incompleteAtTurns.includes(currentTurn)) {
+          response.write(frame({ content: "UNCONFIRMED_CHUNK" }));
+          response.end("data: [DONE]\n\n");
           return;
         }
         // 一条完整的 delta 就够 CLI 用；分片拼装由 llm.test.mjs 单独覆盖。
@@ -92,6 +103,87 @@ function runCli(env, { args = ["do the task"], input } = {}) {
     child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
 }
+
+test("TUI：.env.example 占位 Key 不能冒充已配置模型，也不能发出请求", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("not reached")]);
+    try {
+      const run = await runCli(
+        { API_KEY: "sk-your-key-here", OPENAI_API_KEY: "", BASE_URL: mock.url, MODEL: "mock-demo", WORKDIR: workdir },
+        { args: ["--tui", "hello"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 1);
+      assert.match(run.stderr, /Model service is not configured/);
+      assert.match(run.stderr, /missing API_KEY/);
+      assert.equal(mock.requests.length, 0, "占位配置不能发起模型调用");
+      assert.doesNotMatch(run.stdout, /Thinking|Failed|请求|tokens/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：显式外部 Mock 演示有标识，不能仅凭 mock-demo 模型名宣称连接成功", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("demo answer")]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-demo", AGENT_DEMO: "1", WORKDIR: workdir },
+        { args: ["--tui", "hello"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /mock-demo \[demo: external mock\]/);
+      assert.match(run.stdout, /demo answer/);
+      assert.equal(mock.requests.length, 1);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：SSE 无完成标记分类为模型回复中断，英文/中文各只展示一条错误摘要", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("never confirmed")], { incompleteAtTurns: [0, 1] });
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-demo", WORKDIR: workdir },
+        { args: ["--tui"], input: "hello\n你好\n/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 2);
+      assert.equal((run.stdout.match(/Model response interrupted/g) ?? []).length, 1);
+      assert.equal((run.stdout.match(/模型回复中断/g) ?? []).length, 1);
+      assert.match(run.stdout, /stream ended before the model finished/);
+      assert.match(run.stdout, /技术详情：/);
+      assert.match(run.stdout, /Technical details：/);
+      assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
+      assert.doesNotMatch(run.stdout, /【流式响应中断：未确认正文已丢弃】/);
+      assert.doesNotMatch(run.stdout, /model: never confirmed/);
+      assert.match(run.stdout, /请求=2/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：401 明确提示鉴权失败，不误报为 SSE 中断", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("ignored")], { httpStatus: 401 });
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--tui", "hello"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /Model authentication failed/);
+      assert.match(run.stdout, /LLM HTTP 401/);
+      assert.doesNotMatch(run.stdout, /Model response interrupted|stream interrupted/);
+      assert.equal(mock.requests.length, 1);
+    } finally {
+      await mock.close();
+    }
+  });
+});
 
 test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼容形状", async () => {
   await withWorkspace(async (workdir) => {
@@ -159,7 +251,9 @@ test("CLI：模型流式请求中断时声明草稿失效，不冒充已确认�
       const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
       assert.notEqual(run.code, 0);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
-      assert.match(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
+      assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
+      assert.match(run.stderr, /Invalid model response/);
+      assert.match(run.stderr, /preview is discarded/);
       assert.doesNotMatch(run.stdout, /model \(confirmed\): UNCONFIRMED_SECOND_REQUEST/);
     } finally {
       await mock.close();
@@ -554,7 +648,9 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
       assert.match(run.stdout, /model: CONFIRMED_FIRST_STEP/);
       assert.equal((run.stdout.match(/model: CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
-      assert.match(run.stdout, /unconfirmed text discarded/);
+      assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
+      assert.match(run.stdout, /Invalid model response/);
+      assert.match(run.stdout, /preview is discarded/);
       assert.equal(mock.requests.length, 2);
     } finally {
       await mock.close();

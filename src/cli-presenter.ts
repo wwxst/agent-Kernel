@@ -238,9 +238,10 @@ export class RunPresenter {
   }
 
   /** 失败的模型请求只有临时增量、没有已确认消息时，必须声明其失效。 */
-  discardAssistantDraft(): void {
+  discardAssistantDraft(announce = true): void {
     this.closeStreamLine();
-    if (this.streamedCurrentStep) console.log("[stream interrupted: unconfirmed text discarded]");
+    // 已分类的模型失败由外层给出明确原因，避免重复的泛化流式警告。
+    if (announce && this.streamedCurrentStep) console.log("[stream interrupted: unconfirmed text discarded]");
     this.streamedCurrentStep = false;
     this.streamedText = "";
   }
