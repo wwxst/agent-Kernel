@@ -671,7 +671,7 @@ export class Tui {
     if (this.layout) {
       this.output.write("\x1b[2J\x1b[H");
       this.renderNow();
-      this.moveToInput();
+      if (this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS) this.moveToInput();
       return;
     }
 
