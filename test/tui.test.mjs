@@ -30,7 +30,7 @@ function screenRows(ui, count = 40) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", term = "xterm-256color", onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", term = "xterm-256color", autoLayout = false, onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -55,7 +55,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     interactive,
     columns,
     rows,
-    layout: tty,
+    ...(autoLayout ? {} : { layout: tty }),
     color,
     flowInput,
     screenMode,
@@ -86,6 +86,18 @@ test("TUI 屏幕模式：环境变量只接受 auto、always 和 never", () => {
   assert.equal(parseTuiScreenMode("always"), "always");
   assert.equal(parseTuiScreenMode("never"), "never");
   assert.throws(() => parseTuiScreenMode("maybe"), /invalid AGENT_TUI_SCREEN/);
+});
+
+test("TUI auto：能力不明时启动只提示一次兼容模式，never 不重复提示", (t) => {
+  const fallback = makeTui({ interactive: true, tty: true, screenMode: "auto", autoLayout: true, term: "wyse60" });
+  const manual = makeTui({ interactive: true, tty: true, screenMode: "never", autoLayout: true, term: "wyse60" });
+  t.after(() => { fallback.cleanup(); manual.cleanup(); });
+  fallback.tui.start();
+  fallback.tui.logLine("more output");
+  assert.equal((fallback.text().match(/Terminal compatibility mode/g) ?? []).length, 1);
+  assert.doesNotMatch(fallback.text(), /\x1b\[\?1049h|\x1b\[2J/);
+  manual.tui.start();
+  assert.doesNotMatch(manual.text(), /Terminal compatibility mode/);
 });
 
 test("TUI auto：linux/vt100/ansi/unknown 不误入备用屏幕，always 允许显式覆盖", (t) => {
@@ -190,6 +202,47 @@ test("TUI 独立屏幕：滚动到历史中段后，缩放期间流式增长不�
   await new Promise((resolve) => setTimeout(resolve, 130));
   const after = lastRow(ui.text(), 4);
   assert.match(after, new RegExp(before), "视口仍从相同逻辑行开始，而非跳到新的流式输出");
+});
+
+test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳到最新", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("Inspect a file");
+  const call = { id: "history-group", type: "function", function: { name: "read", arguments: '{"path":"history.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "content\n".repeat(25));
+  for (let i = 0; i < 95; i++) ui.tui.logLine(`STABLE_${String(i).padStart(3, "0")} ${"内容 ".repeat(7)}`);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  const before = lastRow(ui.text(), 4).match(/STABLE_\d{3}/)?.[0];
+  assert.ok(before, "向上翻页后必须有可见历史锚点");
+  ui.input.write("\x0f");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "切换较早活动的展开状态后仍看同一段历史");
+  ui.output.columns = 50;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "窗口重新换行也应保持同一条日志");
+});
+
+test("TUI 稳定日志 ID：缩放期间历史被裁剪时显示告知并定位到剩余记录", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查历史");
+  for (let i = 0; i < 90; i++) ui.tui.logLine(`ORIGINAL_${String(i).padStart(3, "0")}`);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  assert.match(lastRow(ui.text(), 4), /ORIGINAL_\d{3}/);
+
+  ui.output.columns = 65;
+  ui.output.emit("resize");
+  for (let i = 0; i < 2_120; i++) ui.tui.logLine(`LATER_${i}`);
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const current = screenRows(ui, 35).join("\n");
+  assert.match(current, /LATER_\d+/);
+  assert.match(current, /历史已截断/, "找不到锚点时不可无声跳转");
+  ui.input.emit("keypress", "", { name: "pagedown" });
+  assert.doesNotMatch(lastRow(ui.text(), 32), /历史已截断/, "用户继续滚动后提示消失");
 });
 
 test("TUI 独立屏幕：进入和退出成对恢复 Shell 画面，保留原有聊天和统计", (t) => {
