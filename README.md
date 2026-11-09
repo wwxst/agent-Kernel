@@ -18,6 +18,18 @@ npm run agent -- --permission read-only "先看看这个仓库的结构"   # 只
 npm run agent -- --permission full-access "跑测试并修掉失败"     # 全部工具、不审批
 ```
 
+### TUI 屏幕模式与窗口缩放
+
+`--tui` 默认使用 `AGENT_TUI_SCREEN=auto`：Windows Terminal、VS Code 终端和受支持的类 Unix 终端进入**独立屏幕**，历史、输入栏、工具与动态状态从内存日志重绘，退出时恢复原来的 Shell 画面。拖动窗口时把连续 resize 合并，75ms 内不反复清屏；窗口太小只显示提示，放大后恢复原会话内容。
+
+在传统 Windows CMD/ConHost 或无法确认终端支持备用屏幕的环境，会自动降级为**行式聊天**，避免把同一个全屏画面不断写进终端滚动历史。可以在 `.env` 明确指定：
+
+- `AGENT_TUI_SCREEN=auto`（默认）：能安全独占屏幕时使用完整 TUI，否则兼容行式聊天。
+- `AGENT_TUI_SCREEN=always`：强制在真实交互终端进入独立屏幕；仅在终端确实支持时使用。
+- `AGENT_TUI_SCREEN=never`：始终使用兼容行式聊天，适合排查旧终端兼容问题。
+
+独立屏幕不是 Shell 滚动历史：对话可用 TUI 的 PageUp/PageDown 浏览，退出会恢复启动前的终端内容。所有模式均保留真实的 Agent Transcript，不修改工具权限或模型请求。
+
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
 
 CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是黑屏等一段。评测走非流式，保证跨轮对比的是同样的完整响应（见 [ADR-0012](./docs/adr/0012-streaming-is-display-only.md)）。
