@@ -2204,6 +2204,23 @@ test("TUI 过程概述：同组多工具只更新一个当前操作说明，缩�
   assert.match(screen, /已读取文件、已搜索代码/);
 });
 
+test("TUI 过程概述：Shell 等待审批时不能提前宣称命令已经运行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请运行检查");
+  const call = { id: "approval-overview", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(call);
+  const approval = ui.tui.approve({ tool: "shell", args: { command: "npm run check" } });
+  assert.match(screenRows(ui, 45).join("\n"), /正在等待命令 npm run check的执行授权/,
+    "待审批时只能描述等待授权，不能声称已运行命令");
+  ui.input.write("\r");
+  assert.equal(await approval, false);
+  ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
+  assert.match(screenRows(ui, 45).join("\n"), /未获授权，无法执行 npm run check。/);
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /命令执行结束 npm run check。/);
+});
+
 test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
