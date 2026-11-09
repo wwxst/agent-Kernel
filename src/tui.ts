@@ -26,7 +26,7 @@ import { isToolResultFailure } from "./tool-result-status.ts";
 
 /** 固定布局至少需要：标题/路径/分隔线 + 日志 + 输入框 + 状态行 + 缓冲。 */
 const MIN_ROWS = 12;
-/** 太窄时顶部标题和页脚会挤成一团，退回行式聊天更可读。 */
+/** 太窄时不画完整布局：备用屏幕保留提示，旧版内联布局退回行式聊天。 */
 const MIN_COLUMNS = 30;
 
 const TITLE_ROW = 1;
@@ -189,14 +189,16 @@ export function parseTuiScreenMode(value: string | undefined): TuiScreenMode {
  */
 function supportsAlternateScreen(): boolean {
   const term = process.env.TERM?.toLowerCase() ?? "";
-  if (/^(?:dumb|linux|vt\d+|ansi|cons\d+|unknown|emacs)$/.test(term)) return false;
+  const knownTerm = /^(?:xterm|screen|tmux|rxvt|alacritty|wezterm|kitty|foot|st|konsole)(?:-|$)/.test(term);
+  // TERM 显式声明了未知或低能力终端时，即使 WT_SESSION 被上层 Shell 继承也不要猜测。
+  if (term !== "" && !knownTerm) return false;
   if (process.platform === "win32") {
     return Boolean(process.env.WT_SESSION?.trim()) ||
       process.env.TERM_PROGRAM === "vscode" ||
       process.env.TERM_PROGRAM === "WezTerm";
   }
   // 普通 POSIX TTY 的 TERM 未知时宁可行式输出；always 是用户明确的强制覆盖。
-  return /^(?:xterm|screen|tmux|rxvt|alacritty|wezterm|kitty|foot|st|konsole)(?:-|$)/.test(term);
+  return knownTerm;
 }
 
 export interface TuiOptions {
@@ -213,7 +215,7 @@ export interface TuiOptions {
   rows?: number;
   /** 测试可以显式强制开关固定布局；生产代码不传。 */
   layout?: boolean;
-  /** 终端屏幕策略：现代终端默认独立屏幕；老式终端自动采用行式输出。 */
+  /** auto 只为识别出的兼容终端启用备用屏幕；能力不明时退回行式输出。 */
   screenMode?: TuiScreenMode;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
