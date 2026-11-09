@@ -1742,6 +1742,16 @@ test("TUI 展示：只有围栏的回复退回原文，不能显示成空消息"
   assert.match(screen, /```/, "纯围栏回复退回原文，至少让人看见收到了什么");
 });
 
+test("TUI 布局：顶部模型名和底部统计与窗口右边缘留 2 列余量", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, columns: 80 });
+  t.after(() => ui.cleanup());
+  ui.tui.setStats(session);
+  ui.tui.start();
+  // 可用内容宽 = columns - 1（末列留空防折行），再让出 2 列右边距。
+  assert.equal(lastRow(ui.text(), 1).length, 77, "顶部模型名不能贴右边框");
+  assert.equal(lastRow(ui.text(), 32).length, 77, "底部统计不能贴右边框");
+});
+
 test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());

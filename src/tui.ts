@@ -40,6 +40,9 @@ const MAX_LOG_LINES = 2_000;
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
+/** 右对齐的模型名和统计与窗口右边缘之间留的呼吸空间，避免文字贴边难读。 */
+const RIGHT_MARGIN = 2;
+
 /** 拖动窗口时先记录最终尺寸，安静 75ms 后再重排，避免每个中间宽度都清屏。 */
 const RESIZE_DEBOUNCE_MS = 75;
 
@@ -2001,12 +2004,13 @@ export class Tui {
   }
 
   private titleLine(width: number): string {
+    const innerWidth = Math.max(1, width - RIGHT_MARGIN);
     const rawProject = this.project === "agent-Kernel" ? "agent-Kernel" : `agent-Kernel · ${singleLine(this.project)}`;
-    const maxProject = Math.max(1, width - 2);
+    const maxProject = Math.max(1, innerWidth - 2);
     const project = clip(rawProject, maxProject);
-    const modelRoom = Math.max(0, width - displayWidth(project) - 1);
+    const modelRoom = Math.max(0, innerWidth - displayWidth(project) - 1);
     const model = modelRoom > 0 ? clip(singleLine(this.model), modelRoom) : "";
-    const gap = Math.max(1, width - displayWidth(project) - displayWidth(model));
+    const gap = Math.max(1, innerWidth - displayWidth(project) - displayWidth(model));
     return (
       this.style.bold(this.style.paint("accent", project)) +
       `${" ".repeat(gap)}${this.style.paint("assistant", model)}`
@@ -2037,25 +2041,26 @@ export class Tui {
     let left = this.fullAccessConfirmationPending
       ? this.uiText("Confirm full-access: Shift+Tab again · Esc cancel", "确认完全访问：再次按 Shift+Tab · Esc 取消")
       : baseLabel + shortcut;
-    let right = this.formatSessionStats(width >= 60);
+    const innerWidth = Math.max(1, width - RIGHT_MARGIN);
+    let right = this.formatSessionStats(innerWidth >= 60);
 
     // 优先保留快捷键提示和完整统计，空间不足时再逐级缩短。
-    if (displayWidth(left) + displayWidth(right) + 1 > width) {
+    if (displayWidth(left) + displayWidth(right) + 1 > innerWidth) {
       right = this.formatSessionStats(false);
     }
-    if (displayWidth(left) + displayWidth(right) + 1 > width && !this.fullAccessConfirmationPending) {
+    if (displayWidth(left) + displayWidth(right) + 1 > innerWidth && !this.fullAccessConfirmationPending) {
       left = baseLabel;
-      if (this.scrollOffset > 0 && displayWidth(left) + displayWidth(right) + 1 > width) left = scrollPrefix;
+      if (this.scrollOffset > 0 && displayWidth(left) + displayWidth(right) + 1 > innerWidth) left = scrollPrefix;
     }
-    if (displayWidth(left) + displayWidth(right) + 1 > width) {
+    if (displayWidth(left) + displayWidth(right) + 1 > innerWidth) {
       const requests = formatNumber(this.stats?.requests ?? 0);
       const lower = (this.stats?.usage.unknown ?? 0) > 0 ? ">=" : "";
       right = `${requests}r ${lower}${formatNumber(this.stats?.usage.totalTokens ?? 0)}tok`;
     }
 
-    const rightText = clip(right, Math.max(1, width));
-    const leftText = clip(left, Math.max(1, width - displayWidth(rightText) - 1));
-    const gap = Math.max(1, width - displayWidth(leftText) - displayWidth(rightText));
+    const rightText = clip(right, Math.max(1, innerWidth));
+    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
+    const gap = Math.max(1, innerWidth - displayWidth(leftText) - displayWidth(rightText));
     return (
       this.style.paint(this.fullAccessConfirmationPending || this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
       `${" ".repeat(gap)}${this.style.paint("muted", rightText)}`
