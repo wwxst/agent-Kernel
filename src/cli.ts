@@ -35,7 +35,7 @@ import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
-import { Tui, parseTuiScreenMode } from "./tui.ts";
+import { Tui, parseTuiScreenMode, uiLanguageFromLocale } from "./tui.ts";
 import type { ToolCall } from "./types.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
@@ -598,6 +598,10 @@ async function repl(config: Config, controller: AbortController): Promise<void> 
 async function tuiSession(config: Config, controller: AbortController, initialTask?: string): Promise<void> {
   const signal = controller.signal;
   const interactive = hasInteractiveTerminal();
+  // 交互式终端按系统语言初始化界面；管道/CI 保持英文，脚本和端到端断言不随机器语言漂移。
+  const initialLanguage = interactive
+    ? uiLanguageFromLocale(Intl.DateTimeFormat().resolvedOptions().locale)
+    : "en";
   const tui = new Tui({
     input: process.stdin,
     output: process.stdout,
@@ -607,6 +611,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     permission: config.permission,
     controller,
     interactive,
+    language: initialLanguage,
     // Shift+Tab 只发起模式切换；Permission 是唯一的执行授权源。
     // Agent 每次请求动态读取此 Permission，因此下一轮模型提示自动同步。
     onPermissionChange: (mode) => {

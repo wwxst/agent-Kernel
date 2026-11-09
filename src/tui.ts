@@ -72,6 +72,11 @@ export function detectUiLanguage(task: string, previous: UiLanguage = "en"): UiL
   return han > 0 && han >= englishWords ? "zh" : "en";
 }
 
+/** 交互式 TUI 启动时按系统 locale 定初始语言：中文系统用中文，其余用英文。 */
+export function uiLanguageFromLocale(locale: string): UiLanguage {
+  return locale.toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
 type Tone =
   | "accent"
   | "assistant"
@@ -220,6 +225,8 @@ export interface TuiOptions {
   screenMode?: TuiScreenMode;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
+  /** 初始界面语言；缺省英文，交互式 CLI 按系统 locale 传入；之后仍按任务正文切换。 */
+  language?: UiLanguage;
   /** Claude Code 风格：短对话时输入框跟随消息，长对话时自动停靠底部。 */
   flowInput?: boolean;
   /** TUI 只发出权限切换意图；CLI 负责更新真实 Permission 和模型提示。 */
@@ -280,8 +287,8 @@ export class Tui {
 
   private readonly glyphs: Glyphs;
 
-  /** 最近一次用户任务的主要语言；命令和模型输出不触发语言切换。 */
-  private uiLanguage: UiLanguage = "en";
+  /** 最近一次用户任务的主要语言；命令和模型输出不触发语言切换。启动值由 CLI 按系统 locale 传入。 */
+  private uiLanguage: UiLanguage;
 
   private columns: number;
 
@@ -441,6 +448,7 @@ export class Tui {
     this.controller = options.controller;
     this.interactive = options.interactive;
     this.permissionMode = options.permission;
+    this.uiLanguage = options.language ?? "en";
     this.flowInput = options.flowInput ?? false;
     this.onPermissionChange = options.onPermissionChange;
     this.terminalControls = process.env.TERM !== "dumb";

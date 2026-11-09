@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiScreenMode } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiScreenMode, uiLanguageFromLocale } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
@@ -54,7 +54,7 @@ function screenWithoutSync(output) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", term = "xterm-256color", autoLayout = false, onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, language, screenMode = "never", term = "xterm-256color", autoLayout = false, onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -82,6 +82,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     ...(autoLayout ? {} : { layout: tty }),
     color,
     flowInput,
+    language,
     screenMode,
     onPermissionChange,
   });
@@ -1692,6 +1693,23 @@ test("TUI 语言识别：忽略路径、文件名和代码，按最近一次用�
   assert.equal(detectUiLanguage("Explain the Chinese 中文 words quickly"), "en");
   assert.equal(detectUiLanguage("请使用 TypeScript 进行修改"), "zh");
   assert.equal(detectUiLanguage("123?!", "zh"), "zh", "无可判断语言时保持上一次用户语言");
+});
+
+test("TUI 启动语言：按系统 locale 初始化，中文系统启动即显示中文权限标签", (t) => {
+  assert.equal(uiLanguageFromLocale("zh-CN"), "zh");
+  assert.equal(uiLanguageFromLocale("zh-Hans-CN"), "zh");
+  assert.equal(uiLanguageFromLocale("en-US"), "en");
+  assert.equal(uiLanguageFromLocale("ja-JP"), "en");
+  assert.equal(uiLanguageFromLocale(""), "en");
+
+  const zh = makeTui({ interactive: true, tty: true, rows: 35, language: "zh", onPermissionChange: () => {} });
+  const en = makeTui({ interactive: true, tty: true, rows: 35, language: "en", onPermissionChange: () => {} });
+  t.after(() => { zh.cleanup(); en.cleanup(); });
+  zh.tui.start();
+  en.tui.start();
+
+  assert.match(lastRow(zh.text(), 32), /工作区读写（Shift\+Tab 切换）/);
+  assert.match(lastRow(en.text(), 32), /workspace-write \(shift-tab to cycle\)/);
 });
 
 test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {
