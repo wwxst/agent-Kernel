@@ -454,7 +454,7 @@ test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff",
   t.after(() => ui.cleanup());
   ui.tui.start();
   ui.tui.beginTurn("编辑文件并检查");
-  const call = { id: "edit-detail", type: "function", function: { name: "edit", arguments: '{"path":"src/tui.ts","old":"a","new":"b"}' } };
+  const call = { id: "edit-detail", type: "function", function: { name: "edit", arguments: '{"path":"src/tui.ts","old_string":"a","new_string":"b"}' } };
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "Updated src/tui.ts");
   let screen = screenRows(ui, 45).join("\n");
@@ -465,7 +465,10 @@ test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff",
   assert.match(screen, /编辑 src\/tui\.ts.*(?:▾|v)/);
   assert.match(screen, /调用：.*edit/);
   assert.match(screen, /Updated src\/tui\.ts/);
-  assert.doesNotMatch(screen, /^\+.*\-.*$/m, "不根据路径虚构文件 Diff");
+  assert.match(screen, /替换片段（非完整 Diff）/);
+  assert.match(screen, /- a/);
+  assert.match(screen, /\+ b/);
+  assert.doesNotMatch(screen, /@@ -\d/, "不根据路径虚构带行号的完整文件 Diff");
 });
 
 test("TUI 时间线：失败及取消仍可展开，不隐藏真实的工具错误", (t) => {
