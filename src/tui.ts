@@ -2639,6 +2639,10 @@ function toolProgressOverview(
   if (result === undefined && awaitingApproval) {
     return zh ? `正在等待命令${target}的执行授权。` : `Awaiting approval to run command${target}.`;
   }
+  // ToolCall 先于 Permission 的判定到达 TUI；缺少 ToolResult 时不能宣称 Shell 已运行。
+  if (result === undefined && name === "shell") {
+    return zh ? `正在处理命令请求${target}。` : `Handling command request${target}.`;
+  }
   const status = result === undefined ? "running" : (() => {
     const summary = summarizeToolResult(call, result);
     return summary.denied ? "denied" : summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
@@ -2678,6 +2682,7 @@ function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSumm
     edit: [zh ? "已修改代码" : "Edited code", zh ? "正在修改代码" : "Editing code", zh ? "尝试修改代码" : "Tried editing code"],
     shell: [zh ? "已执行命令" : "Ran commands", zh ? "正在执行命令" : "Running commands", zh ? "尝试执行命令" : "Tried running commands"],
   };
+  if (call.function.name === "shell" && pending) return zh ? "正在处理命令请求" : "Handling command request";
   if (call.function.name === "shell" && summary?.denied) return zh ? "请求了命令授权" : "Requested command approval";
   if (call.function.name === "shell" && summary?.notRun) return zh ? "命令未执行" : "Command not run";
   const words = labels[call.function.name] ?? [zh ? "已使用工具" : "Used tools",
