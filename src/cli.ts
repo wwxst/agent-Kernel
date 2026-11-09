@@ -651,6 +651,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   const callbacks: AgentCallbacks = {
     onRequestStart: () => {
       toolStartedInLatestResponse = false;
+      tui.beginModelRequest();
       tui.setThinking(true);
     },
     onToolCall: (call, confirmedContent) => {
