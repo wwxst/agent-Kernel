@@ -749,9 +749,9 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
         } else if (command.mode !== undefined) {
           permission.setMode(command.mode);
           tui.setPermission(command.mode);
-          tui.logLine(tui.uiText(`permission: ${permission.mode}`, `权限：${permission.mode}`));
+          tui.logLine(`${tui.uiText("permission: ", "权限：")}${tui.permissionLabel(permission.mode)}`);
         } else {
-          tui.logLine(tui.uiText(`permission: ${permission.mode}`, `权限：${permission.mode}`));
+          tui.logLine(`${tui.uiText("permission: ", "权限：")}${tui.permissionLabel(permission.mode)}`);
         }
         continue;
       }

@@ -1694,6 +1694,28 @@ test("TUI 语言识别：忽略路径、文件名和代码，按最近一次用�
   assert.equal(detectUiLanguage("123?!", "zh"), "zh", "无可判断语言时保持上一次用户语言");
 });
 
+test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const footer = () => lastRow(ui.text(), 32);
+
+  ui.tui.beginTurn("请检查项目文件");
+  assert.match(footer(), /工作区读写/);
+  assert.doesNotMatch(footer(), /workspace-write/);
+  ui.tui.setPermission("read-only");
+  assert.match(footer(), /只读模式/);
+  assert.doesNotMatch(footer(), /read-only/);
+  ui.tui.setPermission("full-access");
+  assert.match(footer(), /完全访问/);
+  assert.doesNotMatch(footer(), /full-access/);
+
+  ui.tui.beginTurn("Please check the project files in English");
+  assert.match(footer(), /full-access/);
+  ui.tui.setPermission("workspace-write");
+  assert.match(footer(), /workspace-write/);
+});
+
 test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Thinking 始终是英文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
