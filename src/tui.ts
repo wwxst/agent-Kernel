@@ -966,17 +966,23 @@ export class Tui {
     const elapsed = Math.max(0, (turn.endedAt ?? Date.now()) - turn.startedAt);
     const duration = formatActivityDuration(elapsed, turn.language);
     const zh = turn.language === "zh";
+    const arrow = this.foldArrow(turn.expanded);
     if (turn.outcome === "completed") return {
-      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}`,
+      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}  ${arrow}`,
       tone: "success",
     };
     if (turn.outcome === "failed" || turn.outcome === "cancelled") {
       const outcome = turn.outcome === "failed" ? (zh ? "执行失败" : "Failed") : (zh ? "已取消" : "Cancelled");
-      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}`,
+      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}  ${arrow}`,
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
-    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}`, tone: "muted" };
-    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}`, tone: "accent" };
+    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}  ${arrow}`, tone: "muted" };
+    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}  ${arrow}`, tone: "accent" };
+  }
+
+  /** 只在显示层拼接折叠指示符，始终位于对应文字后面。 */
+  private foldArrow(expanded: boolean): string {
+    return this.glyphs === UNICODE_GLYPHS ? (expanded ? "▾" : "▸") : (expanded ? "v" : ">");
   }
 
   private activitySummary(group: ActivityGroup): string {
@@ -1942,14 +1948,15 @@ export class Tui {
     };
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
-        append(line, [this.turnStatusLine(line.turn),
-          { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]);
+        append(line, [this.turnStatusLine(line.turn)]);
         continue;
       }
+      // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
+      if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
         const children: LogLine[] = [
-          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)}`),
             tone: "muted", kind: "activity" },
         ];
         if (group.expanded) {
