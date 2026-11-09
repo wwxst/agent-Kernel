@@ -711,7 +711,7 @@ export class Tui {
 
     if (this.interactive) {
       if (this.compatibilityNotice) {
-        this.logLine("Terminal compatibility mode / 终端兼容模式：line-by-line output (AGENT_TUI_SCREEN=never)");
+        this.logLine("Terminal compatibility mode / 终端兼容模式：line-by-line output");
       }
       this.logLine(this.formatStatus());
       this.logLine(this.formatStatsLine());
@@ -730,6 +730,8 @@ export class Tui {
     const first = oldLines[Math.max(0, oldLines.length - this.logHeight - this.scrollOffset)];
     if (first?.id !== undefined) {
       this.resizeAnchor = { entryId: first.id, charOffset: first.charOffset ?? 0 };
+      // 锚点已决定目标位置，后续不能再按新增行数累加 scrollOffset。
+      this.lastTotalLines = 0;
     }
   }
 
