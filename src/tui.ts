@@ -179,15 +179,21 @@ export function parseTuiScreenMode(value: string | undefined): TuiScreenMode {
   throw new Error(`invalid AGENT_TUI_SCREEN "${value}" (expected: auto, always, never)`);
 }
 
-/** 无法确认 Windows 传统控制台的备用屏幕能力时退化为行式聊天，避免污染滚动历史。 */
+/**
+ * auto 只在有明确终端能力线索时启用备用屏幕；TERM=linux/vt100/ansi 等
+ * 虽然不是 dumb，也不能据此推断实现了 1049 备用屏幕。
+ * Windows 只信任现代宿主标记，不把通用的 TERM=xterm 当作能力证明。
+ */
 function supportsAlternateScreen(): boolean {
-  if (process.platform !== "win32") return process.env.TERM !== undefined && process.env.TERM !== "dumb";
-  return Boolean(
-    process.env.WT_SESSION ||
-    process.env.TERM_PROGRAM === "vscode" ||
-    process.env.TERM_PROGRAM === "WezTerm" ||
-    process.env.ConEmuANSI === "ON",
-  );
+  const term = process.env.TERM?.toLowerCase() ?? "";
+  if (/^(?:dumb|linux|vt\d+|ansi|cons\d+|unknown|emacs)$/.test(term)) return false;
+  if (process.platform === "win32") {
+    return Boolean(process.env.WT_SESSION?.trim()) ||
+      process.env.TERM_PROGRAM === "vscode" ||
+      process.env.TERM_PROGRAM === "WezTerm";
+  }
+  // 普通 POSIX TTY 的 TERM 未知时宁可行式输出；always 是用户明确的强制覆盖。
+  return /^(?:xterm|screen|tmux|rxvt|alacritty|wezterm|kitty|foot|st|konsole)(?:-|$)/.test(term);
 }
 
 export interface TuiOptions {
