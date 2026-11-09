@@ -30,7 +30,7 @@ function screenRows(ui, count = 40) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", term = "xterm-256color", onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -44,7 +44,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
   output.on("data", (chunk) => chunks.push(String(chunk)));
 
   const previousTerm = process.env.TERM;
-  if (interactive) process.env.TERM = "xterm-256color";
+  if (interactive) process.env.TERM = term;
   const tui = new Tui({
     input,
     output,
@@ -86,6 +86,95 @@ test("TUI 屏幕模式：环境变量只接受 auto、always 和 never", () => {
   assert.equal(parseTuiScreenMode("always"), "always");
   assert.equal(parseTuiScreenMode("never"), "never");
   assert.throws(() => parseTuiScreenMode("maybe"), /invalid AGENT_TUI_SCREEN/);
+});
+
+test("TUI auto：linux/vt100/ansi/unknown 不误入备用屏幕，always 允许显式覆盖", (t) => {
+  for (const term of ["linux", "vt100", "ansi", "unknown", "cons25", "dumb", "wyse60"]) {
+    const ui = makeTui({ interactive: true, tty: true, screenMode: "auto", term });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    assert.doesNotMatch(ui.text(), /\x1b\[\?1049h/, `TERM=${term} 不能默认进入备用屏幕`);
+  }
+  const forced = makeTui({ interactive: true, tty: true, screenMode: "always", term: "vt100" });
+  t.after(() => forced.cleanup());
+  forced.tui.start();
+  assert.match(forced.text(), /\x1b\[\?1049h/, "显式 always 可覆盖保守检测");
+});
+
+test("TUI auto：受支持终端才启用备用屏幕，never 始终关闭", (t) => {
+  const previous = process.env.WT_SESSION;
+  try {
+    if (process.platform === "win32") process.env.WT_SESSION = "test-windows-terminal";
+    const supported = makeTui({ interactive: true, tty: true, screenMode: "auto", term: "xterm-256color" });
+    t.after(() => supported.cleanup());
+    supported.tui.start();
+    assert.match(supported.text(), /\x1b\[\?1049h/);
+    const denied = makeTui({ interactive: true, tty: true, screenMode: "never" });
+    t.after(() => denied.cleanup());
+    denied.tui.start();
+    assert.doesNotMatch(denied.text(), /\x1b\[\?1049h/);
+  } finally {
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  }
+});
+
+test("TUI：start 前 close 不清屏、不移动光标、不进入备用屏幕，之后也不能启动", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.close();
+  assert.equal(ui.text(), "", "未启动的界面只能释放资源，不应更改 Shell");
+  ui.tui.start();
+  assert.equal(ui.text(), "", "已关闭的界面不能再启动");
+});
+
+test("TUI 独立屏幕：初次绘制和缩放清屏必须包含在同步帧内", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.output.columns = 96;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const output = ui.text();
+  const frames = output.match(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g) ?? [];
+  assert.equal(frames.length >= 2, true, "启动与缩放均产生同步帧");
+  assert.equal(frames.filter((frame) => frame.includes("\x1b[2J\x1b[H")).length, 2,
+    "两次清屏各自与完整重绘同帧提交");
+  const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
+  assert.doesNotMatch(outside, /\x1b\[2J/, "不能在同步帧外清空可见屏幕");
+});
+
+test("TUI 独立屏幕：窄窗口提示清屏也不能漏出同步帧", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.output.columns = 20;
+  ui.output.rows = 8;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const output = ui.text();
+  const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
+  assert.doesNotMatch(outside, /\x1b\[2J/);
+  assert.match(output, /窗口太小/);
+});
+
+test("TUI 独立屏幕：滚动到历史中段后，缩放期间流式增长不能移动历史锚点", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let i = 0; i < 85; i++) ui.tui.logLine(`ANCHOR_${String(i).padStart(3, "0")} ${"内容 ".repeat(7)}`);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  await tick();
+  const before = lastRow(ui.text(), 4).match(/ANCHOR_\d{3}/)?.[0];
+  assert.ok(before, "应能滚动到历史中段的稳定日志行");
+
+  ui.output.columns = 45;
+  ui.output.emit("resize");
+  ui.tui.assistantDelta("新增流式回答\n".repeat(70));
+  ui.tui.confirmAssistant("新增流式回答\n".repeat(70));
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const after = lastRow(ui.text(), 4);
+  assert.match(after, new RegExp(before), "视口仍从相同逻辑行开始，而非跳到新的流式输出");
 });
 
 test("TUI 独立屏幕：进入和退出成对恢复 Shell 画面，保留原有聊天和统计", (t) => {
