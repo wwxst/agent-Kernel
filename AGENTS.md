@@ -14,7 +14,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access` |
 | `npm run agent -- --repl` | 多轮会话：`/exit`、`/reset`、`/permission`、`/help`；需要 `.env` |
-| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | Claude Code 风格聊天式 TUI：对话贴顶、带框输入、状态行在下、颜色与字形降级、历史滚动、resize、审批面板；可带一个初始任务；需要 `.env` |
+| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | TUI：现代终端独立屏幕、75ms 缩放防抖、退出恢复原屏幕；老终端兼容行式聊天，可用 `AGENT_TUI_SCREEN=auto/always/never` 控制；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
