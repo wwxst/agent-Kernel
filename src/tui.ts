@@ -587,6 +587,37 @@ export class Tui {
         return;
       }
 
+      // Ctrl+E 翻阅任务节点：终端没有可点击箭头，键盘直接展开/收起最近轮次。
+      if (key?.ctrl && name === "e" && this.layout) {
+        const turns = this.log.flatMap((line) =>
+          line.kind === "turn-status" && line.turn !== undefined ? [line.turn] : []);
+        if (turns.length > 0) {
+          this.turnFocus = this.turnFocus <= 0 ? turns.length - 1 : this.turnFocus - 1;
+          this.captureHistoryAnchor();
+          turns[this.turnFocus]!.expanded = !turns[this.turnFocus]!.expanded;
+          this.renderNow();
+        }
+        return;
+      }
+
+      // Ctrl+G 展开具体工具的真实调用和结果；每按一次定位上一条工具。
+      if (key?.ctrl && name === "g" && this.layout) {
+        const tools = this.log.flatMap((line) =>
+          line.kind === "activity" && line.activity !== undefined
+            ? line.activity.tools.map((tool) => ({ tool, group: line.activity!, turn: line.turn }))
+            : []);
+        if (tools.length > 0) {
+          this.toolFocus = this.toolFocus <= 0 ? tools.length - 1 : this.toolFocus - 1;
+          this.captureHistoryAnchor();
+          const chosen = tools[this.toolFocus]!;
+          chosen.tool.detailsExpanded = !chosen.tool.detailsExpanded;
+          chosen.group.expanded = true;
+          if (chosen.turn !== undefined) chosen.turn.expanded = true;
+          this.renderNow();
+        }
+        return;
+      }
+
       // Ctrl+O 依次切换最近、上一段等组的展开状态；已有展开项不会被强制收起。
       // 从已保留的日志锚点收集组，因而上一轮任务的活动也能查看。
       if (key?.ctrl && name === "o" && this.layout && this.currentTurn !== undefined) {
@@ -598,6 +629,8 @@ export class Tui {
           // 浏览旧记录时展开详情也不能把视口跳到最新消息。
           this.captureHistoryAnchor();
           group.expanded = !group.expanded;
+          const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
+          if (owner !== undefined) owner.expanded = true;
           this.renderNow();
         }
         return;
