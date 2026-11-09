@@ -1727,7 +1727,7 @@ export class Tui {
 
   private paintLogLine(line: LogLine, width: number): string {
     const text = clip(line.text, width);
-    if (line.tone === "user") return this.style.userMessage(padRight(text, width));
+    if (line.tone === "user") return this.style.userMessage(padRight(text, width), `${this.glyphs.user} `);
     if (line.tone === "assistant" && text.startsWith(`${this.glyphs.assistant} `)) {
       return this.style.paint("accent", this.glyphs.assistant) +
         this.style.paint("assistant", text.slice(this.glyphs.assistant.length));
@@ -2153,11 +2153,19 @@ class Style {
     this.palette = rich ? RICH_PALETTE : BASIC_PALETTE;
   }
 
-  /** 用户整行使用轻微底色，向 Claude Code 的任务条靠拢；16 色终端只加粗。 */
-  userMessage(text: string): string {
-    if (!this.enabled) return text;
-    if (!this.rich) return `\x1b[1;39m${text}\x1b[0m`;
-    return `\x1b[1;38;5;255;48;5;237m${text}\x1b[0m`;
+  /**
+   * 用户消息整行：Claude Code 风格任务条——深灰底色、灰色前缀、白色粗体正文。
+   * 先叠一层 16 色退化（亮黑底 + 亮白粗体），能认 256 色的终端再用精确颜色覆盖；
+   * 这样传统 conhost 和 Windows Terminal 都能一眼看出「这一行是用户发的」。
+   */
+  userMessage(text: string, marker = ""): string {
+    if (!this.enabled || text === "") return text;
+    const markerPaint = "\x1b[37;100m\x1b[38;5;246;48;5;237m";
+    const bodyPaint = "\x1b[1;97;100m\x1b[38;5;255;48;5;237m";
+    if (marker !== "" && text.startsWith(marker)) {
+      return `${markerPaint}${marker}${bodyPaint}${text.slice(marker.length)}\x1b[0m`;
+    }
+    return `${bodyPaint}${text}\x1b[0m`;
   }
 
   paint(tone: Tone, text: string): string {

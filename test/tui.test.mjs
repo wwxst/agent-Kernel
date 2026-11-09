@@ -550,9 +550,20 @@ test("TUI：标题标明程序和项目，用户正文与输入边界使用中�
   ui.tui.beginTurn("READ_ME");
   await tick();
   assert.match(ui.text(), /agent-Kernel · repo/);
-  assert.match(ui.text(), /\x1b\[(?:1;39|1;38;5;255;48;5;237)m(?:❯|>) READ_ME/, "用户消息加粗；富色终端为深色背景配白字，浅色主题仍可读");
+  assert.match(ui.text(), /\x1b\[37;100m\x1b\[38;5;246;48;5;237m(?:❯|>) \x1b\[1;97;100m\x1b\[38;5;255;48;5;237mREAD_ME/, "用户消息使用 Claude Code 任务条：灰色前缀 + 深灰底色 + 白色粗体正文");
   const inputTop = ui.text().slice(ui.text().lastIndexOf("\x1b[18;1H\x1b[2K"));
   assert.match(inputTop, /\x1b\[(?:90|38;5;244)m[-─]/);
+});
+
+test("TUI 用户消息样式：Claude Code 任务条，多行任务整行铺底色", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, color: true, columns: 60, rows: 30 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("第一行\n第二行");
+  await tick();
+  const text = ui.text();
+  assert.match(text, /\x1b\[37;100m\x1b\[38;5;246;48;5;237m(?:❯|>) \x1b\[1;97;100m\x1b\[38;5;255;48;5;237m第一行 {2,}\x1b\[0m/, "首行：灰色前缀 + 深灰底色 + 白色粗体正文");
+  assert.match(text, /\x1b\[1;97;100m\x1b\[38;5;255;48;5;237m  第二行 {2,}\x1b\[0m/, "续行同样整行铺底色");
 });
 
 test("TUI：回答审批后收起已结束的面板，保留决定与工具结果", async (t) => {
@@ -1363,7 +1374,7 @@ test("TUI：Windows Terminal 字形路径使用 Unicode 图标", async (t) => {
   ui.tui.setThinking(true);
   await tick();
 
-  assert.match(ui.text(), /❯ hello/);
+  assert.match(ui.text(), /❯ \x1b\[1;97;100m\x1b\[38;5;255;48;5;237mhello/, "Unicode 前缀 + 任务条正文");
   assert.match(ui.text(), /✻ Thinking/);
   assert.match(ui.text(), /\x1b\[2 q/, "现代终端输入使用块状光标");
   ui.tui.close();
