@@ -30,7 +30,7 @@ function screenRows(ui, count = 40) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, onPermissionChange } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -48,7 +48,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
   const tui = new Tui({
     input,
     output,
-    model: "mock-model",
+    model,
     workspace: "C:\\work\\repo",
     permission: "workspace-write",
     controller,
@@ -1775,4 +1775,21 @@ test("TUI：取消时尚未返回的工具不能在历史中继续显示运行�
   assert.match(screen, /已取消 · 用时/);
   assert.match(screen, /未收到工具结果/);
   assert.doesNotMatch(screen, /正在执行命令|运行中\.\.\./);
+});
+
+test("TUI：右上角未配置模型，重试时只替换当前 Thinking 行且不污染历史", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, model: "未配置模型" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  assert.match(screenRows(ui, 35).join("\n"), /未配置模型/);
+  ui.tui.beginTurn("你好");
+  ui.tui.setThinking(true);
+  ui.tui.setRetrying(3, 5);
+  const during = screenRows(ui, 35).join("\n");
+  assert.match(during, /正在重新连接 3\/5/);
+  assert.doesNotMatch(during, /Thinking\.\.\./);
+  ui.tui.setThinking(false);
+  const after = screenRows(ui, 35).join("\n");
+  assert.doesNotMatch(after, /正在重新连接 3\/5/);
+  assert.match(after, /未配置模型/);
 });

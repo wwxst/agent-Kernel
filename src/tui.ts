@@ -284,6 +284,9 @@ export class Tui {
 
   private thinking = false;
 
+  /** 与 Thinking 共用一个状态位；不会新增历史日志或第二层错误描述。 */
+  private retryStatus?: { attempt: number; maxRetries: number };
+
   private thinkingStartedAt = 0;
 
   private thinkingTimer?: NodeJS.Timeout;
@@ -743,9 +746,23 @@ export class Tui {
     else this.writeRaw("\r\x1b[2K");
   }
 
+  /** 只有真实发生网络重试时才会调用，次数来自 Agent，而不是 UI 猜测。 */
+  setRetrying(attempt: number, maxRetries: number): void {
+    if (!this.thinking) return;
+    this.retryStatus = { attempt, maxRetries };
+    const status = this.uiText(
+      `Reconnecting... ${attempt}/${maxRetries}`,
+      `正在重新连接 ${attempt}/${maxRetries}`,
+    );
+    if (this.layout) this.renderNow();
+    else if (this.interactive && this.terminalControls) this.writeRaw(`\r\x1b[2K${status}`);
+    else this.logLine(status, "warning");
+  }
+
   private stopThinking(): void {
     const wasThinking = this.thinking;
     this.thinking = false;
+    this.retryStatus = undefined;
     // 首段模型正文到达时移除等待态和俏皮短句，不能在日志末尾留下假的 Thinking。
     if (wasThinking && this.activityState === "thinking") {
       this.activityState = undefined;
@@ -1146,6 +1163,7 @@ export class Tui {
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed, cancelled = false }: { failed: boolean; cancelled?: boolean }): void {
     this.stats = session;
     this.runStartedAt = undefined;
+    this.retryStatus = undefined;
 
     if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
       this.currentTurn.endedAt = Date.now();
@@ -1712,6 +1730,13 @@ export class Tui {
       }
     }
     if (this.thinking) {
+      if (this.retryStatus !== undefined) {
+        const { attempt, maxRetries } = this.retryStatus;
+        logical.push({ text: `  ${this.glyphs.running} ${this.uiText(
+          `Reconnecting... ${attempt}/${maxRetries}`,
+          `正在重新连接 ${attempt}/${maxRetries}`,
+        )}`, tone: "warning" });
+      } else {
       const elapsed = Math.max(0, Date.now() - this.thinkingStartedAt);
       // 不用带 Emoji 属性的星号（如 U+2733）：Windows 会回退成绿色方块，破坏颜色与列宽。
       const frames = this.glyphs === UNICODE_GLYPHS ? ["✻", "✶", "✢", "✦"] : ["*", "+", "-", "+"];
@@ -1725,6 +1750,7 @@ export class Tui {
       logical.push({ text: this.withMood(waiting, this.contentWidth()), tone: "accent", kind: "thinking" });
       // 中文对照：Ctrl-C 取消。
       logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
+      }
     } else if (this.currentTurn?.endedAt === undefined && this.activityState !== undefined &&
                this.activityState !== "preparing" && !this.assistantOpen && !this.approvalMenuActive) {
       // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。

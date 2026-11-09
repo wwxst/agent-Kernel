@@ -29,7 +29,7 @@ import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { RunPresenter } from "./cli-presenter.ts";
 import type { AgentView, AgentVoice } from "./cli-presenter.ts";
-import { ModelConfigError, describeError, modelFailure } from "./errors.ts";
+import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./errors.ts";
 import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
@@ -119,13 +119,13 @@ function viewFromEnv(): AgentView {
   throw new Error('invalid AGENT_VIEW: "' + view + '" (expected compact or detailed)');
 }
 
-function loadConfig(permission: PermissionMode, details: boolean): Config {
+function loadConfig(permission: PermissionMode, details: boolean, allowMissingModel = false): Config {
   // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
   const candidateKeys = [process.env.API_KEY, process.env.OPENAI_API_KEY];
   const apiKey = firstNonEmpty(...candidateKeys.filter((value) =>
     value?.trim() !== "sk-your-key-here" && value?.trim() !== "your-api-key"));
-  if (!apiKey) {
-    // 示例占位符不是有效凭据；错误必须在 TUI 开始 Thinking 之前暴露。
+  if (!apiKey && !allowMissingModel) {
+    // 非交互 CLI 仍在请求前显式失败；真实 TUI 显示“未配置模型”，不得产生模型请求。
     throw new ModelConfigError("missing API_KEY (or OPENAI_API_KEY); replace the .env.example placeholder with a real key");
   }
 
@@ -304,6 +304,7 @@ interface AgentCallbacks {
   onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
   onToolResult?: (call: ToolCall, result: string) => void;
   onDelta?: (text: string) => void;
+  onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
 }
 
 /**
@@ -356,6 +357,9 @@ function createAgent(
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
     signal,
+    // 只在 TUI 启用有界暂时故障重试；其它 CLI/评测继续保持一次一请求。
+    maxModelRetries: callbacks?.onRetry === undefined ? 0 : 5,
+    onRetry: callbacks?.onRetry,
     // 每次模型请求/工具调用只有一个开始通知；CLI 和 TUI 共享事实，展示实现仍各自负责。
     onRequestStart: callbacks?.onRequestStart ?? ((step) => activePresenter?.thinking(step)),
     onToolCall: callbacks?.onToolCall ?? ((call, content) => {
@@ -387,7 +391,7 @@ async function runTurn(agent: Agent, task: string, config: Config, signal: Abort
     // 预算阻断可能已经确认模型正文；请求中断时则必须明确宣布临时增量无效。
     const confirmed = agent.transcript.slice(transcriptStart)
       .filter((message) => message.role === "assistant");
-    const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
+    const latest = confirmed.length === agent.stats.requests - agent.retryAttempts ? confirmed.at(-1) : undefined;
     if (latest !== undefined) presenter.confirmAssistant(latest.content);
     else presenter.discardAssistantDraft(modelFailure(error, "en") === undefined);
     presenter.finish(agent.stats.toolCalls, signal.aborted, true);
@@ -596,7 +600,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   const tui = new Tui({
     input: process.stdin,
     output: process.stdout,
-    model: config.demo ? `${config.model} [demo: external mock]` : config.model,
+    model: config.apiKey === "" ? "未配置模型"
+      : config.demo ? `${config.model} [demo: external mock]` : config.model,
     workspace: config.root,
     permission: config.permission,
     controller,
@@ -642,6 +647,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
     onDelta: (text) => tui.assistantDelta(text),
+    onRetry: (_error, attempt, maxRetries) => tui.setRetrying(attempt, maxRetries),
   };
 
   const newAgent = (): Agent => {
@@ -662,6 +668,11 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 
   /** 跑一轮；返回 false 表示取消，循环该停了。失败但不取消时返回 true。 */
   const runTask = async (task: string, showTask?: boolean): Promise<boolean> => {
+    if (config.apiKey === "") {
+      // 未配置不是一次 Agent Run；不进入 Thinking、也不产生虚假的请求或账单。
+      tui.logError(tui.uiText("Model not configured · set API_KEY in .env", "未配置模型，请在 .env 中设置 API_KEY"));
+      return true;
+    }
     // Transcript 跨多个 Run 累积；只检查当前 Run 的响应，不把先前的正式回复当成新草稿。
     const transcriptStart = agent.transcript.length;
     tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
@@ -677,7 +688,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       const failure = modelFailure(error, tui.uiText("en", "zh") === "zh" ? "zh" : "en");
       const confirmed = agent.transcript.slice(transcriptStart)
         .filter((message) => message.role === "assistant");
-      const latest = confirmed.length === agent.stats.requests ? confirmed.at(-1) : undefined;
+      const latest = confirmed.length === agent.stats.requests - agent.retryAttempts ? confirmed.at(-1) : undefined;
       if (latest?.content?.trim()) {
         // onToolCall 已提交该段正文时不要重复提交；预算阻断的调用则还没有这一事件。
         if (!toolStartedInLatestResponse) tui.confirmAssistant(latest.content);
@@ -693,8 +704,9 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
       if (failure !== undefined) {
-        tui.logError(`${failure.title}：${failure.advice}`);
-        tui.logLine(`${tui.uiText("Technical details", "技术详情")}：${failure.detail}`, "muted");
+        // 真实 HTTP 状态码可见，错误类型仍只占一类；技术原文保留在异常中供 CLI 诊断。
+        const code = error instanceof ModelHttpError ? `HTTP ${error.status} · ` : "";
+        tui.logError(`${code}${failure.title}：${failure.advice}`);
       } else {
         tui.logError(`${tui.uiText("[agent] turn failed:", "[agent] 任务失败：")} ${describeError(error)}`);
       }
@@ -748,7 +760,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     }
   } finally {
     // 先写总账再退出：TUI 的日志行比固定栏位更适合作为最后的记录。
-    tui.sessionSummary(agent.sessionStats);
+    if (agent.sessionStats.runs > 0) tui.sessionSummary(agent.sessionStats);
     tui.close();
   }
 
@@ -792,7 +804,7 @@ if (cli.error !== undefined) {
   }
 
   try {
-    const config = loadConfig(cli.permission, cli.details);
+    const config = loadConfig(cli.permission, cli.details, tuiMode && hasInteractiveTerminal());
     if (tuiMode) {
       await tuiSession(config, controller, cli.task === "" ? undefined : cli.task);
     } else if (replMode) {

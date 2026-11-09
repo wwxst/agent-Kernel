@@ -22,7 +22,8 @@
  * 「谁重置 transcript、失败后算不算已消费、并发调用怎么排队」，那是一整套会话管理，
  * 不在当前范围内。显式拒绝比隐式继承便宜得多。
  */
-import { ChatResponseError, ProcessCleanupError } from "./errors.ts";
+import { setTimeout as sleep } from "node:timers/promises";
+import { ChatResponseError, ProcessCleanupError, isRetryableModelError } from "./errors.ts";
 import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "./types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 
@@ -171,6 +172,10 @@ export interface AgentOptions {
    * CLI 使用 step 展示阶段，TUI 只需知道开始思考；不能为一次请求重复发送通知。
    */
   onRequestStart?: (step: number) => void;
+  /** 仅对确认可重试的请求报告真实进度，不代表一个新的 Agent Step。 */
+  onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
+  /** 每个 Step 最多额外尝试多少次；默认零，保持原始核心行为。 */
+  maxModelRetries?: number;
   /**
    * 流式正文增量。只在 ChatClient 支持流式时才会被调用，且只用于显示：
    * 最终消息仍以 chat() 的返回值为准，回调晚到、漏掉都不影响正确性。
@@ -189,6 +194,8 @@ export class Agent {
   private readonly onToolResult?: (call: ToolCall, result: string) => void;
   private readonly onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
   private readonly onRequestStart?: (step: number) => void;
+  private readonly onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
+  private readonly maxModelRetries: number;
 
   private readonly onDelta?: (text: string) => void;
 
@@ -200,6 +207,9 @@ export class Agent {
 
   /** 本次 Run 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
   private runRequests = 0;
+
+  /** 本次 Run 的额外网络请求数；requests 本身始终是真实发出的次数。 */
+  private runRetries = 0;
 
   /** 本次 Run 的用量；Token budget 按它算。每次 Run 开始时归零。 */
   private runUsage: AgentUsage = emptyUsage();
@@ -236,6 +246,8 @@ export class Agent {
     this.onToolResult = options.onToolResult;
     this.onToolCall = options.onToolCall;
     this.onRequestStart = options.onRequestStart;
+    this.onRetry = options.onRetry;
+    this.maxModelRetries = options.maxModelRetries ?? 0;
     this.onDelta = options.onDelta;
 
     // 系统提示词只放一条，之后每轮都跟着 messages 一起发出去；内容可由 provider 在请求前刷新。
@@ -290,6 +302,11 @@ export class Agent {
   /** 累计展示回调失败数；可供宿主诊断，但绝不污染模型消息或工具结果。 */
   get observerFailureCount(): number {
     return this.observerFailures;
+  }
+
+  /** UI 用于区分实际 HTTP 请求数与模型 Step 数，避免重试后错认已确认的正文。 */
+  get retryAttempts(): number {
+    return this.runRetries;
   }
 
   /** 没有执行的调用也要留下一条结果：明确写「没跑」，而不是让它们凭空消失。 */
@@ -412,6 +429,7 @@ export class Agent {
   private beginRun(): void {
     this.runCount++;
     this.runRequests = 0;
+    this.runRetries = 0;
     this.runToolCalls = 0;
     this.runUsage = emptyUsage();
   }
@@ -433,18 +451,27 @@ export class Agent {
       this.notifyObserver(this.onRequestStart, step);
       // 展示回调可能同步触发取消，不能在取消后继续提交模型请求。
       this.stopIfCancelled();
-      this.runRequests++;
-      this.sessionRequests++;
       let response: ChatResponse;
-      try {
-        response = await this.llm.chat(this.messages, this.tools.definitions, {
-          onDelta: this.onDelta === undefined ? undefined : (text) => this.notifyObserver(this.onDelta, text),
-        });
-      } catch (error) {
-        // 请求已经发出去：响应非法但带回 usage 时精确记账，否则记未知。
-        // 不记的话，失败请求的成本会从统计里凭空消失。
-        this.recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
-        throw error;
+      // 重试不构成新的 Agent Step，也不会重放工具；每个真实请求都各自计数、记账。
+      // 仅 fetch 阶段的网络错误或 HTTP 408/429/5xx 可重试；流式增量错误禁止重放。
+      for (let attempt = 0; ; attempt++) {
+        this.stopIfCancelled();
+        this.runRequests++;
+        this.sessionRequests++;
+        try {
+          response = await this.llm.chat(this.messages, this.tools.definitions, {
+            onDelta: this.onDelta === undefined ? undefined : (text) => this.notifyObserver(this.onDelta, text),
+          });
+          break;
+        } catch (error) {
+          // 失败的每次尝试可能已产生 token 费用；未知按 unknown 记录，不能补 0。
+          this.recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
+          if (attempt >= this.maxModelRetries || !isRetryableModelError(error)) throw error;
+          this.runRetries++;
+          this.notifyObserver(this.onRetry, error, attempt + 1, this.maxModelRetries);
+          // Ctrl-C 必须能中断退避，不再发新的模型请求。
+          await sleep(Math.min(100 * 2 ** attempt, 800), undefined, { signal: this.signal });
+        }
       }
 
       // 3) 模型这一轮的输出要立刻入栈，而且顺序有讲究：

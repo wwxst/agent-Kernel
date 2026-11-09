@@ -58,6 +58,13 @@ export class ModelConnectionError extends Error {
   }
 }
 
+/** 仅重试尚未进入流式输出的暂时网络或 HTTP 故障；鉴权、404、响应协议异常禁止重放。 */
+export function isRetryableModelError(error: unknown): boolean {
+  return error instanceof ModelConnectionError ||
+    (error instanceof ModelHttpError &&
+      (error.status === 408 || error.status === 429 || (error.status >= 500 && error.status < 600)));
+}
+
 /**
  * 显示层的错误分类，不改异常本体也不参与 Agent 决策。
  * 技术详情保留 describeError 的原文；UI 只在可以确认类别时给出对应的修复建议。
@@ -106,7 +113,13 @@ export function modelFailure(error: unknown, language: "zh" | "en"): {
       en: ["Invalid model response", "The provider returned unexpected data; any previously shown preview is discarded, not a confirmed reply. Check API compatibility."],
     },
   } as const;
-  const [title, advice] = messages[kind][language];
+  // UI 只保留三种终态 + 运行中的重连状态；内部细分类型和原始详情仍完整保留。
+  const title = kind === "config"
+    ? (language === "zh" ? "未配置模型" : "Model not configured")
+    : kind === "auth"
+      ? (language === "zh" ? "模型认证失败" : "Model authentication failed")
+      : (language === "zh" ? "模型服务不可用" : "Model service unavailable");
+  const [, advice] = messages[kind][language];
   return { title, advice, detail: describeError(error) };
 }
 

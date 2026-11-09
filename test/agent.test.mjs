@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
-import { ChatResponseError, ProcessCleanupError } from "../src/errors.ts";
+import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/errors.ts";
 import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */
@@ -762,4 +762,63 @@ test("系统提示词：关键歧义可以问，禁止编造验证结果，shell
   assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command or test that you did not run/);
   assert.match(DEFAULT_SYSTEM_PROMPT, /Run one shell command per call with simple syntax/);
   assert.equal(DEFAULT_SYSTEM_PROMPT.includes("Do not ask questions"), false);
+});
+
+test("TUI 级别的可恢复 HTTP 429 重试计入真实请求与未知成本，Step 不重复", async () => {
+  let calls = 0;
+  const retries = [];
+  const steps = [];
+  const llm = {
+    chat: async () => {
+      calls++;
+      if (calls < 3) throw new ModelHttpError(429, "busy");
+      return {
+        message: finalReply("recovered"),
+        usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+      };
+    },
+  };
+  const agent = new Agent({
+    llm,
+    tools: makeRegistry([]),
+    maxModelRetries: 2,
+    onRequestStart: (step) => steps.push(step),
+    onRetry: (error, attempt, maxRetries) => retries.push([error.status, attempt, maxRetries]),
+  });
+  const reply = await agent.run("hello");
+  assert.equal(reply.content, "recovered");
+  assert.equal(calls, 3);
+  assert.equal(agent.stats.requests, 3, "每次 HTTP 尝试都要计账");
+  assert.equal(agent.retryAttempts, 2);
+  assert.deepEqual(steps, [1], "重试不得伪造新的 Agent Step");
+  assert.deepEqual(retries, [[429, 1, 2], [429, 2, 2]]);
+  assert.equal(agent.stats.usage.unknown, 2, "429 的 token 费用不能假装为零");
+  assert.equal(agent.stats.usage.reported, 1);
+  assert.equal(agent.stats.usage.totalTokens, 5);
+  assert.equal(agent.transcript.filter((m) => m.role === "assistant").length, 1);
+});
+
+test("HTTP 401 不重试；收到取消时等待退避会立即停手", async () => {
+  let calls = 0;
+  const auth = new Agent({
+    llm: { chat: async () => { calls++; throw new ModelHttpError(401, "unauthorized"); } },
+    tools: makeRegistry([]),
+    maxModelRetries: 5,
+  });
+  await assert.rejects(auth.run("hello"), /401/);
+  assert.equal(calls, 1);
+  assert.equal(auth.retryAttempts, 0);
+
+  const controller = new AbortController();
+  let networkCalls = 0;
+  const interrupted = new Agent({
+    llm: { chat: async () => { networkCalls++; throw new ModelHttpError(503, "unavailable"); } },
+    tools: makeRegistry([]),
+    signal: controller.signal,
+    maxModelRetries: 5,
+    onRetry: () => controller.abort(new Error("stop during backoff")),
+  });
+  await assert.rejects(interrupted.run("hello"));
+  assert.equal(networkCalls, 1, "取消后不得发起第二次请求");
+  assert.equal(interrupted.stats.requests, 1);
 });

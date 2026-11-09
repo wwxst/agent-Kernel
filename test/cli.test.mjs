@@ -32,8 +32,9 @@ async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [
       const currentTurn = turn++;
       const message = script[Math.min(currentTurn, script.length - 1)];
 
-      if (httpStatus !== 200) {
-        response.writeHead(httpStatus, { "content-type": "application/json" });
+      const status = Array.isArray(httpStatus) ? httpStatus[Math.min(currentTurn, httpStatus.length - 1)] : httpStatus;
+      if (status !== 200) {
+        response.writeHead(status, { "content-type": "application/json" });
         response.end(JSON.stringify({ error: { message: "mock provider rejected request" } }));
         return;
       }
@@ -151,11 +152,11 @@ test("TUI：SSE 无完成标记分类为模型回复中断，英文/中文各只
       );
       assert.equal(run.code, 0, run.stderr);
       assert.equal(mock.requests.length, 2);
-      assert.equal((run.stdout.match(/Model response interrupted/g) ?? []).length, 1);
-      assert.equal((run.stdout.match(/模型回复中断/g) ?? []).length, 1);
-      assert.match(run.stdout, /stream ended before the model finished/);
-      assert.match(run.stdout, /技术详情：/);
-      assert.match(run.stdout, /Technical details：/);
+      assert.equal((run.stdout.match(/Model service unavailable/g) ?? []).length, 1);
+      assert.equal((run.stdout.match(/模型服务不可用/g) ?? []).length, 1);
+      assert.match(run.stdout, /previously shown preview is discarded|previously shown preview is discarded/i);
+      assert.match(run.stdout, /此前显示的草稿已作废/);
+      assert.doesNotMatch(run.stdout, /技术详情：|Technical details：/);
       assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
       assert.doesNotMatch(run.stdout, /【流式响应中断：未确认正文已丢弃】/);
       assert.doesNotMatch(run.stdout, /model: never confirmed/);
@@ -176,7 +177,7 @@ test("TUI：401 明确提示鉴权失败，不误报为 SSE 中断", async () =>
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /Model authentication failed/);
-      assert.match(run.stdout, /LLM HTTP 401/);
+      assert.match(run.stdout, /HTTP 401/);
       assert.doesNotMatch(run.stdout, /Model response interrupted|stream interrupted/);
       assert.equal(mock.requests.length, 1);
     } finally {
@@ -1020,4 +1021,42 @@ test("CLI 配置：未知语气和显示模式明确报错", async () => {
   const view = await runCli({ AGENT_VIEW: "unknown" });
   assert.equal(view.code, 1);
   assert.match(view.stderr, /invalid AGENT_VIEW/);
+});
+
+test("TUI：HTTP 429 真的重试一次并统一显示重连状态，累计真实请求次数", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("after reconnect")], { httpStatus: [429, 200] });
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--tui", "hello"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 2, "第 2 次请求才真正成功");
+      assert.match(run.stdout, /Reconnecting\.\.\. 1\/5/);
+      assert.match(run.stdout, /after reconnect/);
+      assert.match(run.stdout, /requests=2/);
+      assert.doesNotMatch(run.stdout, /Model authentication failed/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TUI：HTTP 404 不触发自动重连，展示统一类别并保留实际 HTTP 码", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("no")], { httpStatus: 404 });
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--tui", "hello"], input: "/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 1);
+      assert.match(run.stdout, /HTTP 404 · Model service unavailable/);
+      assert.doesNotMatch(run.stdout, /Reconnecting\.\.\./);
+    } finally {
+      await mock.close();
+    }
+  });
 });
