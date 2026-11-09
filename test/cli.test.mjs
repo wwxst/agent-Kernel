@@ -590,6 +590,28 @@ test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
   });
 });
 
+test("TUI：中文任务后 /permission 反馈显示中文，命令参数仍使用英文权限值", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("检查完成")]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        { args: ["--tui", "请检查项目文件"], input: "/permission\n/permission read-only\n/permission\n/exit\n" },
+      );
+
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /权限：工作区读写/);
+      assert.equal((run.stdout.match(/权限：只读模式/g) ?? []).length, 2);
+      assert.doesNotMatch(run.stdout, /权限：read-only/);
+      assert.equal(mock.requests.length, 1);
+      assert.match(mock.requests[0].messages[0].content, /Permission mode: workspace-write/,
+        "UI 翻译不能修改模型收到的真实权限策略");
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("TUI：最后一步模型已确认说明但工具未执行，保留正文并标注 Run 失败", async () => {
   await withWorkspace(async (workdir) => {
     const response = callTool("pending_read", "read", { path: "unread.txt" });
