@@ -90,9 +90,10 @@ interface LogLine {
   kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error";
   activity?: ActivityGroup;
   turn?: TurnActivity;
-  /** 仅包裹到屏幕行时使用；源逻辑行和分片定位缩放前的历史视口。 */
-  sourceLine?: number;
-  part?: number;
+  /** 仅展示层使用；持久日志项的身份不随换行和活动展开改变。 */
+  id?: number;
+  /** 当前屏幕行在所属日志项内部的字符偏移；不会发送给模型。 */
+  charOffset?: number;
 }
 
 interface ActivityTool {
@@ -250,6 +251,9 @@ export class Tui {
 
   private readonly fixedLayoutAllowed: boolean;
 
+  /** auto 无法确认备用屏幕能力时，只在启动时向交互式终端告知一次。 */
+  private readonly compatibilityNotice: boolean;
+
   /** 独立屏幕由 TUI 独占：缩放不会把中间帧写入 Shell 滚动历史。 */
   private readonly ownedScreen: boolean;
 
@@ -299,8 +303,10 @@ export class Tui {
 
   private stats?: AgentSessionStats;
 
-  /** 已经收尾的日志行（已转义的单行文本 + 语义色）。 */
+  /** 已经收尾的日志行（已转义的单行文本 + 语义色）；ID 只存在于本次 TUI。 */
   private readonly log: LogLine[] = [];
+
+  private nextLogId = 1;
 
   /** 正在运行的工具调用行：结果到达时原地替换，而不是再追一行。 */
   private readonly pendingTools = new Map<string, LogLine>();
@@ -352,8 +358,11 @@ export class Tui {
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
 
-  /** 缩放前视口顶端的逻辑行位置；流式新增内容和换行变化都不能把它推走。 */
-  private resizeAnchor?: { sourceLine: number; part: number };
+  /** 缩放前视口顶端的稳定日志 ID + 内容偏移，不受前面的展开或裁剪影响。 */
+  private resizeAnchor?: { entryId: number; charOffset: number };
+
+  /** 当锚点对应的日志被裁剪时，状态栏提示一次，而不是默默跳到新回复。 */
+  private historyTrimmedNotice = false;
 
   /** 本次 readLine 的原始 prompt；滚动后重绘输入行要用。 */
   private promptText = COMMAND_PROMPT;
@@ -439,9 +448,11 @@ export class Tui {
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
     const initialRows = options.rows !== undefined && options.rows > 0 ? options.rows : 24;
     const screenMode = options.screenMode ?? "auto";
-    const canDraw = options.interactive && isTerminalOutput(options.output) && this.terminalControls;
+    const tty = options.interactive && isTerminalOutput(options.output);
+    const canDraw = tty && this.terminalControls;
     this.ownedScreen = options.layout !== false && canDraw &&
       (screenMode === "always" || (screenMode === "auto" && supportsAlternateScreen()));
+    this.compatibilityNotice = screenMode === "auto" && tty && !this.ownedScreen && options.layout === undefined;
     // 生产环境不支持独立屏幕时直接使用行式模式；显式 layout 仅供旧版渲染回归测试。
     this.fixedLayoutAllowed = options.layout ?? this.ownedScreen;
     this.layout = this.fixedLayoutAllowed &&
@@ -698,6 +709,9 @@ export class Tui {
     }
 
     if (this.interactive) {
+      if (this.compatibilityNotice) {
+        this.logLine("Terminal compatibility mode / 终端兼容模式：line-by-line output (AGENT_TUI_SCREEN=never)");
+      }
       this.logLine(this.formatStatus());
       this.logLine(this.formatStatsLine());
       return;
@@ -718,7 +732,9 @@ export class Tui {
     if (this.ownedScreen && this.resizeTimer === undefined && this.resizeAnchor === undefined && this.scrollOffset > 0) {
       const oldLines = this.wrappedDisplayLines();
       const first = oldLines[Math.max(0, oldLines.length - this.logHeight - this.scrollOffset)];
-      if (first?.sourceLine !== undefined) this.resizeAnchor = { sourceLine: first.sourceLine, part: first.part ?? 0 };
+      if (first?.id !== undefined) {
+        this.resizeAnchor = { entryId: first.id, charOffset: first.charOffset ?? 0 };
+      }
     }
     this.columns = Math.max(1, columns);
     this.rows = Math.max(1, rows);
@@ -1499,6 +1515,7 @@ export class Tui {
 
     this.closed = true;
     this.resizeAnchor = undefined;
+    this.historyTrimmedNotice = false;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
     this.resizeSource?.removeListener("resize", this.onResize);
