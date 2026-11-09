@@ -95,7 +95,7 @@ interface LogLine {
   text: string;
   tone: Tone;
   /** 工具标题与暂态等待各有局部样式，不把整行都染成状态色。 */
-  kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error";
+  kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error" | "final-reply";
   activity?: ActivityGroup;
   turn?: TurnActivity;
   /** 仅展示层使用；持久日志项的身份不随换行和活动展开改变。 */
@@ -109,6 +109,8 @@ interface ActivityTool {
   startedAt: number;
   endedAt?: number;
   result?: string;
+  /** 第四层只改变真实工具输入/返回的显示，不改变 Tool result。 */
+  detailsExpanded?: boolean;
 }
 
 interface ActivityGroup {
@@ -122,6 +124,8 @@ interface TurnActivity {
   language: UiLanguage;
   startedAt: number;
   endedAt?: number;
+  /** 运行时展开，结束后自动收起；旧轮次可以由键盘独立展开。 */
+  expanded: boolean;
   outcome: "preparing" | "running" | "completed" | "failed" | "cancelled";
   groups: ActivityGroup[];
 }
@@ -340,8 +344,15 @@ export class Tui {
 
   private activeActivity?: ActivityGroup;
 
-  /** Ctrl+O 的当前浏览位置；各组展开状态彼此独立。 */
+  /** Ctrl+E / Ctrl+O / Ctrl+I 分别控制轮次、阶段和工具详情。 */
+  private turnFocus = -1;
+
   private activityFocus = -1;
+
+  private toolFocus = -1;
+
+  /** 仅标注 CLI 已确认的最终回复，折叠执行过程时仍独立展示。 */
+  private finalResponsePending = false;
 
   private activityState?: MoodState;
 
@@ -1042,10 +1053,12 @@ export class Tui {
     this.runToolResults = 0;
     this.activeActivity = undefined;
     this.activityFocus = -1;
+    this.toolFocus = -1;
+    this.turnFocus = -1;
     this.activityPending.clear();
     if (this.fixedLayoutAllowed) {
       this.currentTurn = { language: this.uiLanguage, startedAt: this.runStartedAt,
-        outcome: "preparing", groups: [] };
+        expanded: true, outcome: "preparing", groups: [] };
       // 即使任务后来失败或被取消，旧轮标题也保留独立状态，不受新轮计时影响。
       if (this.layout) {
         this.stopThinking();
@@ -1168,8 +1181,9 @@ export class Tui {
    * 撤回已写字节，必须追加明确的更正提示与权威正文，而不是悄悄忽略差异。
    * 与 finishAssistant() 不同：null 表示模型确认没有正文，不是“未知正文”。
    */
-  confirmAssistant(content: string | null): void {
+  confirmAssistant(content: string | null, final = false): void {
     const confirmed = normalizeNewlines(content ?? "");
+    if (final && this.layout && confirmed !== "") this.finalResponsePending = true;
     if (this.layout) {
       if (this.streamingText !== confirmed || (!this.assistantOpen && confirmed !== "")) {
         if (!this.assistantOpen && confirmed !== "") this.activeActivity = undefined;
@@ -1317,12 +1331,14 @@ export class Tui {
     if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
       this.currentTurn.endedAt = Date.now();
       this.currentTurn.outcome = cancelled ? "cancelled" : failed ? "failed" : "completed";
-      // 完成后只折叠工具明细，AI 的真实阶段说明和每一段摘要仍常驻。
+      this.currentTurn.expanded = false;
+      // 结束后自动收起整轮时间线；原始事件保留在 TUI 的内存日志中。
       for (const group of this.currentTurn.groups) {
         group.expanded = false;
         group.finished = true;
       }
       this.activityFocus = -1;
+      this.toolFocus = -1;
       this.activeActivity = undefined;
       this.activityPending.clear();
     }
@@ -1839,8 +1855,10 @@ export class Tui {
     if (!this.assistantOpen) return;
     this.pushBlank();
     for (const line of this.assistantDisplayLines()) {
-      this.appendLog({ text: line, tone: "assistant" });
+      this.appendLog({ text: line, tone: "assistant",
+        kind: this.finalResponsePending ? "final-reply" : undefined });
     }
+    this.finalResponsePending = false;
     this.streamingText = "";
     this.assistantOpen = false;
     this.pushBlank();
@@ -1890,6 +1908,8 @@ export class Tui {
   /** 每条持久展示日志只分配一次 ID；动态台词不占号，也不影响 Agent Transcript。 */
   private appendLog(line: LogLine): void {
     line.id = this.nextLogId++;
+    // 用户问题属于对话正文，不随过程折叠；其余事件归属于当前 Run。
+    if (line.tone !== "user" && this.currentTurn?.endedAt === undefined) line.turn = this.currentTurn;
     this.log.push(line);
   }
 
