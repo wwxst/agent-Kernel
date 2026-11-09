@@ -1855,33 +1855,45 @@ export class Tui {
   private wrappedDisplayLines(): LogLine[] {
     const logical: LogLine[] = [];
     const pendingLines = new Set(this.pendingTools.values());
+    // 一个持久 ID 可以展开成多条逻辑行；偏移累计的是本次展示内容，不是换行后的行号。
+    const append = (entry: LogLine, children: LogLine[]): void => {
+      let offset = 0;
+      for (const line of children) {
+        logical.push({ ...line, id: entry.id, charOffset: offset });
+        offset += line.text.length + 1;
+      }
+    };
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
-        logical.push(this.turnStatusLine(line.turn));
-        logical.push({ text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" });
+        append(line, [this.turnStatusLine(line.turn),
+          { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]);
         continue;
       }
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
-        logical.push({ text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
-          tone: "muted", kind: "activity" });
+        const children: LogLine[] = [
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
+            tone: "muted", kind: "activity" },
+        ];
         if (group.expanded) {
-          for (const item of group.tools) logical.push(...this.activityToolLines(item, group));
+          for (const item of group.tools) children.push(...this.activityToolLines(item, group));
         } else {
           // 收起后异常仍然可见；不能把拒绝、错误藏进成功摘要。
           for (const item of group.tools) {
             const failure = this.activityFailureLine(item, group.language);
-            if (failure !== undefined) logical.push(failure);
-            else if (group.finished && item.result === undefined) logical.push(this.activityUnfinishedLine(item, group.language));
+            if (failure !== undefined) children.push(failure);
+            else if (group.finished && item.result === undefined) children.push(this.activityUnfinishedLine(item, group.language));
           }
         }
+        append(line, children);
         continue;
       }
-      logical.push(line);
+      const children = [line];
       // 兼容没有 beginTurn 的旧调用；正常任务的 Running 从 ActivityGroup 派生。
       if (pendingLines.has(line) && !this.approvalBlocksRunning) {
-        logical.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
+        children.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
       }
+      append(line, children);
     }
     if (this.assistantOpen) {
       for (const line of this.assistantDisplayLines()) {
@@ -1921,16 +1933,20 @@ export class Tui {
 
     const width = this.contentWidth();
     const wrapped: LogLine[] = [];
-    for (const [sourceLine, line] of logical.entries()) {
+    for (const line of logical) {
       const indent = line.text.match(/^\s*/)?.[0] ?? "";
       const continuation = line.kind === "tool" ? "    "
         : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
       const parts = line.kind === "activity-error" || line.kind === "activity"
         ? [clip(line.text, width)]
         : wrapLine(line.text, width, continuation);
+      let offset = line.charOffset ?? 0;
       for (const [index, part] of parts.entries()) {
         wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
-          kind: index === 0 ? line.kind : undefined, sourceLine, part: index });
+          kind: index === 0 ? line.kind : undefined, id: line.id, charOffset: offset });
+        // 续行的缩进只是展示前缀，不属于源文本。偏移因此不会随终端宽度漂移。
+        const prefix = index === 0 ? "" : takeByWidth(continuation, Math.max(0, width - 2));
+        offset += Math.max(0, part.length - prefix.length);
       }
     }
     if (this.approvalRequest !== undefined) {
