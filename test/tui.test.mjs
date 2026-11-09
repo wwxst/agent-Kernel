@@ -264,7 +264,10 @@ test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳�
   assert.ok(before, "向上翻页后必须有可见历史锚点");
   ui.input.write("\x0f");
   await tick();
-  assert.match(lastRow(ui.text(), 4), new RegExp(before), "切换较早活动的展开状态后仍看同一段历史");
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "收起较早活动后仍看同一段历史");
+  ui.input.write("\x0f");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "重新展开更多详情行时不能二次累加滚动偏移");
   ui.output.columns = 50;
   ui.output.emit("resize");
   await new Promise((resolve) => setTimeout(resolve, 130));
