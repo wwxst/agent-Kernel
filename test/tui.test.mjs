@@ -632,12 +632,12 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   t.mock.timers.tick(3200);
   ui.tui.finishAssistant("done");
   ui.tui.finishTurn(run, session, { failed: false });
-  assert.match(lastRow(ui.text(), 6), /Completed · in 3s/);
+  assert.match(screenRows(ui).join("\n"), /Completed · in 3s/, "状态位置允许随折叠布局上移");
   ui.tui.beginTurn("second");
   t.mock.timers.tick(1000);
   ui.tui.finishTurn({ ...run, toolCalls: 0 }, session, { failed: true });
-  assert.match(lastRow(ui.text(), 12), /Failed · after 1s/);
-  assert.doesNotMatch(lastRow(ui.text(), 12), /after 4s/);
+  assert.match(screenRows(ui).join("\n"), /Failed · after 1s/);
+  assert.doesNotMatch(screenRows(ui).join("\n"), /after 4s/);
 });
 
 test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条消息仍贴顶", async (t) => {
@@ -652,9 +652,11 @@ test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条�
   t.mock.timers.tick(2000);
   ui.tui.finishTurn(run, session, { failed: false });
   ui.tui.beginTurn("second");
-  assert.match(lastRow(ui.text(), 6), /Completed · in 2s/);
-  assert.equal(lastRow(ui.text(), 9), "");
-  assert.match(lastRow(ui.text(), 10), /^(?:❯|>) second/);
+  const rows = screenRows(ui, 35);
+  const previous = rows.findIndex((row) => /Completed · in 2s/.test(row));
+  const second = rows.findIndex((row) => /^(?:❯|>) second/.test(row));
+  assert.ok(previous >= 0 && second > previous, "上一轮完成状态保留在新任务之前");
+  assert.ok(rows.slice(previous + 1, second).some((row) => row.trim() === ""), "两轮之间保留空行");
 });
 
 test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
@@ -1045,8 +1047,10 @@ test("TUI 固定布局：流式响应失败时撤销未确认正文，但保留�
 
   const current = screenRows(ui).join("\n");
   assert.doesNotMatch(current, /UNCONFIRMED_RESPONSE_42/);
-  assert.match(current, /unconfirmed text discarded/);
   assert.match(current, /Failed/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  const detail = screenRows(ui).join("\n");
+  assert.match(detail, /unconfirmed text discarded/, "失败草稿说明在展开后可追溯");
 });
 
 test("TUI 行式输出：已写出的流式片段不能撤回，但明确标记其未确认", async (t) => {
@@ -2134,6 +2138,8 @@ test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示�
   ui.tui.toolResult(second, "hello");
   ui.tui.finishAssistant("最终结果已经整理好。");
   ui.tui.finishTurn({ requests: 2, toolCalls: 5, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  assert.doesNotMatch(screenRows(ui, 55).join("\n"), /先检查相关文件和代码/, "结束时过程默认折叠");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
   const result = screenRows(ui, 55).join("\n");
   assert.match(result, /先检查相关文件和代码/);
   assert.match(result, /再查看修复结果/);
@@ -2155,6 +2161,7 @@ test("TUI：失败原因与命令同行，阶段折叠仍保留真实失败", (t
   ui.tui.toolResult(call, "exit 1\nTypeScript 类型检查未通过");
   ui.tui.finishAssistant("发现类型检查错误，需要修复。");
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
   const rows = screenRows(ui, 40);
   const failedRows = rows.filter((line) => line.includes("TypeScript 类型检查未通过"));
   assert.equal(failedRows.length, 1);
@@ -2247,6 +2254,7 @@ test("TUI：取消时尚未返回的工具不能在历史中继续显示运行�
   const call = { id: "pending-cancel", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
   ui.tui.toolCall(call);
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true, cancelled: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
   const screen = screenRows(ui, 35).join("\n");
   assert.match(screen, /已取消 · 用时/);
   assert.match(screen, /未收到工具结果/);
