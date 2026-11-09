@@ -303,10 +303,15 @@ let activePresenter: RunPresenter | undefined;
  */
 /** 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。 */
 const TUI_PROGRESS_GUIDANCE = [
+  // 在重要的一组工具调用之前，向用户简短说明当前准备做什么。
   "In this interactive TUI, briefly tell the user what you are doing before a meaningful group of tool calls.",
+  // 有实际结果以后，简短说明观察到的结果，以及已经明确的下一步。
   "After a meaningful result, briefly explain the observed outcome and your next step if known.",
+  // 用用户的语言，每次只说一句；合并相关操作，不逐个工具播报。
   "Keep each visible progress update to one short sentence in the user's language; group related operations instead of narrating every tool.",
+  // 只说有证据的事实和计划；不伪造结果，也不暴露模型内部推理。
   "Only describe verified facts and plans, never invent results or reveal private chain-of-thought.",
+  // 正式回答与临时进度说明分离。
   "Keep the final response separate from these progress updates.",
 ].join(" ");
 
