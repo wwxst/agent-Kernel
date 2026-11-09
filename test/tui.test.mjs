@@ -101,6 +101,20 @@ test("TUI auto：linux/vt100/ansi/unknown 不误入备用屏幕，always 允许�
   assert.match(forced.text(), /\x1b\[\?1049h/, "显式 always 可覆盖保守检测");
 });
 
+test("TUI auto：继承了现代终端标记但 TERM 未知时仍保守降级", (t) => {
+  const previous = process.env.WT_SESSION;
+  try {
+    process.env.WT_SESSION = "inherited-from-other-terminal";
+    const ui = makeTui({ interactive: true, tty: true, screenMode: "auto", term: "wyse60" });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    assert.doesNotMatch(ui.text(), /\x1b\[\?1049h/);
+  } finally {
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  }
+});
+
 test("TUI auto：受支持终端才启用备用屏幕，never 始终关闭", (t) => {
   const previous = process.env.WT_SESSION;
   try {
