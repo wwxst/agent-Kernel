@@ -4,11 +4,11 @@
  * v0.3 的目标是「像聊天，而不是调试控制台」：顶部是项目/模型/路径，中间是用户、
  * 模型和工具调用的对话视口，底部是带分隔线的固定输入区，最下面是权限和 Session 统计。
  *
- * 渲染用绝对光标定位 + 差分重绘：传统 Windows conhost 不实现 DECSTBM，靠滚动区域
- * 固定栏位会让回复互相覆盖；只重画变化行，在 conhost / Windows Terminal
- * / xterm 上都能成立。不切 alternate screen、不引 TUI 库、不改 Agent。
+ * 渲染用绝对光标定位 + 差分重绘：可确认兼容的终端进入备用屏幕，缩放合并后重排；
+ * 传统 Windows conhost 等能力不明的终端用行式聊天，不向 Shell 历史重复写入固定画面。
+ * 不引 TUI 库、不改 Agent。
  *
- * 非 TTY（管道、CI、e2e）退化成逐行输出：没有颜色和固定位置，但走同一套日志/审批逻辑。
+ * 非 TTY（管道、CI、e2e）也退化成逐行输出：没有固定位置，但走同一套日志/审批逻辑。
  * 已知边界：固定布局要求终端至少 12 行、30 列；历史保留最近 2000 条逻辑行；
  * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
  */
@@ -249,6 +249,12 @@ export class Tui {
   private readonly ownedScreen: boolean;
 
   private altScreenActive = false;
+
+  /** 未进入 start 的对象只能释放资源，不能发出任何终端控制序列。 */
+  private started = false;
+
+  /** 全屏清理和差分行必须在同一同步帧中输出。 */
+  private clearBeforeNextFrame = false;
 
   private resizeTimer?: NodeJS.Timeout;
 
@@ -667,17 +673,19 @@ export class Tui {
       : this.style.paint("muted", clip(plain, width));
   }
 
-  /** 画第一帧。固定布局清屏但不切 alternate screen。 */
+  /** 画第一帧；支持备用屏幕的终端在关闭时会完整恢复原有 Shell。 */
   start(): void {
+    if (this.closed || this.started) return;
+    this.started = true;
     if (this.ownedScreen) {
       // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
       this.output.write("\x1b[?1049h\x1b[?25l");
       this.altScreenActive = true;
     }
     if (this.layout) {
-      this.output.write("\x1b[2J\x1b[H");
+      this.clearBeforeNextFrame = true;
       this.renderNow();
-      if (this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS) this.moveToInput();
+      if (!this.ownedScreen && this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS) this.moveToInput();
       return;
     }
 
@@ -694,7 +702,7 @@ export class Tui {
 
   /** 终端尺寸变化后重新排版；保持当前输入行和滚动位置。 */
   private resize(columns: number, rows: number): void {
-    if (!this.fixedLayoutAllowed || this.closed) return;
+    if (!this.started || !this.fixedLayoutAllowed || this.closed) return;
 
     const hadLayout = this.layout;
     this.columns = Math.max(1, columns);
@@ -712,8 +720,7 @@ export class Tui {
         this.inputDirty = true;
         this.lastFrame = [];
         this.lastTotalLines = 0;
-        // 窄窗口由提示帧自行清屏；正常布局只清一次，避免不必要的终端历史变化。
-        if (this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS) this.output.write("\x1b[2J\x1b[H");
+        this.clearBeforeNextFrame = true;
         this.renderNow();
       }, RESIZE_DEBOUNCE_MS);
       this.resizeTimer.unref?.();
@@ -746,7 +753,7 @@ export class Tui {
     this.inputDirty = true;
     this.lastFrame = [];
     this.lastTotalLines = 0;
-    this.output.write("\x1b[2J\x1b[H");
+    this.clearBeforeNextFrame = true;
     if (this.approvalMenuActive) this.setApprovalCursor(true);
     this.renderNow();
     if (wasPrompt) {
@@ -1451,7 +1458,7 @@ export class Tui {
   /** 结束 TUI：清掉监听器和定时器、提交当前回复、恢复终端。 */
   close(): void {
     if (this.closed) return;
-    this.setThinking(false);
+    if (this.started) this.setThinking(false);
     if (this.activityTimer !== undefined) {
       clearInterval(this.activityTimer);
       this.activityTimer = undefined;
@@ -1466,11 +1473,13 @@ export class Tui {
     }
     this.renderScheduled = false;
 
-    if (this.layout) {
-      this.commitAssistant();
-      this.renderNow();
-    } else {
-      this.setThinking(false);
+    if (this.started) {
+      if (this.layout) {
+        this.commitAssistant();
+        this.renderNow();
+      } else {
+        this.setThinking(false);
+      }
     }
 
     this.closed = true;
@@ -1478,6 +1487,7 @@ export class Tui {
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
+    if (!this.started) return;
     this.setApprovalCursor(false);
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
@@ -1519,15 +1529,17 @@ export class Tui {
 
   /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
   private renderNow(): void {
-    if (!this.layout || this.closed || (this.ownedScreen && this.resizeTimer !== undefined)) return;
+    if (!this.started || !this.layout || this.closed || (this.ownedScreen && this.resizeTimer !== undefined)) return;
 
     if (this.ownedScreen && (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS)) {
       // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
       const message = clip(this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续"),
         Math.max(1, this.columns - 1));
-      if (this.lastFrame.length === 1 && this.lastFrame[0] === message) return;
+      if (this.lastFrame.length === 1 && this.lastFrame[0] === message && !this.clearBeforeNextFrame) return;
       this.lastFrame = [message];
-      this.output.write(`\x1b[?25l\x1b[2J\x1b[H${message}`);
+      this.clearBeforeNextFrame = false;
+      // 极窄提示也是完整帧：清屏位于同步更新内，且避免中间帧残留。
+      this.output.write(`\x1b[?2026h\x1b[?25l\x1b[2J\x1b[H${message}\x1b[?2026l`);
       return;
     }
 
@@ -1611,7 +1623,8 @@ export class Tui {
     }
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
-    let frame = "";
+    let frame = this.clearBeforeNextFrame ? "\x1b[2J\x1b[H" : "";
+    this.clearBeforeNextFrame = false;
     for (let index = 0; index < rows.length; index++) {
       const forceInput = this.inputDirty && index === this.inputRow - 1;
       if (forceInput || this.lastFrame[index] !== rows[index]) {
