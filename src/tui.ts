@@ -803,6 +803,15 @@ export class Tui {
     return this.uiLanguage === "zh" ? chinese : english;
   }
 
+  /** 权限值是策略标识，只有 UI 标签按最近一次用户任务的语言翻译，不影响命令和实际授权。 */
+  permissionLabel(mode: PermissionMode): string {
+    switch (mode) {
+      case "read-only": return this.uiText(mode, "只读模式");
+      case "workspace-write": return this.uiText(mode, "工作区读写");
+      case "full-access": return this.uiText(mode, "完全访问");
+    }
+  }
+
   /** 用于 CLI 的会话命令提示，语言跟随最近一轮任务。 */
   helpText(permissionModes: string): string {
     return this.uiText(
@@ -1998,13 +2007,14 @@ export class Tui {
     const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} ${this.uiText("lines", "行")}`;
     const historyWarning = this.historyTrimmedNotice
       ? this.uiText(" [history truncated]", "【历史已截断】") : "";
+    const permissionLabel = this.permissionLabel(this.permissionMode);
     const baseLabel = (this.scrollOffset > 0
-      ? `${scrollPrefix} · ${this.permissionMode}`
-      : this.permissionMode) + historyWarning;
+      ? `${scrollPrefix} · ${permissionLabel}`
+      : permissionLabel) + historyWarning;
     const shortcut = this.onPermissionChange !== undefined && this.interactive
       ? this.uiText(" (shift-tab to cycle)", "（Shift+Tab 切换）") : "";
     let left = this.fullAccessConfirmationPending
-      ? this.uiText("Confirm full-access: Shift+Tab again · Esc cancel", "确认 full-access：再次按 Shift+Tab · Esc 取消")
+      ? this.uiText("Confirm full-access: Shift+Tab again · Esc cancel", "确认完全访问：再次按 Shift+Tab · Esc 取消")
       : baseLabel + shortcut;
     let right = this.formatSessionStats(width >= 60);
 
@@ -2074,7 +2084,7 @@ export class Tui {
   }
 
   private formatStatus(): string {
-    const prefix = `${this.uiText("model", "模型")} ${clip(singleLine(this.model), 24)} | ${this.uiText("permission", "权限")} ${this.permissionMode} | ${this.uiText("workspace", "工作目录")} `;
+    const prefix = `${this.uiText("model", "模型")} ${clip(singleLine(this.model), 24)} | ${this.uiText("permission", "权限")} ${this.permissionLabel(this.permissionMode)} | ${this.uiText("workspace", "工作目录")} `;
     const room = this.columns - displayWidth(prefix);
     const workspace = singleLine(this.workspace);
     let shown = "";
