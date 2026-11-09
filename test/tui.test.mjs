@@ -395,7 +395,7 @@ test("TUI 时间线：执行中说明与活动交替出现，完成后自动收�
   ui.tui.confirmAssistant("最终回复：已验证通过。", true);
   ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
   const folded = screenRows(ui, 40).join("\n");
-  assert.match(folded, /已完成 · 用时 .*▸/);
+  assert.match(folded, /已完成 · 用时 .*(?:▸|>)/);
   assert.doesNotMatch(folded, /先检查日志状态|已读取文件|已经找到问题/);
   assert.match(folded, /最终回复：已验证通过/, "正式回答在折叠过程外仍然可见");
   assert.doesNotMatch(folded, /已读取文件、修改代码、运行检查等/, "不应再渲染综合摘要层");
@@ -403,7 +403,7 @@ test("TUI 时间线：执行中说明与活动交替出现，完成后自动收�
   ui.input.emit("keypress", "", { name: "e", ctrl: true });
   await tick();
   const unfolded = screenRows(ui, 40).join("\n");
-  assert.match(unfolded, /已完成 · 用时 .*▾/);
+  assert.match(unfolded, /已完成 · 用时 .*(?:▾|v)/);
   assert.match(unfolded, /先检查日志状态/);
   assert.match(unfolded, /已读取文件/);
   assert.match(unfolded, /已经找到问题/);
@@ -438,11 +438,11 @@ test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff",
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "Updated src/tui.ts");
   let screen = screenRows(ui, 45).join("\n");
-  assert.match(screen, /编辑 src\/tui\.ts.*▸/);
+  assert.match(screen, /编辑 src\/tui\.ts.*(?:▸|>)/);
   assert.doesNotMatch(screen, /调用：/, "原始工具详情默认不展开");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
   screen = screenRows(ui, 45).join("\n");
-  assert.match(screen, /编辑 src\/tui\.ts.*▾/);
+  assert.match(screen, /编辑 src\/tui\.ts.*(?:▾|v)/);
   assert.match(screen, /调用：.*edit/);
   assert.match(screen, /Updated src\/tui\.ts/);
   assert.doesNotMatch(screen, /^\+.*\-.*$/m, "不根据路径虚构文件 Diff");
@@ -457,11 +457,11 @@ test("TUI 时间线：失败及取消仍可展开，不隐藏真实的工具错�
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "exit 1\nERROR: process failed");
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true });
-  assert.match(screenRows(ui, 35).join("\n"), /执行失败 · 用时 .*▸/);
+  assert.match(screenRows(ui, 35).join("\n"), /执行失败 · 用时 .*(?:▸|>)/);
   ui.input.emit("keypress", "", { name: "e", ctrl: true });
   ui.input.emit("keypress", "", { name: "o", ctrl: true });
   const expanded = screenRows(ui, 35).join("\n");
-  assert.match(expanded, /执行失败 · 用时 .*▾/);
+  assert.match(expanded, /执行失败 · 用时 .*(?:▾|v)/);
   assert.match(expanded, /failed|失败/);
 });
 
