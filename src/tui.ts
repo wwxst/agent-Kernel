@@ -1617,14 +1617,17 @@ export class Tui {
     }
 
     if (this.resizeAnchor !== undefined) {
-      const { sourceLine, part } = this.resizeAnchor;
-      const first = lines.findIndex((line) => line.sourceLine === sourceLine);
-      if (first >= 0) {
-        let last = first;
-        while (last + 1 < lines.length && lines[last + 1]?.sourceLine === sourceLine) last++;
-        const top = Math.min(first + part, last);
-        this.scrollOffset = Math.max(0, lines.length - this.logHeight - top);
+      const { entryId, charOffset } = this.resizeAnchor;
+      // 优先恢复相同日志项中最接近原文本位置的行，而不是原来的屏幕行号。
+      let top = lines.findLastIndex((line) => line.id === entryId && (line.charOffset ?? 0) <= charOffset);
+      if (top < 0) top = lines.findIndex((line) => line.id === entryId);
+      if (top < 0) {
+        // 原 ID 已被 2000 行裁剪：退到最靠近的存活项，给用户明确提示。
+        top = lines.findIndex((line) => line.id !== undefined && line.id > entryId);
+        if (top < 0) top = lines.findLastIndex((line) => line.id !== undefined);
+        this.historyTrimmedNotice = true;
       }
+      if (top >= 0) this.scrollOffset = Math.max(0, lines.length - this.logHeight - top);
       this.resizeAnchor = undefined;
     }
 
@@ -1729,6 +1732,7 @@ export class Tui {
   }
 
   private scrollPage(direction: "up" | "down"): void {
+    this.historyTrimmedNotice = false;
     const max = this.maxScroll();
     const step = Math.max(1, this.logHeight - 2);
     this.scrollOffset = Math.min(
@@ -1986,9 +1990,11 @@ export class Tui {
           ? "assistant"
           : "warning";
     const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} ${this.uiText("lines", "行")}`;
-    const baseLabel = this.scrollOffset > 0
+    const historyWarning = this.historyTrimmedNotice
+      ? this.uiText(" [history truncated]", "【历史已截断】") : "";
+    const baseLabel = (this.scrollOffset > 0
       ? `${scrollPrefix} · ${this.permissionMode}`
-      : this.permissionMode;
+      : this.permissionMode) + historyWarning;
     const shortcut = this.onPermissionChange !== undefined && this.interactive
       ? this.uiText(" (shift-tab to cycle)", "（Shift+Tab 切换）") : "";
     let left = this.fullAccessConfirmationPending
