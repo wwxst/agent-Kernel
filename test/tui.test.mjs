@@ -177,7 +177,7 @@ test("TUI 独立屏幕：滚动到历史中段后，缩放期间流式增长不�
   const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 35, screenMode: "always" });
   t.after(() => ui.cleanup());
   ui.tui.start();
-  for (let i = 0; i < 85; i++) ui.tui.logLine(`ANCHOR_${String(i).padStart(3, "0")} ${"内容 ".repeat(7)}`);
+  for (let i = 0; i < 85; i++) ui.tui.logLine(`ANCHOR_${String(i).padStart(3, "0")} ${"内容 ".repeat(17)}`);
   ui.input.emit("keypress", "", { name: "pageup" });
   await tick();
   const before = lastRow(ui.text(), 4).match(/ANCHOR_\d{3}/)?.[0];
