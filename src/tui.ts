@@ -2050,7 +2050,10 @@ export class Tui {
         // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
         if (group.fallbackOverview && group.tools.length > 0) {
           const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
-          children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(current.call, current.result, group.language)}`),
+          children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
+            current.call, current.result, group.language, group.finished === true,
+            this.approvalMenuActive && current.call.function.name === "shell",
+          )}`),
             tone: "info" });
         }
         children.push(
@@ -2581,7 +2584,10 @@ function oneLine(text: string): string {
 
 
 /** 工具事实兜底：只说明“正在/已做什么”，不猜测原因、发现或下一步计划。 */
-function toolProgressOverview(call: ToolCall, result: string | undefined, language: UiLanguage): string {
+function toolProgressOverview(
+  call: ToolCall, result: string | undefined, language: UiLanguage,
+  finished = false, awaitingApproval = false,
+): string {
   const zh = language === "zh";
   let args: unknown;
   try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* 不猜测非法参数 */ }
@@ -2591,6 +2597,13 @@ function toolProgressOverview(call: ToolCall, result: string | undefined, langua
     : name === "grep" || name === "glob" ? params.pattern : params.path;
   const target = typeof rawTarget === "string" && rawTarget.trim() !== ""
     ? ` ${clip(oneLine(rawTarget), 54)}` : "";
+  if (result === undefined && finished) {
+    return zh ? `未收到${target || ` ${name}`}的操作结果，执行状态未知。`
+      : `No result received for${target || ` ${name}`}; execution status unknown.`;
+  }
+  if (result === undefined && awaitingApproval) {
+    return zh ? `正在等待命令${target}的执行授权。` : `Awaiting approval to run command${target}.`;
+  }
   const status = result === undefined ? "running" : (() => {
     const summary = summarizeToolResult(call, result);
     return summary.denied ? "denied" : summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
