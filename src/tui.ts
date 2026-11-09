@@ -1729,7 +1729,8 @@ export class Tui {
         // 原 ID 已被 2000 行裁剪：退到最靠近的存活项，给用户明确提示。
         top = lines.findIndex((line) => line.id !== undefined && line.id > entryId);
         if (top < 0) top = lines.findLastIndex((line) => line.id !== undefined);
-        this.historyTrimmedNotice = true;
+        // 若只是手动收起了该日志所在的任务，并非真的被裁剪，不显示误导性警告。
+        if (!this.log.some((entry) => entry.id === entryId)) this.historyTrimmedNotice = true;
       }
       if (top >= 0) this.scrollOffset = Math.max(0, lines.length - this.logHeight - top);
       this.resizeAnchor = undefined;
@@ -2039,12 +2040,12 @@ export class Tui {
       }
       append(line, children);
     }
-    if (this.assistantOpen) {
+    if (this.assistantOpen && this.currentTurn?.expanded !== false) {
       for (const line of this.assistantDisplayLines()) {
         logical.push({ text: line, tone: "assistant" });
       }
     }
-    if (this.thinking) {
+    if (this.thinking && this.currentTurn?.expanded !== false) {
       if (this.retryStatus !== undefined) {
         const { attempt, maxRetries } = this.retryStatus;
         logical.push({ text: `  ${this.glyphs.running} ${this.uiText(
@@ -2066,8 +2067,9 @@ export class Tui {
       // 中文对照：Ctrl-C 取消。
       logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
       }
-    } else if (this.currentTurn?.endedAt === undefined && this.activityState !== undefined &&
-               this.activityState !== "preparing" && !this.assistantOpen && !this.approvalMenuActive) {
+    } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
+               this.activityState !== undefined && this.activityState !== "preparing" &&
+               !this.assistantOpen && !this.approvalMenuActive) {
       // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。
       this.maybeRotateMood();
       const status = formatActivityStateLabel(this.activityState, this.uiLanguage);
