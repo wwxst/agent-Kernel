@@ -1076,7 +1076,9 @@ export class Tui {
       lines.push(this.makeLogLine(`  ${result[1].text}`, result[1].tone));
     }
     if (!ended && !group.finished && !this.approvalBlocksRunning) {
-      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, "muted"));
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${item.call.function.name === "shell"
+        ? this.uiText("Awaiting tool result...", "等待工具结果...")
+        : this.uiText("Running...", "运行中...")}`, "muted"));
     }
     if (!item.detailsExpanded) return lines;
     const raw = ended ? item.result! : "";
@@ -1352,7 +1354,8 @@ export class Tui {
     this.approvalBlocksRunning = false;
     this.setThinking(false);
     this.finishAssistant();
-    this.setActivityState(moodStateForTool(call));
+    // Shell 工具通知先于权限检查；在授权结果到来前只能表示请求处理中。
+    this.setActivityState(call.function.name === "shell" ? "working" : moodStateForTool(call));
     const turn = this.currentTurn;
     if (this.fixedLayoutAllowed && turn !== undefined && turn.endedAt === undefined) {
       let group = this.activeActivity;
