@@ -18,6 +18,18 @@ npm run agent -- --permission read-only "先看看这个仓库的结构"   # 只
 npm run agent -- --permission full-access "跑测试并修掉失败"     # 全部工具、不审批
 ```
 
+### TUI 屏幕模式与窗口缩放
+
+`--tui` 默认使用 `AGENT_TUI_SCREEN=auto`：仅在有明确能力线索的 Windows Terminal、VS Code 终端或受支持的 POSIX TERM 中启用**独立屏幕**，其他终端保守降级为行式聊天；检测不能百分之百确认终端能力，遇到兼容问题可设 `never`。独立屏幕里历史、输入栏、工具与动态状态从内存日志重绘，退出时恢复原来的 Shell 画面。拖动窗口时把连续 resize 合并，75ms 内不反复清屏；窗口太小只显示提示，放大后恢复原会话内容。
+
+在传统 Windows CMD/ConHost 或无法确认终端支持备用屏幕的环境，会自动降级为**行式聊天**，避免把同一个全屏画面不断写进终端滚动历史。可以在 `.env` 明确指定：
+
+- `AGENT_TUI_SCREEN=auto`（默认）：能安全独占屏幕时使用完整 TUI，否则兼容行式聊天。
+- `AGENT_TUI_SCREEN=always`：强制在真实交互终端进入独立屏幕；仅在终端确实支持时使用。
+- `AGENT_TUI_SCREEN=never`：始终使用兼容行式聊天，适合排查旧终端兼容问题。
+
+独立屏幕不是 Shell 滚动历史：对话可用 TUI 的 PageUp/PageDown 浏览，退出会恢复启动前的终端内容。TUI 为每条已提交的展示日志分配**仅在本次会话有效的内部 ID**，缩放和工具活动展开时按 ID 与文本偏移恢复历史视口；这些 ID 不显示、不写入 Transcript，也不进入模型请求。被日志上限裁剪的锚点会退到剩余记录并在状态栏提示“历史已截断”。`auto` 无法确认终端能力时，启动时只提示一次已使用行式兼容模式。同步更新协议用于降低闪烁，若终端忽略该协议，仍通过清屏、逐行定位和单次写入保证最终画面的确定性；真实终端仍需人工验收。所有模式均保留真实的 Agent Transcript，不修改工具权限或模型请求。
+
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
 
 CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是黑屏等一段。评测走非流式，保证跨轮对比的是同样的完整响应（见 [ADR-0012](./docs/adr/0012-streaming-is-display-only.md)）。
@@ -180,7 +192,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - **状态行**：始终紧跟输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），有空间时显示 `(shift-tab to cycle)`，右边 requests / tool calls / tokens。
 - **中英文自动适配**：TUI 默认使用英文；每次用户提交自然语言任务时，根据任务主要语言切换界面自带的工具标签、审批菜单、统计、状态和命令帮助。路径、代码片段、文件名不作为语言识别依据；混合输入按中文字符数与英文单词数判断；无语言内容时沿用上一轮语言。不翻译模型回复、Shell 命令、工具实际返回内容或权限模式 ID（`read-only` 等）。**`Thinking...` 永远保持英文、动画和计时逻辑不变。** 不增加运行时依赖。
 
-- 不切 alternate screen、不引 TUI 库；差分重绘只写变化的行，退出后 TUI 历史不会留在 scrollback 里。非 TTY（管道、CI、e2e）退化为纯逐行输出。
+- `auto` 检测到支持时使用 alternate screen，不引 TUI 库；普通帧差分绘制、清屏与内容在一个同步帧内写出。无法确认能力的终端以及非 TTY（管道、CI、e2e）采用逐行输出；`never` 可强制兼容模式。
 
 工具与审批：
 
@@ -204,7 +216,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 
-已知边界：固定布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标和多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+O` 以键盘浏览活动组；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
+已知边界：完整固定布局要求终端至少 12 行、30 列（备用屏幕尺寸不足时只显示提示）；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；没有鼠标和多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+O` 以键盘浏览活动组；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
 
 ## 配置
 
@@ -291,7 +303,7 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 - 会话持久化到磁盘：进程内的多轮 REPL / TUI 已经有了（`--repl`、`--tui`），跨进程恢复 transcript 没有做
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
-- 全屏 TUI / alternate screen、鼠标、多行输入和 Hooks 尚未做；当前 TUI 提供顶部对话、输入区、滚动审批面板、Ctrl+O 活动明细及 `/` Slash 自动补全（见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)）。
+- 鼠标、多行输入和 Hooks 尚未做；TUI 已支持对可识别终端的 alternate screen 与窗口缩放重绘，仍保留顶部对话、输入区、滚动审批面板、Ctrl+O 活动明细及 `/` Slash 自动补全（早期布局决策见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)）。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 操作系统级隔离：Permission v0.1 只做工具调用策略（见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)），不是 Sandbox；`shell` 放行后仍是启动者的权限（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、非 TUI 模式的自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）

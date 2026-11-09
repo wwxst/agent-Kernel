@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiScreenMode } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
@@ -27,10 +27,34 @@ function screenRows(ui, count = 40) {
 }
 
 /**
+ * 只理解基本 ANSI 光标、整屏清除与行清除；故意忽略同步更新协议 ?2026。
+ * 这不是通用终端模拟器，只还原当前 TUI 真实使用的屏幕更新指令。
+ */
+function screenWithoutSync(output) {
+  const rows = new Map();
+  let row = 1;
+  for (const token of output.match(/\x1b\[[0-9;? ]*[A-Za-z]|[^\x1b]+/g) ?? []) {
+    if (token.startsWith("\x1b[")) {
+      const cursor = token.match(/^\x1b\[(\d+);(\d+)H$/);
+      if (cursor) row = Number(cursor[1]);
+      else if (token === "\x1b[H") row = 1;
+      else if (token === "\x1b[2J") rows.clear();
+      else if (token === "\x1b[2K") rows.set(row, "");
+      continue;
+    }
+    for (const part of token.split(/(\r\n|\n|\r)/)) {
+      if (part === "\r\n" || part === "\n") row++;
+      else if (part !== "\r") rows.set(row, (rows.get(row) ?? "") + part);
+    }
+  }
+  return rows;
+}
+
+/**
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", term = "xterm-256color", autoLayout = false, onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -44,7 +68,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
   output.on("data", (chunk) => chunks.push(String(chunk)));
 
   const previousTerm = process.env.TERM;
-  if (interactive) process.env.TERM = "xterm-256color";
+  if (interactive) process.env.TERM = term;
   const tui = new Tui({
     input,
     output,
@@ -55,9 +79,10 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     interactive,
     columns,
     rows,
-    layout: tty,
+    ...(autoLayout ? {} : { layout: tty }),
     color,
     flowInput,
+    screenMode,
     onPermissionChange,
   });
   if (previousTerm === undefined) delete process.env.TERM;
@@ -78,6 +103,252 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
+
+test("TUI 屏幕模式：环境变量只接受 auto、always 和 never", () => {
+  assert.equal(parseTuiScreenMode(undefined), "auto");
+  assert.equal(parseTuiScreenMode(""), "auto");
+  assert.equal(parseTuiScreenMode("always"), "always");
+  assert.equal(parseTuiScreenMode("never"), "never");
+  assert.throws(() => parseTuiScreenMode("maybe"), /invalid AGENT_TUI_SCREEN/);
+});
+
+test("TUI auto：能力不明时启动只提示一次兼容模式，never 不重复提示", (t) => {
+  const fallback = makeTui({ interactive: true, tty: true, screenMode: "auto", autoLayout: true, term: "wyse60" });
+  const manual = makeTui({ interactive: true, tty: true, screenMode: "never", autoLayout: true, term: "wyse60" });
+  t.after(() => { fallback.cleanup(); manual.cleanup(); });
+  fallback.tui.start();
+  fallback.tui.logLine("more output");
+  assert.equal((fallback.text().match(/Terminal compatibility mode/g) ?? []).length, 1);
+  assert.doesNotMatch(fallback.text(), /\x1b\[\?1049h|\x1b\[2J/);
+  manual.tui.start();
+  assert.doesNotMatch(manual.text(), /Terminal compatibility mode/);
+});
+
+test("TUI auto：linux/vt100/ansi/unknown 不误入备用屏幕，always 允许显式覆盖", (t) => {
+  for (const term of ["linux", "vt100", "ansi", "unknown", "cons25", "dumb", "wyse60"]) {
+    const ui = makeTui({ interactive: true, tty: true, screenMode: "auto", term });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    assert.doesNotMatch(ui.text(), /\x1b\[\?1049h/, `TERM=${term} 不能默认进入备用屏幕`);
+  }
+  const forced = makeTui({ interactive: true, tty: true, screenMode: "always", term: "vt100" });
+  t.after(() => forced.cleanup());
+  forced.tui.start();
+  assert.match(forced.text(), /\x1b\[\?1049h/, "显式 always 可覆盖保守检测");
+});
+
+test("TUI auto：继承了现代终端标记但 TERM 未知时仍保守降级", (t) => {
+  const previous = process.env.WT_SESSION;
+  try {
+    process.env.WT_SESSION = "inherited-from-other-terminal";
+    const ui = makeTui({ interactive: true, tty: true, screenMode: "auto", term: "wyse60" });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    assert.doesNotMatch(ui.text(), /\x1b\[\?1049h/);
+  } finally {
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  }
+});
+
+test("TUI auto：受支持终端才启用备用屏幕，never 始终关闭", (t) => {
+  const previous = process.env.WT_SESSION;
+  try {
+    if (process.platform === "win32") process.env.WT_SESSION = "test-windows-terminal";
+    const supported = makeTui({ interactive: true, tty: true, screenMode: "auto", term: "xterm-256color" });
+    t.after(() => supported.cleanup());
+    supported.tui.start();
+    assert.match(supported.text(), /\x1b\[\?1049h/);
+    const denied = makeTui({ interactive: true, tty: true, screenMode: "never" });
+    t.after(() => denied.cleanup());
+    denied.tui.start();
+    assert.doesNotMatch(denied.text(), /\x1b\[\?1049h/);
+  } finally {
+    if (previous === undefined) delete process.env.WT_SESSION;
+    else process.env.WT_SESSION = previous;
+  }
+});
+
+test("TUI：start 前 close 不清屏、不移动光标、不进入备用屏幕，之后也不能启动", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.close();
+  assert.equal(ui.text(), "", "未启动的界面只能释放资源，不应更改 Shell");
+  ui.tui.start();
+  assert.equal(ui.text(), "", "已关闭的界面不能再启动");
+});
+
+test("TUI 独立屏幕：初次绘制和缩放清屏必须包含在同步帧内", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.output.columns = 96;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const output = ui.text();
+  const frames = output.match(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g) ?? [];
+  assert.equal(frames.length >= 2, true, "启动与缩放均产生同步帧");
+  assert.equal(frames.filter((frame) => frame.includes("\x1b[2J\x1b[H")).length, 2,
+    "两次清屏各自与完整重绘同帧提交");
+  const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
+  assert.doesNotMatch(outside, /\x1b\[2J/, "不能在同步帧外清空可见屏幕");
+});
+
+test("TUI 独立屏幕：忽略同步协议的终端在多次缩放后仍显示单份正确画面", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.logLine("ORIGINAL_VISIBLE");
+  for (const columns of [110, 40, 95]) {
+    ui.output.columns = columns;
+    ui.output.emit("resize");
+    ui.tui.logLine(`NEW_AT_${columns}`);
+    await new Promise((resolve) => setTimeout(resolve, 95));
+  }
+  const lines = [...screenWithoutSync(ui.text()).values()];
+  const screen = lines.join("\n");
+  assert.match(lines[0], /agent-Kernel/);
+  assert.match(lines[1], /C:\\work\\repo/);
+  assert.match(lines[2], /^(?:─|-){94}$/, "分隔线长度对应最后一次 95 列窗口");
+  for (const text of ["ORIGINAL_VISIBLE", "NEW_AT_110", "NEW_AT_40", "NEW_AT_95"]) {
+    assert.equal((screen.match(new RegExp(text, "g")) ?? []).length, 1, `${text} 只在最终画面出现一次`);
+  }
+});
+
+test("TUI 独立屏幕：窄窗口提示清屏也不能漏出同步帧", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查窗口");
+  ui.output.columns = 20;
+  ui.output.rows = 8;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const output = ui.text();
+  const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
+  assert.doesNotMatch(outside, /\x1b\[2J/);
+  assert.match(output, /窗口太小/);
+});
+
+test("TUI 独立屏幕：滚动到历史中段后，缩放期间流式增长不能移动历史锚点", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let i = 0; i < 85; i++) ui.tui.logLine(`ANCHOR_${String(i).padStart(3, "0")} ${"内容 ".repeat(17)}`);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  await tick();
+  const before = lastRow(ui.text(), 4).match(/ANCHOR_\d{3}/)?.[0];
+  assert.ok(before, "应能滚动到历史中段的稳定日志行");
+
+  ui.output.columns = 45;
+  ui.output.emit("resize");
+  ui.tui.assistantDelta("新增流式回答\n".repeat(70));
+  ui.tui.confirmAssistant("新增流式回答\n".repeat(70));
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const after = lastRow(ui.text(), 4);
+  assert.match(after, new RegExp(before), "视口仍从相同逻辑行开始，而非跳到新的流式输出");
+});
+
+test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳到最新", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("Inspect a file");
+  const call = { id: "history-group", type: "function", function: { name: "read", arguments: '{"path":"history.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "content\n".repeat(25));
+  for (let i = 0; i < 95; i++) ui.tui.logLine(`STABLE_${String(i).padStart(3, "0")} ${"内容 ".repeat(7)}`);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  const before = lastRow(ui.text(), 4).match(/STABLE_\d{3}/)?.[0];
+  assert.ok(before, "向上翻页后必须有可见历史锚点");
+  ui.input.write("\x0f");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "收起较早活动后仍看同一段历史");
+  ui.input.write("\x0f");
+  await tick();
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "重新展开更多详情行时不能二次累加滚动偏移");
+  ui.output.columns = 50;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.match(lastRow(ui.text(), 4), new RegExp(before), "窗口重新换行也应保持同一条日志");
+});
+
+test("TUI 稳定日志 ID：缩放期间历史被裁剪时显示告知并定位到剩余记录", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查历史");
+  for (let i = 0; i < 90; i++) ui.tui.logLine(`ORIGINAL_${String(i).padStart(3, "0")}`);
+  ui.input.emit("keypress", "", { name: "pageup" });
+  assert.match(lastRow(ui.text(), 4), /ORIGINAL_\d{3}/);
+
+  ui.output.columns = 65;
+  ui.output.emit("resize");
+  for (let i = 0; i < 2_120; i++) ui.tui.logLine(`LATER_${i}`);
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  const current = screenRows(ui, 35).join("\n");
+  assert.match(current, /LATER_\d+/);
+  assert.match(current, /历史已截断/, "找不到锚点时不可无声跳转");
+  ui.input.emit("keypress", "", { name: "pagedown" });
+  assert.doesNotMatch(lastRow(ui.text(), 32), /历史已截断/, "用户继续滚动后提示消失");
+});
+
+test("TUI 独立屏幕：进入和退出成对恢复 Shell 画面，保留原有聊天和统计", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always", flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  assert.match(ui.text(), /\x1b\[\?1049h/);
+  ui.tui.beginTurn("请检查项目");
+  ui.tui.finishAssistant("检查完成");
+  ui.tui.setStats(session);
+  const screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /检查完成/);
+  assert.match(screen, /2 次请求/);
+  ui.tui.close();
+  assert.match(ui.text(), /\x1b\[\?1049l/);
+  assert.equal((ui.text().match(/\x1b\[\?1049h/g) ?? []).length, 1);
+  assert.equal((ui.text().match(/\x1b\[\?1049l/g) ?? []).length, 1);
+});
+
+test("TUI 独立屏幕：连续缩放只在最后尺寸重排一次，流式回复不重复写入历史", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always", flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查窗口缩放");
+  ui.tui.assistantDelta("一段输出，");
+  for (const columns of [85, 96, 107, 121]) {
+    ui.output.columns = columns;
+    ui.output.emit("resize");
+  }
+  ui.tui.assistantDelta("继续输出");
+  ui.tui.confirmAssistant("一段输出，继续输出");
+  assert.equal((ui.text().match(/\x1b\[2J/g) ?? []).length, 1, "缩放期间不应反复清屏");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.equal((ui.text().match(/\x1b\[2J/g) ?? []).length, 2, "稳定后只能清屏重建一次");
+  const screen = screenRows(ui, 35).join("\n");
+  assert.equal((screen.match(/一段输出，继续输出/g) ?? []).length, 1, "历史中只有一份确认回复");
+  assert.match(lastRow(ui.text(), 3), /^(?:─|-){120}$/, "分隔线使用最终宽度而非中间宽度");
+});
+
+test("TUI 独立屏幕：缩到不足最小尺寸不退回逐行输出，放大后恢复原有对话", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请处理窗口变化");
+  ui.output.columns = 20;
+  ui.output.rows = 8;
+  ui.output.emit("resize");
+  ui.tui.finishAssistant("最终回答");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.match(ui.text(), /窗口太小，放大后/, "窄屏提示会按可用列宽截断");
+  ui.output.columns = 80;
+  ui.output.rows = 35;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.match(screenRows(ui, 35).join("\n"), /最终回答/);
+  assert.doesNotMatch(screenRows(ui, 35).join("\n"), /窗口太小/);
+});
 
 test("TUI：已确认模型正文覆盖不一致的流式草稿，不向历史提交错误文本", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });

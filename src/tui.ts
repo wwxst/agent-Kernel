@@ -4,11 +4,11 @@
  * v0.3 的目标是「像聊天，而不是调试控制台」：顶部是项目/模型/路径，中间是用户、
  * 模型和工具调用的对话视口，底部是带分隔线的固定输入区，最下面是权限和 Session 统计。
  *
- * 渲染用绝对光标定位 + 差分重绘：传统 Windows conhost 不实现 DECSTBM，靠滚动区域
- * 固定栏位会让回复互相覆盖；只重画变化行，在 conhost / Windows Terminal
- * / xterm 上都能成立。不切 alternate screen、不引 TUI 库、不改 Agent。
+ * 渲染用绝对光标定位 + 差分重绘：可确认兼容的终端进入备用屏幕，缩放合并后重排；
+ * 传统 Windows conhost 等能力不明的终端用行式聊天，不向 Shell 历史重复写入固定画面。
+ * 不引 TUI 库、不改 Agent。
  *
- * 非 TTY（管道、CI、e2e）退化成逐行输出：没有颜色和固定位置，但走同一套日志/审批逻辑。
+ * 非 TTY（管道、CI、e2e）也退化成逐行输出：没有固定位置，但走同一套日志/审批逻辑。
  * 已知边界：固定布局要求终端至少 12 行、30 列；历史保留最近 2000 条逻辑行；
  * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
  */
@@ -26,7 +26,7 @@ import { isToolResultFailure } from "./tool-result-status.ts";
 
 /** 固定布局至少需要：标题/路径/分隔线 + 日志 + 输入框 + 状态行 + 缓冲。 */
 const MIN_ROWS = 12;
-/** 太窄时顶部标题和页脚会挤成一团，退回行式聊天更可读。 */
+/** 太窄时不画完整布局：备用屏幕保留提示，旧版内联布局退回行式聊天。 */
 const MIN_COLUMNS = 30;
 
 const TITLE_ROW = 1;
@@ -39,6 +39,9 @@ const MAX_LOG_LINES = 2_000;
 
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
+
+/** 拖动窗口时先记录最终尺寸，安静 75ms 后再重排，避免每个中间宽度都清屏。 */
+const RESIZE_DEBOUNCE_MS = 75;
 
 const PLACEHOLDER = "Ask anything, or type /help...";
 const COMMAND_PROMPT = "> ";
@@ -87,6 +90,10 @@ interface LogLine {
   kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error";
   activity?: ActivityGroup;
   turn?: TurnActivity;
+  /** 仅展示层使用；持久日志项的身份不随换行和活动展开改变。 */
+  id?: number;
+  /** 当前屏幕行在所属日志项内部的字符偏移；不会发送给模型。 */
+  charOffset?: number;
 }
 
 interface ActivityTool {
@@ -166,6 +173,35 @@ const ASCII_GLYPHS: Glyphs = {
   boxVertical: "|",
 };
 
+/** auto 优先独立屏幕；always 强制独立屏幕；never 使用兼容行式聊天。 */
+export type TuiScreenMode = "auto" | "always" | "never";
+
+/** 环境变量的错误必须显式报告，不能悄悄回到另一种终端行为。 */
+export function parseTuiScreenMode(value: string | undefined): TuiScreenMode {
+  if (value === undefined || value === "" || value === "auto") return "auto";
+  if (value === "always" || value === "never") return value;
+  throw new Error(`invalid AGENT_TUI_SCREEN "${value}" (expected: auto, always, never)`);
+}
+
+/**
+ * auto 只在有明确终端能力线索时启用备用屏幕；TERM=linux/vt100/ansi 等
+ * 虽然不是 dumb，也不能据此推断实现了 1049 备用屏幕。
+ * Windows 只信任现代宿主标记，不把通用的 TERM=xterm 当作能力证明。
+ */
+function supportsAlternateScreen(): boolean {
+  const term = process.env.TERM?.toLowerCase() ?? "";
+  const knownTerm = /^(?:xterm|screen|tmux|rxvt|alacritty|wezterm|kitty|foot|st|konsole)(?:-|$)/.test(term);
+  // TERM 显式声明了未知或低能力终端时，即使 WT_SESSION 被上层 Shell 继承也不要猜测。
+  if (term !== "" && !knownTerm) return false;
+  if (process.platform === "win32") {
+    return Boolean(process.env.WT_SESSION?.trim()) ||
+      process.env.TERM_PROGRAM === "vscode" ||
+      process.env.TERM_PROGRAM === "WezTerm";
+  }
+  // 普通 POSIX TTY 的 TERM 未知时宁可行式输出；always 是用户明确的强制覆盖。
+  return knownTerm;
+}
+
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
@@ -180,6 +216,8 @@ export interface TuiOptions {
   rows?: number;
   /** 测试可以显式强制开关固定布局；生产代码不传。 */
   layout?: boolean;
+  /** auto 只为识别出的兼容终端启用备用屏幕；能力不明时退回行式输出。 */
+  screenMode?: TuiScreenMode;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
   /** Claude Code 风格：短对话时输入框跟随消息，长对话时自动停靠底部。 */
@@ -212,6 +250,22 @@ export class Tui {
   private layout: boolean;
 
   private readonly fixedLayoutAllowed: boolean;
+
+  /** auto 无法确认备用屏幕能力时，只在启动时向交互式终端告知一次。 */
+  private readonly compatibilityNotice: boolean;
+
+  /** 独立屏幕由 TUI 独占：缩放不会把中间帧写入 Shell 滚动历史。 */
+  private readonly ownedScreen: boolean;
+
+  private altScreenActive = false;
+
+  /** 未进入 start 的对象只能释放资源，不能发出任何终端控制序列。 */
+  private started = false;
+
+  /** 全屏清理和差分行必须在同一同步帧中输出。 */
+  private clearBeforeNextFrame = false;
+
+  private resizeTimer?: NodeJS.Timeout;
 
   private readonly flowInput: boolean;
 
@@ -249,8 +303,10 @@ export class Tui {
 
   private stats?: AgentSessionStats;
 
-  /** 已经收尾的日志行（已转义的单行文本 + 语义色）。 */
+  /** 已经收尾的日志行（已转义的单行文本 + 语义色）；ID 只存在于本次 TUI。 */
   private readonly log: LogLine[] = [];
+
+  private nextLogId = 1;
 
   /** 正在运行的工具调用行：结果到达时原地替换，而不是再追一行。 */
   private readonly pendingTools = new Map<string, LogLine>();
@@ -301,6 +357,12 @@ export class Tui {
 
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
+
+  /** 缩放前视口顶端的稳定日志 ID + 内容偏移，不受前面的展开或裁剪影响。 */
+  private resizeAnchor?: { entryId: number; charOffset: number };
+
+  /** 当锚点对应的日志被裁剪时，状态栏提示一次，而不是默默跳到新回复。 */
+  private historyTrimmedNotice = false;
 
   /** 本次 readLine 的原始 prompt；滚动后重绘输入行要用。 */
   private promptText = COMMAND_PROMPT;
@@ -385,10 +447,16 @@ export class Tui {
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
     const initialRows = options.rows !== undefined && options.rows > 0 ? options.rows : 24;
-    this.fixedLayoutAllowed =
-      options.layout ??
-      (options.interactive && isTerminalOutput(options.output) && this.terminalControls);
-    this.layout = this.fixedLayoutAllowed && initialColumns >= MIN_COLUMNS && initialRows >= MIN_ROWS;
+    const screenMode = options.screenMode ?? "auto";
+    const tty = options.interactive && isTerminalOutput(options.output);
+    const canDraw = tty && this.terminalControls;
+    this.ownedScreen = options.layout !== false && canDraw &&
+      (screenMode === "always" || (screenMode === "auto" && supportsAlternateScreen()));
+    this.compatibilityNotice = screenMode === "auto" && tty && !this.ownedScreen && options.layout === undefined;
+    // 生产环境不支持独立屏幕时直接使用行式模式；显式 layout 仅供旧版渲染回归测试。
+    this.fixedLayoutAllowed = options.layout ?? this.ownedScreen;
+    this.layout = this.fixedLayoutAllowed &&
+      (this.ownedScreen || (initialColumns >= MIN_COLUMNS && initialRows >= MIN_ROWS));
 
     this.columns = initialColumns;
     this.rows = initialRows;
@@ -492,8 +560,9 @@ export class Tui {
         if (groups.length > 0) {
           this.activityFocus = this.activityFocus <= 0 ? groups.length - 1 : this.activityFocus - 1;
           const group = groups[this.activityFocus]!;
+          // 浏览旧记录时展开详情也不能把视口跳到最新消息。
+          this.captureHistoryAnchor();
           group.expanded = !group.expanded;
-          this.scrollOffset = 0;
           this.renderNow();
         }
         return;
@@ -624,16 +693,26 @@ export class Tui {
       : this.style.paint("muted", clip(plain, width));
   }
 
-  /** 画第一帧。固定布局清屏但不切 alternate screen。 */
+  /** 画第一帧；支持备用屏幕的终端在关闭时会完整恢复原有 Shell。 */
   start(): void {
+    if (this.closed || this.started) return;
+    this.started = true;
+    if (this.ownedScreen) {
+      // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
+      this.output.write("\x1b[?1049h\x1b[?25l");
+      this.altScreenActive = true;
+    }
     if (this.layout) {
-      this.output.write("\x1b[2J\x1b[H");
+      this.clearBeforeNextFrame = true;
       this.renderNow();
-      this.moveToInput();
+      if (!this.ownedScreen && this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS) this.moveToInput();
       return;
     }
 
     if (this.interactive) {
+      if (this.compatibilityNotice) {
+        this.logLine("Terminal compatibility mode / 终端兼容模式：line-by-line output");
+      }
       this.logLine(this.formatStatus());
       this.logLine(this.formatStatsLine());
       return;
@@ -644,13 +723,46 @@ export class Tui {
     this.logLine(`permission: ${this.permissionMode}`);
   }
 
+  /** 将当前视口顶端绑定到稳定的展示日志 ID；展开活动和 resize 共用同一规则。 */
+  private captureHistoryAnchor(): void {
+    if (!this.ownedScreen || this.resizeAnchor !== undefined || this.scrollOffset === 0) return;
+    const oldLines = this.wrappedDisplayLines();
+    const first = oldLines[Math.max(0, oldLines.length - this.logHeight - this.scrollOffset)];
+    if (first?.id !== undefined) {
+      this.resizeAnchor = { entryId: first.id, charOffset: first.charOffset ?? 0 };
+      // 锚点已决定目标位置，后续不能再按新增行数累加 scrollOffset。
+      this.lastTotalLines = 0;
+    }
+  }
+
   /** 终端尺寸变化后重新排版；保持当前输入行和滚动位置。 */
   private resize(columns: number, rows: number): void {
-    if (!this.fixedLayoutAllowed || this.closed) return;
+    if (!this.started || !this.fixedLayoutAllowed || this.closed) return;
 
     const hadLayout = this.layout;
+    // 只捕获本轮 resize 的第一帧；后续拖动和流式事件都沿用同一个锚点。
+    if (this.resizeTimer === undefined) this.captureHistoryAnchor();
     this.columns = Math.max(1, columns);
     this.rows = Math.max(1, rows);
+    if (this.ownedScreen) {
+      // 只记录尺寸变化，流式文本和工具状态继续进内存日志，不向终端写中间宽度的帧。
+      if (this.resizeTimer !== undefined) clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => {
+        this.resizeTimer = undefined;
+        if (this.closed) return;
+        // 个别终端在最后一个 resize 事件之后才稳定 columns/rows，最终绘制前再采样。
+        const stream = this.output as NodeJS.WriteStream;
+        if (typeof stream.columns === "number") this.columns = Math.max(1, stream.columns);
+        if (typeof stream.rows === "number") this.rows = Math.max(1, stream.rows);
+        this.inputDirty = true;
+        this.lastFrame = [];
+        this.lastTotalLines = 0;
+        this.clearBeforeNextFrame = true;
+        this.renderNow();
+      }, RESIZE_DEBOUNCE_MS);
+      this.resizeTimer.unref?.();
+      return;
+    }
     this.layout = this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS;
     if (!this.layout) {
       if (hadLayout) {
@@ -678,7 +790,7 @@ export class Tui {
     this.inputDirty = true;
     this.lastFrame = [];
     this.lastTotalLines = 0;
-    this.output.write("\x1b[2J\x1b[H");
+    this.clearBeforeNextFrame = true;
     if (this.approvalMenuActive) this.setApprovalCursor(true);
     this.renderNow();
     if (wasPrompt) {
@@ -907,7 +1019,7 @@ export class Tui {
         this.commitAssistant();
       }
       if (show) this.pushTask(task);
-      this.log.push({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
+      this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
       this.trimLog();
       this.setActivityState("preparing");
       if (this.activityTimer !== undefined) clearInterval(this.activityTimer);
@@ -1095,7 +1207,7 @@ export class Tui {
         turn.groups.push(group);
         this.activeActivity = group;
         // 非空锚点让下一段 AI 发言自动与本阶段之间留一行。
-        this.log.push({ text: "↳", tone: "muted", kind: "activity", activity: group });
+        this.appendLog({ text: "↳", tone: "muted", kind: "activity", activity: group });
       }
       const item: ActivityTool = { call, startedAt: Date.now() };
       group.tools.push(item);
@@ -1112,7 +1224,7 @@ export class Tui {
         ...this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call, this.uiLanguage)}`, "muted"),
         kind: "tool",
       };
-      this.log.push(line);
+      this.appendLog(line);
       this.pendingTools.set(call.id, line);
       this.trimLog();
       if (this.layout) {
@@ -1147,6 +1259,10 @@ export class Tui {
       const lines = toolResultLines(call, result, this.glyphs, this.uiLanguage)
         .map((line) => ({ ...line, ...this.makeLogLine(line.text, line.tone) }));
       const index = pending === undefined ? -1 : this.log.indexOf(pending);
+      for (const [position, line] of lines.entries()) {
+        // 运行中的同一工具原地变为结果时，首行沿用原 ID，历史锚点无需跳转。
+        line.id = index >= 0 && position === 0 ? pending?.id : this.nextLogId++;
+      }
       if (index >= 0) this.log.splice(index, 1, ...lines);
       else this.log.push(...lines);
       this.trimLog();
@@ -1383,7 +1499,7 @@ export class Tui {
   /** 结束 TUI：清掉监听器和定时器、提交当前回复、恢复终端。 */
   close(): void {
     if (this.closed) return;
-    this.setThinking(false);
+    if (this.started) this.setThinking(false);
     if (this.activityTimer !== undefined) {
       clearInterval(this.activityTimer);
       this.activityTimer = undefined;
@@ -1392,25 +1508,38 @@ export class Tui {
       clearTimeout(this.renderTimer);
       this.renderTimer = undefined;
     }
+    if (this.resizeTimer !== undefined) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = undefined;
+    }
     this.renderScheduled = false;
 
-    if (this.layout) {
-      this.commitAssistant();
-      this.renderNow();
-    } else {
-      this.setThinking(false);
+    if (this.started) {
+      if (this.layout) {
+        this.commitAssistant();
+        this.renderNow();
+      } else {
+        this.setThinking(false);
+      }
     }
 
     this.closed = true;
+    this.resizeAnchor = undefined;
+    this.historyTrimmedNotice = false;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
+    if (!this.started) return;
     this.setApprovalCursor(false);
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
-    if (this.layout) {
-      // 最后一行是缓冲行；从那里换行，shell 提示符会出现在 TUI 下方。
+    if (this.altScreenActive) {
+      // Leave 恢复终端原来的 Shell 画面；这里不额外向主屏幕输出聊天帧。
+      this.output.write("\x1b[?25h\x1b[?1049l");
+      this.altScreenActive = false;
+    } else if (this.layout) {
+      // 旧版内联固定布局仅用于显式兼容测试。
       this.output.write(`\x1b[${this.rows};1H`);
       this.output.write("\r\n");
     }
@@ -1443,7 +1572,19 @@ export class Tui {
 
   /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
   private renderNow(): void {
-    if (!this.layout || this.closed) return;
+    if (!this.started || !this.layout || this.closed || (this.ownedScreen && this.resizeTimer !== undefined)) return;
+
+    if (this.ownedScreen && (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS)) {
+      // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
+      const message = clip(this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续"),
+        Math.max(1, this.columns - 1));
+      if (this.lastFrame.length === 1 && this.lastFrame[0] === message && !this.clearBeforeNextFrame) return;
+      this.lastFrame = [message];
+      this.clearBeforeNextFrame = false;
+      // 极窄提示也是完整帧：清屏位于同步更新内，且避免中间帧残留。
+      this.output.write(`\x1b[?2026h\x1b[?25l\x1b[2J\x1b[H${message}\x1b[?2026l`);
+      return;
+    }
 
     if (!this.cursorStyleChanged && prefersRichColor()) {
       // DECSCUSR 也覆盖窄窗口放大后首次进入布局；退出时恢复默认，不改持久配置。
@@ -1479,6 +1620,21 @@ export class Tui {
       this.inputRow = this.boxTopRow + 1;
       this.boxBottomRow = this.inputRow + 1;
       this.statusRow = this.boxBottomRow + menuRows + 1;
+    }
+
+    if (this.resizeAnchor !== undefined) {
+      const { entryId, charOffset } = this.resizeAnchor;
+      // 优先恢复相同日志项中最接近原文本位置的行，而不是原来的屏幕行号。
+      let top = lines.findLastIndex((line) => line.id === entryId && (line.charOffset ?? 0) <= charOffset);
+      if (top < 0) top = lines.findIndex((line) => line.id === entryId);
+      if (top < 0) {
+        // 原 ID 已被 2000 行裁剪：退到最靠近的存活项，给用户明确提示。
+        top = lines.findIndex((line) => line.id !== undefined && line.id > entryId);
+        if (top < 0) top = lines.findLastIndex((line) => line.id !== undefined);
+        this.historyTrimmedNotice = true;
+      }
+      if (top >= 0) this.scrollOffset = Math.max(0, lines.length - this.logHeight - top);
+      this.resizeAnchor = undefined;
     }
 
     const rows: string[] = new Array(this.rows).fill("");
@@ -1525,15 +1681,21 @@ export class Tui {
     }
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
+    let frame = this.clearBeforeNextFrame ? "\x1b[2J\x1b[H" : "";
+    this.clearBeforeNextFrame = false;
     for (let index = 0; index < rows.length; index++) {
       const forceInput = this.inputDirty && index === this.inputRow - 1;
       if (forceInput || this.lastFrame[index] !== rows[index]) {
-        this.writeRow(index + 1, rows[index]);
+        frame += `\x1b[${index + 1};1H\x1b[2K${rows[index]}`;
         this.lastFrame[index] = rows[index];
       }
     }
     this.inputDirty = false;
-    if (!this.approvalMenuActive) this.restoreInputCursor();
+    if (!this.approvalMenuActive) frame += this.inputCursorSequence();
+    // 同一帧通过一次输出写入，避免 Windows Terminal 在多次 write 之间露出半张画面。
+    if (frame !== "") this.output.write(this.ownedScreen
+      ? `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`
+      : frame);
   }
 
   /** 确保审批结束、取消或 resize 后不会把终端光标留在隐藏状态。 */
@@ -1576,6 +1738,7 @@ export class Tui {
   }
 
   private scrollPage(direction: "up" | "down"): void {
+    this.historyTrimmedNotice = false;
     const max = this.maxScroll();
     const step = Math.max(1, this.logHeight - 2);
     this.scrollOffset = Math.min(
@@ -1622,13 +1785,13 @@ export class Tui {
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
-  private restoreInputCursor(): void {
+  private inputCursorSequence(): string {
     const plainPrompt = this.promptText === COMMAND_PROMPT
       ? `${this.glyphs.user} `
       : singleLine(this.promptText);
     const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
-    const column = 1 + displayWidth(plainPrompt) + displayWidth(before);
-    this.output.write(`\x1b[${this.inputRow};${column}H`);
+    const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
+    return `\x1b[${this.inputRow};${column}H`;
   }
 
   private scheduleInputChrome(): void {
@@ -1642,7 +1805,7 @@ export class Tui {
     if (!this.assistantOpen) return;
     this.pushBlank();
     for (const line of this.assistantDisplayLines()) {
-      this.log.push({ text: line, tone: "assistant" });
+      this.appendLog({ text: line, tone: "assistant" });
     }
     this.streamingText = "";
     this.assistantOpen = false;
@@ -1672,9 +1835,15 @@ export class Tui {
 
   private pushLog(text: string, tone: Tone): void {
     for (const line of splitDisplayLines(text)) {
-      this.log.push(this.makeLogLine(line, tone));
+      this.appendLog(this.makeLogLine(line, tone));
     }
     this.trimLog();
+  }
+
+  /** 每条持久展示日志只分配一次 ID；动态台词不占号，也不影响 Agent Transcript。 */
+  private appendLog(line: LogLine): void {
+    line.id = this.nextLogId++;
+    this.log.push(line);
   }
 
   /** 所有进入固定布局日志的文本都在这里转义，避免工具/模型输出改写光标或颜色。 */
@@ -1685,7 +1854,7 @@ export class Tui {
   private pushBlank(): void {
     if (this.log.length === 0) return;
     const last = this.log[this.log.length - 1];
-    if (last.text !== "") this.log.push({ text: "", tone: "plain" });
+    if (last.text !== "") this.appendLog({ text: "", tone: "plain" });
   }
 
   private trimLog(): void {
@@ -1696,33 +1865,45 @@ export class Tui {
   private wrappedDisplayLines(): LogLine[] {
     const logical: LogLine[] = [];
     const pendingLines = new Set(this.pendingTools.values());
+    // 一个持久 ID 可以展开成多条逻辑行；偏移累计的是本次展示内容，不是换行后的行号。
+    const append = (entry: LogLine, children: LogLine[]): void => {
+      let offset = 0;
+      for (const line of children) {
+        logical.push({ ...line, id: entry.id, charOffset: offset });
+        offset += line.text.length + 1;
+      }
+    };
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
-        logical.push(this.turnStatusLine(line.turn));
-        logical.push({ text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" });
+        append(line, [this.turnStatusLine(line.turn),
+          { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]);
         continue;
       }
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
-        logical.push({ text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
-          tone: "muted", kind: "activity" });
+        const children: LogLine[] = [
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
+            tone: "muted", kind: "activity" },
+        ];
         if (group.expanded) {
-          for (const item of group.tools) logical.push(...this.activityToolLines(item, group));
+          for (const item of group.tools) children.push(...this.activityToolLines(item, group));
         } else {
           // 收起后异常仍然可见；不能把拒绝、错误藏进成功摘要。
           for (const item of group.tools) {
             const failure = this.activityFailureLine(item, group.language);
-            if (failure !== undefined) logical.push(failure);
-            else if (group.finished && item.result === undefined) logical.push(this.activityUnfinishedLine(item, group.language));
+            if (failure !== undefined) children.push(failure);
+            else if (group.finished && item.result === undefined) children.push(this.activityUnfinishedLine(item, group.language));
           }
         }
+        append(line, children);
         continue;
       }
-      logical.push(line);
+      const children = [line];
       // 兼容没有 beginTurn 的旧调用；正常任务的 Running 从 ActivityGroup 派生。
       if (pendingLines.has(line) && !this.approvalBlocksRunning) {
-        logical.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
+        children.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
       }
+      append(line, children);
     }
     if (this.assistantOpen) {
       for (const line of this.assistantDisplayLines()) {
@@ -1769,9 +1950,13 @@ export class Tui {
       const parts = line.kind === "activity-error" || line.kind === "activity"
         ? [clip(line.text, width)]
         : wrapLine(line.text, width, continuation);
+      let offset = line.charOffset ?? 0;
       for (const [index, part] of parts.entries()) {
         wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
-          kind: index === 0 ? line.kind : undefined });
+          kind: index === 0 ? line.kind : undefined, id: line.id, charOffset: offset });
+        // 续行的缩进只是展示前缀，不属于源文本。偏移因此不会随终端宽度漂移。
+        const prefix = index === 0 ? "" : takeByWidth(continuation, Math.max(0, width - 2));
+        offset += Math.max(0, part.length - prefix.length);
       }
     }
     if (this.approvalRequest !== undefined) {
@@ -1811,9 +1996,11 @@ export class Tui {
           ? "assistant"
           : "warning";
     const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} ${this.uiText("lines", "行")}`;
-    const baseLabel = this.scrollOffset > 0
+    const historyWarning = this.historyTrimmedNotice
+      ? this.uiText(" [history truncated]", "【历史已截断】") : "";
+    const baseLabel = (this.scrollOffset > 0
       ? `${scrollPrefix} · ${this.permissionMode}`
-      : this.permissionMode;
+      : this.permissionMode) + historyWarning;
     const shortcut = this.onPermissionChange !== undefined && this.interactive
       ? this.uiText(" (shift-tab to cycle)", "（Shift+Tab 切换）") : "";
     let left = this.fullAccessConfirmationPending
@@ -1884,11 +2071,6 @@ export class Tui {
 
   private moveToInput(): void {
     this.output.write(`\x1b[${this.inputRow};1H`);
-  }
-
-  private writeRow(row: number, text: string): void {
-    const target = Math.min(Math.max(1, row), this.rows);
-    this.output.write(`\x1b[${target};1H\x1b[2K${text}`);
   }
 
   private formatStatus(): string {

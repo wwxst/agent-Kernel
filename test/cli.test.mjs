@@ -686,6 +686,15 @@ test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录",
   });
 });
 
+test("TUI：非法屏幕模式必须明确报错，不静默改变显示策略", async () => {
+  const run = await runCli(
+    { AGENT_TUI_SCREEN: "unrecognized" },
+    { args: ["--tui"], input: "/exit\n" },
+  );
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /invalid AGENT_TUI_SCREEN/);
+});
+
 test("--tui 与 --repl 不能同时使用", async () => {
   const run = await runCli({}, { args: ["--tui", "--repl"] });
 
