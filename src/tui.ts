@@ -1099,6 +1099,10 @@ export class Tui {
     this.turnFocus = -1;
     this.activityPending.clear();
     if (this.fixedLayoutAllowed) {
+      // 上轮已折叠时，其结尾空行也被隐藏；补一条轮次外间距，避免新问题紧贴最终回复。
+      if (this.currentTurn?.endedAt !== undefined && !this.currentTurn.expanded) {
+        this.appendLog({ text: "", tone: "plain" });
+      }
       this.currentTurn = { language: this.uiLanguage, startedAt: this.runStartedAt,
         expanded: true, outcome: "preparing", groups: [] };
       // 即使任务后来失败或被取消，旧轮标题也保留独立状态，不受新轮计时影响。
