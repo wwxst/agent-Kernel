@@ -135,7 +135,7 @@ test("TUI 独立屏幕：缩到不足最小尺寸不退回逐行输出，放大�
   ui.output.emit("resize");
   ui.tui.finishAssistant("最终回答");
   await new Promise((resolve) => setTimeout(resolve, 130));
-  assert.match(ui.text(), /窗口太小，放大后继续/);
+  assert.match(ui.text(), /窗口太小，放大后/, "窄屏提示会按可用列宽截断");
   ui.output.columns = 80;
   ui.output.rows = 35;
   ui.output.emit("resize");
