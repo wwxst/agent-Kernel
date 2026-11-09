@@ -28,7 +28,7 @@ npm run agent -- --permission full-access "跑测试并修掉失败"     # 全�
 - `AGENT_TUI_SCREEN=always`：强制在真实交互终端进入独立屏幕；仅在终端确实支持时使用。
 - `AGENT_TUI_SCREEN=never`：始终使用兼容行式聊天，适合排查旧终端兼容问题。
 
-独立屏幕不是 Shell 滚动历史：对话可用 TUI 的 PageUp/PageDown 浏览，退出会恢复启动前的终端内容。所有模式均保留真实的 Agent Transcript，不修改工具权限或模型请求。
+独立屏幕不是 Shell 滚动历史：对话可用 TUI 的 PageUp/PageDown 浏览，退出会恢复启动前的终端内容。TUI 为每条已提交的展示日志分配**仅在本次会话有效的内部 ID**，缩放和工具活动展开时按 ID 与文本偏移恢复历史视口；这些 ID 不显示、不写入 Transcript，也不进入模型请求。被日志上限裁剪的锚点会退到剩余记录并在状态栏提示“历史已截断”。`auto` 无法确认终端能力时，启动时只提示一次已使用行式兼容模式。同步更新协议用于降低闪烁，若终端忽略该协议，仍通过清屏、逐行定位和单次写入保证最终画面的确定性；真实终端仍需人工验收。所有模式均保留真实的 Agent Transcript，不修改工具权限或模型请求。
 
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
 
