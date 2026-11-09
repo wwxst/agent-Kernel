@@ -1712,6 +1712,36 @@ test("TUI 启动语言：按系统 locale 初始化，中文系统启动即显�
   assert.match(lastRow(en.text(), 32), /workspace-write \(shift-tab to cycle\)/);
 });
 
+test("TUI 展示：固定布局隐藏 Markdown 代码块围栏，块内正文用竖线缩进显示", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("创建 hello 文件");
+
+  const reply = "已在当前目录创建 `hello_world.txt`，内容为：\n```\nhello world\n```\n完成。";
+  ui.tui.assistantDelta(reply);
+  const draft = screenRows(ui, 40).join("\n");
+  assert.doesNotMatch(draft, /```/, "流式草稿也不能闪出围栏行");
+  assert.match(draft, /(?:│|\|) hello world/, "块内正文用竖线标出");
+  assert.match(draft, /创建 `hello_world\.txt`/, "行内反引号保持原文");
+
+  ui.tui.finishAssistant(reply);
+  const screen = screenRows(ui, 40).join("\n");
+  assert.doesNotMatch(screen, /```/);
+  assert.match(screen, /(?:│|\|) hello world/);
+  assert.match(screen, /完成。/);
+});
+
+test("TUI 展示：只有围栏的回复退回原文，不能显示成空消息", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("空回复");
+  ui.tui.finishAssistant("```\n```");
+  const screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /```/, "纯围栏回复退回原文，至少让人看见收到了什么");
+});
+
 test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());

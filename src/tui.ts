@@ -1830,14 +1830,27 @@ export class Tui {
     this.trimLog();
   }
 
+  /**
+   * 固定布局把 Markdown 代码块围栏（``` 或 ```lang）隐藏起来，块内正文缩进并用
+   * 一条竖线标出；行式兼容模式仍按原文输出（已经写出的字节无法撤回）。
+   * 只改展示：Transcript、模型请求和工具结果都不受影响。
+   */
   private assistantDisplayLines(): string[] {
     const safe = escapeControlCharacters(normalizeNewlines(this.streamingText));
     const parts = safe.split("\n");
-    const lines = [`${this.glyphs.assistant} ${parts[0] ?? ""}`];
-    for (let index = 1; index < parts.length; index++) {
-      lines.push(`  ${parts[index]}`);
+    const display: string[] = [];
+    let inCodeBlock = false;
+    for (const part of parts) {
+      if (part.trimStart().startsWith("```")) {
+        inCodeBlock = !inCodeBlock;
+        continue;
+      }
+      display.push(inCodeBlock ? `${this.glyphs.boxVertical} ${part}` : part);
     }
-    return lines;
+    // 整条回复只有围栏时不能显示成空消息：退回原文，免得让人以为模型什么都没说。
+    if (display.length === 0 && safe.trim() !== "") display.push(...parts);
+    return display.map((line, index) =>
+      index === 0 ? `${this.glyphs.assistant} ${line}` : `  ${line}`);
   }
 
   private pushTask(task: string): void {
