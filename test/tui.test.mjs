@@ -409,6 +409,26 @@ test("TUI 时间线：执行中说明与活动交替出现，完成后自动收�
   assert.match(unfolded, /已经找到问题/);
 });
 
+test("TUI 时间线：执行中手动收起只隐藏过程画面，不停止真实流式接收", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("正在分析 TUI");
+  ui.tui.assistantDelta("MODEL_STAGE_FIRST");
+  ui.tui.setThinking(true);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  let screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /正在执行 · 已用时 .*?(?:▸|>)/);
+  assert.doesNotMatch(screen, /MODEL_STAGE_FIRST|Thinking\.\.\./);
+  ui.tui.assistantDelta("MODEL_STAGE_SECOND");
+  screen = screenRows(ui, 35).join("\n");
+  assert.doesNotMatch(screen, /MODEL_STAGE_SECOND/, "收起期间接收的增量不能漏到过程外面");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /MODEL_STAGE_FIRSTMODEL_STAGE_SECOND/, "重新展开后恢复完整流式正文");
+  assert.doesNotMatch(screen, /历史已截断|history truncated/, "隐藏内容不等于日志被裁剪");
+});
+
 test("TUI 时间线：多轮任务分别折叠，键盘可独立展开旧轮次", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, screenMode: "always" });
   t.after(() => ui.cleanup());
