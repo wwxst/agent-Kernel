@@ -1013,7 +1013,7 @@ export class Tui {
         this.commitAssistant();
       }
       if (show) this.pushTask(task);
-      this.log.push({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
+      this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
       this.trimLog();
       this.setActivityState("preparing");
       if (this.activityTimer !== undefined) clearInterval(this.activityTimer);
@@ -1201,7 +1201,7 @@ export class Tui {
         turn.groups.push(group);
         this.activeActivity = group;
         // 非空锚点让下一段 AI 发言自动与本阶段之间留一行。
-        this.log.push({ text: "↳", tone: "muted", kind: "activity", activity: group });
+        this.appendLog({ text: "↳", tone: "muted", kind: "activity", activity: group });
       }
       const item: ActivityTool = { call, startedAt: Date.now() };
       group.tools.push(item);
@@ -1218,7 +1218,7 @@ export class Tui {
         ...this.makeLogLine(`  ${this.glyphs.running} ${formatToolEvent(call, this.uiLanguage)}`, "muted"),
         kind: "tool",
       };
-      this.log.push(line);
+      this.appendLog(line);
       this.pendingTools.set(call.id, line);
       this.trimLog();
       if (this.layout) {
@@ -1253,6 +1253,10 @@ export class Tui {
       const lines = toolResultLines(call, result, this.glyphs, this.uiLanguage)
         .map((line) => ({ ...line, ...this.makeLogLine(line.text, line.tone) }));
       const index = pending === undefined ? -1 : this.log.indexOf(pending);
+      for (const [position, line] of lines.entries()) {
+        // 运行中的同一工具原地变为结果时，首行沿用原 ID，历史锚点无需跳转。
+        line.id = index >= 0 && position === 0 ? pending?.id : this.nextLogId++;
+      }
       if (index >= 0) this.log.splice(index, 1, ...lines);
       else this.log.push(...lines);
       this.trimLog();
@@ -1791,7 +1795,7 @@ export class Tui {
     if (!this.assistantOpen) return;
     this.pushBlank();
     for (const line of this.assistantDisplayLines()) {
-      this.log.push({ text: line, tone: "assistant" });
+      this.appendLog({ text: line, tone: "assistant" });
     }
     this.streamingText = "";
     this.assistantOpen = false;
@@ -1821,9 +1825,15 @@ export class Tui {
 
   private pushLog(text: string, tone: Tone): void {
     for (const line of splitDisplayLines(text)) {
-      this.log.push(this.makeLogLine(line, tone));
+      this.appendLog(this.makeLogLine(line, tone));
     }
     this.trimLog();
+  }
+
+  /** 每条持久展示日志只分配一次 ID；动态台词不占号，也不影响 Agent Transcript。 */
+  private appendLog(line: LogLine): void {
+    line.id = this.nextLogId++;
+    this.log.push(line);
   }
 
   /** 所有进入固定布局日志的文本都在这里转义，避免工具/模型输出改写光标或颜色。 */
@@ -1834,7 +1844,7 @@ export class Tui {
   private pushBlank(): void {
     if (this.log.length === 0) return;
     const last = this.log[this.log.length - 1];
-    if (last.text !== "") this.log.push({ text: "", tone: "plain" });
+    if (last.text !== "") this.appendLog({ text: "", tone: "plain" });
   }
 
   private trimLog(): void {
