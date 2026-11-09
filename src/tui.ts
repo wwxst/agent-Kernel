@@ -706,7 +706,8 @@ export class Tui {
         this.inputDirty = true;
         this.lastFrame = [];
         this.lastTotalLines = 0;
-        this.output.write("\x1b[2J\x1b[H");
+        // 窄窗口由提示帧自行清屏；正常布局只清一次，避免不必要的终端历史变化。
+        if (this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS) this.output.write("\x1b[2J\x1b[H");
         this.renderNow();
       }, RESIZE_DEBOUNCE_MS);
       this.resizeTimer.unref?.();
@@ -1516,9 +1517,11 @@ export class Tui {
 
     if (this.ownedScreen && (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS)) {
       // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
-      const message = this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续");
-      this.lastFrame = [];
-      this.output.write(`\x1b[?25l\x1b[2J\x1b[H${clip(message, Math.max(1, this.columns - 1))}`);
+      const message = clip(this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续"),
+        Math.max(1, this.columns - 1));
+      if (this.lastFrame.length === 1 && this.lastFrame[0] === message) return;
+      this.lastFrame = [message];
+      this.output.write(`\x1b[?25l\x1b[2J\x1b[H${message}`);
       return;
     }
 
