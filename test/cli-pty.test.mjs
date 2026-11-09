@@ -263,3 +263,48 @@ test("PTY REPL：审批中 EOF 报审批通道关闭，而不是用户拒绝", {
     }
   });
 });
+
+test("PTY：未配置模型能进入真实 TUI，右上角显示状态且不产生虚假请求", { skip }, async () => {
+  const command = [process.execPath, cliPath, "--tui"].map(shellQuote).join(" ");
+  const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
+    cwd: projectRoot,
+    env: {
+      ...process.env,
+      API_KEY: "sk-your-key-here",
+      OPENAI_API_KEY: "",
+      MODEL: "mock-demo",
+      TERM: "xterm",
+    },
+    stdio: ["pipe", "pipe", "pipe"],
+    detached: true,
+  });
+  let stdout = "";
+  let stderr = "";
+  let sentExit = false;
+  const result = await new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      killTree(child);
+      resolve({ code: null, timedOut: true });
+    }, 15_000);
+    child.stdout.on("data", (data) => {
+      stdout += String(data);
+      if (!sentExit && stdout.includes("未配置模型")) {
+        sentExit = true;
+        child.stdin.write("/exit\n");
+      }
+    });
+    child.stderr.on("data", (data) => { stderr += String(data); });
+    child.on("error", () => {
+      clearTimeout(timeout);
+      resolve({ code: null, timedOut: false });
+    });
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      resolve({ code, timedOut: false });
+    });
+  });
+  assert.equal(result.timedOut, false, "TUI hung: " + stdout + stderr);
+  assert.equal(result.code, 0, stdout + stderr);
+  assert.match(stdout, /未配置模型/);
+  assert.doesNotMatch(stdout, /mock-demo|Thinking\.\.\.|请求=1|requests=1/);
+});
