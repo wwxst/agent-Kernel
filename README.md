@@ -273,7 +273,7 @@ npm run eval:cross-day   # 在不同自然日各运行 3 轮，固定使用 eac7
 
 6 轮全部满分。相比上一版提示词（119/120、101.5 请求、139,040 tokens）：请求 -11.8%、tokens -14.5%、墙钟 -10.4%，轮间 token 从 118k–168k（1.42×）收窄到 103k–126k（1.22×）。收益来自系统提示词里新增的一行——要求模型一次只跑一条简单 shell 命令，减少 `|`、`rm` 之类的语法失败重试（见 [提示词 v2 报告](./docs/reports/2026-11-05-prompt-v2.md)）。逐任务波动见 [eval/baseline.md](./eval/baseline.md)：`13-callback-to-promise` 3.76×、`20-fix-email-regex` 2.51×、`08-extract-duplication` 1.40×，剩余波动仍来自模型自己的路径选择，成本要按中位数加余量估。第一阶段验收基线是 DeepSeek-V4.1-Flash：20/20、178 请求、200 工具调用、389,074 tokens、66.5s。
 
-跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。
+跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。跨天基线现在钉在 `eac798d`（prompt v2），v2 序列从 2026-11-06 起跑，跑满三个自然日再写结论；v1（`4edd0e4`）的 11-05 数据只作历史，归档在 `eval/baselines/cross-day-v1-4edd0e4/`。
 
 关于耗时与成本：`hy3` 单任务中位数约 12.4 秒、4.5 次模型请求，其中**请求与请求之间的等待几乎全是模型往返**，工具执行加内核开销占比很小。省时间主要靠任务之间并发（默认 `--jobs 4`，20 个任务墙钟约 71 秒）；省钱主要靠选模型（输入 token 占 93.8%，成本来自反复重发完整对话历史）、少让模型走冤枉路，以及收紧 `MAX_TOTAL_TOKENS` / `MAX_OUTPUT_TOKENS`。上下文压缩这一阶段刻意不做，先用多轮评测判断它是不是真的瓶颈。
 

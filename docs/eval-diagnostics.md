@@ -46,6 +46,8 @@ eval/baselines/cross-day/YYYY-MM-DD/
   summary.json
 ~~~
 
+Archives from the closed v1 series (`4edd0e4`, tag `stability-2026-11-04`) live under `eval/baselines/cross-day-v1-4edd0e4/` instead. They are deliberately outside the root above: the runner validates every earlier day against the pinned SHA, and v1 rounds ran against a different prompt.
+
 Do not use the diagnostic branch's newer evaluator for these baseline measurements. The helper deliberately imports the evaluator only after checking out the pinned SHA. Do not run the command three times on one day and call that cross-day validation.
 
 The original six-round summary did not record Node/OS/timezone metadata, so exact environment equivalence with that first day cannot be machine-verified. Run on the same machine/runtime used for the original six rounds; the new runner then enforces consistency across the three additional days.

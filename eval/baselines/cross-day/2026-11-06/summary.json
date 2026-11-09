@@ -1,0 +1,454 @@
+{
+  "date": "2026-11-06",
+  "baselineSha": "eac798de31b24463dba09361b8c2c551e1e114d2",
+  "model": "hy3",
+  "baseUrl": "http://127.0.0.1:8788/v1",
+  "command": "npm run eval:cross-day",
+  "tasks": 20,
+  "jobs": 4,
+  "rounds": 3,
+  "plannedRounds": 3,
+  "complete": true,
+  "generatedAt": "2026-11-06T00:51:25.484Z",
+  "environment": {
+    "node": "v24.13.1",
+    "platform": "win32",
+    "arch": "x64",
+    "timezone": "Asia/Shanghai"
+  },
+  "environmentConsistency": {
+    "priorDaysCompared": [],
+    "originalSixRoundBaselineEnvironmentRecorded": false
+  },
+  "overall": {
+    "taskAttempts": 60,
+    "taskPasses": 60,
+    "passRate": 100,
+    "successfulRounds": 3,
+    "totalRounds": 3
+  },
+  "medians": {
+    "requests": 95,
+    "toolCalls": 92,
+    "prompt": 120762,
+    "completion": 8157,
+    "tokens": 129477,
+    "elapsed": 78.5
+  },
+  "tokenRange": {
+    "min": 109558,
+    "max": 135050
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-06T00:49:00.489Z",
+      "ok": true,
+      "passed": 20,
+      "total": 20,
+      "requests": 95,
+      "toolCalls": 96,
+      "prompt": 120762,
+      "completion": 8715,
+      "tokens": 129477,
+      "unknown": 0,
+      "elapsed": 79.6,
+      "failures": [],
+      "infraErrors": []
+    },
+    {
+      "round": 2,
+      "at": "2026-11-06T00:50:06.968Z",
+      "ok": true,
+      "passed": 20,
+      "total": 20,
+      "requests": 85,
+      "toolCalls": 83,
+      "prompt": 102428,
+      "completion": 7130,
+      "tokens": 109558,
+      "unknown": 0,
+      "elapsed": 66.5,
+      "failures": [],
+      "infraErrors": []
+    },
+    {
+      "round": 3,
+      "at": "2026-11-06T00:51:25.482Z",
+      "ok": true,
+      "passed": 20,
+      "total": 20,
+      "requests": 97,
+      "toolCalls": 92,
+      "prompt": 126893,
+      "completion": 8157,
+      "tokens": 135050,
+      "unknown": 0,
+      "elapsed": 78.5,
+      "failures": [],
+      "infraErrors": []
+    }
+  ],
+  "perTask": [
+    {
+      "name": "01-add-health-route",
+      "requests": [
+        4,
+        3,
+        3
+      ],
+      "tokens": [
+        4885,
+        3705,
+        3713
+      ],
+      "medianTokens": 3713,
+      "minTokens": 3705,
+      "maxTokens": 4885,
+      "spread": 1.32,
+      "failures": []
+    },
+    {
+      "name": "02-fix-failing-test",
+      "requests": [
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        5203,
+        5213,
+        5276
+      ],
+      "medianTokens": 5213,
+      "minTokens": 5203,
+      "maxTokens": 5276,
+      "spread": 1.01,
+      "failures": []
+    },
+    {
+      "name": "03-rename-function",
+      "requests": [
+        5,
+        5,
+        5
+      ],
+      "tokens": [
+        7093,
+        6934,
+        6959
+      ],
+      "medianTokens": 6959,
+      "minTokens": 6934,
+      "maxTokens": 7093,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "04-create-doc",
+      "requests": [
+        3,
+        3,
+        3
+      ],
+      "tokens": [
+        3721,
+        3736,
+        3730
+      ],
+      "medianTokens": 3730,
+      "minTokens": 3721,
+      "maxTokens": 3736,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "05-extract-constant",
+      "requests": [
+        3,
+        4,
+        4
+      ],
+      "tokens": [
+        3846,
+        4840,
+        5342
+      ],
+      "medianTokens": 4840,
+      "minTokens": 3846,
+      "maxTokens": 5342,
+      "spread": 1.39,
+      "failures": []
+    },
+    {
+      "name": "06-guard-missing-file",
+      "requests": [
+        4,
+        4,
+        10
+      ],
+      "tokens": [
+        4695,
+        4784,
+        16220
+      ],
+      "medianTokens": 4784,
+      "minTokens": 4695,
+      "maxTokens": 16220,
+      "spread": 3.45,
+      "failures": []
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "requests": [
+        5,
+        4,
+        4
+      ],
+      "tokens": [
+        6171,
+        4989,
+        4743
+      ],
+      "medianTokens": 4989,
+      "minTokens": 4743,
+      "maxTokens": 6171,
+      "spread": 1.3,
+      "failures": []
+    },
+    {
+      "name": "08-extract-duplication",
+      "requests": [
+        9,
+        4,
+        4
+      ],
+      "tokens": [
+        15465,
+        5068,
+        5058
+      ],
+      "medianTokens": 5068,
+      "minTokens": 5058,
+      "maxTokens": 15465,
+      "spread": 3.06,
+      "failures": []
+    },
+    {
+      "name": "09-update-readme",
+      "requests": [
+        3,
+        3,
+        3
+      ],
+      "tokens": [
+        3617,
+        3672,
+        3671
+      ],
+      "medianTokens": 3671,
+      "minTokens": 3617,
+      "maxTokens": 3672,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "10-delete-dead-code",
+      "requests": [
+        7,
+        6,
+        6
+      ],
+      "tokens": [
+        9416,
+        7807,
+        7939
+      ],
+      "medianTokens": 7939,
+      "minTokens": 7807,
+      "maxTokens": 9416,
+      "spread": 1.21,
+      "failures": []
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "requests": [
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4657,
+        4747,
+        4684
+      ],
+      "medianTokens": 4684,
+      "minTokens": 4657,
+      "maxTokens": 4747,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "12-add-input-validation",
+      "requests": [
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4690,
+        4668,
+        4684
+      ],
+      "medianTokens": 4684,
+      "minTokens": 4668,
+      "maxTokens": 4690,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "13-callback-to-promise",
+      "requests": [
+        10,
+        8,
+        11
+      ],
+      "tokens": [
+        18892,
+        13264,
+        20485
+      ],
+      "medianTokens": 18892,
+      "minTokens": 13264,
+      "maxTokens": 20485,
+      "spread": 1.54,
+      "failures": []
+    },
+    {
+      "name": "14-fix-sort-order",
+      "requests": [
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4640,
+        4578,
+        4569
+      ],
+      "medianTokens": 4578,
+      "minTokens": 4569,
+      "maxTokens": 4640,
+      "spread": 1.02,
+      "failures": []
+    },
+    {
+      "name": "15-merge-defaults",
+      "requests": [
+        5,
+        5,
+        4
+      ],
+      "tokens": [
+        6035,
+        5955,
+        4646
+      ],
+      "medianTokens": 5955,
+      "minTokens": 4646,
+      "maxTokens": 6035,
+      "spread": 1.3,
+      "failures": []
+    },
+    {
+      "name": "16-handle-bad-json",
+      "requests": [
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        4701,
+        4685,
+        4708
+      ],
+      "medianTokens": 4701,
+      "minTokens": 4685,
+      "maxTokens": 4708,
+      "spread": 1,
+      "failures": []
+    },
+    {
+      "name": "17-write-missing-test",
+      "requests": [
+        5,
+        5,
+        4
+      ],
+      "tokens": [
+        6398,
+        6276,
+        5051
+      ],
+      "medianTokens": 6276,
+      "minTokens": 5051,
+      "maxTokens": 6398,
+      "spread": 1.27,
+      "failures": []
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "requests": [
+        3,
+        3,
+        3
+      ],
+      "tokens": [
+        3497,
+        3639,
+        3433
+      ],
+      "medianTokens": 3497,
+      "minTokens": 3433,
+      "maxTokens": 3639,
+      "spread": 1.06,
+      "failures": []
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "requests": [
+        4,
+        4,
+        4
+      ],
+      "tokens": [
+        5185,
+        5682,
+        5579
+      ],
+      "medianTokens": 5579,
+      "minTokens": 5185,
+      "maxTokens": 5682,
+      "spread": 1.1,
+      "failures": []
+    },
+    {
+      "name": "20-fix-email-regex",
+      "requests": [
+        5,
+        4,
+        9
+      ],
+      "tokens": [
+        6670,
+        5316,
+        14560
+      ],
+      "medianTokens": 6670,
+      "minTokens": 5316,
+      "maxTokens": 14560,
+      "spread": 2.74,
+      "failures": []
+    }
+  ]
+}

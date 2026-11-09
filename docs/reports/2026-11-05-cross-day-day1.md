@@ -1,9 +1,11 @@
 # 跨天验证 Day 1（2026-11-05）
 
+> **状态：已关闭，仅作历史记录。** v1 序列的 Day 2 / Day 3 不再运行；v2 的跨天从 2026-11-06 重新开始，钉 `eac798d`（tag `stability-2026-11-05-prompt-v2`）。数据已移出 v2 归档根，见下方链接。
+
 - 分支：`feat/minimal-agent-loop`；代码固定 tag `stability-2026-11-04` → `4edd0e4`
 - 模型：`hy3`（本地 OpenAI 兼容端点）
 - 配置：20 个任务、4 并发、3 轮，`node eval/cross-day.mjs --date 2026-11-05 --rounds 3 --jobs 4`
-- 原始记录：[`eval/baselines/cross-day/2026-11-05/`](../../eval/baselines/cross-day/2026-11-05/)
+- 原始记录：[`eval/baselines/cross-day-v1-4edd0e4/2026-11-05/`](../../eval/baselines/cross-day-v1-4edd0e4/2026-11-05/)
 
 ## 1. 结果
 
@@ -50,7 +52,7 @@
 按协议 environment 失败不算 agent 失败，整轮不可用。处理方式：
 
 - 没有把 12/20 计入 `day-summary.json`；
-- 原始数据保留在 [`2026-11-05-ratelimit-attempt/`](../../eval/baselines/cross-day/2026-11-05-ratelimit-attempt/)，其中 round-02 / round-03 在冷却后都跑出 20/20，说明是环境问题不是任务问题；
+- 原始数据保留在 [`2026-11-05-ratelimit-attempt/`](../../eval/baselines/cross-day-v1-4edd0e4/2026-11-05-ratelimit-attempt/)，其中 round-02 / round-03 在冷却后都跑出 20/20，说明是环境问题不是任务问题；
 - 冷却后重跑 3 轮，得到第 1 节的 60/60。
 
 代价：这次被丢弃的尝试额外消耗约 347k tokens（round-01 有 8 个请求没有 usage，实际略高）。运行器本身不重试，遇到限流就整轮作废——这是有意的：把 429 当任务失败重跑，会把「环境抖动」洗成「能力稳定」。
@@ -71,10 +73,10 @@
 
 tag `4edd0e4` 的 `eval/run.mjs` 里 `classifyRunFailure` 还没有「429 → environment」这条规则（主分支 `e8b4deb` 之后才加）。所以在跨天归档里，限流会被记成 `failure: "task"`，只有 `error` 文本能看出是 429。协议要求把 environment 和 task 分开，因此跨天分析要按错误文本人工归类，不能只看 `failure` 字段。
 
-实验期间不改 tag；这条差异记录在此，等三天跑完、应用提示词新 tag 时一并修掉。
+实验期间不改 tag；这条差异记录在此。**该问题已随换 tag 消除**：v2 钉的 `eac798d` 里的 `classifyRunFailure` 已经带「429 → environment」这条规则，跨天归档不再需要人工归类。
 
-## 6. 下一步
+## 6. 下一步（已被 v2 计划取代）
 
-1. 11-06、11-07 各跑 3 轮（同一命令、同一 tag、同一模型），三天数据齐了再写跨天结论。
-2. 观察 06 是否复现；同时看 13、20 是否又回到 5× 档——如果交替出现，说明方差在任务集内部迁移，成本预算要按「最坏任务 + 中位数」估。
-3. 跨天期间不应用候选 B 提示词，也不改 `src/`。
+1. ~~11-06、11-07 各跑 3 轮（同一命令、同一 tag、同一模型）~~：**不再执行。** 代码与提示词已经变了，继续跑 v1 tag 只会得到一份混着两个提示词的三天数据。决定见 [提示词 v2 报告](./2026-11-05-prompt-v2.md) 第 5 节。
+2. 06 的离群是否复现、13/20 的 5× 档是否回潮，改由 v2 的 `perTask` 数据回答。
+3. 跨天期间不改 `src/`、不应用候选提示词，这条继续有效。
