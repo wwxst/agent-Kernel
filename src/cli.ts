@@ -301,6 +301,15 @@ let activePresenter: RunPresenter | undefined;
  * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（REPL、一次性任务）；
  * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
  */
+/** 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。 */
+const TUI_PROGRESS_GUIDANCE = [
+  "In this interactive TUI, briefly tell the user what you are doing before a meaningful group of tool calls.",
+  "After a meaningful result, briefly explain the observed outcome and your next step if known.",
+  "Keep each visible progress update to one short sentence in the user's language; group related operations instead of narrating every tool.",
+  "Only describe verified facts and plans, never invent results or reveal private chain-of-thought.",
+  "Keep the final response separate from these progress updates.",
+].join(" ");
+
 interface AgentCallbacks {
   onRequestStart?: (step: number) => void;
   onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
@@ -323,7 +332,7 @@ function createAgent(
   config: Config,
   signal: AbortSignal,
   permission: Permission,
-  options: { announce?: boolean; callbacks?: AgentCallbacks } = {},
+  options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean } = {},
 ): Agent {
   const tools = new ToolRegistry(
     createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal })),
@@ -354,7 +363,7 @@ function createAgent(
     tools,
     // 权限说明只指导模型；真正的放行/拒绝仍由 ToolRegistry 执行。
     // 函数在每次请求前求值，/permission 切换后下一次请求自动使用新规则。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}`,
+    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
@@ -660,7 +669,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   };
 
   const newAgent = (): Agent => {
-    current = createAgent(config, signal, permission, { announce: false, callbacks });
+    current = createAgent(config, signal, permission, { announce: false, callbacks, narrateProgress: true });
     return current;
   };
 
