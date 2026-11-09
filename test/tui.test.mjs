@@ -2138,6 +2138,90 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   assert.doesNotMatch(final, /\d+ 项操作|\d+ 成功|\d+ 失败/);
 });
 
+test("TUI 过程概述：缺少模型阶段说明时按真实工具进展生成一条自然语言提示", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查项目文件");
+  const call = { id: "overview-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(call);
+  let screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /正在查看文件 src\/tui\.ts。/);
+  assert.ok(screen.indexOf("正在查看文件 src/tui.ts") < screen.indexOf("正在读取文件"),
+    "进度说明在可折叠活动前面，形成对话式时间线");
+  ui.tui.toolResult(call, "real file content");
+  screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /已读取文件 src\/tui\.ts。/);
+  assert.doesNotMatch(screen, /正在查看文件 src\/tui\.ts。/, "状态在同一条概述原地更新");
+  assert.equal((screen.match(/已读取文件 src\/tui\.ts。/g) ?? []).length, 1, "不重复追加同一个阶段");
+
+  ui.tui.confirmAssistant("文件已检查。", true);
+  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  screen = screenRows(ui, 40).join("\n");
+  assert.doesNotMatch(screen, /已读取文件 src\/tui\.ts。/);
+  assert.match(screen, /文件已检查。/, "最终答复不随过程折叠");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  assert.match(screenRows(ui, 40).join("\n"), /已读取文件 src\/tui\.ts。/, "展开后恢复同一阶段概述");
+});
+
+test("TUI 过程概述：优先展示模型真实阶段说明，不重复生成工具模板", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请修复 TUI");
+  ui.tui.assistantDelta("当前正在核对 TUI 的折叠逻辑，随后验证窗口缩放表现。");
+  const call = { id: "narrated-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file contents");
+  const screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /当前正在核对 TUI 的折叠逻辑，随后验证窗口缩放表现。/);
+  assert.doesNotMatch(screen, /正在查看文件 src\/tui\.ts。|已读取文件 src\/tui\.ts。/,
+    "已有模型原文时不再添加机械化的重复说明");
+  assert.match(screen, /已读取文件/, "真实工具活动仍独立可折叠");
+});
+
+test("TUI 过程概述：同组多工具只更新一个当前操作说明，缩放不额外创建日志", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请查找项目内容");
+  const read = { id: "overview-read2", type: "function", function: { name: "read", arguments: '{"path":"package.json"}' } };
+  const grep = { id: "overview-grep", type: "function", function: { name: "grep", arguments: '{"pattern":"resize","path":"src"}' } };
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "package contents");
+  ui.tui.toolCall(grep);
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /正在搜索代码 resize。/);
+  assert.doesNotMatch(screen, /已读取文件 package\.json。/, "同一阶段不累计重复进度文字");
+  ui.tui.toolResult(grep, "match in src/tui.ts");
+  ui.output.columns = 80;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  screen = screenRows(ui, 45).join("\n");
+  assert.equal((screen.match(/已搜索代码 resize。/g) ?? []).length, 1);
+  assert.match(screen, /已读取文件、已搜索代码/);
+});
+
+test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请运行检查");
+  const shell = { id: "overview-denied", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(shell);
+  ui.tui.toolResult(shell, 'ERROR: permission denied: user denied tool "shell"');
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /未获授权，无法执行 npm run check。/);
+  assert.doesNotMatch(screen, /命令执行结束 npm run check。/);
+  ui.tui.assistantDelta("权限不足，改为只检查文件。");
+  const read = { id: "overview-fail", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "ERROR: file not found");
+  screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /权限不足，改为只检查文件。/);
+  assert.doesNotMatch(screen, /已读取文件 missing\.txt。/, "模型已说明的新阶段也不应由工具伪造成功进度");
+});
+
 test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示等", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 55, columns: 108 });
   t.after(() => ui.cleanup());
