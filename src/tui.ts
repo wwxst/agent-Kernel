@@ -560,8 +560,9 @@ export class Tui {
         if (groups.length > 0) {
           this.activityFocus = this.activityFocus <= 0 ? groups.length - 1 : this.activityFocus - 1;
           const group = groups[this.activityFocus]!;
+          // 浏览旧记录时展开详情也不能把视口跳到最新消息。
+          this.captureHistoryAnchor();
           group.expanded = !group.expanded;
-          this.scrollOffset = 0;
           this.renderNow();
         }
         return;
@@ -722,20 +723,23 @@ export class Tui {
     this.logLine(`permission: ${this.permissionMode}`);
   }
 
+  /** 将当前视口顶端绑定到稳定的展示日志 ID；展开活动和 resize 共用同一规则。 */
+  private captureHistoryAnchor(): void {
+    if (!this.ownedScreen || this.resizeAnchor !== undefined || this.scrollOffset === 0) return;
+    const oldLines = this.wrappedDisplayLines();
+    const first = oldLines[Math.max(0, oldLines.length - this.logHeight - this.scrollOffset)];
+    if (first?.id !== undefined) {
+      this.resizeAnchor = { entryId: first.id, charOffset: first.charOffset ?? 0 };
+    }
+  }
+
   /** 终端尺寸变化后重新排版；保持当前输入行和滚动位置。 */
   private resize(columns: number, rows: number): void {
     if (!this.started || !this.fixedLayoutAllowed || this.closed) return;
 
     const hadLayout = this.layout;
-    // 在改变列宽前从旧布局捕获用户正在看的逻辑行，不能只保存离底部的行数。
     // 只捕获本轮 resize 的第一帧；后续拖动和流式事件都沿用同一个锚点。
-    if (this.ownedScreen && this.resizeTimer === undefined && this.resizeAnchor === undefined && this.scrollOffset > 0) {
-      const oldLines = this.wrappedDisplayLines();
-      const first = oldLines[Math.max(0, oldLines.length - this.logHeight - this.scrollOffset)];
-      if (first?.id !== undefined) {
-        this.resizeAnchor = { entryId: first.id, charOffset: first.charOffset ?? 0 };
-      }
-    }
+    if (this.resizeTimer === undefined) this.captureHistoryAnchor();
     this.columns = Math.max(1, columns);
     this.rows = Math.max(1, rows);
     if (this.ownedScreen) {
