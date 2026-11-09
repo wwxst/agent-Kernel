@@ -148,6 +148,7 @@ test("TUI 独立屏幕：窄窗口提示清屏也不能漏出同步帧", async (
   const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
   t.after(() => ui.cleanup());
   ui.tui.start();
+  ui.tui.beginTurn("请检查窗口");
   ui.output.columns = 20;
   ui.output.rows = 8;
   ui.output.emit("resize");
