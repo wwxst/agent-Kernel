@@ -884,10 +884,15 @@ export class Tui {
 
   /** 用于 CLI 的会话命令提示，语言跟随最近一轮任务。 */
   helpText(permissionModes: string): string {
-    return this.uiText(
+    const commands = this.uiText(
       `commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this\n          /permission [mode]  show or switch permission (${permissionModes})`,
       `命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助\n      /permission [模式]  查看或切换权限（${permissionModes}）`,
     );
+    // 折叠箭头是终端字符，不是可点击组件；只有固定布局支持这些快捷键。
+    return this.layout ? `${commands}\n${this.uiText(
+      "timeline: Ctrl+E turns · Ctrl+O activity groups · Ctrl+G tool details · PageUp/PageDown scroll",
+      "时间线：Ctrl+E 任务 · Ctrl+O 活动组 · Ctrl+G 工具详情 · PageUp/PageDown 浏览",
+    )}` : commands;
   }
 
   /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */
