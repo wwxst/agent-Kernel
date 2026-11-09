@@ -687,7 +687,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
     try {
       const reply = await agent.run(task);
-      tui.confirmAssistant(reply.content);
+      // 只有 Agent.run 的最终回复独立于可折叠的执行时间线；工具前阶段说明保持原位。
+      tui.confirmAssistant(reply.content, true);
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: false });
       return true;
     } catch (error) {
