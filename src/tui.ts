@@ -117,6 +117,8 @@ interface ActivityGroup {
   language: UiLanguage;
   tools: ActivityTool[];
   expanded: boolean;
+  /** 模型没有阶段说明时，按真实工具事件生成一条事实性概述，不冒充模型原文。 */
+  fallbackOverview?: boolean;
   finished?: boolean;
 }
 
@@ -1301,6 +1303,16 @@ export class Tui {
     this.assistantAtLineStart = true;
   }
 
+  /** 本阶段有模型可见说明时优先使用原文，不再用工具行为重复解释。 */
+  private hasVisibleStageNarration(turn: TurnActivity): boolean {
+    for (let index = this.log.length - 1; index >= 0; index--) {
+      const line = this.log[index]!;
+      if (line.turn !== turn || line.kind === "activity" || line.kind === "turn-status") break;
+      if (line.tone === "assistant" && line.kind !== "final-reply" && line.text.trim() !== "") return true;
+    }
+    return false;
+  }
+
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
   toolCall(call: ToolCall): void {
     this.approvalBlocksRunning = false;
@@ -1313,7 +1325,8 @@ export class Tui {
       if (group === undefined) {
         // AI 的说明与其下方的 ↳ 摘要紧邻；通用 commitAssistant 会多留一个空行。
         if (this.log.at(-1)?.text === "" && this.log.at(-2)?.tone === "assistant") this.log.pop();
-        group = { language: this.uiLanguage, tools: [], expanded: true };
+        group = { language: this.uiLanguage, tools: [], expanded: true,
+          fallbackOverview: !this.hasVisibleStageNarration(turn) };
         turn.groups.push(group);
         this.activeActivity = group;
         // 非空锚点让下一段 AI 发言自动与本阶段之间留一行。
@@ -2033,10 +2046,17 @@ export class Tui {
       if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
-        const children: LogLine[] = [
+        const children: LogLine[] = [];
+        // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
+        if (group.fallbackOverview && group.tools.length > 0) {
+          const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
+          children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(current.call, current.result, group.language)}`),
+            tone: "info" });
+        }
+        children.push(
           { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)}`),
             tone: "muted", kind: "activity" },
-        ];
+        );
         if (group.expanded) {
           for (const item of group.tools) children.push(...this.activityToolLines(item, group));
         } else {
