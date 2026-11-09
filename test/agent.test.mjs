@@ -821,4 +821,5 @@ test("HTTP 401 不重试；收到取消时等待退避会立即停手", async ()
   await assert.rejects(interrupted.run("hello"));
   assert.equal(networkCalls, 1, "取消后不得发起第二次请求");
   assert.equal(interrupted.stats.requests, 1);
+  assert.equal(interrupted.retryAttempts, 0, "等待期间取消尚未发出的重试不得计数");
 });

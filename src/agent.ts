@@ -456,6 +456,8 @@ export class Agent {
       // 仅 fetch 阶段的网络错误或 HTTP 408/429/5xx 可重试；流式增量错误禁止重放。
       for (let attempt = 0; ; attempt++) {
         this.stopIfCancelled();
+        // 进入真实的下一次 HTTP 调用才记为 retry；等待期间取消不能预支计数。
+        if (attempt > 0) this.runRetries++;
         this.runRequests++;
         this.sessionRequests++;
         try {
@@ -467,7 +469,6 @@ export class Agent {
           // 失败的每次尝试可能已产生 token 费用；未知按 unknown 记录，不能补 0。
           this.recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
           if (attempt >= this.maxModelRetries || !isRetryableModelError(error)) throw error;
-          this.runRetries++;
           this.notifyObserver(this.onRetry, error, attempt + 1, this.maxModelRetries);
           // Ctrl-C 必须能中断退避，不再发新的模型请求。
           await sleep(Math.min(100 * 2 ** attempt, 800), undefined, { signal: this.signal });
