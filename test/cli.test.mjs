@@ -114,7 +114,7 @@ test("TUI：.env.example 占位 Key 不能冒充已配置模型，也不能发�
         { args: ["--tui", "hello"], input: "/exit\n" },
       );
       assert.equal(run.code, 1);
-      assert.match(run.stderr, /Model service is not configured/);
+      assert.match(run.stderr, /Model not configured/);
       assert.match(run.stderr, /missing API_KEY/);
       assert.equal(mock.requests.length, 0, "占位配置不能发起模型调用");
       assert.doesNotMatch(run.stdout, /Thinking|Failed|请求|tokens/);
@@ -253,7 +253,7 @@ test("CLI：模型流式请求中断时声明草稿失效，不冒充已确认�
       assert.notEqual(run.code, 0);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
       assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
-      assert.match(run.stderr, /Invalid model response/);
+      assert.match(run.stderr, /Model service unavailable/);
       assert.match(run.stderr, /preview is discarded/);
       assert.doesNotMatch(run.stdout, /model \(confirmed\): UNCONFIRMED_SECOND_REQUEST/);
     } finally {
@@ -650,7 +650,7 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
       assert.equal((run.stdout.match(/model: CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
-      assert.match(run.stdout, /Invalid model response/);
+      assert.match(run.stdout, /Model service unavailable/);
       assert.match(run.stdout, /preview is discarded/);
       assert.equal(mock.requests.length, 2);
     } finally {
