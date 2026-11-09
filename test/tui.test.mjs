@@ -2140,6 +2140,62 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   assert.doesNotMatch(final, /\d+ 项操作|\d+ 成功|\d+ 失败/);
 });
 
+test("TUI 时间线：连续无文字模型请求仍分成独立活动阶段", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 118 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查项目并运行验证");
+  ui.tui.beginModelRequest();
+  const first = { id: "phase-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(first);
+  ui.tui.toolResult(first, "file content");
+  ui.tui.beginModelRequest();
+  const next = { id: "phase-shell", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(next);
+  ui.tui.toolResult(next, "exit 0");
+  const screen = screenRows(ui, 48).join("\n");
+  assert.ok(screen.indexOf("已读取文件 src/tui.ts。") < screen.indexOf("命令执行结束 npm run check。"),
+    "不同模型请求各自保存真实进度，按发生顺序展示");
+  assert.equal((screen.match(/(?:↳|\+) 已读取文件/g) ?? []).length, 1);
+  assert.equal((screen.match(/(?:↳|\+) 已执行命令/g) ?? []).length, 1);
+});
+
+test("TUI 时间线：失败时最后一段过程说明不冒充独立的最终回复", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查代码");
+  ui.tui.assistantDelta("正在检查问题，还没有验证完成。");
+  ui.tui.finishAssistant();
+  ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
+    session, { failed: true });
+  let screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /执行失败 · 用时/);
+  assert.doesNotMatch(screen, /正在检查问题，还没有验证完成。/, "失败后的阶段说明默认属于可折叠过程");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /正在检查问题，还没有验证完成。/, "展开后依然能复盘真实说明");
+});
+
+test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件名", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 120 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("编辑文件");
+  const call = { id: "raw-args", type: "function", function: {
+    name: "edit", arguments: '{"path":"src/tui.ts","old_string":"old_value","new_string":"new_value"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "edited src/tui.ts");
+  assert.doesNotMatch(screenRows(ui, 48).join("\n"), /原始参数（摘录）/);
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 48).join("\n");
+  assert.match(screen, /原始参数（摘录）：/);
+  assert.match(screen, /"old_string": "old_value"/);
+  assert.match(screen, /"new_string": "new_value"/);
+  assert.match(screen, /edited src\/tui\.ts/);
+});
+
 test("TUI 过程概述：缺少模型阶段说明时按真实工具进展生成一条自然语言提示", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
   t.after(() => ui.cleanup());
