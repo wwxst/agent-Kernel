@@ -131,10 +131,11 @@ test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色",
   await tick();
 
   assert.match(mono.text(), /\x1b\[37;100m\x1b\[38;5;246;48;5;237m(?:❯|>) /, "用户消息任务条颜色保留");
-  assert.match(mono.text(), /\x1b\[(?:90|38;5;244)m(?:❯|>) /, "输入行提示符保留灰色");
+  assert.doesNotMatch(mono.text(), /\x1b\[(?:90|38;5;244)m(?:❯|>) /, "输入行提示符用默认色，不再是灰色");
   assert.match(mono.text(), /\x1b\[(?:90|38;5;244)m Ask anything, or type \/help\.\.\./, "占位提示保留灰色");
   assert.doesNotMatch(mono.text(), /\x1b\[(?:33|38;5;215)m/, "标题与状态不再使用强调色");
   assert.doesNotMatch(mono.text(), /\x1b\[(?:90|38;5;244)m[-─]/, "分隔线不再使用灰色层次色");
+  assert.match(full.text(), /\x1b\[(?:90|38;5;244)m(?:❯|>) /, "full 模式提示符仍用灰色强调");
   assert.match(full.text(), /\x1b\[(?:33|38;5;215)m/, "full 模式恢复强调色");
 });
 
