@@ -377,6 +377,94 @@ test("TUI 独立屏幕：缩到不足最小尺寸不退回逐行输出，放大�
   assert.doesNotMatch(screenRows(ui, 35).join("\n"), /窗口太小/);
 });
 
+
+test("TUI 时间线：执行中说明与活动交替出现，完成后自动收起，最终答复独立展示", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查 TUI 并修复");
+  ui.tui.confirmAssistant("先检查日志状态，然后读取文件。");
+  const call = { id: "timeline-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "real file content");
+  ui.tui.confirmAssistant("已经找到问题，接下来验证结果。");
+  const during = screenRows(ui, 40).join("\n");
+  assert.ok(during.indexOf("先检查日志状态") < during.indexOf("已读取文件"), "阶段说明出现在对应活动之前");
+  assert.ok(during.indexOf("已读取文件") < during.indexOf("已经找到问题"), "工具活动与下一条说明交替出现");
+
+  ui.tui.confirmAssistant("最终回复：已验证通过。", true);
+  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  const folded = screenRows(ui, 40).join("\n");
+  assert.match(folded, /已完成 · 用时 .*▸/);
+  assert.doesNotMatch(folded, /先检查日志状态|已读取文件|已经找到问题/);
+  assert.match(folded, /最终回复：已验证通过/, "正式回答在折叠过程外仍然可见");
+  assert.doesNotMatch(folded, /已读取文件、修改代码、运行检查等/, "不应再渲染综合摘要层");
+
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  const unfolded = screenRows(ui, 40).join("\n");
+  assert.match(unfolded, /已完成 · 用时 .*▾/);
+  assert.match(unfolded, /先检查日志状态/);
+  assert.match(unfolded, /已读取文件/);
+  assert.match(unfolded, /已经找到问题/);
+});
+
+test("TUI 时间线：多轮任务分别折叠，键盘可独立展开旧轮次", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (const [task, reply] of [["第一个任务", "FIRST_RESULT"], ["第二个任务", "SECOND_RESULT"]]) {
+    ui.tui.beginTurn(task);
+    ui.tui.confirmAssistant("STAGE_" + reply);
+    ui.tui.confirmAssistant(reply, true);
+    ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  }
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT|STAGE_SECOND_RESULT/);
+  assert.match(screenRows(ui, 45).join("\n"), /FIRST_RESULT/);
+  assert.match(screenRows(ui, 45).join("\n"), /SECOND_RESULT/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  assert.match(screenRows(ui, 45).join("\n"), /STAGE_SECOND_RESULT/);
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  assert.match(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT/);
+});
+
+test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 115, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("编辑文件并检查");
+  const call = { id: "edit-detail", type: "function", function: { name: "edit", arguments: '{"path":"src/tui.ts","old":"a","new":"b"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "Updated src/tui.ts");
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /编辑 src\/tui\.ts.*▸/);
+  assert.doesNotMatch(screen, /调用：/, "原始工具详情默认不展开");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /编辑 src\/tui\.ts.*▾/);
+  assert.match(screen, /调用：.*edit/);
+  assert.match(screen, /Updated src\/tui\.ts/);
+  assert.doesNotMatch(screen, /^\+.*\-.*$/m, "不根据路径虚构文件 Diff");
+});
+
+test("TUI 时间线：失败及取消仍可展开，不隐藏真实的工具错误", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("运行检查");
+  const call = { id: "failed-step", type: "function", function: { name: "shell", arguments: '{"command":"exit 1"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "exit 1\nERROR: process failed");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true });
+  assert.match(screenRows(ui, 35).join("\n"), /执行失败 · 用时 .*▸/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  ui.input.emit("keypress", "", { name: "o", ctrl: true });
+  const expanded = screenRows(ui, 35).join("\n");
+  assert.match(expanded, /执行失败 · 用时 .*▾/);
+  assert.match(expanded, /failed|失败/);
+});
+
 test("TUI：已确认模型正文覆盖不一致的流式草稿，不向历史提交错误文本", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());
