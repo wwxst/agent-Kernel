@@ -1077,6 +1077,24 @@ export class Tui {
     const raw = ended ? item.result! : "";
     // 真实参数和返回来自 ToolCall/ToolResult；不从编辑路径猜测 Diff 或图片预览。
     lines.push(this.makeLogLine(`      ${this.uiText("Call:", "调用：")} ${formatToolCall(item.call)}`, "muted"));
+    // 第四层明确提供真实参数摘录；上面的 Call 只是简短标题，不是完整参数。
+    // 输入可能包含大块文件内容，限制解析/展示规模，避免每帧重排拖慢终端。
+    const rawArguments = item.call.function.arguments || "{}";
+    let argumentText = rawArguments.slice(0, 12_000);
+    if (rawArguments.length <= 12_000) {
+      try { argumentText = JSON.stringify(JSON.parse(rawArguments), null, 2); } catch {
+        // 不合法的参数仍展示实际收到的文字，不伪造结构。
+      }
+    }
+    const argumentLines = splitDisplayLines(argumentText);
+    lines.push(this.makeLogLine(`      ${this.uiText("Arguments (excerpt):", "原始参数（摘录）：")}`, "muted"));
+    for (const line of argumentLines.slice(0, 12)) {
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${clip(line, 160)}`, "muted"));
+    }
+    if (argumentLines.length > 12 || rawArguments.length > 12_000) {
+      lines.push(this.makeLogLine(
+        `      … ${this.uiText("arguments truncated for display", "参数过长，展示已截断")}`, "muted"));
+    }
     if (ended && failure === undefined && item.call.function.name === "edit") {
       // edit 的 Tool result 只有字符数；展示真实请求片段，不冒充带行号的完整文件 Diff。
       try {
@@ -1166,6 +1184,17 @@ export class Tui {
       const text = index === 0 ? `${label}${line}` : `${" ".repeat(displayWidth(label))}${line}`;
       this.writeRaw(`${escapeControlCharacters(text)}${this.newline()}`);
     });
+  }
+
+  /**
+   * 每次模型请求开始时划清阶段边界。模型没有输出可见文字，也不能把下一次
+   * 请求里的工具继续记进上一组；否则整轮过程会失去真实的执行顺序。
+   * 同一次模型回复里的多个工具仍按原顺序归入同组。
+   */
+  beginModelRequest(): void {
+    if (this.currentTurn?.endedAt === undefined && this.activeActivity?.tools.length) {
+      this.activeActivity = undefined;
+    }
   }
 
   /** 模型正文增量。固定布局只累积、限频重绘；行式聊天直接写。 */
@@ -1402,7 +1431,8 @@ export class Tui {
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed, cancelled = false }: { failed: boolean; cancelled?: boolean }): void {
     // 先收尾可见正文，再决定折叠；没有通过 CLI 显式标记时也识别末尾的正式回复。
     if (this.layout) this.commitAssistant();
-    if (this.currentTurn?.endedAt === undefined) this.markTrailingReply();
+    // 失败与取消时尾部文字可能只是上一条阶段说明，不能冒充成功后的最终答复。
+    if (!failed && !cancelled && this.currentTurn?.endedAt === undefined) this.markTrailingReply();
     this.stats = session;
     this.runStartedAt = undefined;
     this.retryStatus = undefined;
