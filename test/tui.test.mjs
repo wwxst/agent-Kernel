@@ -958,10 +958,12 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   ui.output.columns = 80;
   ui.output.emit("resize");
   await tick();
-  assert.match(lastRow(ui.text(), 4), /TASK_NARROW/);
-  assert.match(lastRow(ui.text(), 8), /已读取文件|Read files/);
-  assert.match(lastRow(ui.text(), 9), /(?:✓|\+) Read a.txt/);
-  assert.match(lastRow(ui.text(), 10), /Received 1 line/);
+  const screen = screenRows(ui).join("\n");
+  assert.match(screen, /TASK_NARROW/);
+  assert.match(screen, /Read file a\.txt\./, "事实性过程概述在活动摘要之前");
+  assert.match(screen, /已读取文件|Read files/);
+  assert.match(screen, /(?:✓|\+) Read a\.txt/);
+  assert.match(screen, /Received 1 line/);
 });
 
 test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
@@ -2365,6 +2367,7 @@ test("TUI：取消时尚未返回的工具不能在历史中继续显示运行�
   const screen = screenRows(ui, 35).join("\n");
   assert.match(screen, /已取消 · 用时/);
   assert.match(screen, /未收到工具结果/);
+  assert.match(screen, /执行状态未知/, "取消之后不能继续声称正在执行");
   assert.doesNotMatch(screen, /正在执行命令|运行中\.\.\./);
 });
 
