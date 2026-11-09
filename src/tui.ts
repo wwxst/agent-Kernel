@@ -1019,33 +1019,36 @@ export class Tui {
   }
 
   private activityToolLines(item: ActivityTool, group: ActivityGroup): LogLine[] {
-    if (item.result === undefined && group.finished) return [this.activityUnfinishedLine(item, group.language)];
-    if (item.result === undefined) {
-      const title = this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted");
-      title.kind = "tool";
-      const lines = [title];
-      if (!this.approvalBlocksRunning) lines.push(this.makeLogLine(
-        `      ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, "muted"));
-      return lines;
+    const ended = item.result !== undefined;
+    const failure = ended ? this.activityFailureLine(item, group.language) : undefined;
+    const unfinished = !ended && group.finished ? this.activityUnfinishedLine(item, group.language) : undefined;
+    const result = ended ? toolResultLines(item.call, item.result!, this.glyphs, group.language) : [];
+    const title = failure ?? unfinished ?? (!ended
+      ? this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted")
+      : this.makeLogLine(result[0]!.text.replace(/^  /, "    ") +
+        ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`,
+        result[0]!.tone));
+    title.kind = failure?.kind ?? unfinished?.kind ?? "tool";
+    title.text += `  ${this.foldArrow(item.detailsExpanded === true)}`;
+    const lines: LogLine[] = [title];
+    // 摘要始终保留成功/失败事实；详情层才展开原始结果。
+    if (ended && failure === undefined && result[1] !== undefined) {
+      lines.push(this.makeLogLine(`  ${result[1].text}`, result[1].tone));
     }
-    const failed = this.activityFailureLine(item, group.language);
-    if (failed !== undefined) {
-      const raw = item.result.split("\n").map((line) => line.trim()).filter(Boolean);
-      const lines: LogLine[] = [failed];
-      // 摘要中错误原因始终在命令同一行；展开后再展示实际返回的原始内容。
-      for (const line of raw.slice(0, 20)) {
-        lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${line}`, "muted"));
-      }
-      if (raw.length > 20) lines.push(this.makeLogLine(`      … ${raw.length - 20} ${this.uiText("more lines in the tool result", "行原始输出未预览")}`, "muted"));
-      return lines;
+    if (!ended && !group.finished && !this.approvalBlocksRunning) {
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, "muted"));
     }
-    const result = toolResultLines(item.call, item.result, this.glyphs, group.language);
-    return result.map((entry, index) => ({
-      ...this.makeLogLine(index === 0
-        ? entry.text.replace(/^  /, "    ") + ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`
-        : `  ${entry.text}`, entry.tone),
-      kind: index === 0 ? entry.kind : undefined,
-    }));
+    if (!item.detailsExpanded) return lines;
+    const raw = ended ? item.result! : "";
+    // 真实参数和返回来自 ToolCall/ToolResult；不从编辑路径猜测 Diff 或图片预览。
+    lines.push(this.makeLogLine(`      ${this.uiText("Call:", "调用：")} ${formatToolCall(item.call)}`, "muted"));
+    for (const line of splitDisplayLines(raw).slice(0, 20)) {
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${line}`, failure === undefined ? "muted" : "error"));
+    }
+    const count = splitDisplayLines(raw).length;
+    if (count > 20) lines.push(this.makeLogLine(
+      `      … ${count - 20} ${this.uiText("additional result lines", "行结果未展示")}`, "muted"));
+    return lines;
   }
 
   /**
