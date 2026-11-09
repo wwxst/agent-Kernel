@@ -2580,6 +2580,42 @@ function oneLine(text: string): string {
 }
 
 
+/** 工具事实兜底：只说明“正在/已做什么”，不猜测原因、发现或下一步计划。 */
+function toolProgressOverview(call: ToolCall, result: string | undefined, language: UiLanguage): string {
+  const zh = language === "zh";
+  let args: unknown;
+  try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* 不猜测非法参数 */ }
+  const params = isRecord(args) ? args : {};
+  const name = call.function.name;
+  const rawTarget = name === "shell" ? params.command
+    : name === "grep" || name === "glob" ? params.pattern : params.path;
+  const target = typeof rawTarget === "string" && rawTarget.trim() !== ""
+    ? ` ${clip(oneLine(rawTarget), 54)}` : "";
+  const status = result === undefined ? "running" : (() => {
+    const summary = summarizeToolResult(call, result);
+    return summary.denied ? "denied" : summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
+  })();
+  if (status === "denied") return zh ? `未获授权，无法执行${target || ` ${name}`}。`
+    : `Permission denied for${target || ` ${name}`}.`;
+  if (status === "not-run") return zh ? `未执行${target || ` ${name}`}。`
+    : `Did not run${target || ` ${name}`}.`;
+  const verbs: Record<string, [string, string, string, string, string, string]> = {
+    read: ["正在查看文件", "已读取文件", "读取文件失败", "Reading file", "Read file", "Could not read file"],
+    grep: ["正在搜索代码", "已搜索代码", "搜索代码失败", "Searching code", "Searched code", "Code search failed"],
+    glob: ["正在匹配文件", "已完成文件匹配", "匹配文件失败", "Matching files", "Matched files", "File matching failed"],
+    ls: ["正在列出目录", "已列出目录", "列出目录失败", "Listing directory", "Listed directory", "Directory listing failed"],
+    write: ["正在写入文件", "已写入文件", "写入文件失败", "Writing file", "Wrote file", "Could not write file"],
+    edit: ["正在修改文件", "已修改文件", "修改文件失败", "Editing file", "Edited file", "Could not edit file"],
+    shell: ["正在执行命令", "命令执行结束", "命令执行失败", "Running command", "Command finished", "Command failed"],
+  };
+  const forms = verbs[name] ?? ["正在调用工具", "工具调用已返回", "工具调用失败",
+    "Calling tool", "Tool call returned", "Tool call failed"];
+  const offset = zh ? 0 : 3;
+  const position = status === "running" ? 0 : status === "failed" ? 2 : 1;
+  const suffix = target || (verbs[name] === undefined ? ` ${clip(name, 40)}` : "");
+  return `${forms[offset + position]}${suffix}${zh ? "。" : "."}`;
+}
+
 /** 真实操作类型映射为自然语言；仅根据工具名及结果分类，不虚构工作进展。 */
 function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSummary): string {
   const zh = lang === "zh";
