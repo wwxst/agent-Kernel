@@ -2272,7 +2272,9 @@ test("TUI 过程概述：Shell 等待审批时不能提前宣称命令已经运�
   ui.tui.toolCall(call);
   const beforeApproval = screenRows(ui, 45).join("\n");
   assert.match(beforeApproval, /正在处理命令请求 npm run check。/);
-  assert.doesNotMatch(beforeApproval, /正在执行命令 npm run check。/, "授权前不能谎称 Shell 正在运行");
+  assert.doesNotMatch(beforeApproval, /正在执行命令 npm run check。|Running\.\.\./,
+    "授权前不能把尚未放行的命令说成已在执行");
+  assert.match(beforeApproval, /等待工具结果/);
   const approval = ui.tui.approve({ tool: "shell", args: { command: "npm run check" } });
   assert.match(screenRows(ui, 45).join("\n"), /正在等待命令 npm run check的执行授权/,
     "待审批时只能描述等待授权，不能声称已运行命令");
