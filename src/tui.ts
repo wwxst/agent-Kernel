@@ -191,6 +191,16 @@ export function parseTuiScreenMode(value: string | undefined): TuiScreenMode {
   throw new Error(`invalid AGENT_TUI_SCREEN "${value}" (expected: auto, always, never)`);
 }
 
+/** mono 只保留用户消息任务条的颜色；full 恢复状态与提示的层次配色。 */
+export type TuiColorMode = "full" | "mono";
+
+/** 默认 mono：其余文字保持终端默认色，只有用户消息任务条上色。 */
+export function parseTuiColorMode(value: string | undefined): TuiColorMode {
+  if (value === undefined || value === "" || value === "mono") return "mono";
+  if (value === "full") return value;
+  throw new Error(`invalid AGENT_TUI_COLOR "${value}" (expected: full, mono)`);
+}
+
 /**
  * auto 只在有明确终端能力线索时启用备用屏幕；TERM=linux/vt100/ansi 等
  * 虽然不是 dumb，也不能据此推断实现了 1049 备用屏幕。
@@ -226,6 +236,8 @@ export interface TuiOptions {
   layout?: boolean;
   /** auto 只为识别出的兼容终端启用备用屏幕；能力不明时退回行式输出。 */
   screenMode?: TuiScreenMode;
+  /** 层次配色开关；默认 mono，只保留用户消息任务条的颜色，其余文字纯白。 */
+  colorMode?: TuiColorMode;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
   /** 初始界面语言；缺省英文，交互式 CLI 按系统 locale 传入；之后仍按任务正文切换。 */
@@ -478,11 +490,12 @@ export class Tui {
     this.logHeight = 1;
     this.recomputeGeometry();
 
+    const colorMode = options.colorMode ?? "mono";
     const colorEnabled =
       this.fixedLayoutAllowed &&
       (options.color ??
         (process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"));
-    this.style = new Style(colorEnabled, prefersRichColor());
+    this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono");
     // Windows Terminal / VS Code 终端里用 ❯/✻；传统 conhost 退化成 >/*，避免方框。
     this.glyphs = process.platform !== "win32" || prefersRichColor() ? UNICODE_GLYPHS : ASCII_GLYPHS;
 
@@ -2139,17 +2152,20 @@ export class Tui {
   }
 }
 
-/** 16 色或 256 色的极简样式；无颜色终端直接返回原文。 */
+/** 16 色或 256 色的极简样式；mono 或无声终端只返回原文（用户消息任务条除外）。 */
 class Style {
   private readonly enabled: boolean;
 
   private readonly rich: boolean;
 
+  private readonly mono: boolean;
+
   private readonly palette: Record<Tone, string>;
 
-  constructor(enabled: boolean, rich: boolean) {
+  constructor(enabled: boolean, rich: boolean, mono = false) {
     this.enabled = enabled;
     this.rich = rich;
+    this.mono = mono;
     this.palette = rich ? RICH_PALETTE : BASIC_PALETTE;
   }
 
@@ -2169,12 +2185,12 @@ class Style {
   }
 
   paint(tone: Tone, text: string): string {
-    if (!this.enabled || text === "" || tone === "plain") return text;
+    if (!this.enabled || this.mono || text === "" || tone === "plain") return text;
     return `\x1b[${this.palette[tone]}m${text}\x1b[0m`;
   }
 
   bold(text: string): string {
-    if (!this.enabled || text === "") return text;
+    if (!this.enabled || this.mono || text === "") return text;
     return `\x1b[1m${text}\x1b[22m`;
   }
 }

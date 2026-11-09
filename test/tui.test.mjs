@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiScreenMode, uiLanguageFromLocale } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiScreenMode, uiLanguageFromLocale } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
@@ -54,7 +54,7 @@ function screenWithoutSync(output) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, language, screenMode = "never", term = "xterm-256color", autoLayout = false, onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", flowInput = false, language, screenMode = "never", term = "xterm-256color", autoLayout = false, onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -81,6 +81,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     rows,
     ...(autoLayout ? {} : { layout: tty }),
     color,
+    colorMode,
     flowInput,
     language,
     screenMode,
@@ -111,6 +112,28 @@ test("TUI 屏幕模式：环境变量只接受 auto、always 和 never", () => {
   assert.equal(parseTuiScreenMode("always"), "always");
   assert.equal(parseTuiScreenMode("never"), "never");
   assert.throws(() => parseTuiScreenMode("maybe"), /invalid AGENT_TUI_SCREEN/);
+});
+
+test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色", async (t) => {
+  assert.equal(parseTuiColorMode(undefined), "mono");
+  assert.equal(parseTuiColorMode(""), "mono");
+  assert.equal(parseTuiColorMode("mono"), "mono");
+  assert.equal(parseTuiColorMode("full"), "full");
+  assert.throws(() => parseTuiColorMode("maybe"), /invalid AGENT_TUI_COLOR/);
+
+  const mono = makeTui({ interactive: true, tty: true, color: true, colorMode: "mono" });
+  const full = makeTui({ interactive: true, tty: true, color: true, colorMode: "full" });
+  t.after(() => { mono.cleanup(); full.cleanup(); });
+  mono.tui.start();
+  full.tui.start();
+  mono.tui.beginTurn("你好");
+  full.tui.beginTurn("你好");
+  await tick();
+
+  assert.match(mono.text(), /\x1b\[37;100m\x1b\[38;5;246;48;5;237m(?:❯|>) /, "用户消息任务条颜色保留");
+  assert.doesNotMatch(mono.text(), /\x1b\[(?:33|38;5;215)m/, "标题与状态不再使用强调色");
+  assert.doesNotMatch(mono.text(), /\x1b\[(?:90|38;5;244)m/, "提示与分隔线不再使用灰色层次色");
+  assert.match(full.text(), /\x1b\[(?:33|38;5;215)m/, "full 模式恢复强调色");
 });
 
 test("TUI auto：能力不明时启动只提示一次兼容模式，never 不重复提示", (t) => {
