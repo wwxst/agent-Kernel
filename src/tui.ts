@@ -90,6 +90,9 @@ interface LogLine {
   kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error";
   activity?: ActivityGroup;
   turn?: TurnActivity;
+  /** 仅包裹到屏幕行时使用；源逻辑行和分片定位缩放前的历史视口。 */
+  sourceLine?: number;
+  part?: number;
 }
 
 interface ActivityTool {
@@ -346,6 +349,9 @@ export class Tui {
 
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
+
+  /** 缩放前视口顶端的逻辑行位置；流式新增内容和换行变化都不能把它推走。 */
+  private resizeAnchor?: { sourceLine: number; part: number };
 
   /** 本次 readLine 的原始 prompt；滚动后重绘输入行要用。 */
   private promptText = COMMAND_PROMPT;
@@ -705,6 +711,13 @@ export class Tui {
     if (!this.started || !this.fixedLayoutAllowed || this.closed) return;
 
     const hadLayout = this.layout;
+    // 在改变列宽前从旧布局捕获用户正在看的逻辑行，不能只保存离底部的行数。
+    // 只捕获本轮 resize 的第一帧；后续拖动和流式事件都沿用同一个锚点。
+    if (this.ownedScreen && this.resizeTimer === undefined && this.resizeAnchor === undefined && this.scrollOffset > 0) {
+      const oldLines = this.wrappedDisplayLines();
+      const first = oldLines[Math.max(0, oldLines.length - this.logHeight - this.scrollOffset)];
+      if (first?.sourceLine !== undefined) this.resizeAnchor = { sourceLine: first.sourceLine, part: first.part ?? 0 };
+    }
     this.columns = Math.max(1, columns);
     this.rows = Math.max(1, rows);
     if (this.ownedScreen) {
@@ -1483,6 +1496,7 @@ export class Tui {
     }
 
     this.closed = true;
+    this.resizeAnchor = undefined;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
     this.resizeSource?.removeListener("resize", this.onResize);
@@ -1577,6 +1591,18 @@ export class Tui {
       this.inputRow = this.boxTopRow + 1;
       this.boxBottomRow = this.inputRow + 1;
       this.statusRow = this.boxBottomRow + menuRows + 1;
+    }
+
+    if (this.resizeAnchor !== undefined) {
+      const { sourceLine, part } = this.resizeAnchor;
+      const first = lines.findIndex((line) => line.sourceLine === sourceLine);
+      if (first >= 0) {
+        let last = first;
+        while (last + 1 < lines.length && lines[last + 1]?.sourceLine === sourceLine) last++;
+        const top = Math.min(first + part, last);
+        this.scrollOffset = Math.max(0, lines.length - this.logHeight - top);
+      }
+      this.resizeAnchor = undefined;
     }
 
     const rows: string[] = new Array(this.rows).fill("");
@@ -1866,7 +1892,7 @@ export class Tui {
 
     const width = this.contentWidth();
     const wrapped: LogLine[] = [];
-    for (const line of logical) {
+    for (const [sourceLine, line] of logical.entries()) {
       const indent = line.text.match(/^\s*/)?.[0] ?? "";
       const continuation = line.kind === "tool" ? "    "
         : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
@@ -1875,7 +1901,7 @@ export class Tui {
         : wrapLine(line.text, width, continuation);
       for (const [index, part] of parts.entries()) {
         wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
-          kind: index === 0 ? line.kind : undefined });
+          kind: index === 0 ? line.kind : undefined, sourceLine, part: index });
       }
     }
     if (this.approvalRequest !== undefined) {
