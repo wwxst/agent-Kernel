@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiScreenMode } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
@@ -30,7 +30,7 @@ function screenRows(ui, count = 40) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, flowInput = false, screenMode = "never", onPermissionChange, model = "mock-model" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -58,6 +58,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     layout: tty,
     color,
     flowInput,
+    screenMode,
     onPermissionChange,
   });
   if (previousTerm === undefined) delete process.env.TERM;
@@ -78,6 +79,70 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
+
+test("TUI 屏幕模式：环境变量只接受 auto、always 和 never", () => {
+  assert.equal(parseTuiScreenMode(undefined), "auto");
+  assert.equal(parseTuiScreenMode(""), "auto");
+  assert.equal(parseTuiScreenMode("always"), "always");
+  assert.equal(parseTuiScreenMode("never"), "never");
+  assert.throws(() => parseTuiScreenMode("maybe"), /invalid AGENT_TUI_SCREEN/);
+});
+
+test("TUI 独立屏幕：进入和退出成对恢复 Shell 画面，保留原有聊天和统计", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always", flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  assert.match(ui.text(), /\x1b\[\?1049h/);
+  ui.tui.beginTurn("请检查项目");
+  ui.tui.finishAssistant("检查完成");
+  ui.tui.setStats(session);
+  const screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /检查完成/);
+  assert.match(screen, /2 次请求/);
+  ui.tui.close();
+  assert.match(ui.text(), /\x1b\[\?1049l/);
+  assert.equal((ui.text().match(/\x1b\[\?1049h/g) ?? []).length, 1);
+  assert.equal((ui.text().match(/\x1b\[\?1049l/g) ?? []).length, 1);
+});
+
+test("TUI 独立屏幕：连续缩放只在最后尺寸重排一次，流式回复不重复写入历史", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always", flowInput: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查窗口缩放");
+  ui.tui.assistantDelta("一段输出，");
+  for (const columns of [85, 96, 107, 121]) {
+    ui.output.columns = columns;
+    ui.output.emit("resize");
+  }
+  ui.tui.assistantDelta("继续输出");
+  ui.tui.confirmAssistant("一段输出，继续输出");
+  assert.equal((ui.text().match(/\x1b\[2J/g) ?? []).length, 1, "缩放期间不应反复清屏");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.equal((ui.text().match(/\x1b\[2J/g) ?? []).length, 2, "稳定后只能清屏重建一次");
+  const screen = screenRows(ui, 35).join("\n");
+  assert.equal((screen.match(/一段输出，继续输出/g) ?? []).length, 1, "历史中只有一份确认回复");
+  assert.match(lastRow(ui.text(), 3), /^(?:─|-){120}$/, "分隔线使用最终宽度而非中间宽度");
+});
+
+test("TUI 独立屏幕：缩到不足最小尺寸不退回逐行输出，放大后恢复原有对话", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请处理窗口变化");
+  ui.output.columns = 20;
+  ui.output.rows = 8;
+  ui.output.emit("resize");
+  ui.tui.finishAssistant("最终回答");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.match(ui.text(), /窗口太小，放大后继续/);
+  ui.output.columns = 80;
+  ui.output.rows = 35;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  assert.match(screenRows(ui, 35).join("\n"), /最终回答/);
+  assert.doesNotMatch(screenRows(ui, 35).join("\n"), /窗口太小/);
+});
 
 test("TUI：已确认模型正文覆盖不一致的流式草稿，不向历史提交错误文本", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
