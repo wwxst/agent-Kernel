@@ -1075,6 +1075,23 @@ export class Tui {
     const raw = ended ? item.result! : "";
     // 真实参数和返回来自 ToolCall/ToolResult；不从编辑路径猜测 Diff 或图片预览。
     lines.push(this.makeLogLine(`      ${this.uiText("Call:", "调用：")} ${formatToolCall(item.call)}`, "muted"));
+    if (ended && failure === undefined && item.call.function.name === "edit") {
+      // edit 的 Tool result 只有字符数；展示真实请求片段，不冒充带行号的完整文件 Diff。
+      try {
+        const args: unknown = JSON.parse(item.call.function.arguments);
+        if (isRecord(args) && typeof args.old_string === "string" && typeof args.new_string === "string") {
+          lines.push(this.makeLogLine(`      ${this.uiText("Replacement fragments (not a full diff):", "替换片段（非完整 Diff）：")}`, "muted"));
+          for (const line of splitDisplayLines(args.old_string).slice(0, 8)) {
+            lines.push(this.makeLogLine(`      - ${clip(line, 180)}`, "error"));
+          }
+          for (const line of splitDisplayLines(args.new_string).slice(0, 8)) {
+            lines.push(this.makeLogLine(`      + ${clip(line, 180)}`, "success"));
+          }
+        }
+      } catch {
+        // 参数格式不合法时保持工具原始结果，不为了装饰界面猜测编辑内容。
+      }
+    }
     for (const line of splitDisplayLines(raw).slice(0, 20)) {
       lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${line}`, failure === undefined ? "muted" : "error"));
     }
@@ -2083,8 +2100,12 @@ export class Tui {
       const indent = line.text.match(/^\s*/)?.[0] ?? "";
       const continuation = line.kind === "tool" ? "    "
         : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
+      // 单行活动过长时保留末尾折叠箭头，不能因为裁剪而失去操作入口。
+      const arrow = (line.kind === "activity-error" || line.kind === "activity")
+        ? line.text.match(/  [▸▾>v]$/)?.[0] : undefined;
       const parts = line.kind === "activity-error" || line.kind === "activity"
-        ? [clip(line.text, width)]
+        ? [arrow === undefined ? clip(line.text, width)
+          : clip(line.text.slice(0, -arrow.length), width - displayWidth(arrow)) + arrow]
         : wrapLine(line.text, width, continuation);
       let offset = line.charOffset ?? 0;
       for (const [index, part] of parts.entries()) {
