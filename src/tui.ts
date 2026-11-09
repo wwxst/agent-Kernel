@@ -1366,6 +1366,9 @@ export class Tui {
 
   /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed, cancelled = false }: { failed: boolean; cancelled?: boolean }): void {
+    // 先收尾可见正文，再决定折叠；没有通过 CLI 显式标记时也识别末尾的正式回复。
+    if (this.layout) this.commitAssistant();
+    if (this.currentTurn?.endedAt === undefined) this.markTrailingReply();
     this.stats = session;
     this.runStartedAt = undefined;
     this.retryStatus = undefined;
@@ -1893,6 +1896,20 @@ export class Tui {
     });
   }
 
+  /** 没有工具跟在后面的末尾模型正文属于正式答复，不能被完成后的折叠隐藏。 */
+  private markTrailingReply(): void {
+    const turn = this.currentTurn;
+    if (turn === undefined) return;
+    let end = this.log.length - 1;
+    while (end >= 0 && this.log[end]?.text === "" && this.log[end]?.turn === turn) end--;
+    let start = end;
+    while (start >= 0 && this.log[start]?.tone === "assistant" && this.log[start]?.turn === turn) start--;
+    for (let index = start + 1; index <= end; index++) {
+      const line = this.log[index];
+      if (line !== undefined) line.kind = "final-reply";
+    }
+  }
+
   private commitAssistant(): void {
     if (!this.assistantOpen) return;
     this.pushBlank();
@@ -1984,7 +2001,10 @@ export class Tui {
     };
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
-        append(line, [this.turnStatusLine(line.turn)]);
+        // 展开中的标题下保留旧布局的节奏；折叠后只占一行。
+        append(line, line.turn.expanded
+          ? [this.turnStatusLine(line.turn), { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
+          : [this.turnStatusLine(line.turn)]);
         continue;
       }
       // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
