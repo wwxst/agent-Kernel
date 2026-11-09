@@ -40,6 +40,9 @@ const MAX_LOG_LINES = 2_000;
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
+/** 拖动窗口时先记录最终尺寸，安静 75ms 后再重排，避免每个中间宽度都清屏。 */
+const RESIZE_DEBOUNCE_MS = 75;
+
 const PLACEHOLDER = "Ask anything, or type /help...";
 const COMMAND_PROMPT = "> ";
 
@@ -166,6 +169,27 @@ const ASCII_GLYPHS: Glyphs = {
   boxVertical: "|",
 };
 
+/** auto 优先独立屏幕；always 强制独立屏幕；never 使用兼容行式聊天。 */
+export type TuiScreenMode = "auto" | "always" | "never";
+
+/** 环境变量的错误必须显式报告，不能悄悄回到另一种终端行为。 */
+export function parseTuiScreenMode(value: string | undefined): TuiScreenMode {
+  if (value === undefined || value === "" || value === "auto") return "auto";
+  if (value === "always" || value === "never") return value;
+  throw new Error(`invalid AGENT_TUI_SCREEN "${value}" (expected: auto, always, never)`);
+}
+
+/** 无法确认 Windows 传统控制台的备用屏幕能力时退化为行式聊天，避免污染滚动历史。 */
+function supportsAlternateScreen(): boolean {
+  if (process.platform !== "win32") return process.env.TERM !== undefined && process.env.TERM !== "dumb";
+  return Boolean(
+    process.env.WT_SESSION ||
+    process.env.TERM_PROGRAM === "vscode" ||
+    process.env.TERM_PROGRAM === "WezTerm" ||
+    process.env.ConEmuANSI === "ON",
+  );
+}
+
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
@@ -180,6 +204,8 @@ export interface TuiOptions {
   rows?: number;
   /** 测试可以显式强制开关固定布局；生产代码不传。 */
   layout?: boolean;
+  /** 终端屏幕策略：现代终端默认独立屏幕；老式终端自动采用行式输出。 */
+  screenMode?: TuiScreenMode;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
   /** Claude Code 风格：短对话时输入框跟随消息，长对话时自动停靠底部。 */
@@ -212,6 +238,13 @@ export class Tui {
   private layout: boolean;
 
   private readonly fixedLayoutAllowed: boolean;
+
+  /** 独立屏幕由 TUI 独占：缩放不会把中间帧写入 Shell 滚动历史。 */
+  private readonly ownedScreen: boolean;
+
+  private altScreenActive = false;
+
+  private resizeTimer?: NodeJS.Timeout;
 
   private readonly flowInput: boolean;
 
@@ -385,10 +418,14 @@ export class Tui {
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
     const initialRows = options.rows !== undefined && options.rows > 0 ? options.rows : 24;
-    this.fixedLayoutAllowed =
-      options.layout ??
-      (options.interactive && isTerminalOutput(options.output) && this.terminalControls);
-    this.layout = this.fixedLayoutAllowed && initialColumns >= MIN_COLUMNS && initialRows >= MIN_ROWS;
+    const screenMode = options.screenMode ?? "auto";
+    const canDraw = options.interactive && isTerminalOutput(options.output) && this.terminalControls;
+    this.ownedScreen = options.layout !== false && canDraw &&
+      (screenMode === "always" || (screenMode === "auto" && supportsAlternateScreen()));
+    // 生产环境不支持独立屏幕时直接使用行式模式；显式 layout 仅供旧版渲染回归测试。
+    this.fixedLayoutAllowed = options.layout ?? this.ownedScreen;
+    this.layout = this.fixedLayoutAllowed &&
+      (this.ownedScreen || (initialColumns >= MIN_COLUMNS && initialRows >= MIN_ROWS));
 
     this.columns = initialColumns;
     this.rows = initialRows;
@@ -626,6 +663,11 @@ export class Tui {
 
   /** 画第一帧。固定布局清屏但不切 alternate screen。 */
   start(): void {
+    if (this.ownedScreen) {
+      // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
+      this.output.write("\x1b[?1049h\x1b[?25l");
+      this.altScreenActive = true;
+    }
     if (this.layout) {
       this.output.write("\x1b[2J\x1b[H");
       this.renderNow();
@@ -651,6 +693,25 @@ export class Tui {
     const hadLayout = this.layout;
     this.columns = Math.max(1, columns);
     this.rows = Math.max(1, rows);
+    if (this.ownedScreen) {
+      // 只记录尺寸变化，流式文本和工具状态继续进内存日志，不向终端写中间宽度的帧。
+      if (this.resizeTimer !== undefined) clearTimeout(this.resizeTimer);
+      this.resizeTimer = setTimeout(() => {
+        this.resizeTimer = undefined;
+        if (this.closed) return;
+        // 个别终端在最后一个 resize 事件之后才稳定 columns/rows，最终绘制前再采样。
+        const stream = this.output as NodeJS.WriteStream;
+        if (typeof stream.columns === "number") this.columns = Math.max(1, stream.columns);
+        if (typeof stream.rows === "number") this.rows = Math.max(1, stream.rows);
+        this.inputDirty = true;
+        this.lastFrame = [];
+        this.lastTotalLines = 0;
+        this.output.write("\x1b[2J\x1b[H");
+        this.renderNow();
+      }, RESIZE_DEBOUNCE_MS);
+      this.resizeTimer.unref?.();
+      return;
+    }
     this.layout = this.columns >= MIN_COLUMNS && this.rows >= MIN_ROWS;
     if (!this.layout) {
       if (hadLayout) {
@@ -1392,6 +1453,10 @@ export class Tui {
       clearTimeout(this.renderTimer);
       this.renderTimer = undefined;
     }
+    if (this.resizeTimer !== undefined) {
+      clearTimeout(this.resizeTimer);
+      this.resizeTimer = undefined;
+    }
     this.renderScheduled = false;
 
     if (this.layout) {
@@ -1409,8 +1474,12 @@ export class Tui {
     this.setApprovalCursor(false);
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
-    if (this.layout) {
-      // 最后一行是缓冲行；从那里换行，shell 提示符会出现在 TUI 下方。
+    if (this.altScreenActive) {
+      // Leave 恢复终端原来的 Shell 画面；这里不额外向主屏幕输出聊天帧。
+      this.output.write("\x1b[?25h\x1b[?1049l");
+      this.altScreenActive = false;
+    } else if (this.layout) {
+      // 旧版内联固定布局仅用于显式兼容测试。
       this.output.write(`\x1b[${this.rows};1H`);
       this.output.write("\r\n");
     }
@@ -1443,7 +1512,15 @@ export class Tui {
 
   /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
   private renderNow(): void {
-    if (!this.layout || this.closed) return;
+    if (!this.layout || this.closed || (this.ownedScreen && this.resizeTimer !== undefined)) return;
+
+    if (this.ownedScreen && (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS)) {
+      // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
+      const message = this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续");
+      this.lastFrame = [];
+      this.output.write(`\x1b[?25l\x1b[2J\x1b[H${clip(message, Math.max(1, this.columns - 1))}`);
+      return;
+    }
 
     if (!this.cursorStyleChanged && prefersRichColor()) {
       // DECSCUSR 也覆盖窄窗口放大后首次进入布局；退出时恢复默认，不改持久配置。
@@ -1525,15 +1602,20 @@ export class Tui {
     }
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
+    let frame = "";
     for (let index = 0; index < rows.length; index++) {
       const forceInput = this.inputDirty && index === this.inputRow - 1;
       if (forceInput || this.lastFrame[index] !== rows[index]) {
-        this.writeRow(index + 1, rows[index]);
+        frame += `\x1b[${index + 1};1H\x1b[2K${rows[index]}`;
         this.lastFrame[index] = rows[index];
       }
     }
     this.inputDirty = false;
-    if (!this.approvalMenuActive) this.restoreInputCursor();
+    if (!this.approvalMenuActive) frame += this.inputCursorSequence();
+    // 同一帧通过一次输出写入，避免 Windows Terminal 在多次 write 之间露出半张画面。
+    if (frame !== "") this.output.write(this.ownedScreen
+      ? `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`
+      : frame);
   }
 
   /** 确保审批结束、取消或 resize 后不会把终端光标留在隐藏状态。 */
@@ -1622,13 +1704,13 @@ export class Tui {
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
-  private restoreInputCursor(): void {
+  private inputCursorSequence(): string {
     const plainPrompt = this.promptText === COMMAND_PROMPT
       ? `${this.glyphs.user} `
       : singleLine(this.promptText);
     const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
-    const column = 1 + displayWidth(plainPrompt) + displayWidth(before);
-    this.output.write(`\x1b[${this.inputRow};${column}H`);
+    const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
+    return `\x1b[${this.inputRow};${column}H`;
   }
 
   private scheduleInputChrome(): void {
@@ -1884,11 +1966,6 @@ export class Tui {
 
   private moveToInput(): void {
     this.output.write(`\x1b[${this.inputRow};1H`);
-  }
-
-  private writeRow(row: number, text: string): void {
-    const target = Math.min(Math.max(1, row), this.rows);
-    this.output.write(`\x1b[${target};1H\x1b[2K${text}`);
   }
 
   private formatStatus(): string {
