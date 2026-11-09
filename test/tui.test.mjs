@@ -27,6 +27,30 @@ function screenRows(ui, count = 40) {
 }
 
 /**
+ * 只理解基本 ANSI 光标、整屏清除与行清除；故意忽略同步更新协议 ?2026。
+ * 这不是通用终端模拟器，只还原当前 TUI 真实使用的屏幕更新指令。
+ */
+function screenWithoutSync(output) {
+  const rows = new Map();
+  let row = 1;
+  for (const token of output.match(/\x1b\[[0-9;? ]*[A-Za-z]|[^\x1b]+/g) ?? []) {
+    if (token.startsWith("\x1b[")) {
+      const cursor = token.match(/^\x1b\[(\d+);(\d+)H$/);
+      if (cursor) row = Number(cursor[1]);
+      else if (token === "\x1b[H") row = 1;
+      else if (token === "\x1b[2J") rows.clear();
+      else if (token === "\x1b[2K") rows.set(row, "");
+      continue;
+    }
+    for (const part of token.split(/(\r\n|\n|\r)/)) {
+      if (part === "\r\n" || part === "\n") row++;
+      else if (part !== "\r") rows.set(row, (rows.get(row) ?? "") + part);
+    }
+  }
+  return rows;
+}
+
+/**
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
@@ -168,6 +192,28 @@ test("TUI 独立屏幕：初次绘制和缩放清屏必须包含在同步帧内"
     "两次清屏各自与完整重绘同帧提交");
   const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
   assert.doesNotMatch(outside, /\x1b\[2J/, "不能在同步帧外清空可见屏幕");
+});
+
+test("TUI 独立屏幕：忽略同步协议的终端在多次缩放后仍显示单份正确画面", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.logLine("ORIGINAL_VISIBLE");
+  for (const columns of [110, 40, 95]) {
+    ui.output.columns = columns;
+    ui.output.emit("resize");
+    ui.tui.logLine(`NEW_AT_${columns}`);
+    await new Promise((resolve) => setTimeout(resolve, 95));
+  }
+  const lines = [...screenWithoutSync(ui.text()).values()];
+  const screen = lines.join("\n");
+  assert.match(lines[0], /agent-Kernel/);
+  assert.match(lines[1], /C:\\work\\repo/);
+  assert.match(lines[2], /^(?:─|-){94}$/, "分隔线长度对应最后一次 95 列窗口");
+  for (const text of ["ORIGINAL_VISIBLE", "NEW_AT_110", "NEW_AT_40", "NEW_AT_95"]) {
+    assert.equal((screen.match(new RegExp(text, "g")) ?? []).length, 1, `${text} 只在最终画面出现一次`);
+  }
 });
 
 test("TUI 独立屏幕：窄窗口提示清屏也不能漏出同步帧", async (t) => {
