@@ -1991,12 +1991,15 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 
 
   assert.equal(ui.tui.uiText("permission: workspace-write", "权限：workspace-write"), "权限：workspace-write");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /命令：\/exit/);
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /Ctrl\+E 任务 · Ctrl\+O 活动组 · Ctrl\+G 工具详情/,
+    "固定布局的帮助应让用户知道如何展开尾部折叠箭头");
   ui.tui.setPermission("read-only");
   assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
 
   ui.tui.beginTurn("Please explain the error in English");
   assert.equal(ui.tui.uiText("permission: read-only", "权限：read-only"), "permission: read-only");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /commands: \/exit/);
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /Ctrl\+E turns · Ctrl\+O activity groups · Ctrl\+G tool details/);
 });
 
 
