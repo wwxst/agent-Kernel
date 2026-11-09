@@ -1813,8 +1813,8 @@ export class Tui {
     const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT && this.log.length === 0;
     const text = placeholder ? ` ${this.uiText(PLACEHOLDER, "输入任务，或输入 /help...")}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
     const shown = takeByWidth(text, room);
-    return this.style.paint("muted", prompt) +
-      this.style.paint(placeholder ? "muted" : "plain", padRight(shown, room));
+    return this.style.inputHint(prompt) +
+      (placeholder ? this.style.inputHint(padRight(shown, room)) : padRight(shown, room));
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
@@ -2187,6 +2187,15 @@ class Style {
   paint(tone: Tone, text: string): string {
     if (!this.enabled || this.mono || text === "" || tone === "plain") return text;
     return `\x1b[${this.palette[tone]}m${text}\x1b[0m`;
+  }
+
+  /**
+   * 输入行的提示符与占位提示：mono 模式也保留灰色，维持「这里可以输入」的层次。
+   * 已经输入的正文仍用终端默认色，避免和占位提示混在一起。
+   */
+  inputHint(text: string): string {
+    if (!this.enabled || text === "") return text;
+    return `\x1b[${this.palette.muted}m${text}\x1b[0m`;
   }
 
   bold(text: string): string {
