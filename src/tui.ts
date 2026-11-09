@@ -2585,7 +2585,7 @@ function toolProgressOverview(call: ToolCall, result: string | undefined, langua
   const zh = language === "zh";
   let args: unknown;
   try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* 不猜测非法参数 */ }
-  const params = isRecord(args) ? args : {};
+  const params: Record<string, unknown> = isRecord(args) ? args : {};
   const name = call.function.name;
   const rawTarget = name === "shell" ? params.command
     : name === "grep" || name === "glob" ? params.pattern : params.path;
