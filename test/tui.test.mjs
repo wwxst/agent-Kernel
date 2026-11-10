@@ -2290,3 +2290,23 @@ test("TUI 主视图：历史轮次不能原地展开，失败行在折叠态仍�
   await tick();
   assert.match(ui.text(), /\x1b\[\?1049h/, "历史轮次改在 transcript 视图里展开");
 });
+
+test("TUI transcript：Ctrl+T 进入后必须真的画出历史内容", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("看看历史");
+  ui.tui.logLine("TRANSCRIPT_CONTENT");
+  await tick();
+
+  ui.input.emit("keypress", "", { name: "t", ctrl: true });
+  // 帧是节流渲染的，等一个周期。
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const text = ui.text();
+  const frame = text.slice(text.lastIndexOf("\x1b[?1049h"));
+  assert.match(frame, /TRANSCRIPT_CONTENT/, "transcript 不能是空白屏");
+
+  ui.input.emit("keypress", "", { name: "escape" });
+  await tick();
+  assert.match(ui.text(), /\x1b\[\?1049l/, "Esc 退出并还原主屏");
+});

@@ -1981,7 +1981,9 @@ export class Tui {
 
   /** transcript 视图：临时独占备用屏，整屏重绘，可滚动、可展开历史。 */
   private renderTranscript(): void {
-    if (!this.started || !this.closed) return;
+    // 这里是「已启动且还没关闭」才画；之前写成 !this.closed，等于只有关闭之后才画，
+    // 于是 Ctrl+T 进去只有一块空白屏——提示用户来看详情，结果什么都没有。
+    if (!this.started || this.closed) return;
 
     if (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS) {
       // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
