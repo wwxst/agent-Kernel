@@ -36,6 +36,22 @@ test("编辑提交事件：真实前后文件快照一致，显示观察者抛�
   });
 });
 
+test("write 文件差异：新建和覆盖均在原子提交后提供真实前后快照", async () => {
+  await withWorkspace(async (dir) => {
+    const events = [];
+    const workspace = new Workspace({ root: dir, onWriteCommitted: (file, before, after, created) => {
+      events.push({ file, before, after, created });
+    } });
+    assert.match(await workspace.write("generated.ts", "const value = 1;\n"), /wrote/);
+    assert.match(await workspace.write("generated.ts", "const value = 2;\n"), /wrote/);
+    assert.deepEqual(events, [
+      { file: "generated.ts", before: "", after: "const value = 1;\n", created: true },
+      { file: "generated.ts", before: "const value = 1;\n", after: "const value = 2;\n", created: false },
+    ]);
+    assert.equal(await readFile(path.join(dir, "generated.ts"), "utf8"), events[1].after);
+  });
+});
+
 test("Windows taskkill 成功：只清理一次，不错误杀掉直接子进程", async () => {
   const killer = new EventEmitter();
   let kills = 0;
