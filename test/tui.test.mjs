@@ -16,6 +16,11 @@ function tick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/** 完整 TUI 合并 75ms 内的 resize；这里验收稳定后的真实帧，而非中间尺寸。 */
+function settledResize() {
+  return new Promise((resolve) => setTimeout(resolve, 110));
+}
+
 /** 取最后一次完整写入的行；验收输入框实际内容，不能只检查旧帧里出现过某个词。 */
 function lastRow(text, row) {
   return [...text.matchAll(new RegExp(`\\x1b\\[${row};1H\\x1b\\[2K([^\\x1b]*)`, "g"))].at(-1)?.[1] ?? "";
@@ -892,7 +897,7 @@ test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", asy
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo " + "a".repeat(100) + "\necho TAIL" } });
   ui.output.columns = 34;
   ui.output.emit("resize");
-  await tick();
+  await settledResize();
   assert.match(ui.text(), /echo TAIL/);
   assert.match(lastRow(ui.text(), 5), /^Shell permission$/);
   assert.match(lastRow(ui.text(), 6), /^Workspace: C:\\work\\repo$/);
@@ -918,7 +923,7 @@ test("TUI：超过日志上限的审批保留命令开头，PageUp 可以查看"
   assert.equal(await pending, false);
 });
 
-test("TUI：缩至窄窗口后使用逐行输出，恢复宽度后重新显示历史和草稿", async (t) => {
+test("TUI：缩至窄窗口只显示提示，恢复宽度后重新显示历史和草稿", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -930,12 +935,13 @@ test("TUI：缩至窄窗口后使用逐行输出，恢复宽度后重新显示�
   const start = ui.text().length;
   ui.output.emit("resize");
   ui.tui.logLine("narrow output");
-  await tick();
-  assert.doesNotMatch(ui.text().slice(start), /\x1b\[\d+;\d+H/);
+  await settledResize();
+  assert.match(ui.text().slice(start), /Terminal too sma/);
+  assert.doesNotMatch(ui.text().slice(start), /\x1b\[\d+;\d+H/, "窄窗口不画超出可视范围的固定布局");
   ui.output.columns = 80;
   ui.output.rows = 24;
   ui.output.emit("resize");
-  await tick();
+  await settledResize();
   assert.match(lastRow(ui.text(), 4), /narrow output/);
   assert.match(lastRow(ui.text(), 19), /中文draft/);
   ui.input.write("\r");
@@ -965,7 +971,7 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   ui.tui.toolResult(call, "body");
   ui.output.columns = 80;
   ui.output.emit("resize");
-  await tick();
+  await settledResize();
   const screen = screenRows(ui).join("\n");
   assert.match(screen, /TASK_NARROW/);
   assert.match(screen, /Read file a\.txt\./, "事实性过程概述在活动摘要之前");
@@ -983,7 +989,7 @@ test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) =
   ui.output.rows = 24;
   ui.output.emit("resize");
   ui.input.write("VISIBLE_DRAFT");
-  await tick();
+  await settledResize();
   assert.match(lastRow(ui.text(), 19), /VISIBLE_DRAFT/);
   ui.input.write("\r");
   assert.equal(await pending, "VISIBLE_DRAFT");
@@ -1013,6 +1019,7 @@ test("TUI：审批从窄窗口开始，放大后仍可查阅超过日志上限�
   ui.output.columns = 80;
   ui.output.rows = 24;
   ui.output.emit("resize");
+  await settledResize();
   for (let index = 0; index < 210; index++) ui.input.emit("keypress", "", { name: "pageup" });
   await tick();
   assert.match(Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n"), /echo BEGIN/);
@@ -1032,17 +1039,25 @@ test("TUI：审批中的回车等控制字符逐字转义", async (t) => {
   assert.equal(await pending, false);
 });
 
-test("TUI：窄屏工具事件清除 Thinking 并与流式正文分行", async (t) => {
+test("TUI：窄屏隐藏中间 Thinking，放大后显示真实回复和工具结果", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, columns: 20, rows: 8 });
   t.after(() => ui.cleanup());
   ui.tui.start();
+  ui.tui.beginTurn("inspect");
   const call = { id: "r", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
   ui.tui.setThinking(true);
   ui.tui.toolCall(call);
-  assert.match(ui.text(), /Thinking\.\.\.\r\x1b\[2K/);
   ui.tui.assistantDelta("I will inspect");
   ui.tui.toolResult(call, "body");
-  assert.match(ui.text(), /model: I will inspect\n  ✓ read/);
+  assert.match(ui.text(), /Terminal too sma/);
+  ui.output.columns = 80;
+  ui.output.rows = 24;
+  ui.output.emit("resize");
+  await settledResize();
+  const screen = screenRows(ui).join("\n");
+  assert.match(screen, /I will inspect/);
+  assert.match(screen, /Read a\.txt/);
+  assert.doesNotMatch(screen, /Thinking\.\.\./);
 });
 
 test("TUI：交互终端 TERM=dumb 明确报错，不悄悄切换行式聊天", () => {
@@ -1543,7 +1558,7 @@ test("TUI：现代终端窄窗口启动后放大也设置块状光标，退出�
   assert.doesNotMatch(ui.text(), /\x1b\[2 q/);
   ui.output.columns = 80;
   ui.output.emit("resize");
-  await tick();
+  await settledResize();
   assert.match(ui.text(), /\x1b\[2 q/);
   ui.tui.close();
   assert.match(ui.text(), /\x1b\[0 q/);

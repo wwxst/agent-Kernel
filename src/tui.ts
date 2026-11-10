@@ -785,7 +785,8 @@ export class Tui {
           this.mouseInput?.push(Buffer.from(pending, "latin1"));
         }
       }, 80);
-      this.mousePartialTimer.unref();
+      // 孤立 Esc 仍是用户操作：计时器必须保持事件循环，不能使审批悬置。
+      // 对不完整鼠标序列，80ms 后放弃等待新字节。
     }
     return Buffer.from(output, "latin1");
   }
@@ -2132,7 +2133,7 @@ export class Tui {
 
   /**
    * 固定布局把 Markdown 代码块围栏（``` 或 ```lang）隐藏起来，块内正文缩进并用
-   * 一条竖线标出；行式兼容模式仍按原文输出（已经写出的字节无法撤回）。
+   * 一条竖线标出；非 TTY 文本输出仍按原文输出（已经写出的字节无法撤回）。
    * 只改展示：Transcript、模型请求和工具结果都不受影响。
    */
   private assistantDisplayLines(): string[] {
