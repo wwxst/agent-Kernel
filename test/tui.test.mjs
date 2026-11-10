@@ -2341,6 +2341,8 @@ test("P2 write：大文件快照不可用时明确降级且不伪造 Unified Dif
   ui.tui.toolResult(call, "wrote 17 chars to large.txt");
   let screen = screenRows(ui, 43).join("\n");
   assert.match(screen, /Diff 预览已降级|Diff preview unavailable/, "无需展开原始工具详情即可看到降级原因");
+  assert.match(screen, /2,000,000 (?:bytes|字节)/, "提示必须采用实际 Workspace 限制而不是近似 2 MiB");
+  assert.doesNotMatch(screen, /2 MiB/, "禁止把 2,000,000 字节误写为 2 MiB");
   assert.doesNotMatch(screen, /实际提交的 Unified Diff/, "快照不存在不能显示冒充完整 Diff 的标题");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
   screen = screenRows(ui, 43).join("\n");
