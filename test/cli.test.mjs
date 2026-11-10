@@ -111,7 +111,7 @@ test("TUI：.env.example 占位 Key 不能冒充已配置模型，也不能发�
     try {
       const run = await runCli(
         { API_KEY: "sk-your-key-here", OPENAI_API_KEY: "", BASE_URL: mock.url, MODEL: "mock-demo", WORKDIR: workdir },
-        { args: ["--tui", "hello"], input: "/exit\n" },
+        { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 1);
       assert.match(run.stderr, /Model not configured/);
@@ -130,7 +130,7 @@ test("TUI：显式外部 Mock 演示有标识，不能仅凭 mock-demo 模型名
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-demo", AGENT_DEMO: "1", WORKDIR: workdir },
-        { args: ["--tui", "hello"], input: "/exit\n" },
+        { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /mock-demo \[demo: external mock\]/);
@@ -148,7 +148,7 @@ test("TUI：SSE 无完成标记分类为模型回复中断，英文/中文各只
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-demo", WORKDIR: workdir },
-        { args: ["--tui"], input: "hello\n你好\n/exit\n" },
+        { args: ["--repl"], input: "hello\n你好\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.equal(mock.requests.length, 2);
@@ -173,7 +173,7 @@ test("TUI：401 明确提示鉴权失败，不误报为 SSE 中断", async () =>
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "hello"], input: "/exit\n" },
+        { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /Model authentication failed/);
@@ -529,7 +529,7 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
         {
-          args: ["--tui"],
+          args: ["--repl"],
           input:
             "first task\n/permission wide-open\n/permission read-only\n/help\n/reset\nsecond task\n/exit\n",
         },
@@ -575,7 +575,7 @@ test("TUI 过程概述：仅交互式 TUI 给模型可见进度指导，不新�
     const mock = await startMock([finalReply("finished")]);
     try {
       const env = { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir };
-      const tui = await runCli(env, { args: ["--tui", "inspect"], input: "/exit\n" });
+      const tui = await runCli(env, { args: ["--repl"], input: "inspect\n/exit\n" });
       assert.equal(tui.code, 0, tui.stderr);
       assert.equal(mock.requests.length, 1);
       assert.match(mock.requests[0].messages[0].content, /briefly tell the user what you are doing/);
@@ -599,7 +599,7 @@ test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "do", "the", "initial", "task"], input: "/exit\n" },
+        { args: ["--repl"], input: "do the initial task\n/exit\n" },
       );
 
       assert.equal(run.code, 0, run.stderr);
@@ -619,7 +619,7 @@ test("TUI：中文任务后 /permission 反馈显示中文，命令参数仍使�
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "请检查项目文件"], input: "/permission\n/permission read-only\n/permission\n/exit\n" },
+        { args: ["--repl"], input: "请检查项目文件\n/permission\n/permission read-only\n/permission\n/exit\n" },
       );
 
       assert.equal(run.code, 0, run.stderr);
@@ -643,7 +643,7 @@ test("TUI：最后一步模型已确认说明但工具未执行，保留正文�
     try {
       const run = await runCli(
         { BASE_URL: mock.url, WORKDIR: workdir, MAX_STEPS: "1" },
-        { args: ["--tui", "inspect"], input: "/exit\n" },
+        { args: ["--repl"], input: "inspect\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /model: CONFIRMED_STEP_EXPLANATION/);
@@ -667,7 +667,7 @@ test("TUI：有效响应随后触发 Token 预算，也保留已确认说明", a
     try {
       const run = await runCli(
         { BASE_URL: mock.url, WORKDIR: workdir, MAX_STEPS: "3", MAX_TOTAL_TOKENS: "2" },
-        { args: ["--tui", "inspect"], input: "/exit\n" },
+        { args: ["--repl"], input: "inspect\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /model: CONFIRMED_TOKEN_EXPLANATION/);
@@ -688,7 +688,7 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
     try {
       const run = await runCli(
         { BASE_URL: mock.url, WORKDIR: workdir },
-        { args: ["--tui", "inspect"], input: "/exit\n" },
+        { args: ["--repl"], input: "inspect\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /model: CONFIRMED_FIRST_STEP/);
@@ -713,7 +713,7 @@ test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录",
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "--permission", "workspace-write", "do it"], input: "/exit\n" },
+        { args: ["--repl", "--permission", "workspace-write"], input: "do it\n/exit\n" },
       );
 
       assert.equal(run.code, 0, run.stderr);
@@ -1083,7 +1083,7 @@ test("TUI：HTTP 429 真的重试一次并统一显示重连状态，累计真�
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "hello"], input: "/exit\n" },
+        { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.equal(mock.requests.length, 2, "第 2 次请求才真正成功");
@@ -1103,7 +1103,7 @@ test("TUI：HTTP 404 不触发自动重连，展示统一类别并保留实际 H
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "hello"], input: "/exit\n" },
+        { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.equal(mock.requests.length, 1);
