@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiScreenMode, uiLanguageFromLocale } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiColorMode, uiLanguageFromLocale } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
@@ -79,12 +79,12 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     interactive,
     columns,
     rows,
-    ...(autoLayout ? {} : { layout: tty }),
+    // 旧断言需要隔离测试内联固定布局；真正的完整 TUI 测试省略 layout 选项。
+    ...(autoLayout || screenMode === "always" ? {} : { layout: tty }),
     color,
     colorMode,
     flowInput,
     language,
-    screenMode,
     onPermissionChange,
   });
   if (previousTerm === undefined) delete process.env.TERM;
@@ -105,14 +105,6 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
 const session = { runs: 1, requests: 2, toolCalls: 2, usage };
-
-test("TUI 屏幕模式：环境变量只接受 auto、always 和 never", () => {
-  assert.equal(parseTuiScreenMode(undefined), "auto");
-  assert.equal(parseTuiScreenMode(""), "auto");
-  assert.equal(parseTuiScreenMode("always"), "always");
-  assert.equal(parseTuiScreenMode("never"), "never");
-  assert.throws(() => parseTuiScreenMode("maybe"), /invalid AGENT_TUI_SCREEN/);
-});
 
 test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色", async (t) => {
   assert.equal(parseTuiColorMode(undefined), "mono");
@@ -139,61 +131,26 @@ test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色",
   assert.match(full.text(), /\x1b\[(?:33|38;5;215)m/, "full 模式恢复强调色");
 });
 
-test("TUI auto：能力不明时启动只提示一次兼容模式，never 不重复提示", (t) => {
-  const fallback = makeTui({ interactive: true, tty: true, screenMode: "auto", autoLayout: true, term: "wyse60" });
-  const manual = makeTui({ interactive: true, tty: true, screenMode: "never", autoLayout: true, term: "wyse60" });
-  t.after(() => { fallback.cleanup(); manual.cleanup(); });
-  fallback.tui.start();
-  fallback.tui.logLine("more output");
-  assert.equal((fallback.text().match(/Terminal compatibility mode/g) ?? []).length, 1);
-  assert.doesNotMatch(fallback.text(), /\x1b\[\?1049h|\x1b\[2J/);
-  manual.tui.start();
-  assert.doesNotMatch(manual.text(), /Terminal compatibility mode/);
-});
-
-test("TUI auto：linux/vt100/ansi/unknown 不误入备用屏幕，always 允许显式覆盖", (t) => {
-  for (const term of ["linux", "vt100", "ansi", "unknown", "cons25", "dumb", "wyse60"]) {
-    const ui = makeTui({ interactive: true, tty: true, screenMode: "auto", term });
+test("TUI 唯一完整版：真实 TTY 无论未知 TERM 或 Windows 标记均进入备用屏幕", (t) => {
+  for (const term of ["xterm-256color", "wyse60", "vt100", "linux", "ansi", "unknown"]) {
+    const ui = makeTui({ interactive: true, tty: true, screenMode: "always", term });
     t.after(() => ui.cleanup());
     ui.tui.start();
-    assert.doesNotMatch(ui.text(), /\x1b\[\?1049h/, `TERM=${term} 不能默认进入备用屏幕`);
-  }
-  const forced = makeTui({ interactive: true, tty: true, screenMode: "always", term: "vt100" });
-  t.after(() => forced.cleanup());
-  forced.tui.start();
-  assert.match(forced.text(), /\x1b\[\?1049h/, "显式 always 可覆盖保守检测");
-});
-
-test("TUI auto：继承了现代终端标记但 TERM 未知时仍保守降级", (t) => {
-  const previous = process.env.WT_SESSION;
-  try {
-    process.env.WT_SESSION = "inherited-from-other-terminal";
-    const ui = makeTui({ interactive: true, tty: true, screenMode: "auto", term: "wyse60" });
-    t.after(() => ui.cleanup());
-    ui.tui.start();
-    assert.doesNotMatch(ui.text(), /\x1b\[\?1049h/);
-  } finally {
-    if (previous === undefined) delete process.env.WT_SESSION;
-    else process.env.WT_SESSION = previous;
+    assert.match(ui.text(), /\x1b\[\?1049h/, "完整 TUI 不应根据 TERM 名称暗中降级");
+    assert.doesNotMatch(ui.text(), /Terminal compatibility mode|line-by-line output/);
+    assert.match(ui.text(), /\x1b\[\?1000h\x1b\[\?1006h/, "完整版启用折叠鼠标事件");
   }
 });
 
-test("TUI auto：受支持终端才启用备用屏幕，never 始终关闭", (t) => {
-  const previous = process.env.WT_SESSION;
-  try {
-    if (process.platform === "win32") process.env.WT_SESSION = "test-windows-terminal";
-    const supported = makeTui({ interactive: true, tty: true, screenMode: "auto", term: "xterm-256color" });
-    t.after(() => supported.cleanup());
-    supported.tui.start();
-    assert.match(supported.text(), /\x1b\[\?1049h/);
-    const denied = makeTui({ interactive: true, tty: true, screenMode: "never" });
-    t.after(() => denied.cleanup());
-    denied.tui.start();
-    assert.doesNotMatch(denied.text(), /\x1b\[\?1049h/);
-  } finally {
-    if (previous === undefined) delete process.env.WT_SESSION;
-    else process.env.WT_SESSION = previous;
-  }
+test("TUI 唯一完整版：非 TTY 与 TERM=dumb 直接报错，不输出逐行 UI", (t) => {
+  assert.throws(() => makeTui({ interactive: true, tty: false, autoLayout: true }),
+    /full-screen TUI requires an interactive terminal/);
+  assert.throws(() => makeTui({ interactive: true, tty: true, autoLayout: true, term: "dumb" }),
+    /full-screen TUI requires an interactive terminal/);
+  const full = makeTui({ interactive: true, tty: true, screenMode: "always", term: "unknown" });
+  t.after(() => full.cleanup());
+  full.tui.start();
+  assert.match(full.text(), /\x1b\[\?1049h/);
 });
 
 test("TUI：start 前 close 不清屏、不移动光标、不进入备用屏幕，之后也不能启动", (t) => {
@@ -1090,27 +1047,6 @@ test("TUI：窄屏工具事件清除 Thinking 并与流式正文分行", async (
   ui.tui.assistantDelta("I will inspect");
   ui.tui.toolResult(call, "body");
   assert.match(ui.text(), /model: I will inspect\n  ✓ read/);
-});
-
-test("TUI：TERM=dumb 使用逐行输出，不发送固定布局光标命令", async (t) => {
-  const previous = process.env.TERM;
-  process.env.TERM = "dumb";
-  const input = new PassThrough();
-  const output = new PassThrough();
-  output.isTTY = true;
-  const chunks = [];
-  output.on("data", (chunk) => chunks.push(String(chunk)));
-  const tui = new Tui({ input, output, model: "mock", workspace: "repo", permission: "read-only",
-    controller: new AbortController(), interactive: true, columns: 80, rows: 24 });
-  if (previous === undefined) delete process.env.TERM;
-  else process.env.TERM = previous;
-  t.after(() => { tui.close(); input.end(); });
-  tui.start();
-  tui.logLine("hello");
-  const pending = tui.readLine();
-  input.write("/exit\n");
-  assert.equal(await pending, "/exit");
-  assert.doesNotMatch(chunks.join(""), /\x1b\[\d+;\d+H/);
 });
 
 test("TUI 固定布局：流式响应失败时撤销未确认正文，但保留失败状态", async (t) => {
