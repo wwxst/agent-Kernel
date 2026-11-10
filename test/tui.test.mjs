@@ -2248,6 +2248,26 @@ test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和�
   assert.match(screen, /│/, "应实际生成像素字符行，而非只画占位文本");
 });
 
+test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("创建文件");
+  const call = { id: "create-file-patch", type: "function", function: {
+    name: "write", arguments: '{"path":"new.ts","content":"one\\ntwo\\n"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "new.ts", "", "one\ntwo\n", true);
+  ui.tui.toolResult(call, "wrote 8 chars to new.ts");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 44).join("\n");
+  assert.match(screen, /--- \/dev\/null/);
+  assert.match(screen, /\+\+\+ b\/new\.ts/);
+  assert.match(screen, /@@ -0,0 \+1,2 @@/);
+  assert.match(screen, /\+one/);
+  assert.match(screen, /\+two/);
+});
+
 test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
