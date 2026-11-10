@@ -113,7 +113,7 @@ test("PNG tRNS：错误长度不能被解释成部分透明色", () => {
   const bytes = Buffer.concat([signature, chunk("IHDR", ihdr), chunk("tRNS", Buffer.from([0, 0])),
     chunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0]))), chunk("IEND", Buffer.alloc(0))]);
   const image = previewImage(bytes);
-  assert.deepEqual(image?.rows, [], "格式不完整时必须降级，不得生成错误像素");
+  assert.equal(image, undefined, "tRNS Chunk 格式无效时不得冒充经过校验的 PNG");
 });
 
 test("不支持的 PNG 像素深度明确降级为格式尺寸，不伪造文字缩略图", () => {
@@ -124,6 +124,60 @@ test("不支持的 PNG 像素深度明确降级为格式尺寸，不伪造文字
   const bytes = Buffer.concat([signature, chunk("IHDR", ihdr),
     chunk("IDAT", deflateSync(Buffer.from([0, 0, 0]))), chunk("IEND", Buffer.alloc(0))]);
   assert.deepEqual(previewImage(bytes), { format: "PNG", width: 1, height: 1, rows: [] });
+});
+
+test("PNG CRC：损坏的 IHDR、IDAT、辅助 Chunk 都不能进入像素或元数据预览", () => {
+  const valid = png();
+  for (const [label, offset] of [
+    ["IHDR", 20],
+    ["IDAT", 41],
+  ]) {
+    const bad = Buffer.from(valid);
+    bad[offset] ^= 1;
+    assert.equal(previewImage(bad), undefined, label + " 的 CRC 错误不能降级成已确认 PNG");
+  }
+  const withText = Buffer.concat([signature,
+    valid.subarray(8, 33), chunk("tEXt", Buffer.from("key\0value")),
+    valid.subarray(33)]);
+  assert.ok(previewImage(withText)?.rows.length > 0, "CRC 正确的辅助 Chunk 可以安全跳过");
+  const badText = Buffer.from(withText);
+  badText[33 + 8 + 1] ^= 1; // tEXt 数据损坏但旧 CRC 不变
+  assert.equal(previewImage(badText), undefined, "辅助 Chunk 的 CRC 也必须检查");
+});
+
+test("PNG Chunk：缺少 IEND、尾随字节、错误顺序和重复头均安全拒绝", () => {
+  const valid = png();
+  const hdr = valid.subarray(8, 33);
+  const imageData = valid.subarray(33, valid.length - 12);
+  const end = chunk("IEND", Buffer.alloc(0));
+  const invalid = [
+    valid.subarray(0, valid.length - 12),
+    Buffer.concat([valid, Buffer.from("junk")]),
+    Buffer.concat([signature, imageData, hdr, end]),
+    Buffer.concat([signature, hdr, hdr, imageData, end]),
+    Buffer.concat([signature, hdr, end, imageData]),
+    Buffer.concat([signature, hdr, chunk("CSTM", Buffer.from([1])), imageData, end]),
+    Buffer.concat([signature, hdr, imageData, chunk("tEXt", Buffer.from("key\0data")), imageData, end]),
+  ];
+  for (const bytes of invalid) {
+    assert.equal(previewImage(bytes), undefined, "无效的 PNG Chunk 不得显示图片或格式已确认");
+  }
+});
+
+test("PNG Chunk：连续 IDAT、有效辅助 Chunk 和受支持格式仍能真正解码", () => {
+  const valid = png();
+  const hdr = valid.subarray(8, 33);
+  const originalLength = valid.readUInt32BE(33);
+  const raw = valid.subarray(41, 41 + originalLength);
+  const middle = Math.max(1, Math.floor(raw.length / 2));
+  const split = Buffer.concat([signature, hdr,
+    chunk("tEXt", Buffer.from("description\0example")),
+    chunk("IDAT", raw.subarray(0, middle)), chunk("IDAT", raw.subarray(middle)),
+    chunk("IEND", Buffer.alloc(0))]);
+  const result = previewImage(split);
+  assert.equal(result?.format, "PNG");
+  assert.ok(result.rows.length > 0, "合法连续 IDAT 仍产生真实缩略图");
+  assert.equal(result.width, 16);
 });
 
 test("图片文件安全：无效或过大输入不会生成虚假预览", () => {
