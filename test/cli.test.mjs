@@ -731,13 +731,13 @@ test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录",
   });
 });
 
-test("TUI：非法屏幕模式必须明确报错，不静默改变显示策略", async () => {
+test("TUI：旧 AGENT_TUI_SCREEN 不再影响模式，非 TTY 仍能正常退出", async () => {
   const run = await runCli(
-    { AGENT_TUI_SCREEN: "unrecognized" },
+    { AGENT_TUI_SCREEN: "never" },
     { args: ["--tui"], input: "/exit\n" },
   );
-  assert.equal(run.code, 1);
-  assert.match(run.stderr, /invalid AGENT_TUI_SCREEN/);
+  assert.equal(run.code, 0, run.stderr);
+  assert.doesNotMatch(run.stdout + run.stderr, /Terminal compatibility mode|终端兼容模式/);
 });
 
 test("--tui 与 --repl 不能同时使用", async () => {

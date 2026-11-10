@@ -316,8 +316,8 @@ test("PTY：真实 TUI 接收鼠标字节不污染命令，进入和退出时恢
     const command = [process.execPath, cliPath, "--tui", "inspect"].map(shellQuote).join(" ");
     const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
       cwd: projectRoot,
-      env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", TERM: "xterm-256color",
-        BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+      env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", TERM: "vt100",
+        AGENT_TUI_SCREEN: "never", BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
       stdio: ["pipe", "pipe", "pipe"], detached: true,
     });
     let output = "";
