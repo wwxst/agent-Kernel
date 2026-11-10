@@ -1170,7 +1170,9 @@ export class Tui {
         ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`,
         result[0]!.tone));
     title.kind = failure?.kind ?? unfinished?.kind ?? "tool";
-    title.text += `  ${this.foldArrow(item.detailsExpanded === true)} ${this.foldHint(item.detailsExpanded === true, "Ctrl+G", group.language === "zh")}`;
+    // 工具行只留箭头：每个工具都挂一句「（Ctrl+G 展开）」会把详情区淹掉，
+    // 快捷键在 /help 和活动组那一行里已经有说明。
+    title.text += `  ${this.foldArrow(item.detailsExpanded === true)}`;
     title.tool = item;
     const lines: LogLine[] = [title];
     // 摘要始终保留成功/失败事实；详情层才展开原始结果。
@@ -2406,6 +2408,10 @@ export class Tui {
       if (line.turn !== undefined && !line.turn.expanded &&
           line.kind !== "final-reply" && line.kind !== "activity" && line.text !== "") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
+        // 活动组之间空一行：三段「列出 / 读取 / 编辑」连在一起会糊成一片。
+        if (logical.length > 0 && logical[logical.length - 1]!.text !== "") {
+          logical.push({ text: "", tone: "plain" });
+        }
         const group = line.activity;
         // 轮次折叠时活动组也只显示摘要与失败行：详情属于「下面几层」。
         const detailsOpen = group.expanded && line.turn?.expanded !== false;
