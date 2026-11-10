@@ -2438,6 +2438,32 @@ test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确�
   assert.match(screen, / last/, "Unified patch includes real context");
 });
 
+test("TUI Review Thread：write 工具展开显示真实内容，超限时明确截断", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 50, columns: 116 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查真实参数可追溯性");
+  const write = { id: "review-write", type: "function", function: {
+    name: "write", arguments: '{"path":"notes.txt","content":"actual saved text","options":{"mode":"new"}}',
+  } };
+  ui.tui.toolCall(write);
+  ui.tui.toolResult(write, "wrote 17 chars to notes.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  let screen = screenRows(ui, 50).join("\n");
+  assert.match(screen, /原始参数（摘录）|Arguments \(excerpt\)/);
+  assert.match(screen, /"content": "actual saved text"/);
+  assert.match(screen, /"mode": "new"/);
+  const large = { id: "review-large-write", type: "function", function: {
+    name: "write", arguments: JSON.stringify({ path: "large.txt", content: "x".repeat(15_000) }),
+  } };
+  ui.tui.toolCall(large);
+  ui.tui.toolResult(large, "wrote 15000 chars to large.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  screen = screenRows(ui, 50).join("\n");
+  assert.match(screen, /arguments truncated for display|参数过长，展示已截断/,
+    "防止超大输入刷屏，同时必须显式说明只是原始参数摘录");
+});
+
 test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件名", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 120 });
   t.after(() => ui.cleanup());
