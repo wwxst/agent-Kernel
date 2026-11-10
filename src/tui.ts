@@ -608,8 +608,13 @@ export class Tui {
           line.kind === "turn-status" && line.turn !== undefined ? [line.turn] : []);
         if (turns.length > 0) {
           this.turnFocus = this.turnFocus <= 0 ? turns.length - 1 : this.turnFocus - 1;
+          const target = turns[this.turnFocus]!;
+          if (this.isPrintedTurn(target)) {
+            this.historyHint();
+            return;
+          }
           this.captureHistoryAnchor();
-          turns[this.turnFocus]!.expanded = !turns[this.turnFocus]!.expanded;
+          target.expanded = !target.expanded;
           this.renderNow();
         }
         return;
@@ -623,8 +628,12 @@ export class Tui {
             : []);
         if (tools.length > 0) {
           this.toolFocus = this.toolFocus <= 0 ? tools.length - 1 : this.toolFocus - 1;
-          this.captureHistoryAnchor();
           const chosen = tools[this.toolFocus]!;
+          if (chosen.turn !== undefined && this.isPrintedTurn(chosen.turn)) {
+            this.historyHint();
+            return;
+          }
+          this.captureHistoryAnchor();
           chosen.tool.detailsExpanded = !chosen.tool.detailsExpanded;
           chosen.group.expanded = true;
           if (chosen.turn !== undefined) chosen.turn.expanded = true;
@@ -641,10 +650,13 @@ export class Tui {
         if (groups.length > 0) {
           this.activityFocus = this.activityFocus <= 0 ? groups.length - 1 : this.activityFocus - 1;
           const group = groups[this.activityFocus]!;
-          // 浏览旧记录时展开详情也不能把视口跳到最新消息。
+          const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
+          if (owner !== undefined && this.isPrintedTurn(owner)) {
+            this.historyHint();
+            return;
+          }
           this.captureHistoryAnchor();
           group.expanded = !group.expanded;
-          const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
           if (owner !== undefined) owner.expanded = true;
           this.renderNow();
         }
@@ -1912,6 +1924,19 @@ export class Tui {
     else this.renderInline();
   }
 
+  /** 结束后内容已提交进 scrollback，改不了：历史详情只能去 transcript 视图看。 */
+  private isPrintedTurn(turn: TurnActivity): boolean {
+    return turn.endedAt !== undefined;
+  }
+
+  /** 历史详情改不了，就明确告诉用户去哪里看，而不是按了没反应。 */
+  private historyHint(): void {
+    this.logLine(this.uiText(
+      "This turn is already printed; press Ctrl+T to read its details in the transcript",
+      "这一轮已经打印完成，详情请按 Ctrl+T 在 transcript 视图里查看",
+    ), "muted");
+  }
+
   /** 进/出 transcript 视图。备用屏只用在这里：临时独占整屏回看历史，退出原样还回主屏。 */
   private toggleTranscript(): void {
     if (this.closed) return;
@@ -2369,11 +2394,15 @@ export class Tui {
           : [status]);
         continue;
       }
-      // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
+      // 完成后只隐藏「详情层」，不折叠用户提问、最终正式回复、活动摘要和轮次外的错误。
+      // 摘要里有「哪个命令失败、为什么失败」，是安全信息，折叠时也必须看得见。
       // 空白行不算「过程」：它是上下行之间的呼吸，折叠时也要留着（连续空行稍后压成一行）。
-      if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply" && line.text !== "") continue;
+      if (line.turn !== undefined && !line.turn.expanded &&
+          line.kind !== "final-reply" && line.kind !== "activity" && line.text !== "") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
+        // 轮次折叠时活动组也只显示摘要与失败行：详情属于「下面几层」。
+        const detailsOpen = group.expanded && line.turn?.expanded !== false;
         const children: LogLine[] = [];
         // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
         if (group.fallbackOverview && group.tools.length > 0) {
@@ -2385,10 +2414,10 @@ export class Tui {
             tone: "info" });
         }
         children.push(
-          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)} ${this.foldHint(group.expanded, "Ctrl+O", group.language === "zh")}`),
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(detailsOpen)} ${this.foldHint(detailsOpen, "Ctrl+O", group.language === "zh")}`),
             tone: "muted", kind: "activity", activity: group },
         );
-        if (group.expanded) {
+        if (detailsOpen) {
           for (const item of group.tools) children.push(...this.activityToolLines(item, group));
         } else {
           // 收起后异常仍然可见；不能把拒绝、错误藏进成功摘要。
