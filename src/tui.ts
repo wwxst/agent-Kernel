@@ -751,6 +751,70 @@ export class Tui {
     if (this.controller.signal.aborted) this.rl.close();
   }
 
+  /**
+   * 从原始终端字节中取走 SGR 鼠标报告，不能让 readline 将“0;20;9M”加入任务。
+   * 用 latin1 往返只为保留 UTF-8 原始字节；残缺鼠标序列只暂存有限字符。
+   */
+  private filterMouseInput(chunk: Buffer): Buffer {
+    const data = this.mousePartial + chunk.toString("latin1");
+    this.mousePartial = "";
+    let output = "";
+    let cursor = 0;
+    const pattern = /^\x1b\[<(\d{1,3});(\d{1,4});(\d{1,4})([Mm])/;
+    while (cursor < data.length) {
+      const at = data.indexOf("\x1b[<", cursor);
+      if (at < 0) {
+        output += data.slice(cursor);
+        break;
+      }
+      output += data.slice(cursor, at);
+      const remainder = data.slice(at);
+      const match = pattern.exec(remainder);
+      if (match !== null) {
+        this.handleMouse(Number(match[1]), Number(match[2]), Number(match[3]), match[4] === "M");
+        cursor = at + match[0].length;
+        continue;
+      }
+      if (remainder.length <= 40 && /^\x1b\[<[0-9;]*$/.test(remainder)) {
+        this.mousePartial = remainder;
+        break;
+      }
+      output += "\x1b";
+      cursor = at + 1;
+    }
+    return Buffer.from(output, "latin1");
+  }
+
+  private handleMouse(button: number, column: number, row: number, pressed: boolean): void {
+    if (!this.layout || !this.started || this.closed) return;
+    if ((button & 64) !== 0 && pressed) {
+      if ((button & 3) === 0 || (button & 3) === 1) {
+        this.scrollWheel((button & 3) === 0 ? "up" : "down");
+      }
+      return;
+    }
+    // 鼠标绝不替代权限审批：审批时只有菜单键盘能够作出授权决定。
+    if (this.approvalMenuActive || !pressed || button !== 0) return;
+    const target = this.mouseTargets.get(row);
+    if (target === undefined || target.column !== column) return;
+    this.captureHistoryAnchor();
+    if (target.tool !== undefined) {
+      target.tool.detailsExpanded = !target.tool.detailsExpanded;
+    } else if (target.group !== undefined) {
+      target.group.expanded = !target.group.expanded;
+    } else if (target.turn !== undefined) {
+      target.turn.expanded = !target.turn.expanded;
+    }
+    this.renderNow();
+  }
+
+  /** 鼠标滚轮一次翻三行，比 PageUp 整屏跳转更容易定位上下文。 */
+  private scrollWheel(direction: "up" | "down"): void {
+    this.scrollOffset = Math.max(0, Math.min(this.maxScroll(),
+      this.scrollOffset + (direction === "up" ? 3 : -3)));
+    this.redrawKeepingInput();
+  }
+
   /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
   private slashMenuCandidates(line: string): readonly (typeof SLASH_COMMANDS)[number][] {
     if (!/^\/[^\s]*$/.test(line)) return [];
@@ -1097,6 +1161,7 @@ export class Tui {
         result[0]!.tone));
     title.kind = failure?.kind ?? unfinished?.kind ?? "tool";
     title.text += `  ${this.foldArrow(item.detailsExpanded === true)}`;
+    title.tool = item;
     const lines: LogLine[] = [title];
     // 摘要始终保留成功/失败事实；详情层才展开原始结果。
     if (ended && failure === undefined && result[1] !== undefined) {
@@ -1852,9 +1917,16 @@ export class Tui {
     const end = total - this.scrollOffset;
     const start = Math.max(0, end - this.logHeight);
     const visible = lines.slice(start, end);
+    this.mouseTargets.clear();
     // v0.3：对话从视口顶部开始，内容不足一屏时空白留在下方，不再贴底。
     for (let index = 0; index < this.logHeight; index++) {
       const line = visible[index];
+      if (line !== undefined && /  [▸▾>v]$/.test(line.text) &&
+          (line.kind === "turn-status" || line.kind === "activity" || line.tool !== undefined)) {
+        this.mouseTargets.set(LOG_TOP + index - 1, {
+          column: displayWidth(line.text), turn: line.turn, group: line.activity, tool: line.tool,
+        });
+      }
       rows[LOG_TOP - 1 + index] = line === undefined
         ? ""
         : this.paintLogLine(line, width);
@@ -2106,9 +2178,10 @@ export class Tui {
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
         // 展开中的标题下保留旧布局的节奏；折叠后只占一行。
+        const status = { ...this.turnStatusLine(line.turn), kind: "turn-status" as const, turn: line.turn };
         append(line, line.turn.expanded
-          ? [this.turnStatusLine(line.turn), { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
-          : [this.turnStatusLine(line.turn)]);
+          ? [status, { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
+          : [status]);
         continue;
       }
       // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
@@ -2127,7 +2200,7 @@ export class Tui {
         }
         children.push(
           { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)}`),
-            tone: "muted", kind: "activity" },
+            tone: "muted", kind: "activity", activity: group },
         );
         if (group.expanded) {
           for (const item of group.tools) children.push(...this.activityToolLines(item, group));
@@ -2193,16 +2266,17 @@ export class Tui {
       const continuation = line.kind === "tool" ? "    "
         : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
       // 单行活动过长时保留末尾折叠箭头，不能因为裁剪而失去操作入口。
-      const arrow = (line.kind === "activity-error" || line.kind === "activity")
-        ? line.text.match(/  [▸▾>v]$/)?.[0] : undefined;
-      const parts = line.kind === "activity-error" || line.kind === "activity"
+      const foldable = line.kind === "turn-status" || line.kind === "activity" || line.tool !== undefined;
+      const arrow = foldable ? line.text.match(/  [▸▾>v]$/)?.[0] : undefined;
+      const parts = foldable
         ? [arrow === undefined ? clip(line.text, width)
           : clip(line.text.slice(0, -arrow.length), width - displayWidth(arrow)) + arrow]
         : wrapLine(line.text, width, continuation);
       let offset = line.charOffset ?? 0;
       for (const [index, part] of parts.entries()) {
         wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
-          kind: index === 0 ? line.kind : undefined, id: line.id, charOffset: offset });
+          kind: index === 0 ? line.kind : undefined, id: line.id, charOffset: offset,
+          turn: line.turn, activity: line.activity, tool: index === 0 ? line.tool : undefined });
         // 续行的缩进只是展示前缀，不属于源文本。偏移因此不会随终端宽度漂移。
         const prefix = index === 0 ? "" : takeByWidth(continuation, Math.max(0, width - 2));
         offset += Math.max(0, part.length - prefix.length);
