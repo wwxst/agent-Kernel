@@ -25,6 +25,8 @@ function samplePixel(row: Buffer, x: number, colorType: number, palette: Buffer,
   let alpha = 255;
   if (colorType === 0) {
     luminance = row[x] ?? 0;
+    // PNG tRNS 的 8-bit 灰度透明色仍以 2 字节大端样本保存。
+    if (transparency.length === 2 && transparency.readUInt16BE(0) === luminance) alpha = 0;
   } else if (colorType === 4) {
     luminance = row[x * 2] ?? 0;
     alpha = row[x * 2 + 1] ?? 255;
@@ -37,7 +39,15 @@ function samplePixel(row: Buffer, x: number, colorType: number, palette: Buffer,
   } else {
     const at = x * (colorType === 2 ? 3 : 4);
     luminance = Math.round(((row[at] ?? 0) * 299 + (row[at + 1] ?? 0) * 587 + (row[at + 2] ?? 0) * 114) / 1000);
-    if (colorType === 6) alpha = row[at + 3] ?? 255;
+    if (colorType === 6) {
+      alpha = row[at + 3] ?? 255;
+    } else if (colorType === 2 && transparency.length === 6 &&
+      transparency.readUInt16BE(0) === row[at] &&
+      transparency.readUInt16BE(2) === row[at + 1] &&
+      transparency.readUInt16BE(4) === row[at + 2]) {
+      // RGB tRNS 必须三通道全部匹配；任意一通道不同都应保持不透明。
+      alpha = 0;
+    }
   }
   // 终端缩略图是文字亮度：把透明像素合成到白色背景，而不是当作不透明黑色。
   return Math.round((luminance * alpha + 255 * (255 - alpha)) / 255);
@@ -79,6 +89,8 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
     } else if (kind === "PLTE") {
       palette = value;
     } else if (kind === "tRNS") {
+      // 不猜测格式错误的透明色；调色板 PNG 的 tRNS 仍是逐索引 alpha。
+      if ((colorType === 0 && length !== 2) || (colorType === 2 && length !== 6)) return undefined;
       transparency = value;
     } else if (kind === "IDAT") {
       chunks.push(value);
