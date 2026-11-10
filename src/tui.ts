@@ -14,7 +14,7 @@
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
 import type { Interface, Key } from "node:readline";
-import { Writable } from "node:stream";
+import { Transform, Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
@@ -97,6 +97,7 @@ interface LogLine {
   /** 工具标题与暂态等待各有局部样式，不把整行都染成状态色。 */
   kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error" | "final-reply";
   activity?: ActivityGroup;
+  tool?: ActivityTool;
   turn?: TurnActivity;
   /** 仅展示层使用；持久日志项的身份不随换行和活动展开改变。 */
   id?: number;
@@ -327,6 +328,14 @@ export class Tui {
 
   private readonly rl: Interface;
 
+  /** Alternate-screen SGR 鼠标事件在进入 readline 前必须过滤，否则坐标会污染输入框。 */
+  private readonly mouseInput?: Transform;
+
+  private mousePartial = "";
+
+  /** 每次渲染确定屏幕箭头所在的实际单元格，鼠标点击不猜测文本位置。 */
+  private readonly mouseTargets = new Map<number, { column: number; turn?: TurnActivity; group?: ActivityGroup; tool?: ActivityTool }>();
+
   private permissionMode: PermissionMode;
 
   private stats?: AgentSessionStats;
@@ -521,7 +530,21 @@ export class Tui {
         callback();
       },
     });
-    this.rl = createInterface({ input: options.input, output: editorOutput, terminal: options.interactive });
+    // readline 不认识 SGR 1006：若让鼠标报告直接进入它，坐标会被插入用户的任务输入。
+    // 只为拥有备用屏幕的终端启用输入过滤，其余终端保持原始输入流不变。
+    if (this.ownedScreen) {
+      this.mouseInput = new Transform({
+        transform: (chunk: Buffer, _encoding, done) => {
+          try { done(null, this.filterMouseInput(chunk)); } catch (error) { done(error as Error); }
+        },
+      });
+      const input = this.mouseInput as Transform & { isTTY?: boolean; setRawMode?: (enabled: boolean) => void };
+      const source = options.input as NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (enabled: boolean) => void };
+      input.isTTY = source.isTTY;
+      if (typeof source.setRawMode === "function") input.setRawMode = (enabled) => source.setRawMode!(enabled);
+      options.input.pipe(this.mouseInput);
+    }
+    this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     this.rl.on("line", (line) => {
@@ -705,8 +728,11 @@ export class Tui {
       this.scheduleInputChrome();
     };
     if (options.interactive) {
-      emitKeypressEvents(options.input);
-      (options.input as NodeJS.EventEmitter).on("keypress", this.onKeypress);
+      const editorInput = this.mouseInput ?? options.input;
+      emitKeypressEvents(editorInput);
+      (editorInput as NodeJS.EventEmitter).on("keypress", this.onKeypress);
+      // 测试夹具会显式向原始 input 发送键事件；生产运行只由 editorInput 解析字节。
+      if (this.mouseInput) (options.input as NodeJS.EventEmitter).on("keypress", this.onKeypress);
     }
 
     this.onResize = () => {
@@ -769,7 +795,8 @@ export class Tui {
     this.started = true;
     if (this.ownedScreen) {
       // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
-      this.output.write("\x1b[?1049h\x1b[?25l");
+      // X10 按钮/滚轮事件 + SGR 1006 坐标；不启用运动跟踪，避免高频重绘。
+      this.output.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
       this.altScreenActive = true;
     }
     if (this.layout) {
@@ -1694,6 +1721,10 @@ export class Tui {
     this.historyTrimmedNotice = false;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
+    this.mouseInput?.removeListener("keypress", this.onKeypress);
+    this.input.unpipe?.(this.mouseInput);
+    this.mouseInput?.destroy();
+    this.mouseTargets.clear();
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
     if (!this.started) return;
@@ -1702,7 +1733,7 @@ export class Tui {
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.altScreenActive) {
       // Leave 恢复终端原来的 Shell 画面；这里不额外向主屏幕输出聊天帧。
-      this.output.write("\x1b[?25h\x1b[?1049l");
+      this.output.write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l");
       this.altScreenActive = false;
     } else if (this.layout) {
       // 旧版内联固定布局仅用于显式兼容测试。
