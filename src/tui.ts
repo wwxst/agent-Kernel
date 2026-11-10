@@ -2894,13 +2894,39 @@ function unifiedDiffBody(prefix: " " | "-" | "+", line: { text: string; ended: b
 }
 /** 一次 edit 只有一个连续替换区域，因此可用共同前后缀准确产生完整统一补丁。 */
 function committedEditDiff(path: string, before: string, after: string, created = false): { lines: string[]; truncated: boolean } {
+  // 限制单个可视化的分配成本；不读取额外磁盘数据，也不保留原始文件全文。
+  const MAX_SOURCE_CHARS = 320_000;
+  const MAX_PREVIEW_LINES = 800;
+  const MAX_PREVIEW_LINE_CHARS = 240;
+  if (before.length > MAX_SOURCE_CHARS || after.length > MAX_SOURCE_CHARS) {
+    return { lines: ["File change exceeds the bounded terminal diff preview limit."], truncated: true };
+  }
   const oldLines = unifiedFileLines(before);
   const newLines = unifiedFileLines(after);
+  if (before === after && !created) return { lines: [], truncated: false };
   const name = oneLine(path);
+  const lines: string[] = [];
+  let truncated = false;
+  const append = (line: string): void => {
+    if (line.length > MAX_PREVIEW_LINE_CHARS) {
+      line = `${line.slice(0, MAX_PREVIEW_LINE_CHARS)} … [line truncated]`;
+      truncated = true;
+    }
+    if (lines.length < MAX_PREVIEW_LINES) lines.push(line);
+    else truncated = true;
+  };
+  const appendRange = (prefix: " " | "-" | "+", body: Array<{ text: string; ended: boolean }>): void => {
+    for (const line of body) {
+      if (lines.length >= MAX_PREVIEW_LINES) { truncated = true; break; }
+      for (const item of unifiedDiffBody(prefix, line)) append(item);
+    }
+  };
   if (created) {
-    const lines = ["--- /dev/null", `+++ b/${name}`, `@@ -0,0 +1,${newLines.length} @@`,
-      ...newLines.flatMap((line) => unifiedDiffBody("+", line))];
-    return { lines: lines.slice(0, 800), truncated: lines.length > 800 };
+    append("--- /dev/null");
+    append(`+++ b/${name}`);
+    append(`@@ -0,0 +1,${newLines.length} @@`);
+    appendRange("+", newLines);
+    return { lines, truncated };
   }
   const same = (a: { text: string; ended: boolean }, b: { text: string; ended: boolean }): boolean =>
     a.text === b.text && a.ended === b.ended;
@@ -2909,23 +2935,19 @@ function committedEditDiff(path: string, before: string, after: string, created 
   let suffix = 0;
   while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix &&
     same(oldLines[oldLines.length - suffix - 1]!, newLines[newLines.length - suffix - 1]!)) suffix++;
-  if (prefix === oldLines.length && prefix === newLines.length && before === after) return { lines: [], truncated: false };
   const leading = Math.min(prefix, 3);
   const trailing = Math.min(suffix, 3);
   const oldStart = prefix - leading;
   const oldEnd = oldLines.length - suffix + trailing;
   const newEnd = newLines.length - suffix + trailing;
-  const lines: string[] = [
-    `--- a/${name}`,
-    `+++ b/${name}`,
-    `@@ -${oldStart + 1},${oldEnd - oldStart} +${oldStart + 1},${newEnd - oldStart} @@`,
-    ...oldLines.slice(oldStart, prefix).flatMap((line) => unifiedDiffBody(" ", line)),
-    ...oldLines.slice(prefix, oldLines.length - suffix).flatMap((line) => unifiedDiffBody("-", line)),
-    ...newLines.slice(prefix, newLines.length - suffix).flatMap((line) => unifiedDiffBody("+", line)),
-    ...newLines.slice(newLines.length - suffix, newEnd).flatMap((line) => unifiedDiffBody(" ", line)),
-  ];
-  const limit = 800;
-  return { lines: lines.slice(0, limit), truncated: lines.length > limit };
+  append(`--- a/${name}`);
+  append(`+++ b/${name}`);
+  append(`@@ -${oldStart + 1},${oldEnd - oldStart} +${oldStart + 1},${newEnd - oldStart} @@`);
+  appendRange(" ", oldLines.slice(oldStart, prefix));
+  appendRange("-", oldLines.slice(prefix, oldLines.length - suffix));
+  appendRange("+", newLines.slice(prefix, newLines.length - suffix));
+  appendRange(" ", newLines.slice(newLines.length - suffix, newEnd));
+  return { lines, truncated };
 }
 
 /** 真实操作类型映射为自然语言；仅根据工具名及结果分类，不虚构工作进展。 */
