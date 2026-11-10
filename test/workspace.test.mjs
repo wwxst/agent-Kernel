@@ -12,6 +12,30 @@ import { test } from "node:test";
 import { fillBuffer, terminateTree, Workspace } from "../src/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
 
+test("编辑提交事件：真实前后文件快照一致，显示观察者抛错不改变工具结果", async () => {
+  await withWorkspace(async (dir) => {
+    const file = path.join(dir, "edit.txt");
+    await writeFile(file, "top\\nold\\nbottom\\n".replaceAll("\\\\n", "\\n"));
+    const snapshots = [];
+    const workspace = new Workspace({ root: dir,
+      onEditCommitted: (requested, before, after) => snapshots.push({ requested, before, after }),
+    });
+    const result = await workspace.edit("edit.txt", "old", "new");
+    assert.match(result, /edited edit\.txt/);
+    assert.deepEqual(snapshots, [{
+      requested: "edit.txt", before: "top\\nold\\nbottom\\n".replaceAll("\\\\n", "\\n"),
+      after: "top\\nnew\\nbottom\\n".replaceAll("\\\\n", "\\n"),
+    }]);
+    assert.equal(await readFile(file, "utf8"), snapshots[0].after);
+    const brokenViewer = new Workspace({ root: dir,
+      onEditCommitted: () => { throw new Error("viewer failed"); },
+    });
+    assert.match(await brokenViewer.edit("edit.txt", "new", "done"), /edited edit\.txt/);
+    assert.equal(brokenViewer.editObserverFailureCount, 1);
+    assert.equal(await readFile(file, "utf8"), "top\\ndone\\nbottom\\n".replaceAll("\\\\n", "\\n"));
+  });
+});
+
 test("Windows taskkill 成功：只清理一次，不错误杀掉直接子进程", async () => {
   const killer = new EventEmitter();
   let kills = 0;
