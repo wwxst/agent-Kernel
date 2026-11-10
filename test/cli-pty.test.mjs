@@ -316,8 +316,8 @@ test("PTY：真实 TUI 接收鼠标字节不污染命令，进入和退出时恢
     const command = [process.execPath, cliPath, "--tui", "inspect"].map(shellQuote).join(" ");
     const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
       cwd: projectRoot,
-      env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", TERM: "xterm-256color",
-        BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+      env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", TERM: "wyse60",
+        AGENT_TUI_SCREEN: "never", BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
       stdio: ["pipe", "pipe", "pipe"], detached: true,
     });
     let output = "";
@@ -343,11 +343,15 @@ test("PTY：真实 TUI 接收鼠标字节不污染命令，进入和退出时恢
       const code = await completion;
       assert.equal(timedOut, false, "TUI did not exit: " + output + error);
       assert.equal(code, 0, error);
-      assert.match(output, /\x1b\[\?1049h/);
+      assert.match(output, /\x1b\[\?1049h/, "即使 TERM 未知也必须打开完整备用屏幕");
+      assert.doesNotMatch(output, /Terminal compatibility mode|line-by-line output/,
+        "已取消的 AGENT_TUI_SCREEN=never 也不能让 TUI 变回兼容界面");
       assert.match(output, /\x1b\[\?1000h\x1b\[\?1006h/);
       assert.match(output, /\x1b\[\?1006l\x1b\[\?1000l/);
       assert.match(output, /\x1b\[\?1049l/);
       assert.equal(mock.requests.length, 1, "鼠标坐标不能被当成用户的新任务");
+      assert.match(mock.requests[0].messages[0].content, /briefly tell the user what you are doing/,
+        "完整 TUI 保留专用过程概述提示，而非普通 CLI 的系统提示");
     } finally {
       child.stdin.destroy();
       await mock.close();
