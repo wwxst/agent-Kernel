@@ -147,6 +147,11 @@ export class Workspace {
 
   private readonly onEditCommitted?: (requested: string, before: string, after: string) => void;
 
+  /** 展示观察者故障计数；失败已记录但不改变成功提交的工具语义。 */
+  private editObserverFailures = 0;
+
+  get editObserverFailureCount(): number { return this.editObserverFailures; }
+
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
 
@@ -300,7 +305,7 @@ export class Workspace {
 
     await this.replaceFileAtomically(file, requested, after, original);
     // 只有写入成功提交才通知 UI。观察者错误不回滚真实 edit，也不改工具返回。
-    try { this.onEditCommitted?.(requested, before, after); } catch { /* 边缘显示故障不影响工具完成 */ }
+    try { this.onEditCommitted?.(requested, before, after); } catch { this.editObserverFailures++; }
     // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
     return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
