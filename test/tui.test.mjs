@@ -2273,5 +2273,5 @@ test("TUI 主视图：历史轮次不能原地展开，失败行在折叠态仍�
   // 主视图只追加：已打印的历史不能原地展开，提示去 transcript 视图。
   ui.input.emit("keypress", "", { name: "e", ctrl: true });
   await tick();
-  assert.match(ui.text(), /Ctrl\+T/, "历史轮次提示去 transcript 查看");
+  assert.match(ui.text(), /\x1b\[\?1049h/, "历史轮次改在 transcript 视图里展开");
 });

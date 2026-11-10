@@ -1931,10 +1931,10 @@ export class Tui {
 
   /** 历史详情改不了，就明确告诉用户去哪里看，而不是按了没反应。 */
   private historyHint(): void {
-    this.logLine(this.uiText(
-      "This turn is already printed; press Ctrl+T to read its details in the transcript",
-      "这一轮已经打印完成，详情请按 Ctrl+T 在 transcript 视图里查看",
-    ), "muted");
+    // 已打印的内容改不了，「原地展开」在追加式视图里做不到——Claude Code 和 Codex
+    // 的解法都是切到一个临时全屏视图去展开。所以这里直接把 transcript 打开，
+    // 而不是只打一行提示（那样按了像没反应，还容易刷屏）。
+    if (!this.transcriptMode) this.toggleTranscript();
   }
 
   /** 进/出 transcript 视图。备用屏只用在这里：临时独占整屏回看历史，退出原样还回主屏。 */
