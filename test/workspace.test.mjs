@@ -52,6 +52,46 @@ test("write 文件差异：新建和覆盖均在原子提交后提供真实前�
   });
 });
 
+test("P2 write：超过 2 MiB 的新文件和旧文件覆盖成功后均报告 Diff 快照不可用", async () => {
+  await withWorkspace(async (root) => {
+    const events = [];
+    const workspace = new Workspace({ root, onWriteCommitted: (file, before, after, created) => {
+      events.push({ file, before, after, created });
+    } });
+    const hugeContent = "Q".repeat(2_000_001);
+    const created = await workspace.write("huge-new.txt", hugeContent);
+    assert.match(created, /wrote 2000001 chars/);
+    assert.equal((await stat(path.join(root, "huge-new.txt"))).size, hugeContent.length);
+    assert.deepEqual(events[0], { file: "huge-new.txt", before: "", after: undefined, created: true },
+      "新写入文件过大时不得静默丢掉通知，也不得伪造 Diff 快照");
+
+    await writeFile(path.join(root, "huge-old.txt"), hugeContent);
+    const replaced = await workspace.write("huge-old.txt", "short text\n");
+    assert.match(replaced, /wrote 11 chars/);
+    assert.equal(await readFile(path.join(root, "huge-old.txt"), "utf8"), "short text\n");
+    assert.deepEqual(events[1], {
+      file: "huge-old.txt", before: undefined, after: "short text\n", created: false,
+    }, "旧内容太大时也应报告 Diff 快照不可用，但写入成功状态不变");
+    assert.equal((await readdir(root)).some((name) => name.startsWith(".agent-kernel-")), false,
+      "大文件 write 仍应清理原子写入临时文件");
+  });
+});
+
+test("P2 read：图片观察者存在时，32 KiB 截断尾注和 8 KiB 输出警告必须保留", async () => {
+  await withWorkspace(async (root) => {
+    const bytes = Buffer.alloc(32_769, 65);
+    await writeFile(path.join(root, "large.png"), bytes);
+    const observed = [];
+    const workspace = new Workspace({ root, onImageRead: (name, data) => observed.push({ name, data }) });
+    const result = await workspace.read("large.png");
+    assert.match(result, /\[truncated \d+ chars\]/, "输出上限警告不能被图片预览回调覆盖");
+    assert.match(result, /… \[stopped after 32768 bytes\]$/, "必须保留 read 本身的字节上限尾注");
+    assert.equal(observed.length, 1);
+    assert.equal(observed[0].name, "large.png");
+    assert.equal(observed[0].data.length, bytes.length, "只有已获准的 read 可给 UI 有界图片字节");
+  });
+});
+
 test("Windows taskkill 成功：只清理一次，不错误杀掉直接子进程", async () => {
   const killer = new EventEmitter();
   let kills = 0;
