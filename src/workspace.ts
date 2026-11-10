@@ -118,7 +118,7 @@ export interface WorkspaceOptions {
   /** 仅供 TUI 展示真实已提交的编辑差异；观察者故障不能改变文件提交结果。 */
   onEditCommitted?: (requested: string, before: string, after: string) => void;
   /** 成功新建或覆盖 UTF-8 文件后，把真实文件差异交给可选展示观察者。 */
-  onWriteCommitted?: (requested: string, before: string, after: string, created: boolean) => void;
+  onWriteCommitted?: (requested: string, before: string | undefined, after: string | undefined, created: boolean) => void;
   /** 真实 read 获准后才向 TUI 提供有界图片字节；不影响模型收到的文本结果。 */
   onImageRead?: (requested: string, bytes: Buffer) => void;
 }
@@ -151,7 +151,7 @@ export class Workspace {
 
   private readonly onEditCommitted?: (requested: string, before: string, after: string) => void;
 
-  private readonly onWriteCommitted?: (requested: string, before: string, after: string, created: boolean) => void;
+  private readonly onWriteCommitted?: (requested: string, before: string | undefined, after: string | undefined, created: boolean) => void;
 
   private readonly onImageRead?: (requested: string, bytes: Buffer) => void;
 
@@ -286,9 +286,10 @@ export class Workspace {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     // 回显真实的旧文本必须发生在原子覆盖之前；读取不到时只放弃 UI Diff，不阻止 write。
+    const withinPreviewLimit = Buffer.byteLength(content) <= MAX_EDIT_FILE_BYTES;
     let beforeForDiff: string | undefined = original === undefined ? "" : undefined;
     if (this.onWriteCommitted !== undefined && original !== undefined &&
-        original.size <= MAX_EDIT_FILE_BYTES && Buffer.byteLength(content) <= MAX_EDIT_FILE_BYTES) {
+        original.size <= MAX_EDIT_FILE_BYTES && withinPreviewLimit) {
       try {
         const handle = await open(target, constants.O_RDONLY | NO_FOLLOW_FILE);
         try {
@@ -299,10 +300,12 @@ export class Workspace {
       } catch { this.editObserverFailures++; }
     }
     await this.replaceFileAtomically(target, requested, content, original);
-    if (beforeForDiff !== undefined && Buffer.byteLength(content) <= MAX_EDIT_FILE_BYTES) {
-      try { this.onWriteCommitted?.(requested, beforeForDiff, content, original === undefined); }
-      catch { this.editObserverFailures++; }
-    }
+    // 写入成功时始终通知展示层；快照过大/不可读取用 undefined 明确标示，
+    // 而不是静默丢失 Diff。此回调仍为旁路，不影响真实写入结果。
+    try {
+      this.onWriteCommitted?.(requested, beforeForDiff,
+        withinPreviewLimit ? content : undefined, original === undefined);
+    } catch { this.editObserverFailures++; }
     return `wrote ${content.length} chars to ${requested}`;
   }
 
