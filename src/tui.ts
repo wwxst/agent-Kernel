@@ -2370,7 +2370,8 @@ export class Tui {
         continue;
       }
       // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
-      if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply") continue;
+      // 空白行不算「过程」：它是上下行之间的呼吸，折叠时也要留着（连续空行稍后压成一行）。
+      if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply" && line.text !== "") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
         const children: LogLine[] = [];
@@ -2443,6 +2444,13 @@ export class Tui {
       if (status !== "") logical.push({ text: this.withMood(
         `  ${this.glyphs.running} ${status}`, this.contentWidth()), tone: "muted" });
     }
+
+    // 折叠后可能留下连续空行（被隐藏的过程行原本夹在中间）：压成一行，只去掉开头那一行。
+    // 结尾的空行要留着——它就是回复和状态行之间的呼吸。
+    for (let index = logical.length - 1; index > 0; index--) {
+      if (logical[index]!.text === "" && logical[index - 1]!.text === "") logical.splice(index, 1);
+    }
+    while (logical.length > 0 && logical[0]!.text === "") logical.shift();
 
     // 运行中的状态行只作为活动区尾部显示，不进日志；本轮结束时它才落账（排在回复之后）。
     if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {

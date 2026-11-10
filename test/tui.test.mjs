@@ -2354,3 +2354,22 @@ test("TUI 主视图：状态行排在回复之后，轮次之间留空行", asyn
   assert.ok(secondTask > statusRow, "新任务在状态行之后");
   assert.ok(next.slice(statusRow + 1, secondTask).some((line) => line.trim() === ""), "轮次之间留一行空白");
 });
+
+test("TUI 主视图：折叠态下用户消息、回复、状态行之间各留一行空白", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
+  ui.tui.beginTurn("问题");
+  ui.tui.confirmAssistant("回复", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+  const rows = screenRows(ui, 20);
+  const userRow = rows.findIndex((line) => /[>❯] 问题/.test(line));
+  const replyRow = rows.findIndex((line) => /\* 回复/.test(line));
+  const statusRow = rows.findIndex((line) => /已完成|Completed/.test(line));
+  assert.ok(userRow >= 0 && replyRow > userRow && statusRow > replyRow, "三行顺序正确");
+  // 折叠态下空白行不能被当成「过程」隐藏，否则三行又挤在一起。
+  assert.equal(rows[replyRow - 1].trim(), "", "用户消息与回复之间留一行空白");
+  assert.equal(rows[statusRow - 1].trim(), "", "回复与状态行之间留一行空白");
+});
