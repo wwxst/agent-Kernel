@@ -72,6 +72,50 @@ test("PNG 透明像素：RGBA 透明黑色与真实不透明黑色的终端亮�
   assert.equal(image.rows[0][1], " ", "真实黑色像素应保持暗色");
 });
 
+test("PNG tRNS：8-bit 灰度透明色以大端 16-bit 样本匹配，其他灰度不透明", () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 0; // 灰度
+  const transparentGray = Buffer.from([0, 0]); // 8-bit 灰度值 0 的 tRNS
+  const scanline = Buffer.from([0, 0, 1]); // 左透明黑色，右不透明近黑色
+  const bytes = Buffer.concat([signature, chunk("IHDR", ihdr), chunk("tRNS", transparentGray),
+    chunk("IDAT", deflateSync(scanline)), chunk("IEND", Buffer.alloc(0))]);
+  const image = previewImage(bytes);
+  assert.equal(image?.format, "PNG");
+  assert.equal(image.rows[0][0], "@", "tRNS 灰度透明像素应合成白色背景");
+  assert.equal(image.rows[0][1], " ", "未匹配 tRNS 的灰度必须保持不透明");
+});
+
+test("PNG tRNS：RGB 必须三通道全匹配才透明", () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2; // RGB
+  const transparentBlack = Buffer.alloc(6); // R=G=B=0，每个样本 16-bit big-endian
+  const scanline = Buffer.from([0, 0, 0, 0, 0, 0, 1]);
+  const bytes = Buffer.concat([signature, chunk("IHDR", ihdr), chunk("tRNS", transparentBlack),
+    chunk("IDAT", deflateSync(scanline)), chunk("IEND", Buffer.alloc(0))]);
+  const image = previewImage(bytes);
+  assert.equal(image?.format, "PNG");
+  assert.equal(image.rows[0][0], "@", "完全匹配 tRNS 的黑色应透明");
+  assert.equal(image.rows[0][1], " ", "只改变蓝通道不能误判为透明");
+});
+
+test("PNG tRNS：错误长度不能被解释成部分透明色", () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const bytes = Buffer.concat([signature, chunk("IHDR", ihdr), chunk("tRNS", Buffer.from([0, 0])),
+    chunk("IDAT", deflateSync(Buffer.from([0, 0, 0, 0]))), chunk("IEND", Buffer.alloc(0))]);
+  const image = previewImage(bytes);
+  assert.deepEqual(image?.rows, [], "格式不完整时必须降级，不得生成错误像素");
+});
+
 test("不支持的 PNG 像素深度明确降级为格式尺寸，不伪造文字缩略图", () => {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(1, 0);
