@@ -2115,7 +2115,7 @@ test("TUI Slash：中文菜单跟随最近任务语言；输入参数/审批时�
   ui.output.rows = 13;
   ui.output.columns = 40;
   ui.output.emit("resize");
-  await tick();
+  await settledResize();
   rows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
   assert.ok(rows.some((row) => row.includes("/help")), "小终端仍保留至少一项菜单");
   ui.input.write("permission read-only");
