@@ -1229,7 +1229,9 @@ export class Tui {
       }
     }
     if (!ended && !group.finished && !this.approvalBlocksRunning) {
-      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${item.call.function.name === "shell"
+      const awaitingResult = item.call.function.name === "shell" ||
+        item.call.function.name === "write" || item.call.function.name === "edit";
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${awaitingResult
         ? this.uiText("Awaiting tool result...", "等待工具结果...")
         : this.uiText("Running...", "运行中...")}`, "muted"));
     }
@@ -1556,8 +1558,9 @@ export class Tui {
     this.approvalBlocksRunning = false;
     this.setThinking(false);
     this.finishAssistant();
-    // Shell 工具通知先于权限检查；在授权结果到来前只能表示请求处理中。
-    this.setActivityState(call.function.name === "shell" ? "working" : moodStateForTool(call));
+    // Shell/write/edit 的 ToolCall 发生在 Permission 检查之前，不能提前声称执行中。
+    const needsPermission = ["shell", "write", "edit"].includes(call.function.name);
+    this.setActivityState(needsPermission ? "working" : moodStateForTool(call));
     const turn = this.currentTurn;
     if (this.fixedLayoutAllowed && turn !== undefined && turn.endedAt === undefined) {
       let group = this.activeActivity;
@@ -2866,6 +2869,10 @@ function toolProgressOverview(
   if (result === undefined && name === "shell") {
     return zh ? `正在处理命令请求${target}。` : `Handling command request${target}.`;
   }
+  if (result === undefined && (name === "write" || name === "edit")) {
+    return zh ? `正在处理文件${name === "write" ? "写入" : "编辑"}请求${target}。`
+      : `Handling file ${name === "write" ? "write" : "edit"} request${target}.`;
+  }
   const status = result === undefined ? "running" : (() => {
     const summary = summarizeToolResult(call, result);
     return summary.denied ? "denied" : summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
@@ -3038,7 +3045,9 @@ function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSumm
     edit: [zh ? "已修改代码" : "Edited code", zh ? "正在修改代码" : "Editing code", zh ? "尝试修改代码" : "Tried editing code"],
     shell: [zh ? "已执行命令" : "Ran commands", zh ? "正在执行命令" : "Running commands", zh ? "尝试执行命令" : "Tried running commands"],
   };
-  if (call.function.name === "shell" && pending) return zh ? "正在处理命令请求" : "Handling command request";
+  if (pending && call.function.name === "shell") return zh ? "正在处理命令请求" : "Handling command request";
+  if (pending && call.function.name === "write") return zh ? "正在处理文件写入请求" : "Handling file write request";
+  if (pending && call.function.name === "edit") return zh ? "正在处理文件编辑请求" : "Handling file edit request";
   if (call.function.name === "shell" && summary?.denied) return zh ? "请求了命令授权" : "Requested command approval";
   if (call.function.name === "shell" && summary?.notRun) return zh ? "命令未执行" : "Command not run";
   const words = labels[call.function.name] ?? [zh ? "已使用工具" : "Used tools",
