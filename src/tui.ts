@@ -194,16 +194,6 @@ const ASCII_GLYPHS: Glyphs = {
   boxVertical: "|",
 };
 
-/** auto 优先独立屏幕；always 强制独立屏幕；never 使用兼容行式聊天。 */
-export type TuiScreenMode = "auto" | "always" | "never";
-
-/** 环境变量的错误必须显式报告，不能悄悄回到另一种终端行为。 */
-export function parseTuiScreenMode(value: string | undefined): TuiScreenMode {
-  if (value === undefined || value === "" || value === "auto") return "auto";
-  if (value === "always" || value === "never") return value;
-  throw new Error(`invalid AGENT_TUI_SCREEN "${value}" (expected: auto, always, never)`);
-}
-
 /** mono 只保留用户消息任务条的颜色；full 恢复状态与提示的层次配色。 */
 export type TuiColorMode = "full" | "mono";
 
@@ -212,25 +202,6 @@ export function parseTuiColorMode(value: string | undefined): TuiColorMode {
   if (value === undefined || value === "" || value === "mono") return "mono";
   if (value === "full") return value;
   throw new Error(`invalid AGENT_TUI_COLOR "${value}" (expected: full, mono)`);
-}
-
-/**
- * auto 只在有明确终端能力线索时启用备用屏幕；TERM=linux/vt100/ansi 等
- * 虽然不是 dumb，也不能据此推断实现了 1049 备用屏幕。
- * Windows 只信任现代宿主标记，不把通用的 TERM=xterm 当作能力证明。
- */
-function supportsAlternateScreen(): boolean {
-  const term = process.env.TERM?.toLowerCase() ?? "";
-  const knownTerm = /^(?:xterm|screen|tmux|rxvt|alacritty|wezterm|kitty|foot|st|konsole)(?:-|$)/.test(term);
-  // TERM 显式声明了未知或低能力终端时，即使 WT_SESSION 被上层 Shell 继承也不要猜测。
-  if (term !== "" && !knownTerm) return false;
-  if (process.platform === "win32") {
-    return Boolean(process.env.WT_SESSION?.trim()) ||
-      process.env.TERM_PROGRAM === "vscode" ||
-      process.env.TERM_PROGRAM === "WezTerm";
-  }
-  // 普通 POSIX TTY 的 TERM 未知时宁可行式输出；always 是用户明确的强制覆盖。
-  return knownTerm;
 }
 
 export interface TuiOptions {
@@ -247,8 +218,6 @@ export interface TuiOptions {
   rows?: number;
   /** 测试可以显式强制开关固定布局；生产代码不传。 */
   layout?: boolean;
-  /** auto 只为识别出的兼容终端启用备用屏幕；能力不明时退回行式输出。 */
-  screenMode?: TuiScreenMode;
   /** 层次配色开关；默认 mono，只保留用户消息任务条的颜色，其余文字纯白。 */
   colorMode?: TuiColorMode;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
@@ -287,7 +256,6 @@ export class Tui {
   private readonly fixedLayoutAllowed: boolean;
 
   /** auto 无法确认备用屏幕能力时，只在启动时向交互式终端告知一次。 */
-  private readonly compatibilityNotice: boolean;
 
   /** 独立屏幕由 TUI 独占：缩放不会把中间帧写入 Shell 滚动历史。 */
   private readonly ownedScreen: boolean;
@@ -501,13 +469,14 @@ export class Tui {
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
     const initialRows = options.rows !== undefined && options.rows > 0 ? options.rows : 24;
-    const screenMode = options.screenMode ?? "auto";
     const tty = options.interactive && isTerminalOutput(options.output);
-    const canDraw = tty && this.terminalControls;
-    this.ownedScreen = options.layout !== false && canDraw &&
-      (screenMode === "always" || (screenMode === "auto" && supportsAlternateScreen()));
-    this.compatibilityNotice = screenMode === "auto" && tty && !this.ownedScreen && options.layout === undefined;
-    // 生产环境不支持独立屏幕时直接使用行式模式；显式 layout 仅供旧版渲染回归测试。
+    // --tui 只有完整备用屏幕界面。测试可显式设置 layout 来复用旧渲染单元，
+    // 生产 CLI 不提供该开关，也不会因 TERM/宿主名称未知自动降级。
+    if (options.layout === undefined && (!tty || !this.terminalControls)) {
+      throw new Error("full-screen TUI requires an interactive terminal with ANSI support " +
+        "(stdin/stdout TTY and TERM != dumb); try Windows Terminal or VS Code Terminal");
+    }
+    this.ownedScreen = options.layout === undefined && tty && this.terminalControls;
     this.fixedLayoutAllowed = options.layout ?? this.ownedScreen;
     this.layout = this.fixedLayoutAllowed &&
       (this.ownedScreen || (initialColumns >= MIN_COLUMNS && initialRows >= MIN_ROWS));
@@ -917,9 +886,6 @@ export class Tui {
     }
 
     if (this.interactive) {
-      if (this.compatibilityNotice) {
-        this.logLine("Terminal compatibility mode / 终端兼容模式：line-by-line output");
-      }
       this.logLine(this.formatStatus());
       this.logLine(this.formatStatsLine());
       return;
