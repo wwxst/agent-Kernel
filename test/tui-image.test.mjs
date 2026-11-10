@@ -56,6 +56,32 @@ test("真实 PNG：解码像素和尺寸，缩略图左暗右亮且字符数受�
   assert.ok(preview.rows.every((line) => line.length <= 32));
 });
 
+test("PNG 透明像素：RGBA 透明黑色与真实不透明黑色的终端亮度不同", () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(2, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6; // RGBA
+  const scanline = Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 255]);
+  const bytes = Buffer.concat([signature, chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(scanline)), chunk("IEND", Buffer.alloc(0))]);
+  const image = previewImage(bytes);
+  assert.equal(image?.format, "PNG");
+  assert.equal(image?.rows[0].length, 2);
+  assert.equal(image.rows[0][0], "@", "透明像素合成到白色背景");
+  assert.equal(image.rows[0][1], " ", "真实黑色像素应保持暗色");
+});
+
+test("不支持的 PNG 像素深度明确降级为格式尺寸，不伪造文字缩略图", () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 16; // valid 16-bit grayscale PNG，当前终端灰度转换不解码
+  const bytes = Buffer.concat([signature, chunk("IHDR", ihdr),
+    chunk("IDAT", deflateSync(Buffer.from([0, 0, 0]))), chunk("IEND", Buffer.alloc(0))]);
+  assert.deepEqual(previewImage(bytes), { format: "PNG", width: 1, height: 1, rows: [] });
+});
+
 test("图片文件安全：无效或过大输入不会生成虚假预览", () => {
   assert.equal(previewImage(Buffer.from("not an image")), undefined);
   assert.equal(previewImage(png().subarray(0, 32)), undefined);
