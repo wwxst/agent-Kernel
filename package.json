@@ -6,7 +6,7 @@
   "description": "Minimal coding agent: one Agent class, one tool loop",
   "scripts": {
     "agent": "node --env-file-if-exists=.env src/cli.ts",
-    "test": "node --test test/agent.test.mjs test/tool-registry.test.mjs test/permission.test.mjs test/approval.test.mjs test/llm.test.mjs test/workspace.test.mjs test/cli.test.mjs test/cli-pty.test.mjs test/tui.test.mjs test/selfcheck.test.mjs test/eval.test.mjs test/eval-diagnostics.test.mjs",
+    "test": "node --test test/agent.test.mjs test/tool-registry.test.mjs test/permission.test.mjs test/approval.test.mjs test/llm.test.mjs test/workspace.test.mjs test/cli.test.mjs test/cli-pty.test.mjs test/tui.test.mjs test/tui-image.test.mjs test/selfcheck.test.mjs test/eval.test.mjs test/eval-diagnostics.test.mjs",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "eval": "node --env-file-if-exists=.env eval/run.mjs",
