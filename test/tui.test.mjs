@@ -440,21 +440,27 @@ test("TUI 鼠标：点击真实箭头展开任务、活动与工具，不污染 
   ui.tui.toolResult(call, "sample content");
   ui.tui.confirmAssistant("finished", true);
   ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  async function clickArrow(match) {
+  async function clickArrow(match, splitBeforeMousePrefix = false) {
     const rows = screenRows(ui, 45);
     const row = rows.findIndex((line) => match.test(line) && /[▸▾>]$/.test(line.trim()));
     assert.ok(row >= 0, "目标箭头应绘制在真实屏幕上");
     const line = rows[row].trimEnd();
     const col = Array.from(line).length;
-    ui.input.write(`\x1b[<0;${col};${row + 1}M`);
+    if (splitBeforeMousePrefix) {
+      ui.input.write("\x1b");
+      ui.input.write("[");
+      ui.input.write(`<0;${col};${row + 1}M`);
+    } else {
+      ui.input.write(`\x1b[<0;${col};${row + 1}M`);
+    }
     await tick();
   }
   await clickArrow(/Completed/);
   assert.match(screenRows(ui, 45).join("\n"), /Read files|Read file/);
   await clickArrow(/(?:↳|\+) Read files/);
   assert.match(screenRows(ui, 45).join("\n"), /Read package\.json/);
-  await clickArrow(/Read package\.json/);
-  assert.match(screenRows(ui, 45).join("\n"), /Arguments \(excerpt\):/);
+  await clickArrow(/Read package\.json/, true);
+  assert.match(screenRows(ui, 45).join("\n"), /Arguments \(excerpt\):/, "ESC / [ / < 分包也必须命中箭头");
   const pending = ui.tui.readLine();
   ui.input.write("next task\r");
   assert.equal(await pending, "next task", "SGR 坐标不得混入后续用户输入");
