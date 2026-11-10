@@ -1224,8 +1224,8 @@ export class Tui {
       }
       if (item.diff?.unavailable === true) {
         lines.push(this.makeLogLine(`      ${this.uiText(
-          "Diff preview unavailable: write succeeded, but the file exceeds 2 MiB or the previous snapshot could not be read.",
-          "Diff 预览已降级：写入成功，但文件超过 2 MiB 或旧内容无法安全读取。")}`, "warning"));
+          "Diff preview unavailable: write succeeded, but the file exceeds 2,000,000 bytes or the previous snapshot could not be read.",
+          "Diff 预览已降级：写入成功，但文件超过 2,000,000 字节 或旧内容无法安全读取。")}`, "warning"));
       }
     }
     if (!ended && !group.finished && !this.approvalBlocksRunning) {
