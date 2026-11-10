@@ -2519,6 +2519,49 @@ test("TUI 过程概述：同组多工具只更新一个当前操作说明，缩�
   assert.match(screen, /已读取文件、已搜索代码/);
 });
 
+test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中、修改中", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 116 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查是否允许写文件");
+  for (const [name, id, status] of [
+    ["write", "not-approved-write", "文件写入"],
+    ["edit", "not-approved-edit", "文件编辑"],
+  ]) {
+    ui.tui.beginModelRequest();
+    const call = { id, type: "function", function: {
+      name, arguments: '{"path":"blocked.txt","content":"not applied","old_string":"old","new_string":"new"}',
+    } };
+    ui.tui.toolCall(call);
+    const before = screenRows(ui, 48).join("\n");
+    assert.match(before, new RegExp("正在处理" + status + "请求 blocked.txt。"));
+    assert.match(before, /等待工具结果/);
+    assert.doesNotMatch(before, /正在写入文件 blocked\.txt。|正在修改文件 blocked\.txt。|写入中\.\.\.|修改中\.\.\.|Running\.\.\./,
+      "ToolCall 先于 Permission，不能说文件已开始写入或编辑");
+    ui.tui.toolResult(call, 'ERROR: permission denied: tool not allowed');
+    const denied = screenRows(ui, 48).join("\n");
+    assert.doesNotMatch(denied, /已写入文件 blocked\.txt。|已修改文件 blocked\.txt。/);
+    assert.match(denied, /已拒绝|permission denied|未获授权/);
+  }
+});
+
+test("TUI 预授权状态：取消的 edit 不能留下正在编辑或已编辑的概述", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("尝试编辑文件");
+  const call = { id: "cancelled-edit-before-permission", type: "function", function: {
+    name: "edit", arguments: '{"path":"notes.txt","old_string":"a","new_string":"b"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
+    session, { failed: true, cancelled: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /执行状态未知|未收到工具结果/);
+  assert.doesNotMatch(screen, /正在修改文件 notes\.txt。|已修改文件 notes\.txt。/);
+});
+
 test("TUI 过程概述：Shell 等待审批时不能提前宣称命令已经运行", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105 });
   t.after(() => ui.cleanup());
