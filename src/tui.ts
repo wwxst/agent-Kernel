@@ -1092,22 +1092,22 @@ export class Tui {
     return displayWidth(base) + displayWidth(extra) <= width ? base + extra : base;
   }
 
-  private turnStatusLine(turn: TurnActivity): LogLine {
+  private turnStatusLine(turn: TurnActivity, flat = false): LogLine {
     const elapsed = Math.max(0, (turn.endedAt ?? Date.now()) - turn.startedAt);
     const duration = formatActivityDuration(elapsed, turn.language);
     const zh = turn.language === "zh";
-    const arrow = `${this.foldArrow(turn.expanded)} ${this.foldHint(turn.expanded, "Ctrl+E", zh)}`;
+    const suffix = flat ? "" : `  ${this.foldArrow(turn.expanded)} ${this.foldHint(turn.expanded, "Ctrl+E", zh)}`;
     if (turn.outcome === "completed") return {
-      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}  ${arrow}`,
+      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}${suffix}`,
       tone: "success",
     };
     if (turn.outcome === "failed" || turn.outcome === "cancelled") {
       const outcome = turn.outcome === "failed" ? (zh ? "执行失败" : "Failed") : (zh ? "已取消" : "Cancelled");
-      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}  ${arrow}`,
+      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}${suffix}`,
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
-    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}  ${arrow}`, tone: "muted" };
-    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}  ${arrow}`, tone: "accent" };
+    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}${suffix}`, tone: "muted" };
+    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}${suffix}`, tone: "accent" };
   }
 
   /** 只在显示层拼接折叠指示符，始终位于对应文字后面。 */
@@ -2015,7 +2015,8 @@ export class Tui {
     const menuRows = Math.min(slashCandidates.length, Math.max(0, this.rows - 11), 5);
     this.recomputeGeometry(menuRows);
     const width = this.contentWidth();
-    const lines = this.wrappedDisplayLines();
+    // transcript 是详情视图：默认展开所有过程层。
+    const lines = this.wrappedDisplayLines(false, true);
     if (this.approvalMenuActive) {
       // 审批独占可视区域：不再为隐藏的聊天输入框与状态栏保留四行。
       this.logHeight = Math.max(1, this.rows - LOG_TOP);
@@ -2135,7 +2136,8 @@ export class Tui {
     const width = this.contentWidth();
     const slashCandidates = this.slashMenuItems();
     const menuRows = Math.min(slashCandidates.length, 5);
-    const lines = this.wrappedDisplayLines();
+    // 主视图拍平：一个工具一行，没有第三层、没有展开箭头；详情去 transcript 看。
+    const lines = this.wrappedDisplayLines(true);
 
     // 折叠一轮会让展示行变少，已经打印出去的行收不回来。这时必须把游标退回到当前长度：
     // 否则 printedLines 会一直大于 lines.length，之后新增的行全部落在游标之前，
@@ -2384,7 +2386,7 @@ export class Tui {
     if (overflow > 0) this.log.splice(0, overflow);
   }
 
-  private wrappedDisplayLines(): LogLine[] {
+  private wrappedDisplayLines(flat = false, expandAll = false): LogLine[] {
     const logical: LogLine[] = [];
     const pendingLines = new Set(this.pendingTools.values());
     // 一个持久 ID 可以展开成多条逻辑行；偏移累计的是本次展示内容，不是换行后的行号。
@@ -2398,7 +2400,7 @@ export class Tui {
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
         // 展开中的标题下保留旧布局的节奏；折叠后只占一行。
-        const status = { ...this.turnStatusLine(line.turn), kind: "turn-status" as const, turn: line.turn };
+        const status = { ...this.turnStatusLine(line.turn, flat), kind: "turn-status" as const, turn: line.turn };
         append(line, line.turn.expanded
           ? [status, { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
           : [status]);
@@ -2416,7 +2418,34 @@ export class Tui {
         }
         const group = line.activity;
         // 轮次折叠时活动组也只显示摘要与失败行：详情属于「下面几层」。
-        const detailsOpen = group.expanded && line.turn?.expanded !== false;
+        const detailsOpen = expandAll || (group.expanded && line.turn?.expanded !== false);
+        if (flat) {
+          // 主视图拍平：一个工具一行（动词 + 目标），没有第三层、没有展开箭头。
+          const flatChildren: LogLine[] = [];
+          // 阶段概述先出现，形成「先说做什么，再列做了什么」的对话式时间线。
+          if (group.fallbackOverview && group.tools.length > 0) {
+            const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
+            flatChildren.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
+              current.call, current.result, group.language, group.finished === true,
+              this.approvalMenuActive && current.call.function.name === "shell",
+            )}`), tone: "info" });
+          }
+          for (const item of group.tools) {
+            const failure = this.activityFailureLine(item, group.language);
+            if (failure !== undefined) {
+              flatChildren.push(failure);
+              continue;
+            }
+            flatChildren.push(this.makeLogLine(
+              `  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${formatToolEvent(item.call, group.language)}`, "muted"));
+          }
+          if (flatChildren.length === 0) {
+            flatChildren.push(this.makeLogLine(
+              `  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`, "muted"));
+          }
+          append(line, flatChildren);
+          continue;
+        }
         const children: LogLine[] = [];
         // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
         if (group.fallbackOverview && group.tools.length > 0) {
@@ -2497,7 +2526,7 @@ export class Tui {
 
     // 运行中的状态行只作为活动区尾部显示，不进日志；本轮结束时它才落账（排在回复之后）。
     if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
-      logical.push({ ...this.turnStatusLine(this.currentTurn), kind: "turn-status", turn: this.currentTurn });
+      logical.push({ ...this.turnStatusLine(this.currentTurn, flat), kind: "turn-status", turn: this.currentTurn });
     }
 
     const width = this.contentWidth();
