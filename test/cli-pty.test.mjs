@@ -280,14 +280,14 @@ test("PTY：未配置模型能进入真实 TUI，右上角显示状态且不产�
 });
 
 
-test("PTY：真实 TUI 接收鼠标字节不污染命令，进入和退出时恢复终端模式", { skip }, async () => {
+test("PTY：真实 TUI 不抢鼠标、不进备用屏，杂散鼠标字节不污染命令", { skip }, async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("PTY_TUI_COMPLETE")]);
     const command = [process.execPath, cliPath, "--tui", "inspect"].map(shellQuote).join(" ");
     const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
       cwd: projectRoot,
       env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", TERM: "vt100",
-        AGENT_TUI_SCREEN: "never", BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+        BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
       stdio: ["pipe", "pipe", "pipe"], detached: true,
     });
     let output = "";
@@ -313,10 +313,10 @@ test("PTY：真实 TUI 接收鼠标字节不污染命令，进入和退出时恢
       const code = await completion;
       assert.equal(timedOut, false, "TUI did not exit: " + output + error);
       assert.equal(code, 0, error);
-      assert.match(output, /\x1b\[\?1049h/);
-      assert.match(output, /\x1b\[\?1000h\x1b\[\?1006h/);
-      assert.match(output, /\x1b\[\?1006l\x1b\[\?1000l/);
-      assert.match(output, /\x1b\[\?1049l/);
+      assert.match(output, /PTY_TUI_COMPLETE/);
+      // 主视图在主屏就地追加：既不切备用屏，也不捕获鼠标（滚轮/选中保持原生）。
+      assert.doesNotMatch(output, /\x1b\[\?1049h/, "主视图不进备用屏");
+      assert.doesNotMatch(output, /\x1b\[\?1000h/, "不捕获鼠标");
       assert.equal(mock.requests.length, 1, "鼠标坐标不能被当成用户的新任务");
     } finally {
       child.stdin.destroy();

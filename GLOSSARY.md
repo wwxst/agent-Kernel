@@ -61,7 +61,7 @@ _Avoid_: policy prompt（Policy 是 **Permission** 本身）, system rules（太
 _Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
 
 **TUI**:
-CLI 的 Claude Code 风格聊天式界面：顶部项目/模型/路径、从顶部排列的 **Run log**、底部带边框输入框和状态行。v0.3 用绝对光标定位 + 差分重绘，不依赖 DECSTBM、不切 alternate screen、不引 TUI 库；有颜色/字形降级、PageUp/PageDown 历史滚动和 resize，只保留最后一屏。非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或 **Permission**。
+CLI 的 Claude Code 风格聊天式界面。**主视图**在主屏就地追加：已定稿的行打印一次进 Shell 滚动历史，只有底部活动区（当前轮内容 + 输入框 + 状态行）重绘，不切 alternate screen、不捕获鼠标、不引 TUI 库；**transcript 视图**（`Ctrl+T`）临时进备用屏，用绝对光标定位 + 差分重绘回看和展开历史。有颜色/字形降级和 resize，只保留最后一屏。非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或 **Permission**。
 _Avoid_: dashboard, full-screen app, UI framework
 
 **Status bar**:
