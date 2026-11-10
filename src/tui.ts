@@ -112,6 +112,8 @@ interface ActivityTool {
   result?: string;
   /** 第四层只改变真实工具输入/返回的显示，不改变 Tool result。 */
   detailsExpanded?: boolean;
+  /** 来自 Workspace 成功提交前后的真实全文，只保留有界统一补丁，不复制原文件。 */
+  diff?: { lines: string[]; truncated: boolean };
 }
 
 interface ActivityGroup {
@@ -1194,8 +1196,18 @@ export class Tui {
       lines.push(this.makeLogLine(
         `      … ${this.uiText("arguments truncated for display", "参数过长，展示已截断")}`, "muted"));
     }
-    if (ended && failure === undefined && item.call.function.name === "edit") {
-      // edit 的 Tool result 只有字符数；展示真实请求片段，不冒充带行号的完整文件 Diff。
+    if (ended && failure === undefined && item.diff !== undefined) {
+      lines.push(this.makeLogLine(`      ${this.uiText("Committed unified diff:", "实际提交的 Unified Diff：")}`, "muted"));
+      for (const text of item.diff.lines) {
+        lines.push(this.makeLogLine(`      ${text}`,
+          text.startsWith("+") && !text.startsWith("+++") ? "success"
+            : text.startsWith("-") && !text.startsWith("---") ? "error" : "muted"));
+      }
+      if (item.diff.truncated) {
+        lines.push(this.makeLogLine(`      … ${this.uiText("diff too large to display in full", "Diff 过大，终端预览已截断")}`, "warning"));
+      }
+    } else if (ended && failure === undefined && item.call.function.name === "edit") {
+      // 未收到 Workspace 的提交快照时，仅展示真实请求片段，不冒充带行号的文件 Diff。
       try {
         const args: unknown = JSON.parse(item.call.function.arguments);
         if (isRecord(args) && typeof args.old_string === "string" && typeof args.new_string === "string") {
@@ -1439,6 +1451,17 @@ export class Tui {
       if (line.tone === "assistant" && line.kind !== "final-reply" && line.text.trim() !== "") return true;
     }
     return false;
+  }
+
+  /**
+   * 仅在 Workspace.edit 原子提交成功后才收到这份快照；全量对照算出真实行号。
+   * UI 只保存有界补丁，不能把项目源代码另存到 Transcript 或用户历史任务。
+   */
+  recordEditDiff(callId: string, path: string, before: string, after: string): void {
+    const item = this.activityPending.get(callId);
+    if (item?.call.function.name !== "edit") return;
+    item.diff = committedEditDiff(path, before, after);
+    if (this.layout) this.renderNow();
   }
 
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
@@ -2774,6 +2797,37 @@ function toolProgressOverview(
   const position = status === "running" ? 0 : status === "failed" ? 2 : 1;
   const suffix = target || (verbs[name] === undefined ? ` ${clip(name, 40)}` : "");
   return `${forms[offset + position]}${suffix}${zh ? "。" : "."}`;
+}
+
+/** 一次 edit 只有一个连续替换区域，因此可用共同前后缀准确产生完整统一补丁。 */
+function committedEditDiff(path: string, before: string, after: string): { lines: string[]; truncated: boolean } {
+  const oldLines = splitDisplayLines(before);
+  const newLines = splitDisplayLines(after);
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
+  let suffix = 0;
+  while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix &&
+    oldLines[oldLines.length - suffix - 1] === newLines[newLines.length - suffix - 1]) suffix++;
+  if (prefix === oldLines.length && prefix === newLines.length && before === after) return { lines: [], truncated: false };
+  const leading = Math.min(prefix, 3);
+  const trailing = Math.min(suffix, 3);
+  const oldStart = prefix - leading;
+  const oldEnd = oldLines.length - suffix + trailing;
+  const newEnd = newLines.length - suffix + trailing;
+  const name = oneLine(path);
+  const lines: string[] = [
+    `--- a/${name}`,
+    `+++ b/${name}`,
+    `@@ -${oldStart + 1},${oldEnd - oldStart} +${oldStart + 1},${newEnd - oldStart} @@`,
+    ...oldLines.slice(oldStart, prefix).map((line) => ` ${line}`),
+    ...oldLines.slice(prefix, oldLines.length - suffix).map((line) => `-${line}`),
+    ...newLines.slice(prefix, newLines.length - suffix).map((line) => `+${line}`),
+    ...newLines.slice(oldLines.length - suffix - suffix + suffix, oldLines.length - suffix - suffix + suffix).map((line) => ` ${line}`),
+  ];
+  // 末尾上下文必须来自新文件；前后的段落在本次原子编辑里相等。
+  lines.splice(lines.length, 0, ...newLines.slice(newLines.length - suffix, newEnd).map((line) => ` ${line}`));
+  const limit = 800;
+  return { lines: lines.slice(0, limit), truncated: lines.length > limit };
 }
 
 /** 真实操作类型映射为自然语言；仅根据工具名及结果分类，不虚构工作进展。 */
