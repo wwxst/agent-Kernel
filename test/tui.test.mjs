@@ -2229,6 +2229,25 @@ test("TUI 时间线：失败时最后一段过程说明不冒充独立的最终�
   assert.match(screen, /正在检查问题，还没有验证完成。/, "展开后依然能复盘真实说明");
 });
 
+test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和尺寸", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("查看图片");
+  const call = { id: "image-read", type: "function", function: {
+    name: "read", arguments: '{"path":"terminal.png"}',
+  } };
+  ui.tui.toolCall(call);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/xZcAAAAASUVORK5CYII=", "base64");
+  ui.tui.recordImagePreview(call.id, "terminal.png", png);
+  ui.tui.toolResult(call, "image file returned");
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /真实图片预览：/);
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /真实图片预览： PNG · 1 × 1/);
+  assert.match(screen, /│/, "应实际生成像素字符行，而非只画占位文本");
+});
+
 test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
