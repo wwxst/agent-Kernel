@@ -2244,7 +2244,7 @@ test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和�
     name: "read", arguments: '{"path":"terminal.png"}',
   } };
   ui.tui.toolCall(call);
-  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/xZcAAAAASUVORK5CYII=", "base64");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
   ui.tui.recordImagePreview(call.id, "terminal.png", png);
   ui.tui.toolResult(call, "image file returned");
   assert.doesNotMatch(screenRows(ui, 45).join("\n"), /真实图片预览：/);
