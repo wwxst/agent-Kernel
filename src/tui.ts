@@ -339,6 +339,9 @@ export class Tui {
 
   private mousePartial = "";
 
+  /** 允许 ESC、ESC[ 被拆包，同时不让单独按下的 Esc 永久卡住。 */
+  private mousePartialTimer?: NodeJS.Timeout;
+
   /** 每次渲染确定屏幕箭头所在的实际单元格，鼠标点击不猜测文本位置。 */
   private readonly mouseTargets = new Map<number, { column: number; turn?: TurnActivity; group?: ActivityGroup; tool?: ActivityTool }>();
 
@@ -762,31 +765,68 @@ export class Tui {
    * 用 latin1 往返只为保留 UTF-8 原始字节；残缺鼠标序列只暂存有限字符。
    */
   private filterMouseInput(chunk: Buffer): Buffer {
+    if (this.mousePartialTimer !== undefined) {
+      clearTimeout(this.mousePartialTimer);
+      this.mousePartialTimer = undefined;
+    }
     const data = this.mousePartial + chunk.toString("latin1");
     this.mousePartial = "";
     let output = "";
     let cursor = 0;
+    const prefix = "\x1b[<";
     const pattern = /^\x1b\[<(\d{1,3});(\d{1,4});(\d{1,4})([Mm])/;
     while (cursor < data.length) {
-      const at = data.indexOf("\x1b[<", cursor);
+      const at = data.indexOf("\x1b", cursor);
       if (at < 0) {
         output += data.slice(cursor);
         break;
       }
       output += data.slice(cursor, at);
       const remainder = data.slice(at);
-      const match = pattern.exec(remainder);
-      if (match !== null) {
-        this.handleMouse(Number(match[1]), Number(match[2]), Number(match[3]), match[4] === "M");
-        cursor = at + match[0].length;
-        continue;
-      }
-      if (remainder.length <= 40 && /^\x1b\[<[0-9;]*$/.test(remainder)) {
+      // 终端可能在 ESC 或 ESC[ 处分片；不能提前把这些鼠标前缀交给 readline。
+      if (prefix.startsWith(remainder) && remainder.length < prefix.length) {
         this.mousePartial = remainder;
         break;
       }
+      if (remainder.startsWith(prefix)) {
+        const match = pattern.exec(remainder);
+        if (match !== null) {
+          this.handleMouse(Number(match[1]), Number(match[2]), Number(match[3]), match[4] === "M");
+          cursor = at + match[0].length;
+          continue;
+        }
+        if (remainder.length <= 40 && /^\x1b\[<[0-9;]*$/.test(remainder)) {
+          this.mousePartial = remainder;
+          break;
+        }
+        // 畸形或超长鼠标报告不应变成用户任务；跳过直到消息终止符。
+        const end = remainder.search(/[Mm]/);
+        if (end >= 0 && end < 256) {
+          cursor = at + end + 1;
+          continue;
+        }
+        if (remainder.length <= 40) {
+          this.mousePartial = remainder;
+          break;
+        }
+        cursor = at + Math.min(remainder.length, 256);
+        continue;
+      }
+      // 非鼠标的 ANSI/普通 Esc 保持原样，交由 readline 处理键盘。
       output += "\x1b";
       cursor = at + 1;
+    }
+    if (this.mousePartial !== "") {
+      this.mousePartialTimer = setTimeout(() => {
+        const pending = this.mousePartial;
+        this.mousePartial = "";
+        this.mousePartialTimer = undefined;
+        // 孤立 ESC 仍应保留键盘语义；不完整鼠标坐标则直接丢弃。
+        if (!this.closed && pending !== "" && !pending.startsWith(prefix)) {
+          this.mouseInput?.push(Buffer.from(pending, "latin1"));
+        }
+      }, 80);
+      this.mousePartialTimer.unref();
     }
     return Buffer.from(output, "latin1");
   }
@@ -1845,6 +1885,11 @@ export class Tui {
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
     this.mouseInput?.removeListener("keypress", this.onKeypress);
+    if (this.mousePartialTimer !== undefined) {
+      clearTimeout(this.mousePartialTimer);
+      this.mousePartialTimer = undefined;
+    }
+    this.mousePartial = "";
     this.input.unpipe?.(this.mouseInput);
     this.mouseInput?.destroy();
     this.mouseTargets.clear();
