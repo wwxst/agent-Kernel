@@ -1634,8 +1634,14 @@ export class Tui {
       // 状态行最后落账：正文已经提交进日志，所以它天然排在回复之后
       // （Claude Code 的 "Cooked for 12s"、Codex 的耗时都在回复下面）。
       if (this.currentTurn !== undefined) {
+      // 状态行的唯一作用是展开这一轮折叠起来的过程层；没有工具调用就没有可展开的东西，
+      // 一个「已完成 · 用时」加个箭头只会让人以为下面藏着内容。失败/取消仍然保留，
+      // 那是结果本身，不是在提示「还能展开」。
+      if (this.currentTurn !== undefined &&
+          (this.currentTurn.groups.length > 0 || this.currentTurn.outcome !== "completed")) {
         this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
         this.trimLog();
+      }
       }
       if (run.tokenBudget.exceeded) {
         this.pushLog(this.uiText(`[budget] exceeded (limit=${run.tokenBudget.limit})`, `[预算] 已超出限制（上限=${run.tokenBudget.limit}）`), "warning");

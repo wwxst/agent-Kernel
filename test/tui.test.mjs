@@ -469,6 +469,9 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   const run = { requests: 2, toolCalls: 2, usage, tokenBudget: { exceeded: false } };
   ui.tui.start();
   ui.tui.beginTurn("first");
+  const statusCall = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusCall);
+  ui.tui.toolResult(statusCall, "file 1 a.txt");
   t.mock.timers.tick(3200);
   ui.tui.finishAssistant("done");
   ui.tui.finishTurn(run, session, { failed: false });
@@ -487,6 +490,9 @@ test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条�
   const run = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
   ui.tui.start();
   ui.tui.beginTurn("first");
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
   assert.match(lastRow(ui.text(), 4), /^(?:❯|>) first/);
   ui.tui.finishAssistant("done");
   t.mock.timers.tick(2000);
@@ -1688,6 +1694,9 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   ui.tui.start();
   ui.tui.beginTurn("检查项目");
   assert.match(screenRows(ui, 38).join("\n"), /准备执行/);
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
   ui.tui.setThinking(true);
   assert.match(screenRows(ui, 38).join("\n"), /正在执行 · 已用时/);
   assert.match(screenRows(ui, 38).join("\n"), /Thinking\.\.\./);
@@ -2215,6 +2224,9 @@ test("TUI 主视图：状态行排在回复之后，轮次之间留空行", asyn
   const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
 
   ui.tui.beginTurn("first");
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
   ui.tui.confirmAssistant("reply one", true);
   ui.tui.finishTurn(stats, session, { failed: false });
   await tick();
@@ -2241,6 +2253,9 @@ test("TUI 主视图：折叠态下用户消息、回复、状态行之间各留�
   ui.tui.start();
   const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
   ui.tui.beginTurn("问题");
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
   ui.tui.confirmAssistant("回复", true);
   ui.tui.finishTurn(stats, session, { failed: false });
   await tick();
