@@ -637,8 +637,8 @@ test("REPL：最后一步模型已确认说明但工具未执行，保留正文�
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /CONFIRMED_STEP_EXPLANATION/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
-      assert.match(run.stdout, /turn failed: step limit 1 reached/);
-      assert.match(run.stdout, /were not run/);
+      assert.match(run.stderr, /turn failed: step limit 1 reached/);
+      assert.match(run.stderr, /were not run/);
       assert.equal(mock.requests.length, 1);
     } finally {
       await mock.close();
@@ -661,7 +661,7 @@ test("REPL：有效响应随后触发 Token 预算，也保留已确认说明", 
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /CONFIRMED_TOKEN_EXPLANATION/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
-      assert.match(run.stdout, /turn failed: token budget 2 reached/);
+      assert.match(run.stderr, /turn failed: token budget 2 reached/);
       assert.equal(mock.requests.length, 1);
     } finally {
       await mock.close();
@@ -684,8 +684,8 @@ test("REPL：前一次说明已确认但下一次流式失败，只撤销新请�
       assert.equal((run.stdout.match(/CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
-      assert.match(run.stdout, /Model service unavailable/);
-      assert.match(run.stdout, /preview is discarded/);
+      assert.match(run.stderr, /Model service unavailable/);
+      assert.match(run.stderr, /preview is discarded/);
       assert.equal(mock.requests.length, 2);
     } finally {
       await mock.close();
