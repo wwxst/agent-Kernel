@@ -115,7 +115,7 @@ interface ActivityTool {
   /** 第四层只改变真实工具输入/返回的显示，不改变 Tool result。 */
   detailsExpanded?: boolean;
   /** 来自 Workspace 成功提交前后的真实全文，只保留有界统一补丁，不复制原文件。 */
-  diff?: { lines: string[]; truncated: boolean };
+  diff?: { lines: string[]; truncated: boolean; unavailable?: boolean };
   /** 仅保留经过签名校验后的缩略图网格，不保存原始二进制到日志。 */
   image?: ImagePreview;
 }
@@ -1222,6 +1222,11 @@ export class Tui {
       for (const warning of result.slice(2)) {
         lines.push(this.makeLogLine(`  ${warning.text}`, warning.tone));
       }
+      if (item.diff?.unavailable === true) {
+        lines.push(this.makeLogLine(`      ${this.uiText(
+          "Diff preview unavailable: write succeeded, but the file exceeds 2 MiB or the previous snapshot could not be read.",
+          "Diff 预览已降级：写入成功，但文件超过 2 MiB 或旧内容无法安全读取。")}`, "warning"));
+      }
     }
     if (!ended && !group.finished && !this.approvalBlocksRunning) {
       lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${item.call.function.name === "shell"
@@ -1266,7 +1271,7 @@ export class Tui {
         }
       }
     }
-    if (ended && failure === undefined && item.diff !== undefined) {
+    if (ended && failure === undefined && item.diff !== undefined && !item.diff.unavailable) {
       lines.push(this.makeLogLine(`      ${this.uiText("Committed unified diff:", "实际提交的 Unified Diff：")}`, "muted"));
       for (const text of item.diff.lines) {
         lines.push(this.makeLogLine(`      ${text}`,
@@ -1527,10 +1532,12 @@ export class Tui {
    * 仅在 Workspace.edit 原子提交成功后才收到这份快照；全量对照算出真实行号。
    * UI 只保存有界补丁，不能把项目源代码另存到 Transcript 或用户历史任务。
    */
-  recordEditDiff(callId: string, path: string, before: string, after: string, created = false): void {
+  recordEditDiff(callId: string, path: string, before: string | undefined, after: string | undefined, created = false): void {
     const item = this.activityPending.get(callId);
     if (item === undefined || (item.call.function.name !== "edit" && item.call.function.name !== "write")) return;
-    item.diff = committedEditDiff(path, before, after, created);
+    item.diff = before === undefined || after === undefined
+      ? { lines: [], truncated: false, unavailable: true }
+      : committedEditDiff(path, before, after, created, item.call.function.name === "write");
     if (this.layout) this.renderNow();
   }
 
