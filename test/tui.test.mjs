@@ -429,6 +429,55 @@ test("TUI 时间线：执行中手动收起只隐藏过程画面，不停止真�
   assert.doesNotMatch(screen, /历史已截断|history truncated/, "隐藏内容不等于日志被裁剪");
 });
 
+test("TUI 鼠标：点击真实箭头展开任务、活动与工具，不污染 readline 输入", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  assert.match(ui.text(), /\x1b\[\?1000h\x1b\[\?1006h/, "只在备用屏幕开启 SGR 鼠标");
+  ui.tui.beginTurn("inspect");
+  const call = { id: "mouse-read", type: "function", function: { name: "read", arguments: '{"path":"package.json"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "sample content");
+  ui.tui.confirmAssistant("finished", true);
+  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  async function clickArrow(match) {
+    const rows = screenRows(ui, 45);
+    const row = rows.findIndex((line) => match.test(line) && /[▸▾>]$/.test(line.trim()));
+    assert.ok(row >= 0, "目标箭头应绘制在真实屏幕上");
+    const line = rows[row].trimEnd();
+    const col = Array.from(line).length;
+    ui.input.write(`\x1b[<0;${col};${row + 1}M`);
+    await tick();
+  }
+  await clickArrow(/Completed/);
+  assert.match(screenRows(ui, 45).join("\n"), /Read files|Read file/);
+  await clickArrow(/(?:↳|\+) Read files/);
+  assert.match(screenRows(ui, 45).join("\n"), /Read package\.json/);
+  await clickArrow(/Read package\.json/);
+  assert.match(screenRows(ui, 45).join("\n"), /Arguments \(excerpt\):/);
+  const pending = ui.tui.readLine();
+  ui.input.write("next task\r");
+  assert.equal(await pending, "next task", "SGR 坐标不得混入后续用户输入");
+  ui.tui.close();
+  assert.match(ui.text(), /\x1b\[\?1006l\x1b\[\?1000l/, "退出时恢复终端鼠标模式");
+});
+
+test("TUI 鼠标：拆包 SGR 序列安全解析，滚轮以小步长浏览历史", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 26, columns: 85, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let i = 0; i < 60; i++) ui.tui.logLine(`mouse-history-${i}`);
+  const last = screenRows(ui, 26).join("\n");
+  assert.match(last, /mouse-history-59/);
+  ui.input.write("\x1b[<64;20;");
+  ui.input.write("10M");
+  await tick();
+  assert.match(screenRows(ui, 26).join("\n"), /(?:↑|\^) 3 (?:lines|行)/);
+  ui.input.write("\x1b[<65;20;10M");
+  await tick();
+  assert.match(screenRows(ui, 26).join("\n"), /mouse-history-59/);
+});
+
 test("TUI 时间线：多轮任务分别折叠，键盘可独立展开旧轮次", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, screenMode: "always" });
   t.after(() => ui.cleanup());
