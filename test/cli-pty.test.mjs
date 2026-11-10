@@ -308,3 +308,49 @@ test("PTY：未配置模型能进入真实 TUI，右上角显示状态且不产�
   assert.match(stdout, /未配置模型/);
   assert.doesNotMatch(stdout, /mock-demo|Thinking\.\.\.|请求=1|requests=1/);
 });
+
+
+test("PTY：真实 TUI 接收鼠标字节不污染命令，进入和退出时恢复终端模式", { skip }, async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("PTY_TUI_COMPLETE")]);
+    const command = [process.execPath, cliPath, "--tui", "inspect"].map(shellQuote).join(" ");
+    const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
+      cwd: projectRoot,
+      env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", TERM: "xterm-256color",
+        BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
+      stdio: ["pipe", "pipe", "pipe"], detached: true,
+    });
+    let output = "";
+    let error = "";
+    let sent = false;
+    let timedOut = false;
+    const completion = new Promise((resolve) => {
+      const timer = setTimeout(() => { timedOut = true; killTree(child); }, 15_000);
+      child.stdout.on("data", (chunk) => {
+        output += String(chunk);
+        if (!sent && output.includes("PTY_TUI_COMPLETE")) {
+          sent = true;
+          // 实际 SGR 鼠标报告不应该被 readline 当成键盘输入。
+          child.stdin.write("\x1b[<0;50;9M");
+          child.stdin.write("/exit\r");
+        }
+      });
+      child.stderr.on("data", (chunk) => { error += String(chunk); });
+      child.on("close", (code) => { clearTimeout(timer); resolve(code); });
+      child.on("error", (reason) => { clearTimeout(timer); error += String(reason); resolve(null); });
+    });
+    try {
+      const code = await completion;
+      assert.equal(timedOut, false, "TUI did not exit: " + output + error);
+      assert.equal(code, 0, error);
+      assert.match(output, /\x1b\[\?1049h/);
+      assert.match(output, /\x1b\[\?1000h\x1b\[\?1006h/);
+      assert.match(output, /\x1b\[\?1006l\x1b\[\?1000l/);
+      assert.match(output, /\x1b\[\?1049l/);
+      assert.equal(mock.requests.length, 1, "鼠标坐标不能被当成用户的新任务");
+    } finally {
+      child.stdin.destroy();
+      await mock.close();
+    }
+  });
+});
