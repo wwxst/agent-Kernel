@@ -2229,6 +2229,28 @@ test("TUI 时间线：失败时最后一段过程说明不冒充独立的最终�
   assert.match(screen, /正在检查问题，还没有验证完成。/, "展开后依然能复盘真实说明");
 });
 
+test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("修改文件");
+  const call = { id: "full-patch", type: "function", function: {
+    name: "edit", arguments: '{"path":"src/tui.ts","old_string":"old","new_string":"new"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "src/tui.ts", "first\nold\nlast\n", "first\nnew\nlast\n");
+  ui.tui.toolResult(call, "edited src/tui.ts (15 → 15 chars)");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /实际提交的 Unified Diff/);
+  assert.match(screen, /--- a\/src\/tui\.ts/);
+  assert.match(screen, /\+\+\+ b\/src\/tui\.ts/);
+  assert.match(screen, /@@ -1,3 \+1,3 @@/);
+  assert.match(screen, /-old/);
+  assert.match(screen, /\+new/);
+  assert.match(screen, / last/, "Unified patch includes real context");
+});
+
 test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件名", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 120 });
   t.after(() => ui.cleanup());
