@@ -718,14 +718,20 @@ test("REPL：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录"
 });
 
 test("--tui 非 TTY：直接拒绝，旧 AGENT_TUI_SCREEN 不得重新开启逐行模式", async () => {
-  const run = await runCli(
-    { AGENT_TUI_SCREEN: "never" },
-    { args: ["--tui", "inspect"], input: "/exit\n" },
-  );
-  assert.equal(run.code, 1);
-  assert.match(run.stderr, /full-screen TUI requires an interactive terminal/);
-  assert.match(run.stderr, /Windows Terminal or VS Code Terminal/);
-  assert.doesNotMatch(run.stdout, /Terminal compatibility mode|line-by-line output|model:|\[stats\]/);
+  const mock = await startMock([finalReply("must not run")]);
+  try {
+    const run = await runCli(
+      { AGENT_TUI_SCREEN: "never", BASE_URL: mock.url },
+      { args: ["--tui", "inspect"], input: "/exit\n" },
+    );
+    assert.equal(run.code, 1);
+    assert.match(run.stderr, /full-screen TUI requires an interactive terminal/);
+    assert.match(run.stderr, /Windows Terminal or VS Code Terminal/);
+    assert.doesNotMatch(run.stdout, /Terminal compatibility mode|line-by-line output|model:|\[stats\]/);
+    assert.equal(mock.requests.length, 0, "不能在 TTY 检查失败后仍向模型发起请求");
+  } finally {
+    await mock.close();
+  }
 });
 
 test("--tui 与 --repl 不能同时使用", async () => {
