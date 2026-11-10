@@ -1217,6 +1217,11 @@ export class Tui {
     // 摘要始终保留成功/失败事实；详情层才展开原始结果。
     if (ended && failure === undefined && result[1] !== undefined) {
       lines.push(this.makeLogLine(`  ${result[1].text}`, result[1].tone));
+      // read 的截断警告由 toolResultLines 根据真实尾注生成，不能在活动层漏掉。
+      // 即使工具原始输出默认收起，用户也必须知道读取结果并不完整。
+      for (const warning of result.slice(2)) {
+        lines.push(this.makeLogLine(`  ${warning.text}`, warning.tone));
+      }
     }
     if (!ended && !group.finished && !this.approvalBlocksRunning) {
       lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${item.call.function.name === "shell"
