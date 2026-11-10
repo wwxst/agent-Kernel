@@ -337,10 +337,12 @@ function createAgent(
   config: Config,
   signal: AbortSignal,
   permission: Permission,
-  options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean } = {},
+  options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean;
+    onEditCommitted?: (path: string, before: string, after: string) => void } = {},
 ): Agent {
   const tools = new ToolRegistry(
-    createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal })),
+    createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
+      onEditCommitted: options.onEditCommitted })),
     { permission },
   );
 
@@ -653,9 +655,12 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   let current: Agent | undefined;
   // 工具开始展示时会把本次 assistant 段落提交到运行记录；Run 后续失败不能重复补写。
   let toolStartedInLatestResponse = false;
+  // ToolRegistry 串行执行每条调用；只把该次真实 edit 提交对应到当前 ToolCall。
+  let pendingEditId: string | undefined;
   const callbacks: AgentCallbacks = {
     onRequestStart: () => {
       toolStartedInLatestResponse = false;
+      pendingEditId = undefined;
       tui.beginModelRequest();
       tui.setThinking(true);
     },
@@ -663,10 +668,12 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       // 同一条 assistant 可以带多个工具；只确认一次阶段说明，不能重复展示。
       if (!toolStartedInLatestResponse) tui.confirmAssistant(confirmedContent);
       toolStartedInLatestResponse = true;
+      pendingEditId = call.function.name === "edit" ? call.id : undefined;
       tui.toolCall(call);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
     onToolResult: (call, result) => {
+      if (call.id === pendingEditId) pendingEditId = undefined;
       tui.toolResult(call, result);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
@@ -675,7 +682,11 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   };
 
   const newAgent = (): Agent => {
-    current = createAgent(config, signal, permission, { announce: false, callbacks, narrateProgress: true });
+    current = createAgent(config, signal, permission, { announce: false, callbacks, narrateProgress: true,
+      onEditCommitted: (path, before, after) => {
+        if (pendingEditId !== undefined) tui.recordEditDiff(pendingEditId, path, before, after);
+      },
+    });
     return current;
   };
 
