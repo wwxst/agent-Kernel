@@ -19,6 +19,8 @@ import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./ap
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
 import { selectMood } from "./tui-mood.ts";
+import { previewImage } from "./tui-image.ts";
+import type { ImagePreview } from "./tui-image.ts";
 import type { MoodState } from "./tui-mood.ts";
 import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
@@ -114,6 +116,8 @@ interface ActivityTool {
   detailsExpanded?: boolean;
   /** 来自 Workspace 成功提交前后的真实全文，只保留有界统一补丁，不复制原文件。 */
   diff?: { lines: string[]; truncated: boolean };
+  /** 仅保留经过签名校验后的缩略图网格，不保存原始二进制到日志。 */
+  image?: ImagePreview;
 }
 
 interface ActivityGroup {
@@ -1196,6 +1200,22 @@ export class Tui {
       lines.push(this.makeLogLine(
         `      … ${this.uiText("arguments truncated for display", "参数过长，展示已截断")}`, "muted"));
     }
+    if (ended && failure === undefined && item.image !== undefined) {
+      const image = item.image;
+      const size = image.width !== undefined && image.height !== undefined
+        ? ` · ${image.width} × ${image.height}` : "";
+      lines.push(this.makeLogLine(
+        `      ${this.uiText("Actual image preview:", "真实图片预览：")} ${image.format}${size}`, "muted"));
+      if (image.rows.length === 0) {
+        lines.push(this.makeLogLine(`      ${this.uiText(
+          "Image bytes verified; terminal thumbnail decoding is not supported for this format.",
+          "已确认真实图片字节；此格式暂不支持终端文字缩略图解码。")}`, "warning"));
+      } else {
+        for (const row of image.rows) {
+          lines.push(this.makeLogLine(`      │ ${row}`, "assistant"));
+        }
+      }
+    }
     if (ended && failure === undefined && item.diff !== undefined) {
       lines.push(this.makeLogLine(`      ${this.uiText("Committed unified diff:", "实际提交的 Unified Diff：")}`, "muted"));
       for (const text of item.diff.lines) {
@@ -1461,6 +1481,16 @@ export class Tui {
     const item = this.activityPending.get(callId);
     if (item?.call.function.name !== "edit") return;
     item.diff = committedEditDiff(path, before, after);
+    if (this.layout) this.renderNow();
+  }
+
+  /** 仅由获准 Workspace.read 提供原始字节；失败或未知格式不会生成虚假预览。 */
+  recordImagePreview(callId: string, _path: string, bytes: Buffer): void {
+    const item = this.activityPending.get(callId);
+    if (item?.call.function.name !== "read") return;
+    const preview = previewImage(bytes);
+    if (preview === undefined) return;
+    item.image = preview;
     if (this.layout) this.renderNow();
   }
 
