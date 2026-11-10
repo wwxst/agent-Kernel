@@ -2879,21 +2879,36 @@ function toolProgressOverview(
   return `${forms[offset + position]}${suffix}${zh ? "。" : "."}`;
 }
 
+/** 记录每一行是否真实以换行结尾，避免丢失文件末尾的换行变化。 */
+function unifiedFileLines(content: string): Array<{ text: string; ended: boolean }> {
+  if (content === "") return [];
+  const lines = content.split("\n");
+  const ended = content.endsWith("\n");
+  if (ended) lines.pop();
+  return lines.map((text, index) => ({ text, ended: ended || index < lines.length - 1 }));
+}
+
+/** EOF 无换行的真实文件须附标准补丁标记。 */
+function unifiedDiffBody(prefix: " " | "-" | "+", line: { text: string; ended: boolean }): string[] {
+  return line.ended ? [`${prefix}${line.text}`] : [`${prefix}${line.text}`, "\\ No newline at end of file"];
+}
 /** 一次 edit 只有一个连续替换区域，因此可用共同前后缀准确产生完整统一补丁。 */
 function committedEditDiff(path: string, before: string, after: string, created = false): { lines: string[]; truncated: boolean } {
-  const oldLines = before === "" ? [] : splitDisplayLines(before);
-  const newLines = after === "" ? [] : splitDisplayLines(after);
+  const oldLines = unifiedFileLines(before);
+  const newLines = unifiedFileLines(after);
   const name = oneLine(path);
   if (created) {
     const lines = ["--- /dev/null", `+++ b/${name}`, `@@ -0,0 +1,${newLines.length} @@`,
-      ...newLines.map((line) => `+${line}`)];
+      ...newLines.flatMap((line) => unifiedDiffBody("+", line))];
     return { lines: lines.slice(0, 800), truncated: lines.length > 800 };
   }
+  const same = (a: { text: string; ended: boolean }, b: { text: string; ended: boolean }): boolean =>
+    a.text === b.text && a.ended === b.ended;
   let prefix = 0;
-  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
+  while (prefix < oldLines.length && prefix < newLines.length && same(oldLines[prefix]!, newLines[prefix]!)) prefix++;
   let suffix = 0;
   while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix &&
-    oldLines[oldLines.length - suffix - 1] === newLines[newLines.length - suffix - 1]) suffix++;
+    same(oldLines[oldLines.length - suffix - 1]!, newLines[newLines.length - suffix - 1]!)) suffix++;
   if (prefix === oldLines.length && prefix === newLines.length && before === after) return { lines: [], truncated: false };
   const leading = Math.min(prefix, 3);
   const trailing = Math.min(suffix, 3);
@@ -2904,10 +2919,10 @@ function committedEditDiff(path: string, before: string, after: string, created 
     `--- a/${name}`,
     `+++ b/${name}`,
     `@@ -${oldStart + 1},${oldEnd - oldStart} +${oldStart + 1},${newEnd - oldStart} @@`,
-    ...oldLines.slice(oldStart, prefix).map((line) => ` ${line}`),
-    ...oldLines.slice(prefix, oldLines.length - suffix).map((line) => `-${line}`),
-    ...newLines.slice(prefix, newLines.length - suffix).map((line) => `+${line}`),
-    ...newLines.slice(newLines.length - suffix, newEnd).map((line) => ` ${line}`),
+    ...oldLines.slice(oldStart, prefix).flatMap((line) => unifiedDiffBody(" ", line)),
+    ...oldLines.slice(prefix, oldLines.length - suffix).flatMap((line) => unifiedDiffBody("-", line)),
+    ...newLines.slice(prefix, newLines.length - suffix).flatMap((line) => unifiedDiffBody("+", line)),
+    ...newLines.slice(newLines.length - suffix, newEnd).flatMap((line) => unifiedDiffBody(" ", line)),
   ];
   const limit = 800;
   return { lines: lines.slice(0, limit), truncated: lines.length > limit };
