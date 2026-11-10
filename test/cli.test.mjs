@@ -124,7 +124,7 @@ test("TUI：.env.example 占位 Key 不能冒充已配置模型，也不能发�
   });
 });
 
-test("TUI：显式外部 Mock 演示有标识，不能仅凭 mock-demo 模型名宣称连接成功", async () => {
+test("REPL：显式外部 Mock 演示有标识，不能仅凭模型名宣称连接成功", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("demo answer")]);
     try {
@@ -133,7 +133,8 @@ test("TUI：显式外部 Mock 演示有标识，不能仅凭 mock-demo 模型名
         { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /mock-demo \[demo: external mock\]/);
+      assert.match(run.stdout, /model:\s+mock-demo/);
+      assert.match(run.stdout, /mode:\s+demo \(external mock; connection not verified\)/);
       assert.match(run.stdout, /demo answer/);
       assert.equal(mock.requests.length, 1);
     } finally {
@@ -142,7 +143,7 @@ test("TUI：显式外部 Mock 演示有标识，不能仅凭 mock-demo 模型名
   });
 });
 
-test("TUI：SSE 无完成标记分类为模型回复中断，英文/中文各只展示一条错误摘要", async () => {
+test("REPL：SSE 无完成标记按模型失败处理，不冒充已确认回复", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("never confirmed")], { incompleteAtTurns: [0, 1] });
     try {
@@ -152,22 +153,16 @@ test("TUI：SSE 无完成标记分类为模型回复中断，英文/中文各只
       );
       assert.equal(run.code, 0, run.stderr);
       assert.equal(mock.requests.length, 2);
-      assert.equal((run.stdout.match(/Model service unavailable/g) ?? []).length, 1);
-      assert.equal((run.stdout.match(/模型服务不可用/g) ?? []).length, 1);
-      assert.match(run.stdout, /previously shown preview is discarded|previously shown preview is discarded/i);
-      assert.match(run.stdout, /此前显示的草稿已作废/);
-      assert.doesNotMatch(run.stdout, /技术详情：|Technical details：/);
-      assert.doesNotMatch(run.stdout, /\[stream interrupted: unconfirmed text discarded\]/);
-      assert.doesNotMatch(run.stdout, /【流式响应中断：未确认正文已丢弃】/);
-      assert.doesNotMatch(run.stdout, /model: never confirmed/);
-      assert.match(run.stdout, /请求=2/);
+      assert.match(run.stderr, /\[agent\] turn failed:/);
+      assert.doesNotMatch(run.stdout, /never confirmed/, "未确认的 SSE 内容不得当成模型正式答复");
+      assert.match(run.stdout, /\[session\] runs=2 requests=2/);
     } finally {
       await mock.close();
     }
   });
 });
 
-test("TUI：401 明确提示鉴权失败，不误报为 SSE 中断", async () => {
+test("REPL：401 明确报告鉴权失败，不误报 SSE 中断", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("ignored")], { httpStatus: 401 });
     try {
@@ -176,8 +171,8 @@ test("TUI：401 明确提示鉴权失败，不误报为 SSE 中断", async () =>
         { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /Model authentication failed/);
-      assert.match(run.stdout, /HTTP 401/);
+      assert.match(run.stderr, /Model authentication failed/);
+      assert.match(run.stderr, /HTTP 401/);
       assert.doesNotMatch(run.stdout, /Model response interrupted|stream interrupted/);
       assert.equal(mock.requests.length, 1);
     } finally {
@@ -513,7 +508,7 @@ test("REPL：无 TTY 时 shell 被拒绝，也不会吞掉下一行输入", asyn
   });
 });
 
-test("TUI：状态栏、运行记录、统计与会话命令", async () => {
+test("REPL：运行记录、统计与会话命令均保留", async () => {
   await withWorkspace(async (workdir) => {
     const usage = { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 };
     const mock = await startMock(
@@ -536,25 +531,22 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
       );
 
       assert.equal(run.code, 0, run.stderr);
-      // 顶部状态栏（非 TTY 退化成三行）
-      assert.match(run.stdout, /model: mock-model/);
+      // REPL 是独立入口，不是 TUI 的降级展示。模型/权限和工具活动仍可核查。
+      assert.match(run.stdout, /model:\s+mock-model/);
       assert.ok(run.stdout.includes(`workspace: ${workdir}`));
       assert.match(run.stdout, /permission: workspace-write/);
-
-      // 中间运行记录：用户任务、工具调用、成功结果、模型回复
-      assert.match(run.stdout, /you: first task/);
-      assert.match(run.stdout, /→ write path=hello\.txt/);
-      assert.match(run.stdout, /✓ write \[ok\] wrote 5 chars to hello\.txt/);
-      assert.match(run.stdout, /model: tui first done/);
-      // 第一轮两次请求，各 110 tokens
-      assert.match(run.stdout, /\[stats\] requests=2 tool_calls=1 tokens=220/);
+      assert.match(run.stdout, /⚙ Tool #1 · write/);
+      assert.match(run.stdout, /↳ write ✓ wrote 5 chars to hello\.txt/);
+      assert.match(run.stdout, /tui first done/);
+      // 第一轮两次模型请求，各 110 tokens
+      assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1 tokens=220/);
 
       // 会话命令：非法模式报错、切换权限、帮助、reset
       assert.match(run.stdout, /unknown permission mode "wide-open"/);
       assert.match(run.stdout, /permission: read-only/);
       assert.match(run.stdout, /commands: \/exit/);
       assert.match(run.stdout, /\(session reset\)/);
-      assert.match(run.stdout, /model: tui second done/);
+      assert.match(run.stdout, /tui second done/);
       assert.match(run.stdout, /\[session\] runs=1 requests=1 tool_calls=0 tokens=110/);
 
       // reset 换 Agent 但不换权限：第二次请求回到 system + user，且提示为 read-only。
@@ -592,7 +584,7 @@ test("普通 REPL 与 CLI 不包含 TUI 专用过程提示，不新增请求", a
   });
 });
 
-test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
+test("REPL：管道中的首个任务先完成后再退出", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("initial task done")]);
     try {
@@ -602,9 +594,8 @@ test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /you: do the initial task/);
-      assert.match(run.stdout, /model: initial task done/);
-      assert.match(run.stdout, /\[stats\] requests=1 tool_calls=0 tokens=at least 0/);
+      assert.match(run.stdout, /initial task done/);
+      assert.match(run.stdout, /\[usage\] requests=1 tool_calls=0 tokens=at least 0/);
       assert.match(run.stdout, /\[session\] runs=1 requests=1/);
     } finally {
       await mock.close();
@@ -612,7 +603,7 @@ test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
   });
 });
 
-test("TUI：中文任务后 /permission 反馈显示中文，命令参数仍使用英文权限值", async () => {
+test("REPL：中文任务后仍按真实英文权限标识调整策略", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("检查完成")]);
     try {
@@ -622,9 +613,8 @@ test("TUI：中文任务后 /permission 反馈显示中文，命令参数仍使�
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /权限：工作区读写/);
-      assert.equal((run.stdout.match(/权限：只读模式/g) ?? []).length, 2);
-      assert.doesNotMatch(run.stdout, /权限：read-only/);
+      assert.match(run.stdout, /permission: workspace-write/);
+      assert.equal((run.stdout.match(/permission: read-only/g) ?? []).length, 2);
       assert.equal(mock.requests.length, 1);
       assert.match(mock.requests[0].messages[0].content, /Permission mode: workspace-write/,
         "UI 翻译不能修改模型收到的真实权限策略");
@@ -634,7 +624,7 @@ test("TUI：中文任务后 /permission 反馈显示中文，命令参数仍使�
   });
 });
 
-test("TUI：最后一步模型已确认说明但工具未执行，保留正文并标注 Run 失败", async () => {
+test("REPL：最后一步模型已确认说明但工具未执行，保留正文并标注 Run 失败", async () => {
   await withWorkspace(async (workdir) => {
     const response = callTool("pending_read", "read", { path: "unread.txt" });
     response.content = "CONFIRMED_STEP_EXPLANATION";
@@ -645,7 +635,7 @@ test("TUI：最后一步模型已确认说明但工具未执行，保留正文�
         { args: ["--repl"], input: "inspect\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /model: CONFIRMED_STEP_EXPLANATION/);
+      assert.match(run.stdout, /CONFIRMED_STEP_EXPLANATION/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
       assert.match(run.stdout, /turn failed: step limit 1 reached/);
       assert.match(run.stdout, /were not run/);
@@ -656,7 +646,7 @@ test("TUI：最后一步模型已确认说明但工具未执行，保留正文�
   });
 });
 
-test("TUI：有效响应随后触发 Token 预算，也保留已确认说明", async () => {
+test("REPL：有效响应随后触发 Token 预算，也保留已确认说明", async () => {
   await withWorkspace(async (workdir) => {
     const response = callTool("pending_read", "read", { path: "unread.txt" });
     response.content = "CONFIRMED_TOKEN_EXPLANATION";
@@ -669,7 +659,7 @@ test("TUI：有效响应随后触发 Token 预算，也保留已确认说明", a
         { args: ["--repl"], input: "inspect\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /model: CONFIRMED_TOKEN_EXPLANATION/);
+      assert.match(run.stdout, /CONFIRMED_TOKEN_EXPLANATION/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
       assert.match(run.stdout, /turn failed: token budget 2 reached/);
       assert.equal(mock.requests.length, 1);
@@ -679,7 +669,7 @@ test("TUI：有效响应随后触发 Token 预算，也保留已确认说明", a
   });
 });
 
-test("TUI：前一次说明已确认但下一次流式失败，只撤销新请求的草稿", async () => {
+test("REPL：前一次说明已确认但下一次流式失败，只撤销新请求的草稿", async () => {
   await withWorkspace(async (workdir) => {
     const response = callTool("read_1", "read", { path: "missing.txt" });
     response.content = "CONFIRMED_FIRST_STEP";
@@ -690,8 +680,8 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
         { args: ["--repl"], input: "inspect\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /model: CONFIRMED_FIRST_STEP/);
-      assert.equal((run.stdout.match(/model: CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
+      assert.match(run.stdout, /CONFIRMED_FIRST_STEP/);
+      assert.equal((run.stdout.match(/CONFIRMED_FIRST_STEP/g) ?? []).length, 1);
       assert.match(run.stdout, /UNCONFIRMED_SECOND_REQUEST/);
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
       assert.match(run.stdout, /Model service unavailable/);
@@ -703,7 +693,7 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
   });
 });
 
-test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录", async () => {
+test("REPL：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
       callTool("call_shell", "shell", { command: "echo should-not-run" }),
@@ -716,14 +706,11 @@ test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录",
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /→ shell echo should-not-run/);
-      assert.match(
-        run.stdout,
-        /✗ shell \[denied\] permission denied: tool "shell" requires approval, but no approval prompt is available; denied/,
-      );
+      assert.match(run.stdout, /⚙ Tool #1 · shell · echo should-not-run/);
+      assert.match(run.stdout, /↳ shell ✗ .*permission denied: tool "shell" requires approval/);
       // 没有审批通道就不该展示审批界面。
       assert.doesNotMatch(run.stdout, /\[permission\]/);
-      assert.match(run.stdout, /model: shell denied in tui/);
+      assert.match(run.stdout, /shell denied in tui/);
     } finally {
       await mock.close();
     }
@@ -1078,7 +1065,7 @@ test("CLI 配置：未知语气和显示模式明确报错", async () => {
   assert.match(view.stderr, /invalid AGENT_VIEW/);
 });
 
-test("TUI：HTTP 429 真的重试一次并统一显示重连状态，累计真实请求次数", async () => {
+test("REPL：HTTP 429 保持单次失败而不使用 TUI 重试策略", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("after reconnect")], { httpStatus: [429, 200] });
     try {
@@ -1087,10 +1074,9 @@ test("TUI：HTTP 429 真的重试一次并统一显示重连状态，累计真�
         { args: ["--repl"], input: "hello\n/exit\n" },
       );
       assert.equal(run.code, 0, run.stderr);
-      assert.equal(mock.requests.length, 2, "第 2 次请求才真正成功");
-      assert.match(run.stdout, /Reconnecting\.\.\. 1\/5/);
-      assert.match(run.stdout, /after reconnect/);
-      assert.match(run.stdout, /requests=2/);
+      assert.equal(mock.requests.length, 1, "仅 TUI 使用临时重试；REPL 不改变请求策略");
+      assert.match(run.stderr, /\[agent\] turn failed:/);
+      assert.doesNotMatch(run.stdout, /Reconnecting\.\.\./);
       assert.doesNotMatch(run.stdout, /Model authentication failed/);
     } finally {
       await mock.close();
@@ -1098,7 +1084,7 @@ test("TUI：HTTP 429 真的重试一次并统一显示重连状态，累计真�
   });
 });
 
-test("TUI：HTTP 404 不触发自动重连，展示统一类别并保留实际 HTTP 码", async () => {
+test("REPL：HTTP 404 失败不重试并保留实际 HTTP 码", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("no")], { httpStatus: 404 });
     try {
@@ -1108,7 +1094,7 @@ test("TUI：HTTP 404 不触发自动重连，展示统一类别并保留实际 H
       );
       assert.equal(run.code, 0, run.stderr);
       assert.equal(mock.requests.length, 1);
-      assert.match(run.stdout, /HTTP 404 · Model service unavailable/);
+      assert.match(run.stderr, /HTTP 404/);
       assert.doesNotMatch(run.stdout, /Reconnecting\.\.\./);
     } finally {
       await mock.close();
