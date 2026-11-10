@@ -2254,6 +2254,99 @@ test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和�
   assert.match(screen, /│/, "应实际生成像素字符行，而非只画占位文本");
 });
 
+test("P2 read：活动层必须保留真实读取上限警告，工具详情无需先展开", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 116 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查超大文本");
+  const call = { id: "read-truncated-warning", type: "function", function: {
+    name: "read", arguments: '{"path":"big.log"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "visible data\n… [truncated 24500 chars]\n… [stopped after 32768 bytes]");
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /stopped after 32768 bytes/, "活动工具摘要下必须立即可见读取截断警告");
+  assert.match(screen, /Received 3 lines|收到 3 行/);
+  assert.doesNotMatch(screen, /Arguments \(excerpt\)|原始参数（摘录）/, "不必先进入工具第四层才能看警告");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
+    session, { failed: false });
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /stopped after 32768 bytes/, "整轮结束仍默认折叠");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  ui.input.emit("keypress", "", { name: "o", ctrl: true });
+  screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /stopped after 32768 bytes/, "再次展开原有日志后仍保留警告");
+});
+
+test("P2 write：远距离多处修改显示两段正确行号的独立 Unified Diff", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 70, columns: 120 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("覆盖配置文件");
+  const call = { id: "multi-hunk-write", type: "function", function: {
+    name: "write", arguments: '{"path":"config.txt","content":"two separate changes"}',
+  } };
+  const oldLines = Array.from({ length: 40 }, (_, i) => "line-" + String(i + 1).padStart(2, "0"));
+  const newLines = [...oldLines];
+  newLines[4] = "changed-05";
+  newLines[32] = "changed-33";
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "config.txt", oldLines.join("\n") + "\n", newLines.join("\n") + "\n");
+  ui.tui.toolResult(call, "wrote 430 chars to config.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 70).join("\n");
+  const headers = screen.match(/@@ -\d+,\d+ \+\d+,\d+ @@/g) ?? [];
+  assert.deepEqual(headers, ["@@ -2,7 +2,7 @@", "@@ -30,7 +30,7 @@"],
+    "相距很远的两个替换须有两段真实行号，而不是整片删除重建");
+  assert.match(screen, /-line-05/);
+  assert.match(screen, /\+changed-05/);
+  assert.match(screen, /-line-33/);
+  assert.match(screen, /\+changed-33/);
+  assert.doesNotMatch(screen, / line-18/, "未变化的中间行不能挤进整个巨大 hunk");
+});
+
+test("P2 write：远处插入和删除也保留正确 hunk 行号", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 70, columns: 120 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("覆盖列表文件");
+  const call = { id: "insert-delete-write", type: "function", function: {
+    name: "write", arguments: '{"path":"list.txt","content":"content"}',
+  } };
+  const oldLines = Array.from({ length: 30 }, (_, i) => "entry-" + (i + 1));
+  const newLines = [...oldLines];
+  newLines.splice(2, 0, "inserted");
+  newLines.splice(newLines.indexOf("entry-27"), 1);
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "list.txt", oldLines.join("\n") + "\n", newLines.join("\n") + "\n");
+  ui.tui.toolResult(call, "wrote list.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 70).join("\n");
+  assert.equal((screen.match(/@@ -/g) ?? []).length, 2, "插入与远处删除应分成两个 hunk");
+  assert.match(screen, /\+inserted/);
+  assert.match(screen, /-entry-27/);
+  assert.match(screen, /@@ -1,5 \+1,6 @@/, "文件开头附近插入须准确计算范围");
+});
+
+test("P2 write：大文件快照不可用时明确降级且不伪造 Unified Diff", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 43, columns: 115 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("覆盖大文件");
+  const call = { id: "large-write-no-snapshot", type: "function", function: {
+    name: "write", arguments: '{"path":"large.txt","content":"..."}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "large.txt", undefined, "short replacement", false);
+  ui.tui.toolResult(call, "wrote 17 chars to large.txt");
+  let screen = screenRows(ui, 43).join("\n");
+  assert.match(screen, /Diff 预览已降级|Diff preview unavailable/, "无需展开原始工具详情即可看到降级原因");
+  assert.doesNotMatch(screen, /实际提交的 Unified Diff/, "快照不存在不能显示冒充完整 Diff 的标题");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  screen = screenRows(ui, 43).join("\n");
+  assert.match(screen, /Diff 预览已降级|Diff preview unavailable/);
+  assert.doesNotMatch(screen, /--- a\/large\.txt/, "缺少真实前后快照不能伪造补丁");
+});
+
 test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 110 });
   t.after(() => ui.cleanup());
