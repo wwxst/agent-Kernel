@@ -2822,10 +2822,8 @@ function committedEditDiff(path: string, before: string, after: string): { lines
     ...oldLines.slice(oldStart, prefix).map((line) => ` ${line}`),
     ...oldLines.slice(prefix, oldLines.length - suffix).map((line) => `-${line}`),
     ...newLines.slice(prefix, newLines.length - suffix).map((line) => `+${line}`),
-    ...newLines.slice(oldLines.length - suffix - suffix + suffix, oldLines.length - suffix - suffix + suffix).map((line) => ` ${line}`),
+    ...newLines.slice(newLines.length - suffix, newEnd).map((line) => ` ${line}`),
   ];
-  // 末尾上下文必须来自新文件；前后的段落在本次原子编辑里相等。
-  lines.splice(lines.length, 0, ...newLines.slice(newLines.length - suffix, newEnd).map((line) => ` ${line}`));
   const limit = 800;
   return { lines: lines.slice(0, limit), truncated: lines.length > limit };
 }
