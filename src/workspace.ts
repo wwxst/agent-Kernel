@@ -117,6 +117,8 @@ export interface WorkspaceOptions {
   signal?: AbortSignal;
   /** 仅供 TUI 展示真实已提交的编辑差异；观察者故障不能改变文件提交结果。 */
   onEditCommitted?: (requested: string, before: string, after: string) => void;
+  /** 真实 read 获准后才向 TUI 提供有界图片字节；不影响模型收到的文本结果。 */
+  onImageRead?: (requested: string, bytes: Buffer) => void;
 }
 
 /** grep 的可选参数：默认按正则、区分大小写；只有模型明确要求时才切到字面模式。 */
@@ -147,6 +149,8 @@ export class Workspace {
 
   private readonly onEditCommitted?: (requested: string, before: string, after: string) => void;
 
+  private readonly onImageRead?: (requested: string, bytes: Buffer) => void;
+
   /** 展示观察者故障计数；失败已记录但不改变成功提交的工具语义。 */
   private editObserverFailures = 0;
 
@@ -162,6 +166,7 @@ export class Workspace {
     regexBudgetMs = REGEX_BUDGET_MS,
     signal,
     onEditCommitted,
+    onImageRead,
   }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
@@ -169,6 +174,7 @@ export class Workspace {
     this.regexBudgetMs = regexBudgetMs;
     this.signal = signal;
     this.onEditCommitted = onEditCommitted;
+    this.onImageRead = onImageRead;
   }
 
   /**
@@ -182,6 +188,28 @@ export class Workspace {
 
     const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
     const cut = truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
+    // 仅真实获准的 read 才允许提取图片字节，不以 UI 的路径猜测绕过 ToolRegistry。
+    // 已知边界：预览仅为本地终端展示，模型仍收到原有文字工具结果。
+    if (this.onImageRead !== undefined && /\.(png|jpe?g|gif|webp)$/i.test(requested)) {
+      try {
+        const image = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE);
+        try {
+          const size = (await image.stat()).size;
+          if (size >= 12 && size <= 4_000_000) {
+            const data = Buffer.alloc(size);
+            let offset = 0;
+            while (offset < size) {
+              const { bytesRead } = await image.read(data, offset, size - offset, offset);
+              if (bytesRead === 0) break;
+              offset += bytesRead;
+            }
+            if (offset === size) this.onImageRead(requested, data);
+          }
+        } finally { await image.close(); }
+      } catch {
+        this.editObserverFailures++;
+      }
+    }
     return this.clip(text, cut);
   }
 
