@@ -2289,7 +2289,13 @@ test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", (t) 
   const screen = screenRows(ui, 45).join("\n");
   assert.match(screen, /line truncated|Diff 过大/, "很长的一行也必须截断，而非无限制重绘");
   assert.doesNotMatch(screen, /a{400}/, "不能把整条超长原始行推入终端");
-  ui.tui.recordEditDiff(call.id, "large.txt", "a\n".repeat(200_000), "b\n".repeat(200_000));
+  const hugeCall = { id: "huge-diff", type: "function", function: {
+    name: "edit", arguments: '{"path":"huge.txt","old_string":"a","new_string":"b"}',
+  } };
+  ui.tui.toolCall(hugeCall);
+  ui.tui.recordEditDiff(hugeCall.id, "huge.txt", "a\n".repeat(200_000), "b\n".repeat(200_000));
+  ui.tui.toolResult(hugeCall, "edited huge.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
   const huge = screenRows(ui, 45).join("\n");
   assert.match(huge, /bounded terminal diff preview limit/, "超大文件不能分配数十万条行对象");
 });
