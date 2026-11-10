@@ -570,17 +570,16 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
   });
 });
 
-test("TUI 过程概述：仅交互式 TUI 给模型可见进度指导，不新增请求或污染普通 CLI", async () => {
+test("普通 REPL 与 CLI 不包含 TUI 专用过程提示，不新增请求", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("finished")]);
     try {
       const env = { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir };
-      const tui = await runCli(env, { args: ["--repl"], input: "inspect\n/exit\n" });
-      assert.equal(tui.code, 0, tui.stderr);
+      const repl = await runCli(env, { args: ["--repl"], input: "inspect\n/exit\n" });
+      assert.equal(repl.code, 0, repl.stderr);
       assert.equal(mock.requests.length, 1);
-      assert.match(mock.requests[0].messages[0].content, /briefly tell the user what you are doing/);
-      assert.match(mock.requests[0].messages[0].content, /never invent results/);
-      assert.match(tui.stdout, /model: finished/);
+      assert.doesNotMatch(mock.requests[0].messages[0].content, /briefly tell the user what you are doing/);
+      assert.match(repl.stdout, /finished/);
 
       const ordinary = await runCli(env, { args: ["inspect"] });
       assert.equal(ordinary.code, 0, ordinary.stderr);
@@ -731,13 +730,15 @@ test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录",
   });
 });
 
-test("TUI：非法屏幕模式必须明确报错，不静默改变显示策略", async () => {
+test("--tui 非 TTY：直接拒绝，旧 AGENT_TUI_SCREEN 不得重新开启逐行模式", async () => {
   const run = await runCli(
-    { AGENT_TUI_SCREEN: "unrecognized" },
-    { args: ["--tui"], input: "/exit\n" },
+    { AGENT_TUI_SCREEN: "never" },
+    { args: ["--tui", "inspect"], input: "/exit\n" },
   );
   assert.equal(run.code, 1);
-  assert.match(run.stderr, /invalid AGENT_TUI_SCREEN/);
+  assert.match(run.stderr, /full-screen TUI requires an interactive terminal/);
+  assert.match(run.stderr, /Windows Terminal or VS Code Terminal/);
+  assert.doesNotMatch(run.stdout, /Terminal compatibility mode|line-by-line output|model:|\[stats\]/);
 });
 
 test("--tui 与 --repl 不能同时使用", async () => {
