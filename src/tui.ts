@@ -1923,7 +1923,7 @@ export class Tui {
       const line = visible[index];
       if (line !== undefined && /  [▸▾>v]$/.test(line.text) &&
           (line.kind === "turn-status" || line.kind === "activity" || line.tool !== undefined)) {
-        this.mouseTargets.set(LOG_TOP + index - 1, {
+        this.mouseTargets.set(LOG_TOP + index, {
           column: displayWidth(line.text), turn: line.turn, group: line.activity, tool: line.tool,
         });
       }
