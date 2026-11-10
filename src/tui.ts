@@ -1477,10 +1477,10 @@ export class Tui {
    * 仅在 Workspace.edit 原子提交成功后才收到这份快照；全量对照算出真实行号。
    * UI 只保存有界补丁，不能把项目源代码另存到 Transcript 或用户历史任务。
    */
-  recordEditDiff(callId: string, path: string, before: string, after: string): void {
+  recordEditDiff(callId: string, path: string, before: string, after: string, created = false): void {
     const item = this.activityPending.get(callId);
-    if (item?.call.function.name !== "edit") return;
-    item.diff = committedEditDiff(path, before, after);
+    if (item === undefined || (item.call.function.name !== "edit" && item.call.function.name !== "write")) return;
+    item.diff = committedEditDiff(path, before, after, created);
     if (this.layout) this.renderNow();
   }
 
@@ -2830,9 +2830,15 @@ function toolProgressOverview(
 }
 
 /** 一次 edit 只有一个连续替换区域，因此可用共同前后缀准确产生完整统一补丁。 */
-function committedEditDiff(path: string, before: string, after: string): { lines: string[]; truncated: boolean } {
-  const oldLines = splitDisplayLines(before);
-  const newLines = splitDisplayLines(after);
+function committedEditDiff(path: string, before: string, after: string, created = false): { lines: string[]; truncated: boolean } {
+  const oldLines = before === "" ? [] : splitDisplayLines(before);
+  const newLines = after === "" ? [] : splitDisplayLines(after);
+  const name = oneLine(path);
+  if (created) {
+    const lines = ["--- /dev/null", `+++ b/${name}`, `@@ -0,0 +1,${newLines.length} @@`,
+      ...newLines.map((line) => `+${line}`)];
+    return { lines: lines.slice(0, 800), truncated: lines.length > 800 };
+  }
   let prefix = 0;
   while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
   let suffix = 0;
@@ -2844,7 +2850,6 @@ function committedEditDiff(path: string, before: string, after: string): { lines
   const oldStart = prefix - leading;
   const oldEnd = oldLines.length - suffix + trailing;
   const newEnd = newLines.length - suffix + trailing;
-  const name = oneLine(path);
   const lines: string[] = [
     `--- a/${name}`,
     `+++ b/${name}`,
