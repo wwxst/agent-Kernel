@@ -115,6 +115,8 @@ export interface WorkspaceOptions {
    * 多一层管理器只会多一个需要同步的地方。
    */
   signal?: AbortSignal;
+  /** 仅供 TUI 展示真实已提交的编辑差异；观察者故障不能改变文件提交结果。 */
+  onEditCommitted?: (requested: string, before: string, after: string) => void;
 }
 
 /** grep 的可选参数：默认按正则、区分大小写；只有模型明确要求时才切到字面模式。 */
@@ -143,6 +145,8 @@ export class Workspace {
   /** 当前任务的取消信号；没有就表示不可取消（测试和库调用常见）。 */
   private readonly signal?: AbortSignal;
 
+  private readonly onEditCommitted?: (requested: string, before: string, after: string) => void;
+
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
 
@@ -152,12 +156,14 @@ export class Workspace {
     scanLimit = MAX_SCAN_ENTRIES,
     regexBudgetMs = REGEX_BUDGET_MS,
     signal,
+    onEditCommitted,
   }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
     this.scanLimit = scanLimit;
     this.regexBudgetMs = regexBudgetMs;
     this.signal = signal;
+    this.onEditCommitted = onEditCommitted;
   }
 
   /**
@@ -293,6 +299,8 @@ export class Workspace {
     }
 
     await this.replaceFileAtomically(file, requested, after, original);
+    // 只有写入成功提交才通知 UI。观察者错误不回滚真实 edit，也不改工具返回。
+    try { this.onEditCommitted?.(requested, before, after); } catch { /* 边缘显示故障不影响工具完成 */ }
     // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
     return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
