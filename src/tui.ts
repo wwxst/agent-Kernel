@@ -2086,14 +2086,18 @@ export class Tui {
     const menuRows = Math.min(slashCandidates.length, 5);
     const lines = this.wrappedDisplayLines();
 
+    // 折叠一轮会让展示行变少，已经打印出去的行收不回来。这时必须把游标退回到当前长度：
+    // 否则 printedLines 会一直大于 lines.length，之后新增的行全部落在游标之前，
+    // 永远不会被打印——表现就是「间距没了、整段内容消失」。
+    if (lines.length < this.printedLines) this.printedLines = lines.length;
+
     // 提交边界：最后一组 entry 还在变（流式正文、运行中的工具），留在活动区；其余可以定稿。
     const tailBudget = Math.max(1, Math.min(this.rows - 6, 12));
     const lastId = lines.at(-1)?.id;
     let boundary = lines.length;
     while (boundary > 0 && lines[boundary - 1]?.id === lastId) boundary--;
     const commitTarget = Math.max(0, Math.min(lines.length - tailBudget, boundary));
-    // 打印过的行收不回来：内容变短（折叠）时只是不再打印新的，活动区照旧重画。
-    const commitTo = Math.max(this.printedLines, Math.min(commitTarget, lines.length));
+    const commitTo = Math.min(Math.max(this.printedLines, commitTarget), lines.length);
     const tail = lines.slice(commitTo);
     // 输入框上方 = 活动区尾部 + 输入框上边框；下一帧靠它回到活动区顶端。
     const rowsAboveInput = tail.length + 1;
@@ -2547,7 +2551,13 @@ export class Tui {
 
   private contentWidth(): number {
     // 只留最右一列，防止写满末列触发终端自动折行；其余边距交给终端配置。
-    return Math.max(1, this.columns - 1);
+    // 宽度必须取「真实终端」和「构造时记录的宽度」的较小值：窗口缩小时 stream.columns
+    // 可能比 this.columns 更早更新，一旦按较宽的尺寸排版，行会被终端自动折行，
+    // 而我们的行数估算按「一行一行」算——折出来的那一行会让后续清屏整体错位，
+    // 表现就是轮次之间的空行被擦掉、续行贴左。
+    const stream = this.output as NodeJS.WriteStream;
+    const live = typeof stream.columns === "number" && stream.columns > 0 ? stream.columns : this.columns;
+    return Math.max(1, Math.min(this.columns, live) - 1);
   }
 
   private recomputeGeometry(menuRows = 0): void {

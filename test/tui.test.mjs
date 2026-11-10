@@ -2296,3 +2296,28 @@ test("TUI 主视图：只追加，历史行不会被后续输出抹掉", async (
   assert.ok(screenRows(ui, 20).some((row) => /LATER_5/.test(row)), "最新输出在活动区可见");
 });
 
+
+test("TUI 主视图：一轮结束后仍保留轮次之间的空行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
+  // 第一轮带一次工具调用：结束时这一轮会折叠，展示行数变少，最容易踩到游标错位。
+  ui.tui.beginTurn("first");
+  const call = { id: "c1", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file 13 a.txt");
+  ui.tui.confirmAssistant("reply one", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+  ui.tui.beginTurn("second");
+  ui.tui.confirmAssistant("reply two", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+  const rows = screenRows(ui, 20);
+  const firstReply = rows.findIndex((row) => /reply one/.test(row));
+  const secondTask = rows.findIndex((row) => /second/.test(row));
+  assert.ok(firstReply >= 0 && secondTask > firstReply, "两轮都在屏幕上");
+  // 折叠上一轮会让展示行变少：游标必须跟着退回，否则之后的行整体错位、空行被吞掉。
+  assert.ok(rows.slice(firstReply + 1, secondTask).some((row) => row.trim() === ""), "两轮之间保留空行");
+});
