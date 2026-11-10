@@ -47,7 +47,7 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
   let bpp = 0;
   let colorType = -1;
   let valid = false;
-  let palette = Buffer.alloc(0);
+  let palette: Buffer = Buffer.alloc(0);
   const chunks: Buffer[] = [];
   while (offset + 12 <= bytes.length) {
     const length = bytes.readUInt32BE(offset);
