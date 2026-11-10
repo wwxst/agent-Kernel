@@ -13,8 +13,10 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access` |
-| `npm run agent -- --repl` | 多轮会话：`/exit`、`/reset`、`/permission`、`/help`；需要 `.env` |
-| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | TUI：交互终端统一独立屏幕、75ms 缩放防抖、退出恢复原屏幕；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色（默认 mono，只保留用户消息任务条颜色）；需 `.env` |
+| `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
+| `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
+| `npm run agent --` | 不带任务：直接进全屏 TUI（唯一交互界面）；`--repl` 已移除，传入会报错 |
+| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
@@ -33,10 +35,11 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/workspace.ts` | 工作区文件与 Shell：真实路径守卫、临时文件原子替换与取消检查、grep 物理扫描起点、有界读取/扫描、进程树清理期限及失败告警；父目录 TOCTOU 仍有已知边界 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
-| `src/tui.ts` | Claude Code / Codex 风格 TUI：可见过程说明、真实工具活动分层折叠、尾部箭头和 SGR 鼠标点击、原始参数/结果、成功读图与文件提交后的展示；仍不碰 Agent 循环 | `Tui`（`start`、`assistantDelta`、`recordEditDiff`、`recordImagePreview`、`readLine`、`approve`、`finishTurn`、`close`） |
+| `src/tui.ts` | Claude Code / Codex 风格 TUI：主视图只追加（不进备用屏）、`Ctrl+T` transcript 整屏视图、可见过程说明、工具活动分层折叠、原始参数/结果、成功读图与文件提交后的展示；仍不碰 Agent 循环 | `Tui`（`start`、`assistantDelta`、`recordEditDiff`、`recordImagePreview`、`readLine`、`approve`、`finishTurn`、`close`） |
 | `src/tui-image.ts` | 从获准读取的 PNG 真实字节生成有界文字缩略图；其他图像格式验证签名后按实际兼容能力降级；无第三方运行时依赖 | `previewImage` |
 | `src/cli.ts` | 组装：命令行参数 / 环境变量 → CLI/REPL/TUI；占位 API Key 拒绝、显式外部演示标记及错误展示；权限与取消入口 | — |
 | `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；流式正文与确认回复不一致时显式更正，不改 Transcript | `RunPresenter` |
+| `bin/agent.mjs` | 全局命令入口（`npm link` 后的 `agent-kernel`）：按包内绝对路径加载 `.env`，再进 `cli.ts`；不改工作目录 | — |
 
 依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` / `tui` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError`，`approval` 只依赖 `permission` 的类型；`tui` 只依赖 `approval` / `permission` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查），更不认识 `tui`。
 

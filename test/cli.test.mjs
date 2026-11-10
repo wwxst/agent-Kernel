@@ -362,81 +362,6 @@ test("API Key：只有空白值时按缺失处理", async () => {
   assert.match(run.stderr, /missing API_KEY/);
 });
 
-test("REPL：两轮共享 transcript，每轮打自己的 usage，退出时打会话总账", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([finalReply("first answer"), finalReply("second answer")]);
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--repl"], input: "first task\nsecond task\n/exit\n" },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /first answer/);
-      assert.match(run.stdout, /second answer/);
-      assert.equal(mock.requests.length, 2);
-      // 第二轮请求带着第一轮的全部历史。
-      assert.deepEqual(
-        mock.requests[1].messages.map((message) => message.role),
-        ["system", "user", "assistant", "user"],
-      );
-      // 每轮一行 [usage]，退出时再加一行跨 Run 的 [session]。
-      assert.equal((run.stdout.match(/\[usage\]/g) ?? []).length, 2);
-      assert.match(run.stdout, /\[session\] runs=2 requests=2/);
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
-test("REPL：/reset 清空上下文，重新开一个 Agent", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([finalReply("first answer"), finalReply("second answer")]);
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--repl"], input: "first task\n/reset\nsecond task\n/exit\n" },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /session reset/);
-      assert.equal(mock.requests.length, 2);
-      assert.deepEqual(
-        mock.requests[1].messages.map((message) => message.role),
-        ["system", "user"],
-      );
-      // reset 之后是新会话：总账只算 reset 后那一轮。
-      assert.match(run.stdout, /\[session\] runs=1 requests=1/);
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
-test("REPL：一轮失败不结束会话，下一轮还能继续", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      callTool("call_1", "ls", { path: "." }),
-      finalReply("recovered on the second turn"),
-    ]);
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir, MAX_STEPS: "1" },
-        { args: ["--repl"], input: "first task\nsecond task\n/exit\n" },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stderr, /turn failed: step limit 1 reached/);
-      // 失败那一轮同样打了 usage（task failed），第二轮照常成功。
-      assert.match(run.stdout, /task failed/);
-      assert.match(run.stdout, /recovered on the second turn/);
-      assert.equal(mock.requests.length, 2);
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
 test("--permission read-only：写工具被拒绝，ERROR 回灌后模型继续收尾", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
@@ -488,29 +413,52 @@ test("workspace-write：无 TTY 时 shell 默认拒绝", async () => {
   });
 });
 
-test("REPL：无 TTY 时 shell 被拒绝，也不会吞掉下一行输入", async () => {
-  await withWorkspace(async (workdir) => {
+test("--cwd：工作区指向另一个目录，项目本身不用搬过去", async () => {
+  await withWorkspace(async (target) => {
     const mock = await startMock([
-      callTool("call_shell", "shell", { command: "echo should-not-run" }),
-      finalReply("first turn done"),
-      finalReply("second turn done"),
+      callTool("call_write", "write", { path: "opened.txt", content: "hello" }),
+      finalReply("done"),
     ]);
 
     try {
+      // 进程仍然从项目目录启动（runCli 的 cwd 就是 projectRoot），工作区却落在 target：
+      // 这就是「像 Claude Code 那样打开一个目录」——工具看到的是 target，不是仓库。
       const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--repl"], input: "first task\nsecond task\n/exit\n" },
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: "" },
+        { args: ["--cwd", target, "写个文件"] },
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /first turn done/);
-      assert.match(run.stdout, /second turn done/);
-      assert.equal((run.stdout.match(/ERROR: permission denied/g) ?? []).length, 1);
-      // 两轮都跑完了：审批没有把 "second task" 当成答案。
+      assert.ok(run.stdout.includes(`workspace: ${target}`));
+      assert.equal(await readFile(path.join(target, "opened.txt"), "utf8"), "hello");
+      // 文件只能落在被打开的目录里：仓库根目录不该多出任何东西。
+      await assert.rejects(readFile(path.join(projectRoot, "opened.txt"), "utf8"));
     } finally {
       await mock.close();
     }
   });
+});
+
+test("--cwd：目录不存在时立刻报错并给用法", async () => {
+  const run = await runCli({}, { args: ["--cwd", path.join(projectRoot, "no-such-dir-for-cwd"), "task"] });
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /--cwd is not a directory/);
+  assert.match(run.stdout, /usage:/);
+});
+
+test("--repl 已移除：明确报错并给用法，不能变成一次模型请求", async () => {
+  const mock = await startMock([finalReply("should not be reached")]);
+  try {
+    const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model" }, { args: ["--repl"] });
+
+    assert.equal(run.code, 1);
+    assert.match(run.stderr, /--repl was removed/);
+    assert.match(run.stdout, /usage:/);
+    // 关键：不能被当成普通位置参数吞下去，那会拿 "--repl" 当任务发给模型。
+    assert.equal(mock.requests.length, 0, "被移除的开关不能产生模型调用");
+  } finally {
+    await mock.close();
+  }
 });
 
 test("TUI：状态栏、运行记录、统计与会话命令", async () => {
@@ -740,13 +688,6 @@ test("TUI：旧 AGENT_TUI_SCREEN 不再影响模式，非 TTY 仍能正常退出
   assert.doesNotMatch(run.stdout + run.stderr, /Terminal compatibility mode|终端兼容模式/);
 });
 
-test("--tui 与 --repl 不能同时使用", async () => {
-  const run = await runCli({}, { args: ["--tui", "--repl"] });
-
-  assert.equal(run.code, 1);
-  assert.match(run.stderr, /cannot combine --repl and --tui/);
-});
-
 test("--permission=full-access：shell 不用审批就执行", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
@@ -787,105 +728,6 @@ test("--permission 缺少值：退出码 1，提示可用模式", async () => {
 
   assert.equal(run.code, 1);
   assert.match(run.stderr, /missing value for --permission/);
-});
-
-test("REPL：/permission 查看与切换，/reset 保留当前模式", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      callTool("call_write_1", "write", { path: "blocked-1.txt", content: "no" }),
-      finalReply("first turn done"),
-      callTool("call_write_2", "write", { path: "blocked-2.txt", content: "no" }),
-      finalReply("second turn done"),
-    ]);
-
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        {
-          args: ["--repl"],
-          input: "/permission\n/permission read-only\nfirst task\n/reset\nsecond task\n/exit\n",
-        },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /permission: workspace-write/);
-      assert.match(run.stdout, /permission: read-only/);
-      assert.equal((run.stdout.match(/permission: read-only/g) ?? []).length, 2, "reset 后重开 Agent 仍打印 read-only");
-      assert.equal((run.stdout.match(/ERROR: permission denied/g) ?? []).length, 2);
-
-      // 两次写调用都被拒绝：/reset 换了 Agent，但没有换权限。
-      const toolResults = mock.requests.flatMap((request) =>
-        request.messages.filter((message) => message.role === "tool").map((message) => message.content),
-      );
-      assert.equal(toolResults.length, 2);
-      for (const result of toolResults) assert.match(result, /^ERROR: permission denied: /);
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
-test("REPL：/permission 切换后下一次请求使用新提示", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      finalReply("workspace done"),
-      finalReply("read-only done"),
-    ]);
-
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--repl"], input: "first\n/permission read-only\nsecond\n/exit\n" },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.equal(mock.requests.length, 2);
-
-      const [workspaceRequest, readOnlyRequest] = mock.requests;
-      assert.match(workspaceRequest.messages[0].content, /Permission mode: workspace-write/);
-      assert.match(readOnlyRequest.messages[0].content, /Permission mode: read-only/);
-      assert.doesNotMatch(readOnlyRequest.messages[0].content, /workspace-write|full-access/);
-      assert.equal(readOnlyRequest.messages.filter((message) => message.role === "system").length, 1);
-      // 切换发生在同一会话里：第二次请求仍带着第一轮的历史。
-      assert.deepEqual(
-        readOnlyRequest.messages.map((message) => message.role),
-        ["system", "user", "assistant", "user"],
-      );
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
-test("REPL：/reset 保留当前权限提示，不残留旧规则", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      finalReply("first done"),
-      finalReply("after reset done"),
-    ]);
-
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--repl"], input: "/permission read-only\nfirst\n/reset\nsecond\n/exit\n" },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.equal(mock.requests.length, 2);
-      for (const request of mock.requests) {
-        assert.match(request.messages[0].content, /Permission mode: read-only/);
-        assert.doesNotMatch(request.messages[0].content, /workspace-write|full-access/);
-        assert.equal(request.messages.filter((message) => message.role === "system").length, 1);
-      }
-      // /reset 换 Agent：第二次请求回到 system + user。
-      assert.deepEqual(
-        mock.requests[1].messages.map((message) => message.role),
-        ["system", "user"],
-      );
-    } finally {
-      await mock.close();
-    }
-  });
 });
 
 test(

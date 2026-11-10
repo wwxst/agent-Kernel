@@ -17,7 +17,7 @@ _Avoid_: ReAct（那是另一种带显式推理步的循环）
 _Avoid_: job, turn
 
 **Session**:
-一个 Agent 实例从创建到丢弃之间的一段对话，由按顺序执行的多个 Run 组成。CLI 的 `--repl` 就是它的外壳；`/reset` 等于换一个新 Session。
+一个 Agent 实例从创建到丢弃之间的一段对话，由按顺序执行的多个 Run 组成。CLI 的 TUI 就是它的外壳；`/reset` 等于换一个新 Session。
 _Avoid_: conversation（口语可以，代码里没有单独的 Session 类型）
 
 **Step**:
@@ -49,7 +49,7 @@ _Avoid_: toolbelt, toolbox, tool set
 _Avoid_: sandbox, isolation, ACL
 
 **Permission mode**:
-**Permission** 的当前档位。CLI 默认 `workspace-write`；`--permission` 决定起始值，REPL 的 `/permission` 切换，`/reset` 不改变它。
+**Permission** 的当前档位。CLI 默认 `workspace-write`；`--permission` 决定起始值，TUI 的 `/permission` 切换，`/reset` 不改变它。
 _Avoid_: permission level, security level
 
 **Permission prompt**:
@@ -57,7 +57,7 @@ _Avoid_: permission level, security level
 _Avoid_: policy prompt（Policy 是 **Permission** 本身）, system rules（太泛）
 
 **Approval**:
-`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。REPL 和 **TUI** 共用同一套前置门与 `y` / `yes` 判定，只是展示位置不同。
+`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。一次性任务和 **TUI** 共用同一套前置门与 `y` / `yes` 判定，只是展示位置不同。
 _Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
 
 **TUI**:
@@ -127,7 +127,7 @@ _Avoid_: LLM, model, provider
 - **TUI** 是 **Session** 的一个外壳：**Status bar** 显示项目 / model / workspace，输入框下方显示 **Permission mode** 和 **Session** 统计，**Run log** 显示模型回复、Tool call、Tool result 与拒绝原因；输入复用同一套 `/permission`、`/reset`、`/help`、`/exit`，固定在底部。
 - 每次 **Step** 的模型请求发出后、第一段输出前显示 **Thinking**；第一段正文、Tool call 或错误会清掉它。它不是模型的 `reasoning_content`。
 - **Run log** 不是 **Transcript**：前者只负责显示，后者才是发给模型的记忆；删掉 Run log 不会改变任何一轮请求。
-- **Approval** 在 REPL 与 TUI 里是同一个策略判断，只是问题出现的位置不同：REPL 用多行 prompt，TUI 先写运行记录再读单行 `y/N`。
+- **Approval** 在一次性任务与 TUI 里是同一个策略判断，只是问题出现的位置不同：一次性任务用多行 prompt，TUI 先写运行记录再读单行 `y/N`。
 
 ## Flagged ambiguities
 

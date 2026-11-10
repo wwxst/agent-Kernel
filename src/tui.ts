@@ -256,6 +256,15 @@ export class Tui {
 
   private altScreenActive = false;
 
+  /** 全屏 transcript 视图：临时进备用屏回看/展开历史，退出后主屏原样还回来。 */
+  private transcriptMode = false;
+
+  /** 主视图里已经打印进 scrollback 的行数；打印过的行不再重绘。 */
+  private printedLines = 0;
+
+  /** 上一帧光标上方属于活动区的行数；下一帧靠它回到活动区顶端。 */
+  private lastRowsAboveInput = 0;
+
   /** 未进入 start 的对象只能释放资源，不能发出任何终端控制序列。 */
   private started = false;
 
@@ -555,6 +564,12 @@ export class Tui {
       if (this.closed) return;
       const name = key?.name?.toLowerCase();
 
+      // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
+      if (this.transcriptMode && name === "escape") {
+        this.exitTranscript();
+        return;
+      }
+
       if (this.approvalMenuActive) {
         if (name === "up" || name === "down") {
           this.approvalChoice = name === "up" ? "allow" : "deny";
@@ -577,6 +592,13 @@ export class Tui {
         }
         // 审批只接受菜单按键；误输入的任意文本不改变决定、不写入下一个任务。
         if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+        return;
+      }
+
+      // Ctrl+T 切 transcript 视图：主视图的历史不可改，回看和展开历史都在这里做。
+      // 和 Codex 的 Ctrl+T / Claude Code 的 Ctrl+O 是同一个设计。
+      if (key?.ctrl && name === "t" && this.layout) {
+        this.toggleTranscript();
         return;
       }
 
@@ -859,17 +881,14 @@ export class Tui {
       : this.style.paint("muted", clip(plain, width));
   }
 
-  /** 画第一帧；交互终端进入备用屏幕，在关闭时恢复原有 Shell。 */
+  /** 画第一帧。主视图不切备用屏，定稿的行直接打印进 Shell 滚动历史。 */
   start(): void {
     if (this.closed || this.started) return;
     this.started = true;
-    if (this.ownedScreen) {
-      // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
-      // X10 按钮/滚轮事件 + SGR 1006 坐标；不启用运动跟踪，避免高频重绘。
-      this.output.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
-      this.altScreenActive = true;
-    }
     if (this.layout) {
+      // 光标在活动区里由 TUI 自己摆；不捕获鼠标，滚轮和选中复制保持终端原生行为。
+      this.output.write("\x1b[?25l");
+      this.printHeader();
       this.clearBeforeNextFrame = true;
       this.renderNow();
       return;
@@ -1832,9 +1851,16 @@ export class Tui {
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.altScreenActive) {
-      // Leave 恢复终端原来的 Shell 画面；这里不额外向主屏幕输出聊天帧。
-      this.output.write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l");
+      // transcript 视图退出：备用屏还原主屏，主视图随后自己重画活动区。
+      this.output.write("\x1b[?25h\x1b[?1049l");
       this.altScreenActive = false;
+      this.transcriptMode = false;
+    }
+    if (this.layout) {
+      // 只清底部活动区：已打印的历史留在 Shell 里，光标落到新行。
+      const up = this.lastRowsAboveInput;
+      this.output.write(`${up > 0 ? `\x1b[${up}A` : ""}\r\x1b[J\x1b[?25h`);
+      this.lastRowsAboveInput = 0;
     }
   }
 
@@ -1863,11 +1889,52 @@ export class Tui {
 
   // ---- 固定布局 ----
 
-  /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
+  /** 主视图与 transcript 视图共用的入口：主视图只追加，transcript 重画整屏。 */
   private renderNow(): void {
-    if (!this.started || !this.layout || this.closed || (this.ownedScreen && this.resizeTimer !== undefined)) return;
+    if (!this.started || !this.layout || this.closed || this.resizeTimer !== undefined) return;
+    if (this.transcriptMode) this.renderTranscript();
+    else this.renderInline();
+  }
 
-    if (this.ownedScreen && (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS)) {
+  /** 进/出 transcript 视图。备用屏只用在这里：临时独占整屏回看历史，退出原样还回主屏。 */
+  private toggleTranscript(): void {
+    if (this.closed) return;
+    if (this.transcriptMode) {
+      this.exitTranscript();
+      return;
+    }
+    this.transcriptMode = true;
+    this.output.write("\x1b[?1049h\x1b[?25l");
+    this.altScreenActive = true;
+    this.clearBeforeNextFrame = true;
+    this.lastFrame = [];
+    this.renderNow();
+  }
+
+  private exitTranscript(): void {
+    if (!this.transcriptMode) return;
+    this.transcriptMode = false;
+    this.output.write("\x1b[?25h\x1b[?1049l");
+    this.altScreenActive = false;
+    this.lastFrame = [];
+    // 光标由 1049l 还原到进入前的输入行；lastRowsAboveInput 仍然有效，直接重画活动区。
+    this.renderNow();
+  }
+
+  /** 主视图的抬头：只打印一次，之后随历史一起往上滚。 */
+  private printHeader(): void {
+    const width = this.contentWidth();
+    this.output.write(
+      `${this.titleLine(width)}\r\n${this.style.paint("muted", fitPath(singleLine(this.workspace), width))}\r\n` +
+      `${this.dividerLine(width)}\r\n`,
+    );
+  }
+
+  /** transcript 视图：临时独占备用屏，整屏重绘，可滚动、可展开历史。 */
+  private renderTranscript(): void {
+    if (!this.started || !this.closed) return;
+
+    if (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS) {
       // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
       const message = clip(this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续"),
         Math.max(1, this.columns - 1));
@@ -1994,9 +2061,8 @@ export class Tui {
     this.inputDirty = false;
     if (!this.approvalMenuActive) frame += this.inputCursorSequence();
     // 同一帧通过一次输出写入，避免终端在多次 write 之间露出半张画面。
-    if (frame !== "") this.output.write(this.ownedScreen
-      ? `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`
-      : frame);
+    if (frame !== "") this.output.write(
+      `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`);
   }
 
   /** 确保审批结束、取消或 resize 后不会把终端光标留在隐藏状态。 */
@@ -2004,6 +2070,74 @@ export class Tui {
     if (!this.terminalControls || this.approvalCursorHidden === hidden) return;
     this.output.write(hidden ? "\x1b[?25l" : "\x1b[?25h");
     this.approvalCursorHidden = hidden;
+  }
+
+  /**
+   * 主视图：只追加。
+   *
+   * 已定稿的行用普通输出打印一次，之后随 Shell 滚动历史一起上移，不再重绘；
+   * 底部活动区（当前轮的可变内容 + 输入框 + 状态行）每帧清掉重画。
+   * 这就是 Claude Code 的 `<Static>` 和 Codex 的 inline viewport 的做法：
+   * 历史不可改，想改历史就切到 transcript 视图。
+   */
+  private renderInline(): void {
+    const width = this.contentWidth();
+    const slashCandidates = this.slashMenuItems();
+    const menuRows = Math.min(slashCandidates.length, 5);
+    const lines = this.wrappedDisplayLines();
+
+    // 提交边界：最后一组 entry 还在变（流式正文、运行中的工具），留在活动区；其余可以定稿。
+    const tailBudget = Math.max(1, Math.min(this.rows - 6, 12));
+    const lastId = lines.at(-1)?.id;
+    let boundary = lines.length;
+    while (boundary > 0 && lines[boundary - 1]?.id === lastId) boundary--;
+    const commitTarget = Math.max(0, Math.min(lines.length - tailBudget, boundary));
+    // 打印过的行收不回来：内容变短（折叠）时只是不再打印新的，活动区照旧重画。
+    const commitTo = Math.max(this.printedLines, Math.min(commitTarget, lines.length));
+    const tail = lines.slice(commitTo);
+    // 输入框上方 = 活动区尾部 + 输入框上边框；下一帧靠它回到活动区顶端。
+    const rowsAboveInput = tail.length + 1;
+
+    let frame = "\x1b[?2026h";
+    if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
+    frame += "\r\x1b[J";
+
+    for (let index = this.printedLines; index < commitTo; index++) {
+      frame += `${this.paintLogLine(lines[index]!, width)}\r\n`;
+    }
+    this.printedLines = commitTo;
+
+    for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
+    frame += `${this.dividerLine(width)}\r\n${this.inputLine(width)}\r\n${this.dividerLine(width)}\r\n`;
+    if (menuRows > 0) {
+      const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
+        Math.max(0, slashCandidates.length - menuRows));
+      for (let index = 0; index < menuRows; index++) {
+        frame += `${this.slashMenuLine(slashCandidates[first + index]!, first + index === this.slashSelected, width)}\r\n`;
+      }
+    }
+    frame += this.footerLine(width);
+
+    // 光标从状态行回到输入行：下边框 + 菜单 + 状态行都在它下面。
+    frame += `\x1b[${1 + menuRows + 1}A\r`;
+    if (!this.approvalMenuActive) frame += this.inputColumnSequence();
+    frame += this.approvalMenuActive ? "" : "\x1b[?25h";
+    frame += "\x1b[?2026l";
+
+    this.lastRowsAboveInput = rowsAboveInput;
+    this.inputDirty = false;
+    this.clearBeforeNextFrame = false;
+    this.output.write(frame);
+  }
+
+  /** 主视图的输入光标：相对活动区，按 prompt 宽度和已输入内容算列偏移。 */
+  private inputColumnSequence(): string {
+    const plainPrompt = this.promptText === COMMAND_PROMPT
+      ? `${this.glyphs.user} `
+      : singleLine(this.promptText);
+    const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
+    const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
+    return column > 1 ? `\x1b[${column - 1}C` : "";
   }
 
   private paintLogLine(line: LogLine, width: number): string {
@@ -2427,6 +2561,8 @@ export class Tui {
   }
 
   private moveToInput(): void {
+    // 主视图里输入行的位置由 renderInline 用相对移动摆好；绝对行号只属于 transcript 的整屏网格。
+    if (!this.transcriptMode) return;
     this.output.write(`\x1b[${this.inputRow};1H`);
   }
 

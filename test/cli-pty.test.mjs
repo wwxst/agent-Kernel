@@ -89,7 +89,7 @@ function runPty(env, args, answer, { initialInput } = {}) {
     detached: true,
   });
 
-  // REPL 用例需要先喂一条任务；PTY 的输入会缓冲到 readline 建好之后。
+  // 交互用例需要先喂一条任务；PTY 的输入会缓冲到终端界面建好之后。
   if (initialInput !== undefined) child.stdin.write(initialInput);
 
   let stdout = "";
@@ -228,36 +228,6 @@ test("PTY：审批中 EOF 明确结束等待并默认拒绝", { skip }, async ()
       assert.match(run.stdout, /eof path done/);
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.match(toolMessage.content, /^ERROR: permission denied: .*closed before an answer/);
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
-test("PTY REPL：审批中 EOF 报审批通道关闭，而不是用户拒绝", { skip }, async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      callTool("call_repl_eof", "shell", { command: "echo pty-repl-eof" }),
-      finalReply("repl eof done"),
-    ]);
-
-    try {
-      const run = await runPty(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        ["--repl", "--permission", "workspace-write"],
-        (child) => {
-          child.stdin.write("\u0004");
-          child.stdin.end();
-        },
-        { initialInput: "do the task\n" },
-      );
-
-      assert.equal(run.timedOut, false, `approval hung after REPL EOF:\n${run.stdout}\n${run.stderr}`);
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /repl eof done/);
-      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
-      assert.match(toolMessage.content, /^ERROR: permission denied: .*approval prompt closed/);
-      assert.doesNotMatch(toolMessage.content, /user denied/);
     } finally {
       await mock.close();
     }

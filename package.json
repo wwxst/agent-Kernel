@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "description": "Minimal coding agent: one Agent class, one tool loop",
+  "bin": {
+    "agent-kernel": "bin/agent.mjs",
+    "agent": "bin/agent.mjs"
+  },
   "scripts": {
     "agent": "node --env-file-if-exists=.env src/cli.ts",
     "test": "node --test test/agent.test.mjs test/tool-registry.test.mjs test/permission.test.mjs test/approval.test.mjs test/llm.test.mjs test/workspace.test.mjs test/cli.test.mjs test/cli-pty.test.mjs test/tui.test.mjs test/tui-image.test.mjs test/selfcheck.test.mjs test/eval.test.mjs test/eval-diagnostics.test.mjs",
