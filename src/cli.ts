@@ -339,7 +339,7 @@ function createAgent(
   permission: Permission,
   options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean;
     onEditCommitted?: (path: string, before: string, after: string) => void;
-    onWriteCommitted?: (path: string, before: string, after: string, created: boolean) => void;
+    onWriteCommitted?: (path: string, before: string | undefined, after: string | undefined, created: boolean) => void;
     onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
   const tools = new ToolRegistry(
