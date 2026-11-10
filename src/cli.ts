@@ -19,7 +19,6 @@
  *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
  *   AGENT_VIEW      compact / detailed；也可传 --details
  *   AGENT_VOICE     balanced / energetic / playful / tsundere / curious / gentle / confident
- *   AGENT_TUI_SCREEN auto（现代终端独立屏幕）/ always（强制）/ never（兼容行式）
  *   AGENT_TUI_COLOR  mono（默认，只保留用户消息任务条颜色）/ full（状态与提示层次配色）
  *
  * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
@@ -36,7 +35,7 @@ import { Llm } from "./llm.ts";
 import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
-import { Tui, parseTuiColorMode, parseTuiScreenMode, uiLanguageFromLocale } from "./tui.ts";
+import { Tui, parseTuiColorMode, uiLanguageFromLocale } from "./tui.ts";
 import type { ToolCall } from "./types.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 
@@ -638,9 +637,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       permission.setMode(mode);
       tui.setPermission(mode);
     },
-    // 短对话贴近输入框，内容多时再停靠底部；旧的固定布局仍可供兼容测试。
+    // 短对话贴近输入框，内容多时再停靠底部。
     flowInput: true,
-    screenMode: parseTuiScreenMode(process.env.AGENT_TUI_SCREEN),
     colorMode: parseTuiColorMode(process.env.AGENT_TUI_COLOR),
     columns: process.stdout.columns,
     rows: process.stdout.rows,
@@ -830,7 +828,7 @@ const usage = [
   // 中文对照：权限模式：…（默认：…）
   `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_SCREEN, AGENT_TUI_COLOR",
+  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_COLOR",
 ].join("\n");
 
 const cli = parseArgs(process.argv.slice(2));
