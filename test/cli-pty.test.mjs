@@ -264,6 +264,15 @@ test("PTY REPL：审批中 EOF 报审批通道关闭，而不是用户拒绝", {
   });
 });
 
+test("PTY：TERM=dumb 时完整 TUI 明确拒绝，不输出半截备用屏幕", { skip }, async () => {
+  const run = await runPty({ TERM: "dumb" }, ["--tui", "inspect"], () => {});
+  assert.equal(run.timedOut, false);
+  assert.equal(run.code, 1);
+  assert.match(run.stdout + run.stderr, /full-screen TUI requires an interactive terminal/);
+  assert.doesNotMatch(run.stdout, /\x1b\[\?1049h|Terminal compatibility mode|line-by-line output/,
+    "不具备能力时应立即报错，而不是打印一半固定界面或切逐行模式");
+});
+
 test("PTY：未配置模型能进入真实 TUI，右上角显示状态且不产生虚假请求", { skip }, async () => {
   const command = [process.execPath, cliPath, "--tui"].map(shellQuote).join(" ");
   const child = spawn("script", ["-q", "-e", "-f", "-c", command, "/dev/null"], {
