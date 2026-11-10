@@ -1283,7 +1283,6 @@ export class Tui {
         this.commitAssistant();
       }
       if (show) this.pushTask(task);
-      this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
       this.trimLog();
       this.setActivityState("preparing");
       if (this.activityTimer !== undefined) clearInterval(this.activityTimer);
@@ -1620,6 +1619,12 @@ export class Tui {
     if (this.layout) {
       this.stopThinking();
       this.commitAssistant();
+      // 状态行最后落账：正文已经提交进日志，所以它天然排在回复之后
+      // （Claude Code 的 "Cooked for 12s"、Codex 的耗时都在回复下面）。
+      if (this.currentTurn !== undefined) {
+        this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
+        this.trimLog();
+      }
       if (run.tokenBudget.exceeded) {
         this.pushLog(this.uiText(`[budget] exceeded (limit=${run.tokenBudget.limit})`, `[预算] 已超出限制（上限=${run.tokenBudget.limit}）`), "warning");
       }
@@ -2437,6 +2442,11 @@ export class Tui {
       const status = formatActivityStateLabel(this.activityState, this.uiLanguage);
       if (status !== "") logical.push({ text: this.withMood(
         `  ${this.glyphs.running} ${status}`, this.contentWidth()), tone: "muted" });
+    }
+
+    // 运行中的状态行只作为活动区尾部显示，不进日志；本轮结束时它才落账（排在回复之后）。
+    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
+      logical.push({ ...this.turnStatusLine(this.currentTurn), kind: "turn-status", turn: this.currentTurn });
     }
 
     const width = this.contentWidth();
