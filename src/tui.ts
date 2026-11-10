@@ -1084,7 +1084,7 @@ export class Tui {
     const elapsed = Math.max(0, (turn.endedAt ?? Date.now()) - turn.startedAt);
     const duration = formatActivityDuration(elapsed, turn.language);
     const zh = turn.language === "zh";
-    const arrow = this.foldArrow(turn.expanded);
+    const arrow = `${this.foldArrow(turn.expanded)} ${this.foldHint(turn.expanded, "Ctrl+E", zh)}`;
     if (turn.outcome === "completed") return {
       text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}  ${arrow}`,
       tone: "success",
@@ -1101,6 +1101,17 @@ export class Tui {
   /** 只在显示层拼接折叠指示符，始终位于对应文字后面。 */
   private foldArrow(expanded: boolean): string {
     return this.glyphs === UNICODE_GLYPHS ? (expanded ? "▾" : "▸") : (expanded ? "v" : ">");
+  }
+
+  /**
+   * 箭头后面的快捷键提示。
+   *
+   * 主视图不再捕获鼠标（滚轮和选中复制要留给终端），所以「可以点开」这个隐含约定没了；
+   * 箭头后面必须写明按哪个键，否则用户只看到一个孤零零的三角，不知道能展开。
+   */
+  private foldHint(expanded: boolean, key: string, zh: boolean): string {
+    const action = zh ? (expanded ? "收起" : "展开") : (expanded ? "collapse" : "expand");
+    return zh ? `（${key} ${action}）` : `(${key} ${action})`;
   }
 
   private activitySummary(group: ActivityGroup): string {
@@ -1147,7 +1158,7 @@ export class Tui {
         ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`,
         result[0]!.tone));
     title.kind = failure?.kind ?? unfinished?.kind ?? "tool";
-    title.text += `  ${this.foldArrow(item.detailsExpanded === true)}`;
+    title.text += `  ${this.foldArrow(item.detailsExpanded === true)} ${this.foldHint(item.detailsExpanded === true, "Ctrl+G", group.language === "zh")}`;
     title.tool = item;
     const lines: LogLine[] = [title];
     // 摘要始终保留成功/失败事实；详情层才展开原始结果。
@@ -2368,7 +2379,7 @@ export class Tui {
             tone: "info" });
         }
         children.push(
-          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)}`),
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)} ${this.foldHint(group.expanded, "Ctrl+O", group.language === "zh")}`),
             tone: "muted", kind: "activity", activity: group },
         );
         if (group.expanded) {

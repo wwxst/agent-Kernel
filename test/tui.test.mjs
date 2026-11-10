@@ -2321,3 +2321,19 @@ test("TUI 主视图：一轮结束后仍保留轮次之间的空行", async (t) 
   // 折叠上一轮会让展示行变少：游标必须跟着退回，否则之后的行整体错位、空行被吞掉。
   assert.ok(rows.slice(firstReply + 1, secondTask).some((row) => row.trim() === ""), "两轮之间保留空行");
 });
+
+test("TUI：折叠箭头后面标出对应快捷键，不能只留一个三角", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查一下");
+  const call = { id: "hint", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file 13 a.txt");
+  ui.tui.confirmAssistant("好的", true);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  await tick();
+  const screen = screenRows(ui, 20).join("\n");
+  // 主视图不捕获鼠标：箭头后面必须写明按哪个键，否则用户不知道能展开。
+  assert.match(screen, /Ctrl\+E/);
+});
