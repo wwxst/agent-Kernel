@@ -33,7 +33,8 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/workspace.ts` | 工作区文件与 Shell：真实路径守卫、临时文件原子替换与取消检查、grep 物理扫描起点、有界读取/扫描、进程树清理期限及失败告警；父目录 TOCTOU 仍有已知边界 | `Workspace.read/write/edit/glob/grep/list/run`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
-| `src/tui.ts` | Claude Code 风格 TUI：顶部项目/模型/路径、对话从顶部排列、底部带边框输入、状态行在下、工具状态/审批面板、流式失败草稿失效、颜色/字形降级、PageUp/PageDown、resize；不碰 Agent 循环 | `Tui`（`start`、`logError`、`setThinking`、`readLine`、`approve`、`finishTurn`、`close`） |
+| `src/tui.ts` | Claude Code / Codex 风格 TUI：可见过程说明、真实工具活动分层折叠、尾部箭头和 SGR 鼠标点击、原始参数/结果、成功读图与文件提交后的展示；仍不碰 Agent 循环 | `Tui`（`start`、`assistantDelta`、`recordEditDiff`、`recordImagePreview`、`readLine`、`approve`、`finishTurn`、`close`） |
+| `src/tui-image.ts` | 从获准读取的 PNG 真实字节生成有界文字缩略图；其他图像格式验证签名后按实际兼容能力降级；无第三方运行时依赖 | `previewImage` |
 | `src/cli.ts` | 组装：命令行参数 / 环境变量 → CLI/REPL/TUI；占位 API Key 拒绝、显式外部演示标记及错误展示；权限与取消入口 | — |
 | `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；流式正文与确认回复不一致时显式更正，不改 Transcript | `RunPresenter` |
 
@@ -49,7 +50,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
 - `Workspace` 的七个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
-- `test/tui.test.mjs`：对话贴顶、输入框/状态行、工具运行/成功/失败/拒绝/未执行、审批面板完整命令与 cwd、y/N、排队输入、thinking、颜色开关、PageUp/PageDown、resize、中文宽度、复杂字符输入保真、长会话及退出清理；用假输入/输出流，不需要真终端。
+- `test/tui.test.mjs` + `test/tui-image.test.mjs`：对话贴顶、过程概述、折叠层次、真实提交的 Diff、读图缩略图、SGR 鼠标点击与输入隔离、审批、thinking、颜色、滚动、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入与模式恢复。
 - `test/cli.test.mjs`：端到端验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 布局/命令/统计，且占位 Key 不发请求、SSE 未完成友好提示/去重、HTTP 鉴权分类；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
 
