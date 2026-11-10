@@ -2266,6 +2266,7 @@ test("P2 read：活动层必须保留真实读取上限警告，工具详情无�
   ui.tui.toolResult(call, "visible data\n… [truncated 24500 chars]\n… [stopped after 32768 bytes]");
   let screen = screenRows(ui, 45).join("\n");
   assert.match(screen, /stopped after 32768 bytes/, "活动工具摘要下必须立即可见读取截断警告");
+  assert.match(screen, /truncated 24500 chars/, "输出字符数截断与读取字节上限需要同时保留");
   assert.match(screen, /Received 3 lines|收到 3 行/);
   assert.doesNotMatch(screen, /Arguments \(excerpt\)|原始参数（摘录）/, "不必先进入工具第四层才能看警告");
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
