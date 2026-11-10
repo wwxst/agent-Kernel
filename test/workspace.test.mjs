@@ -184,9 +184,13 @@ test("write：临时文件写完但提交前取消，不截断既有文件且不
     let checks = 0;
     // 精确在临时内容写完后、rename 前的取消检查触发；不用依赖定时器运气。
     const signal = { get aborted() { return ++checks >= 4; } };
-    const workspace = new Workspace({ root, signal });
+    let committedNotices = 0;
+    const workspace = new Workspace({ root, signal,
+      onWriteCommitted: () => { committedNotices++; },
+    });
 
     await assert.rejects(() => workspace.write("saved.txt", "new content"), /cancelled before file write/);
+    assert.equal(committedNotices, 0, "取消提交不能发出成功的 Diff 快照事件");
     assert.ok(checks >= 4, "必须触达临时文件写完后的最终提交检查");
     assert.equal(await readFile(file, "utf8"), "original");
     assert.equal((await readdir(root)).some((name) => name.startsWith(".agent-kernel-")), false);
