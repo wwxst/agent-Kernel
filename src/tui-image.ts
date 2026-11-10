@@ -60,6 +60,83 @@ function paeth(a: number, b: number, c: number): number {
   return left <= above && left <= upper ? a : above <= upper ? b : c;
 }
 
+/** 对所有 PNG Chunk 校验 CRC、顺序与边界；不把损坏文件当成可预览图片。 */
+function inspectPng(bytes: Buffer): { width: number; height: number; supported: boolean } | undefined {
+  if (bytes.length < 45 || !bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return undefined;
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let depth = 0;
+  let colorType = -1;
+  let interlace = 0;
+  let header = false;
+  let paletteEntries = 0;
+  let transparency = false;
+  let hasData = false;
+  let afterData = false;
+
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const end = offset + 12 + length;
+    if (length > MAX_RAW_BYTES || end > bytes.length) return undefined;
+    const kind = bytes.toString("ascii", offset + 4, offset + 8);
+    if (!/^[A-Za-z]{4}$/.test(kind)) return undefined;
+    let crc = 0xffffffff;
+    for (let pos = offset + 4; pos < offset + 8 + length; pos++) {
+      crc ^= bytes[pos]!;
+      for (let bit = 0; bit < 8; bit++) {
+        crc = (crc >>> 1) ^ ((crc & 1) === 1 ? 0xedb88320 : 0);
+      }
+    }
+    if (((crc ^ 0xffffffff) >>> 0) !== bytes.readUInt32BE(offset + 8 + length)) return undefined;
+
+    const value = bytes.subarray(offset + 8, offset + 8 + length);
+    if (!header) {
+      if (kind !== "IHDR" || length !== 13) return undefined;
+      header = true;
+      width = value.readUInt32BE(0);
+      height = value.readUInt32BE(4);
+      depth = value[8]!;
+      colorType = value[9]!;
+      interlace = value[12]!;
+      const validDepths: Record<number, number[]> = {
+        0: [1, 2, 4, 8, 16], 2: [8, 16], 3: [1, 2, 4, 8], 4: [8, 16], 6: [8, 16],
+      };
+      if (width === 0 || height === 0 || width * height > MAX_PIXELS ||
+          !validDepths[colorType]?.includes(depth) || value[10] !== 0 || value[11] !== 0 ||
+          interlace > 1) return undefined;
+    } else if (kind === "IHDR") {
+      return undefined;
+    } else if (kind === "IEND") {
+      if (!hasData || length !== 0 || end !== bytes.length) return undefined;
+      return { width, height, supported: depth === 8 && interlace === 0 };
+    } else if (kind === "PLTE") {
+      if (hasData || paletteEntries !== 0 || transparency || colorType === 0 || colorType === 4 ||
+          length < 3 || length > 768 || length % 3 !== 0) return undefined;
+      paletteEntries = length / 3;
+      if (colorType === 3 && paletteEntries > 2 ** depth) return undefined;
+    } else if (kind === "tRNS") {
+      if (hasData || transparency || colorType === 4 || colorType === 6) return undefined;
+      if ((colorType === 0 && length !== 2) || (colorType === 2 && length !== 6) ||
+          (colorType === 3 && (paletteEntries === 0 || length < 1 || length > paletteEntries))) return undefined;
+      if (colorType === 0 && value.readUInt16BE(0) >= 2 ** depth) return undefined;
+      if (colorType === 2 && (value.readUInt16BE(0) >= 2 ** depth ||
+          value.readUInt16BE(2) >= 2 ** depth || value.readUInt16BE(4) >= 2 ** depth)) return undefined;
+      transparency = true;
+    } else if (kind === "IDAT") {
+      if (afterData || (colorType === 3 && paletteEntries === 0)) return undefined;
+      hasData = true;
+    } else {
+      if (hasData) afterData = true;
+      // 不支持未知关键 Chunk；辅助 Chunk 有 CRC 保障，按 PNG 规则允许跳过。
+      if (kind[0] === kind[0]?.toUpperCase()) return undefined;
+    }
+    if (hasData && kind !== "IDAT") afterData = true;
+    offset = end;
+  }
+  return undefined;
+}
+
 function decodePng(bytes: Buffer): ImagePreview | undefined {
   if (bytes.length < 33 || !bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return undefined;
   let offset = 8;
@@ -146,19 +223,11 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
 export function previewImage(bytes: Buffer): ImagePreview | undefined {
   if (bytes.length < 12 || bytes.length > 4_000_000) return undefined;
   if (bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
-    const decoded = decodePng(bytes);
-    if (decoded !== undefined) return decoded;
-    // 16 位、隔行 PNG 等无法解码时，只在完整 PNG 头尾存在时明确显示格式降级。
-    if (bytes.length >= 45 && bytes.readUInt32BE(8) === 13 &&
-        bytes.toString("ascii", 12, 16) === "IHDR" &&
-        bytes.toString("ascii", bytes.length - 8, bytes.length - 4) === "IEND") {
-      const width = bytes.readUInt32BE(16);
-      const height = bytes.readUInt32BE(20);
-      if (width > 0 && height > 0 && width * height <= MAX_PIXELS) {
-        return { format: "PNG", width, height, rows: [] };
-      }
-    }
-    return undefined;
+    const inspected = inspectPng(bytes);
+    if (inspected === undefined) return undefined;
+    // 支持的格式解码出错时不冒充“已验证图片”；不支持的有效格式才降级为尺寸说明。
+    return inspected.supported ? decodePng(bytes) :
+      { format: "PNG", width: inspected.width, height: inspected.height, rows: [] };
   }
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return { format: "JPEG", rows: [] };
   if (bytes.toString("ascii", 0, 6) === "GIF89a" || bytes.toString("ascii", 0, 6) === "GIF87a") {
