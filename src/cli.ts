@@ -338,11 +338,12 @@ function createAgent(
   signal: AbortSignal,
   permission: Permission,
   options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean;
-    onEditCommitted?: (path: string, before: string, after: string) => void } = {},
+    onEditCommitted?: (path: string, before: string, after: string) => void;
+    onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
   const tools = new ToolRegistry(
     createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
-      onEditCommitted: options.onEditCommitted })),
+      onEditCommitted: options.onEditCommitted, onImageRead: options.onImageRead })),
     { permission },
   );
 
@@ -657,10 +658,12 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   let toolStartedInLatestResponse = false;
   // ToolRegistry 串行执行每条调用；只把该次真实 edit 提交对应到当前 ToolCall。
   let pendingEditId: string | undefined;
+  let pendingImageId: string | undefined;
   const callbacks: AgentCallbacks = {
     onRequestStart: () => {
       toolStartedInLatestResponse = false;
       pendingEditId = undefined;
+      pendingImageId = undefined;
       tui.beginModelRequest();
       tui.setThinking(true);
     },
@@ -669,11 +672,13 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       if (!toolStartedInLatestResponse) tui.confirmAssistant(confirmedContent);
       toolStartedInLatestResponse = true;
       pendingEditId = call.function.name === "edit" ? call.id : undefined;
+      pendingImageId = call.function.name === "read" ? call.id : undefined;
       tui.toolCall(call);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
     onToolResult: (call, result) => {
       if (call.id === pendingEditId) pendingEditId = undefined;
+      if (call.id === pendingImageId) pendingImageId = undefined;
       tui.toolResult(call, result);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
@@ -685,6 +690,9 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     current = createAgent(config, signal, permission, { announce: false, callbacks, narrateProgress: true,
       onEditCommitted: (path, before, after) => {
         if (pendingEditId !== undefined) tui.recordEditDiff(pendingEditId, path, before, after);
+      },
+      onImageRead: (path, bytes) => {
+        if (pendingImageId !== undefined) tui.recordImagePreview(pendingImageId, path, bytes);
       },
     });
     return current;
