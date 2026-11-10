@@ -2274,6 +2274,26 @@ test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行",
   assert.match(screen, /\+two/);
 });
 
+test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少换行标记", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 108 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("修复文件结尾换行");
+  const call = { id: "eof-newline", type: "function", function: {
+    name: "edit", arguments: '{"path":"single.txt","old_string":"same","new_string":"same\\n"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "single.txt", "same", "same\n");
+  ui.tui.toolResult(call, "edited single.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 44).join("\n");
+  assert.match(screen, /@@ -1,1 \+1,1 @@/);
+  assert.match(screen, /-same/);
+  assert.match(screen, /\+same/);
+  assert.match(screen, /\\ No newline at end of file/);
+  assert.doesNotMatch(screen, /@@ -2,0 \+2,0 @@/, "不能产生空的零长度假 hunk");
+});
+
 test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
