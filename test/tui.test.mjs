@@ -377,6 +377,172 @@ test("TUI 独立屏幕：缩到不足最小尺寸不退回逐行输出，放大�
   assert.doesNotMatch(screenRows(ui, 35).join("\n"), /窗口太小/);
 });
 
+
+test("TUI 时间线：执行中说明与活动交替出现，完成后自动收起，最终答复独立展示", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查 TUI 并修复");
+  ui.tui.confirmAssistant("先检查日志状态，然后读取文件。");
+  const call = { id: "timeline-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "real file content");
+  ui.tui.confirmAssistant("已经找到问题，接下来验证结果。");
+  const during = screenRows(ui, 40).join("\n");
+  assert.ok(during.indexOf("先检查日志状态") < during.indexOf("已读取文件"), "阶段说明出现在对应活动之前");
+  assert.ok(during.indexOf("已读取文件") < during.indexOf("已经找到问题"), "工具活动与下一条说明交替出现");
+
+  ui.tui.confirmAssistant("最终回复：已验证通过。", true);
+  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  const folded = screenRows(ui, 40).join("\n");
+  assert.match(folded, /已完成 · 用时 .*(?:▸|>)/);
+  assert.doesNotMatch(folded, /先检查日志状态|已读取文件|已经找到问题/);
+  assert.match(folded, /最终回复：已验证通过/, "正式回答在折叠过程外仍然可见");
+  assert.doesNotMatch(folded, /已读取文件、修改代码、运行检查等/, "不应再渲染综合摘要层");
+
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  const unfolded = screenRows(ui, 40).join("\n");
+  assert.match(unfolded, /已完成 · 用时 .*(?:▾|v)/);
+  assert.match(unfolded, /先检查日志状态/);
+  assert.match(unfolded, /已读取文件/);
+  assert.match(unfolded, /已经找到问题/);
+});
+
+test("TUI 时间线：执行中手动收起只隐藏过程画面，不停止真实流式接收", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("正在分析 TUI");
+  ui.tui.assistantDelta("MODEL_STAGE_FIRST");
+  ui.tui.setThinking(true);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  let screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /正在执行 · 已用时 .*?(?:▸|>)/);
+  assert.doesNotMatch(screen, /MODEL_STAGE_FIRST|Thinking\.\.\./);
+  ui.tui.assistantDelta("MODEL_STAGE_SECOND");
+  screen = screenRows(ui, 35).join("\n");
+  assert.doesNotMatch(screen, /MODEL_STAGE_SECOND/, "收起期间接收的增量不能漏到过程外面");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  screen = screenRows(ui, 35).join("\n");
+  assert.match(screen, /MODEL_STAGE_FIRSTMODEL_STAGE_SECOND/, "重新展开后恢复完整流式正文");
+  assert.doesNotMatch(screen, /历史已截断|history truncated/, "隐藏内容不等于日志被裁剪");
+});
+
+test("TUI 鼠标：点击真实箭头展开任务、活动与工具，不污染 readline 输入", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  assert.match(ui.text(), /\x1b\[\?1000h\x1b\[\?1006h/, "只在备用屏幕开启 SGR 鼠标");
+  ui.tui.beginTurn("inspect");
+  const call = { id: "mouse-read", type: "function", function: { name: "read", arguments: '{"path":"package.json"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "sample content");
+  ui.tui.confirmAssistant("finished", true);
+  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  async function clickArrow(match, splitBeforeMousePrefix = false) {
+    const rows = screenRows(ui, 45);
+    const row = rows.findIndex((line) => match.test(line) && /[▸▾>]$/.test(line.trim()));
+    assert.ok(row >= 0, "目标箭头应绘制在真实屏幕上");
+    const line = rows[row].trimEnd();
+    const col = Array.from(line).length;
+    if (splitBeforeMousePrefix) {
+      ui.input.write("\x1b");
+      ui.input.write("[");
+      ui.input.write(`<0;${col};${row + 1}M`);
+    } else {
+      ui.input.write(`\x1b[<0;${col};${row + 1}M`);
+    }
+    await tick();
+  }
+  await clickArrow(/Completed/);
+  assert.match(screenRows(ui, 45).join("\n"), /Read files|Read file/);
+  await clickArrow(/(?:↳|\+) Read files/);
+  assert.match(screenRows(ui, 45).join("\n"), /Read package\.json/);
+  await clickArrow(/Read package\.json/, true);
+  assert.match(screenRows(ui, 45).join("\n"), /Arguments \(excerpt\):/, "ESC / [ / < 分包也必须命中箭头");
+  const pending = ui.tui.readLine();
+  ui.input.write("next task\r");
+  assert.equal(await pending, "next task", "SGR 坐标不得混入后续用户输入");
+  ui.tui.close();
+  assert.match(ui.text(), /\x1b\[\?1006l\x1b\[\?1000l/, "退出时恢复终端鼠标模式");
+});
+
+test("TUI 鼠标：拆包 SGR 序列安全解析，滚轮以小步长浏览历史", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 26, columns: 85, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let i = 0; i < 60; i++) ui.tui.logLine(`mouse-history-${i}`);
+  const last = screenRows(ui, 26).join("\n");
+  assert.match(last, /mouse-history-59/);
+  ui.input.write("\x1b[<64;20;");
+  ui.input.write("10M");
+  await tick();
+  assert.match(screenRows(ui, 26).join("\n"), /(?:↑|\^) 3 (?:lines|行)/);
+  ui.input.write("\x1b[<65;20;10M");
+  await tick();
+  assert.match(screenRows(ui, 26).join("\n"), /mouse-history-59/);
+});
+
+test("TUI 时间线：多轮任务分别折叠，键盘可独立展开旧轮次", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (const [task, reply] of [["第一个任务", "FIRST_RESULT"], ["第二个任务", "SECOND_RESULT"]]) {
+    ui.tui.beginTurn(task);
+    ui.tui.confirmAssistant("STAGE_" + reply);
+    ui.tui.confirmAssistant(reply, true);
+    ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  }
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT|STAGE_SECOND_RESULT/);
+  assert.match(screenRows(ui, 45).join("\n"), /FIRST_RESULT/);
+  assert.match(screenRows(ui, 45).join("\n"), /SECOND_RESULT/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  assert.match(screenRows(ui, 45).join("\n"), /STAGE_SECOND_RESULT/);
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  assert.match(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT/);
+});
+
+test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 115, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("编辑文件并检查");
+  const call = { id: "edit-detail", type: "function", function: { name: "edit", arguments: '{"path":"src/tui.ts","old_string":"a","new_string":"b"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "Updated src/tui.ts");
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /编辑 src\/tui\.ts.*(?:▸|>)/);
+  assert.doesNotMatch(screen, /调用：/, "原始工具详情默认不展开");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /编辑 src\/tui\.ts.*(?:▾|v)/);
+  assert.match(screen, /调用：.*edit/);
+  assert.match(screen, /Updated src\/tui\.ts/);
+  assert.match(screen, /替换片段（非完整 Diff）/);
+  assert.match(screen, /- a/);
+  assert.match(screen, /\+ b/);
+  assert.doesNotMatch(screen, /@@ -\d/, "不根据路径虚构带行号的完整文件 Diff");
+});
+
+test("TUI 时间线：失败及取消仍可展开，不隐藏真实的工具错误", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35, screenMode: "always" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("运行检查");
+  const call = { id: "failed-step", type: "function", function: { name: "shell", arguments: '{"command":"exit 1"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "exit 1\nERROR: process failed");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true });
+  assert.match(screenRows(ui, 35).join("\n"), /执行失败 · 用时 .*(?:▸|>)/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  ui.input.emit("keypress", "", { name: "o", ctrl: true });
+  const expanded = screenRows(ui, 35).join("\n");
+  assert.match(expanded, /执行失败 · 用时 .*(?:▾|v)/);
+  assert.match(expanded, /failed|失败/);
+});
+
 test("TUI：已确认模型正文覆盖不一致的流式草稿，不向历史提交错误文本", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());
@@ -544,12 +710,12 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   t.mock.timers.tick(3200);
   ui.tui.finishAssistant("done");
   ui.tui.finishTurn(run, session, { failed: false });
-  assert.match(lastRow(ui.text(), 6), /Completed · in 3s/);
+  assert.match(screenRows(ui).join("\n"), /Completed · in 3s/, "状态位置允许随折叠布局上移");
   ui.tui.beginTurn("second");
   t.mock.timers.tick(1000);
   ui.tui.finishTurn({ ...run, toolCalls: 0 }, session, { failed: true });
-  assert.match(lastRow(ui.text(), 12), /Failed · after 1s/);
-  assert.doesNotMatch(lastRow(ui.text(), 12), /after 4s/);
+  assert.match(screenRows(ui).join("\n"), /Failed · after 1s/);
+  assert.doesNotMatch(screenRows(ui).join("\n"), /after 4s/);
 });
 
 test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条消息仍贴顶", async (t) => {
@@ -564,9 +730,11 @@ test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条�
   t.mock.timers.tick(2000);
   ui.tui.finishTurn(run, session, { failed: false });
   ui.tui.beginTurn("second");
-  assert.match(lastRow(ui.text(), 6), /Completed · in 2s/);
-  assert.equal(lastRow(ui.text(), 9), "");
-  assert.match(lastRow(ui.text(), 10), /^(?:❯|>) second/);
+  const rows = screenRows(ui, 35);
+  const previous = rows.findIndex((row) => /Completed · in 2s/.test(row));
+  const second = rows.findIndex((row) => /^(?:❯|>) second/.test(row));
+  assert.ok(previous >= 0 && second > previous, "上一轮完成状态保留在新任务之前");
+  assert.ok(rows.slice(previous + 1, second).some((row) => row.trim() === ""), "两轮之间保留空行");
 });
 
 test("TUI：标题标明程序和项目，用户正文与输入边界使用中性层次", async (t) => {
@@ -845,10 +1013,12 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   ui.output.columns = 80;
   ui.output.emit("resize");
   await tick();
-  assert.match(lastRow(ui.text(), 4), /TASK_NARROW/);
-  assert.match(lastRow(ui.text(), 8), /已读取文件|Read files/);
-  assert.match(lastRow(ui.text(), 9), /(?:✓|\+) Read a.txt/);
-  assert.match(lastRow(ui.text(), 10), /Received 1 line/);
+  const screen = screenRows(ui).join("\n");
+  assert.match(screen, /TASK_NARROW/);
+  assert.match(screen, /Read file a\.txt\./, "事实性过程概述在活动摘要之前");
+  assert.match(screen, /已读取文件|Read files/);
+  assert.match(screen, /(?:✓|\+) Read a\.txt/);
+  assert.match(screen, /Received 1 line/);
 });
 
 test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
@@ -957,8 +1127,10 @@ test("TUI 固定布局：流式响应失败时撤销未确认正文，但保留�
 
   const current = screenRows(ui).join("\n");
   assert.doesNotMatch(current, /UNCONFIRMED_RESPONSE_42/);
-  assert.match(current, /unconfirmed text discarded/);
   assert.match(current, /Failed/);
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  const detail = screenRows(ui).join("\n");
+  assert.match(detail, /unconfirmed text discarded/, "失败草稿说明在展开后可追溯");
 });
 
 test("TUI 行式输出：已写出的流式片段不能撤回，但明确标记其未确认", async (t) => {
@@ -1874,12 +2046,15 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 
 
   assert.equal(ui.tui.uiText("permission: workspace-write", "权限：workspace-write"), "权限：workspace-write");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /命令：\/exit/);
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /Ctrl\+E 任务 · Ctrl\+O 活动组 · Ctrl\+G 工具详情/,
+    "固定布局的帮助应让用户知道如何展开尾部折叠箭头");
   ui.tui.setPermission("read-only");
   assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
 
   ui.tui.beginTurn("Please explain the error in English");
   assert.equal(ui.tui.uiText("permission: read-only", "权限：read-only"), "permission: read-only");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /commands: \/exit/);
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /Ctrl\+E turns · Ctrl\+O activity groups · Ctrl\+G tool details/);
 });
 
 
@@ -2023,6 +2198,440 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   assert.doesNotMatch(final, /\d+ 项操作|\d+ 成功|\d+ 失败/);
 });
 
+test("TUI 时间线：连续无文字模型请求仍分成独立活动阶段", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 118 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查项目并运行验证");
+  ui.tui.beginModelRequest();
+  const first = { id: "phase-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(first);
+  ui.tui.toolResult(first, "file content");
+  ui.tui.beginModelRequest();
+  const next = { id: "phase-shell", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(next);
+  ui.tui.toolResult(next, "exit 0");
+  const screen = screenRows(ui, 48).join("\n");
+  assert.ok(screen.indexOf("已读取文件 src/tui.ts。") < screen.indexOf("命令执行结束 npm run check。"),
+    "不同模型请求各自保存真实进度，按发生顺序展示");
+  assert.equal((screen.match(/(?:↳|\+) 已读取文件/g) ?? []).length, 1);
+  assert.equal((screen.match(/(?:↳|\+) 已执行命令/g) ?? []).length, 1);
+});
+
+test("TUI 时间线：失败时最后一段过程说明不冒充独立的最终回复", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查代码");
+  ui.tui.assistantDelta("正在检查问题，还没有验证完成。");
+  ui.tui.finishAssistant();
+  ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
+    session, { failed: true });
+  let screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /执行失败 · 用时/);
+  assert.doesNotMatch(screen, /正在检查问题，还没有验证完成。/, "失败后的阶段说明默认属于可折叠过程");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /正在检查问题，还没有验证完成。/, "展开后依然能复盘真实说明");
+});
+
+test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和尺寸", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("查看图片");
+  const call = { id: "image-read", type: "function", function: {
+    name: "read", arguments: '{"path":"terminal.png"}',
+  } };
+  ui.tui.toolCall(call);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
+  ui.tui.recordImagePreview(call.id, "terminal.png", png);
+  ui.tui.toolResult(call, "image file returned");
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /真实图片预览：/);
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /真实图片预览： PNG · 1 × 1/);
+  assert.match(screen, /│/, "应实际生成像素字符行，而非只画占位文本");
+});
+
+test("P2 read：活动层必须保留真实读取上限警告，工具详情无需先展开", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 116 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查超大文本");
+  const call = { id: "read-truncated-warning", type: "function", function: {
+    name: "read", arguments: '{"path":"big.log"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "visible data\n… [truncated 24500 chars]\n… [stopped after 32768 bytes]");
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /stopped after 32768 bytes/, "活动工具摘要下必须立即可见读取截断警告");
+  assert.match(screen, /truncated 24500 chars/, "输出字符数截断与读取字节上限需要同时保留");
+  assert.match(screen, /Received 3 lines|收到 3 行/);
+  assert.doesNotMatch(screen, /Arguments \(excerpt\)|原始参数（摘录）/, "不必先进入工具第四层才能看警告");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
+    session, { failed: false });
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /stopped after 32768 bytes/, "整轮结束仍默认折叠");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  ui.input.emit("keypress", "", { name: "o", ctrl: true });
+  screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /stopped after 32768 bytes/, "再次展开原有日志后仍保留警告");
+});
+
+test("P2 write：远距离多处修改显示两段正确行号的独立 Unified Diff", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 70, columns: 120 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("覆盖配置文件");
+  const call = { id: "multi-hunk-write", type: "function", function: {
+    name: "write", arguments: '{"path":"config.txt","content":"two separate changes"}',
+  } };
+  const oldLines = Array.from({ length: 40 }, (_, i) => "line-" + String(i + 1).padStart(2, "0"));
+  const newLines = [...oldLines];
+  newLines[4] = "changed-05";
+  newLines[32] = "changed-33";
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "config.txt", oldLines.join("\n") + "\n", newLines.join("\n") + "\n");
+  ui.tui.toolResult(call, "wrote 430 chars to config.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 70).join("\n");
+  const headers = screen.match(/@@ -\d+,\d+ \+\d+,\d+ @@/g) ?? [];
+  assert.deepEqual(headers, ["@@ -2,7 +2,7 @@", "@@ -30,7 +30,7 @@"],
+    "相距很远的两个替换须有两段真实行号，而不是整片删除重建");
+  assert.match(screen, /-line-05/);
+  assert.match(screen, /\+changed-05/);
+  assert.match(screen, /-line-33/);
+  assert.match(screen, /\+changed-33/);
+  assert.doesNotMatch(screen, / line-18/, "未变化的中间行不能挤进整个巨大 hunk");
+});
+
+test("P2 write：远处插入和删除也保留正确 hunk 行号", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 70, columns: 120 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("覆盖列表文件");
+  const call = { id: "insert-delete-write", type: "function", function: {
+    name: "write", arguments: '{"path":"list.txt","content":"content"}',
+  } };
+  const oldLines = Array.from({ length: 30 }, (_, i) => "entry-" + (i + 1));
+  const newLines = [...oldLines];
+  newLines.splice(2, 0, "inserted");
+  newLines.splice(newLines.indexOf("entry-27"), 1);
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "list.txt", oldLines.join("\n") + "\n", newLines.join("\n") + "\n");
+  ui.tui.toolResult(call, "wrote list.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 70).join("\n");
+  assert.equal((screen.match(/@@ -/g) ?? []).length, 2, "插入与远处删除应分成两个 hunk");
+  assert.match(screen, /\+inserted/);
+  assert.match(screen, /-entry-27/);
+  assert.match(screen, /@@ -1,5 \+1,6 @@/, "文件开头附近插入须准确计算范围");
+});
+
+test("P2 write：大文件快照不可用时明确降级且不伪造 Unified Diff", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 43, columns: 115 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("覆盖大文件");
+  const call = { id: "large-write-no-snapshot", type: "function", function: {
+    name: "write", arguments: '{"path":"large.txt","content":"..."}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "large.txt", undefined, "short replacement", false);
+  ui.tui.toolResult(call, "wrote 17 chars to large.txt");
+  let screen = screenRows(ui, 43).join("\n");
+  assert.match(screen, /Diff 预览已降级|Diff preview unavailable/, "无需展开原始工具详情即可看到降级原因");
+  assert.match(screen, /2,000,000 (?:bytes|字节)/, "提示必须采用实际 Workspace 限制而不是近似 2 MiB");
+  assert.doesNotMatch(screen, /2 MiB/, "禁止把 2,000,000 字节误写为 2 MiB");
+  assert.doesNotMatch(screen, /实际提交的 Unified Diff/, "快照不存在不能显示冒充完整 Diff 的标题");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  screen = screenRows(ui, 43).join("\n");
+  assert.match(screen, /Diff 预览已降级|Diff preview unavailable/);
+  assert.doesNotMatch(screen, /--- a\/large\.txt/, "缺少真实前后快照不能伪造补丁");
+});
+
+test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("创建文件");
+  const call = { id: "create-file-patch", type: "function", function: {
+    name: "write", arguments: '{"path":"new.ts","content":"one\\ntwo\\n"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "new.ts", "", "one\ntwo\n", true);
+  ui.tui.toolResult(call, "wrote 8 chars to new.ts");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 44).join("\n");
+  assert.match(screen, /--- \/dev\/null/);
+  assert.match(screen, /\+\+\+ b\/new\.ts/);
+  assert.match(screen, /@@ -0,0 \+1,2 @@/);
+  assert.match(screen, /\+one/);
+  assert.match(screen, /\+two/);
+});
+
+test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("修改大文件");
+  const call = { id: "large-diff", type: "function", function: {
+    name: "edit", arguments: '{"path":"large.txt","old_string":"old","new_string":"new"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "large.txt", "a".repeat(1500) + "\n", "b".repeat(1500) + "\n");
+  ui.tui.toolResult(call, "edited large.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /line truncated|Diff 过大/, "很长的一行也必须截断，而非无限制重绘");
+  assert.doesNotMatch(screen, /a{400}/, "不能把整条超长原始行推入终端");
+  const hugeCall = { id: "huge-diff", type: "function", function: {
+    name: "edit", arguments: '{"path":"huge.txt","old_string":"a","new_string":"b"}',
+  } };
+  ui.tui.toolCall(hugeCall);
+  ui.tui.recordEditDiff(hugeCall.id, "huge.txt", "a\n".repeat(200_000), "b\n".repeat(200_000));
+  ui.tui.toolResult(hugeCall, "edited huge.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const huge = screenRows(ui, 45).join("\n");
+  assert.match(huge, /bounded terminal diff preview limit/, "超大文件不能分配数十万条行对象");
+});
+
+test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少换行标记", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 108 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("修复文件结尾换行");
+  const call = { id: "eof-newline", type: "function", function: {
+    name: "edit", arguments: '{"path":"single.txt","old_string":"same","new_string":"same\\n"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "single.txt", "same", "same\n");
+  ui.tui.toolResult(call, "edited single.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 44).join("\n");
+  assert.match(screen, /@@ -1,1 \+1,1 @@/);
+  assert.match(screen, /-same/);
+  assert.match(screen, /\+same/);
+  assert.match(screen, /\\ No newline at end of file/);
+  assert.doesNotMatch(screen, /@@ -2,0 \+2,0 @@/, "不能产生空的零长度假 hunk");
+});
+
+test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("修改文件");
+  const call = { id: "full-patch", type: "function", function: {
+    name: "edit", arguments: '{"path":"src/tui.ts","old_string":"old","new_string":"new"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "src/tui.ts", "first\nold\nlast\n", "first\nnew\nlast\n");
+  ui.tui.toolResult(call, "edited src/tui.ts (15 → 15 chars)");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /实际提交的 Unified Diff/);
+  assert.match(screen, /--- a\/src\/tui\.ts/);
+  assert.match(screen, /\+\+\+ b\/src\/tui\.ts/);
+  assert.match(screen, /@@ -1,3 \+1,3 @@/);
+  assert.match(screen, /-old/);
+  assert.match(screen, /\+new/);
+  assert.match(screen, / last/, "Unified patch includes real context");
+});
+
+test("TUI Review Thread：write 工具展开显示真实内容，超限时明确截断", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 50, columns: 116 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查真实参数可追溯性");
+  const write = { id: "review-write", type: "function", function: {
+    name: "write", arguments: '{"path":"notes.txt","content":"actual saved text","options":{"mode":"new"}}',
+  } };
+  ui.tui.toolCall(write);
+  ui.tui.toolResult(write, "wrote 17 chars to notes.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  let screen = screenRows(ui, 50).join("\n");
+  assert.match(screen, /原始参数（摘录）|Arguments \(excerpt\)/);
+  assert.match(screen, /"content": "actual saved text"/);
+  assert.match(screen, /"mode": "new"/);
+  const large = { id: "review-large-write", type: "function", function: {
+    name: "write", arguments: JSON.stringify({ path: "large.txt", content: "x".repeat(15_000) }),
+  } };
+  ui.tui.toolCall(large);
+  ui.tui.toolResult(large, "wrote 15000 chars to large.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  screen = screenRows(ui, 50).join("\n");
+  assert.match(screen, /arguments truncated for display|参数过长，展示已截断/,
+    "防止超大输入刷屏，同时必须显式说明只是原始参数摘录");
+});
+
+test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件名", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 120 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("编辑文件");
+  const call = { id: "raw-args", type: "function", function: {
+    name: "edit", arguments: '{"path":"src/tui.ts","old_string":"old_value","new_string":"new_value"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "edited src/tui.ts");
+  assert.doesNotMatch(screenRows(ui, 48).join("\n"), /原始参数（摘录）/);
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 48).join("\n");
+  assert.match(screen, /原始参数（摘录）：/);
+  assert.match(screen, /"old_string": "old_value"/);
+  assert.match(screen, /"new_string": "new_value"/);
+  assert.match(screen, /edited src\/tui\.ts/);
+});
+
+test("TUI 过程概述：缺少模型阶段说明时按真实工具进展生成一条自然语言提示", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请检查项目文件");
+  const call = { id: "overview-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(call);
+  let screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /正在查看文件 src\/tui\.ts。/);
+  assert.ok(screen.indexOf("正在查看文件 src/tui.ts") < screen.indexOf("正在读取文件"),
+    "进度说明在可折叠活动前面，形成对话式时间线");
+  ui.tui.toolResult(call, "real file content");
+  screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /已读取文件 src\/tui\.ts。/);
+  assert.doesNotMatch(screen, /正在查看文件 src\/tui\.ts。/, "状态在同一条概述原地更新");
+  assert.equal((screen.match(/已读取文件 src\/tui\.ts。/g) ?? []).length, 1, "不重复追加同一个阶段");
+
+  ui.tui.confirmAssistant("文件已检查。", true);
+  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  screen = screenRows(ui, 40).join("\n");
+  assert.doesNotMatch(screen, /已读取文件 src\/tui\.ts。/);
+  assert.match(screen, /文件已检查。/, "最终答复不随过程折叠");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  assert.match(screenRows(ui, 40).join("\n"), /已读取文件 src\/tui\.ts。/, "展开后恢复同一阶段概述");
+});
+
+test("TUI 过程概述：优先展示模型真实阶段说明，不重复生成工具模板", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请修复 TUI");
+  ui.tui.assistantDelta("当前正在核对 TUI 的折叠逻辑，随后验证窗口缩放表现。");
+  const call = { id: "narrated-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file contents");
+  const screen = screenRows(ui, 40).join("\n");
+  assert.match(screen, /当前正在核对 TUI 的折叠逻辑，随后验证窗口缩放表现。/);
+  assert.doesNotMatch(screen, /正在查看文件 src\/tui\.ts。|已读取文件 src\/tui\.ts。/,
+    "已有模型原文时不再添加机械化的重复说明");
+  assert.match(screen, /已读取文件/, "真实工具活动仍独立可折叠");
+});
+
+test("TUI 过程概述：同组多工具只更新一个当前操作说明，缩放不额外创建日志", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请查找项目内容");
+  const read = { id: "overview-read2", type: "function", function: { name: "read", arguments: '{"path":"package.json"}' } };
+  const grep = { id: "overview-grep", type: "function", function: { name: "grep", arguments: '{"pattern":"resize","path":"src"}' } };
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "package contents");
+  ui.tui.toolCall(grep);
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /正在搜索代码 resize。/);
+  assert.doesNotMatch(screen, /已读取文件 package\.json。/, "同一阶段不累计重复进度文字");
+  ui.tui.toolResult(grep, "match in src/tui.ts");
+  ui.output.columns = 80;
+  ui.output.emit("resize");
+  await new Promise((resolve) => setTimeout(resolve, 130));
+  screen = screenRows(ui, 45).join("\n");
+  assert.equal((screen.match(/已搜索代码 resize。/g) ?? []).length, 1);
+  assert.match(screen, /已读取文件、已搜索代码/);
+});
+
+test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中、修改中", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 116 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查是否允许写文件");
+  for (const [name, id, status] of [
+    ["write", "not-approved-write", "文件写入"],
+    ["edit", "not-approved-edit", "文件编辑"],
+  ]) {
+    ui.tui.beginModelRequest();
+    const call = { id, type: "function", function: {
+      name, arguments: '{"path":"blocked.txt","content":"not applied","old_string":"old","new_string":"new"}',
+    } };
+    ui.tui.toolCall(call);
+    const before = screenRows(ui, 48).join("\n");
+    assert.match(before, new RegExp("正在处理" + status + "请求 blocked.txt。"));
+    assert.match(before, /等待工具结果/);
+    assert.doesNotMatch(before, /正在写入文件 blocked\.txt。|正在修改文件 blocked\.txt。|写入中\.\.\.|修改中\.\.\.|Running\.\.\./,
+      "ToolCall 先于 Permission，不能说文件已开始写入或编辑");
+    ui.tui.toolResult(call, 'ERROR: permission denied: tool not allowed');
+    const denied = screenRows(ui, 48).join("\n");
+    assert.doesNotMatch(denied, /已写入文件 blocked\.txt。|已修改文件 blocked\.txt。/);
+    assert.match(denied, /已拒绝|permission denied|未获授权/);
+  }
+});
+
+test("TUI 预授权状态：取消的 edit 不能留下正在编辑或已编辑的概述", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("尝试编辑文件");
+  const call = { id: "cancelled-edit-before-permission", type: "function", function: {
+    name: "edit", arguments: '{"path":"notes.txt","old_string":"a","new_string":"b"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
+    session, { failed: true, cancelled: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /执行状态未知|未收到工具结果/);
+  assert.doesNotMatch(screen, /正在修改文件 notes\.txt。|已修改文件 notes\.txt。/);
+});
+
+test("TUI 过程概述：Shell 等待审批时不能提前宣称命令已经运行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请运行检查");
+  const call = { id: "approval-overview", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(call);
+  const beforeApproval = screenRows(ui, 45).join("\n");
+  assert.match(beforeApproval, /正在处理命令请求 npm run check。/);
+  assert.doesNotMatch(beforeApproval, /正在执行命令 npm run check。|Running\.\.\./,
+    "授权前不能把尚未放行的命令说成已在执行");
+  assert.match(beforeApproval, /等待工具结果/);
+  const approval = ui.tui.approve({ tool: "shell", args: { command: "npm run check" } });
+  assert.match(screenRows(ui, 45).join("\n"), /正在等待命令 npm run check的执行授权/,
+    "待审批时只能描述等待授权，不能声称已运行命令");
+  ui.input.write("\r");
+  assert.equal(await approval, false);
+  ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
+  assert.match(screenRows(ui, 45).join("\n"), /未获授权，无法执行 npm run check。/);
+  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /命令执行结束 npm run check。/);
+});
+
+test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("请运行检查");
+  const shell = { id: "overview-denied", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(shell);
+  ui.tui.toolResult(shell, 'ERROR: permission denied: user denied tool "shell"');
+  let screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /未获授权，无法执行 npm run check。/);
+  assert.doesNotMatch(screen, /命令执行结束 npm run check。/);
+  ui.tui.assistantDelta("权限不足，改为只检查文件。");
+  const read = { id: "overview-fail", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "ERROR: file not found");
+  screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /权限不足，改为只检查文件。/);
+  assert.doesNotMatch(screen, /已读取文件 missing\.txt。/, "模型已说明的新阶段也不应由工具伪造成功进度");
+});
+
 test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示等", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 55, columns: 108 });
   t.after(() => ui.cleanup());
@@ -2046,6 +2655,8 @@ test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示�
   ui.tui.toolResult(second, "hello");
   ui.tui.finishAssistant("最终结果已经整理好。");
   ui.tui.finishTurn({ requests: 2, toolCalls: 5, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  assert.doesNotMatch(screenRows(ui, 55).join("\n"), /先检查相关文件和代码/, "结束时过程默认折叠");
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
   const result = screenRows(ui, 55).join("\n");
   assert.match(result, /先检查相关文件和代码/);
   assert.match(result, /再查看修复结果/);
@@ -2067,6 +2678,7 @@ test("TUI：失败原因与命令同行，阶段折叠仍保留真实失败", (t
   ui.tui.toolResult(call, "exit 1\nTypeScript 类型检查未通过");
   ui.tui.finishAssistant("发现类型检查错误，需要修复。");
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
   const rows = screenRows(ui, 40);
   const failedRows = rows.filter((line) => line.includes("TypeScript 类型检查未通过"));
   assert.equal(failedRows.length, 1);
@@ -2159,9 +2771,11 @@ test("TUI：取消时尚未返回的工具不能在历史中继续显示运行�
   const call = { id: "pending-cancel", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
   ui.tui.toolCall(call);
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true, cancelled: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
   const screen = screenRows(ui, 35).join("\n");
   assert.match(screen, /已取消 · 用时/);
   assert.match(screen, /未收到工具结果/);
+  assert.match(screen, /执行状态未知/, "取消之后不能继续声称正在执行");
   assert.doesNotMatch(screen, /正在执行命令|运行中\.\.\./);
 });
 

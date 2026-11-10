@@ -115,6 +115,12 @@ export interface WorkspaceOptions {
    * 多一层管理器只会多一个需要同步的地方。
    */
   signal?: AbortSignal;
+  /** 仅供 TUI 展示真实已提交的编辑差异；观察者故障不能改变文件提交结果。 */
+  onEditCommitted?: (requested: string, before: string, after: string) => void;
+  /** 成功新建或覆盖 UTF-8 文件后，把真实文件差异交给可选展示观察者。 */
+  onWriteCommitted?: (requested: string, before: string | undefined, after: string | undefined, created: boolean) => void;
+  /** 真实 read 获准后才向 TUI 提供有界图片字节；不影响模型收到的文本结果。 */
+  onImageRead?: (requested: string, bytes: Buffer) => void;
 }
 
 /** grep 的可选参数：默认按正则、区分大小写；只有模型明确要求时才切到字面模式。 */
@@ -143,6 +149,17 @@ export class Workspace {
   /** 当前任务的取消信号；没有就表示不可取消（测试和库调用常见）。 */
   private readonly signal?: AbortSignal;
 
+  private readonly onEditCommitted?: (requested: string, before: string, after: string) => void;
+
+  private readonly onWriteCommitted?: (requested: string, before: string | undefined, after: string | undefined, created: boolean) => void;
+
+  private readonly onImageRead?: (requested: string, bytes: Buffer) => void;
+
+  /** 展示观察者故障计数；失败已记录但不改变成功提交的工具语义。 */
+  private editObserverFailures = 0;
+
+  get editObserverFailureCount(): number { return this.editObserverFailures; }
+
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
 
@@ -152,12 +169,18 @@ export class Workspace {
     scanLimit = MAX_SCAN_ENTRIES,
     regexBudgetMs = REGEX_BUDGET_MS,
     signal,
+    onEditCommitted,
+    onWriteCommitted,
+    onImageRead,
   }: WorkspaceOptions) {
     this.root = root;
     this.timeoutMs = timeoutMs;
     this.scanLimit = scanLimit;
     this.regexBudgetMs = regexBudgetMs;
     this.signal = signal;
+    this.onEditCommitted = onEditCommitted;
+    this.onWriteCommitted = onWriteCommitted;
+    this.onImageRead = onImageRead;
   }
 
   /**
@@ -171,6 +194,28 @@ export class Workspace {
 
     const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
     const cut = truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
+    // 仅真实获准的 read 才允许提取图片字节，不以 UI 的路径猜测绕过 ToolRegistry。
+    // 已知边界：预览仅为本地终端展示，模型仍收到原有文字工具结果。
+    if (this.onImageRead !== undefined && /\.(png|jpe?g|gif|webp)$/i.test(requested)) {
+      try {
+        const image = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE);
+        try {
+          const size = (await image.stat()).size;
+          if (size >= 12 && size <= 4_000_000) {
+            const data = Buffer.alloc(size);
+            let offset = 0;
+            while (offset < size) {
+              const { bytesRead } = await image.read(data, offset, size - offset, offset);
+              if (bytesRead === 0) break;
+              offset += bytesRead;
+            }
+            if (offset === size) this.onImageRead(requested, data);
+          }
+        } finally { await image.close(); }
+      } catch {
+        this.editObserverFailures++;
+      }
+    }
     return this.clip(text, cut);
   }
 
@@ -240,7 +285,27 @@ export class Workspace {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    // 回显真实的旧文本必须发生在原子覆盖之前；读取不到时只放弃 UI Diff，不阻止 write。
+    const withinPreviewLimit = Buffer.byteLength(content) <= MAX_EDIT_FILE_BYTES;
+    let beforeForDiff: string | undefined = original === undefined ? "" : undefined;
+    if (this.onWriteCommitted !== undefined && original !== undefined &&
+        original.size <= MAX_EDIT_FILE_BYTES && withinPreviewLimit) {
+      try {
+        const handle = await open(target, constants.O_RDONLY | NO_FOLLOW_FILE);
+        try {
+          const read = await readTextUpToHandle(handle, MAX_EDIT_FILE_BYTES,
+            Buffer.alloc(MAX_EDIT_FILE_BYTES + 1), { preserveBom: true });
+          if (!read.truncated) beforeForDiff = read.text;
+        } finally { await handle.close(); }
+      } catch { this.editObserverFailures++; }
+    }
     await this.replaceFileAtomically(target, requested, content, original);
+    // 写入成功时始终通知展示层；快照过大/不可读取用 undefined 明确标示，
+    // 而不是静默丢失 Diff。此回调仍为旁路，不影响真实写入结果。
+    try {
+      this.onWriteCommitted?.(requested, beforeForDiff,
+        withinPreviewLimit ? content : undefined, original === undefined);
+    } catch { this.editObserverFailures++; }
     return `wrote ${content.length} chars to ${requested}`;
   }
 
@@ -293,6 +358,8 @@ export class Workspace {
     }
 
     await this.replaceFileAtomically(file, requested, after, original);
+    // 只有写入成功提交才通知 UI。观察者错误不回滚真实 edit，也不改工具返回。
+    try { this.onEditCommitted?.(requested, before, after); } catch { this.editObserverFailures++; }
     // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
     return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }

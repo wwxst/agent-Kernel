@@ -14,11 +14,13 @@
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
 import type { Interface, Key } from "node:readline";
-import { Writable } from "node:stream";
+import { Transform, Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
 import { selectMood } from "./tui-mood.ts";
+import { previewImage } from "./tui-image.ts";
+import type { ImagePreview } from "./tui-image.ts";
 import type { MoodState } from "./tui-mood.ts";
 import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
@@ -95,8 +97,9 @@ interface LogLine {
   text: string;
   tone: Tone;
   /** 工具标题与暂态等待各有局部样式，不把整行都染成状态色。 */
-  kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error";
+  kind?: "tool" | "thinking" | "activity" | "turn-status" | "activity-error" | "final-reply";
   activity?: ActivityGroup;
+  tool?: ActivityTool;
   turn?: TurnActivity;
   /** 仅展示层使用；持久日志项的身份不随换行和活动展开改变。 */
   id?: number;
@@ -109,12 +112,20 @@ interface ActivityTool {
   startedAt: number;
   endedAt?: number;
   result?: string;
+  /** 第四层只改变真实工具输入/返回的显示，不改变 Tool result。 */
+  detailsExpanded?: boolean;
+  /** 来自 Workspace 成功提交前后的真实全文，只保留有界统一补丁，不复制原文件。 */
+  diff?: { lines: string[]; truncated: boolean; unavailable?: boolean };
+  /** 仅保留经过签名校验后的缩略图网格，不保存原始二进制到日志。 */
+  image?: ImagePreview;
 }
 
 interface ActivityGroup {
   language: UiLanguage;
   tools: ActivityTool[];
   expanded: boolean;
+  /** 模型没有阶段说明时，按真实工具事件生成一条事实性概述，不冒充模型原文。 */
+  fallbackOverview?: boolean;
   finished?: boolean;
 }
 
@@ -122,6 +133,8 @@ interface TurnActivity {
   language: UiLanguage;
   startedAt: number;
   endedAt?: number;
+  /** 运行时展开，结束后自动收起；旧轮次可以由键盘独立展开。 */
+  expanded: boolean;
   outcome: "preparing" | "running" | "completed" | "failed" | "cancelled";
   groups: ActivityGroup[];
 }
@@ -321,6 +334,17 @@ export class Tui {
 
   private readonly rl: Interface;
 
+  /** Alternate-screen SGR 鼠标事件在进入 readline 前必须过滤，否则坐标会污染输入框。 */
+  private readonly mouseInput?: Transform;
+
+  private mousePartial = "";
+
+  /** 允许 ESC、ESC[ 被拆包，同时不让单独按下的 Esc 永久卡住。 */
+  private mousePartialTimer?: NodeJS.Timeout;
+
+  /** 每次渲染确定屏幕箭头所在的实际单元格，鼠标点击不猜测文本位置。 */
+  private readonly mouseTargets = new Map<number, { column: number; turn?: TurnActivity; group?: ActivityGroup; tool?: ActivityTool }>();
+
   private permissionMode: PermissionMode;
 
   private stats?: AgentSessionStats;
@@ -340,8 +364,15 @@ export class Tui {
 
   private activeActivity?: ActivityGroup;
 
-  /** Ctrl+O 的当前浏览位置；各组展开状态彼此独立。 */
+  /** Ctrl+E / Ctrl+O / Ctrl+I 分别控制轮次、阶段和工具详情。 */
+  private turnFocus = -1;
+
   private activityFocus = -1;
+
+  private toolFocus = -1;
+
+  /** 仅标注 CLI 已确认的最终回复，折叠执行过程时仍独立展示。 */
+  private finalResponsePending = false;
 
   private activityState?: MoodState;
 
@@ -508,7 +539,21 @@ export class Tui {
         callback();
       },
     });
-    this.rl = createInterface({ input: options.input, output: editorOutput, terminal: options.interactive });
+    // readline 不认识 SGR 1006：若让鼠标报告直接进入它，坐标会被插入用户的任务输入。
+    // 只为拥有备用屏幕的终端启用输入过滤，其余终端保持原始输入流不变。
+    if (this.ownedScreen) {
+      this.mouseInput = new Transform({
+        transform: (chunk: Buffer, _encoding, done) => {
+          try { done(null, this.filterMouseInput(chunk)); } catch (error) { done(error as Error); }
+        },
+      });
+      const input = this.mouseInput as Transform & { isTTY?: boolean; setRawMode?: (enabled: boolean) => void };
+      const source = options.input as NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (enabled: boolean) => void };
+      input.isTTY = source.isTTY;
+      if (typeof source.setRawMode === "function") input.setRawMode = (enabled) => source.setRawMode!(enabled);
+      options.input.pipe(this.mouseInput);
+    }
+    this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     this.rl.on("line", (line) => {
@@ -576,6 +621,37 @@ export class Tui {
         return;
       }
 
+      // Ctrl+E 翻阅任务节点：终端没有可点击箭头，键盘直接展开/收起最近轮次。
+      if (key?.ctrl && name === "e" && this.layout) {
+        const turns = this.log.flatMap((line) =>
+          line.kind === "turn-status" && line.turn !== undefined ? [line.turn] : []);
+        if (turns.length > 0) {
+          this.turnFocus = this.turnFocus <= 0 ? turns.length - 1 : this.turnFocus - 1;
+          this.captureHistoryAnchor();
+          turns[this.turnFocus]!.expanded = !turns[this.turnFocus]!.expanded;
+          this.renderNow();
+        }
+        return;
+      }
+
+      // Ctrl+G 展开具体工具的真实调用和结果；每按一次定位上一条工具。
+      if (key?.ctrl && name === "g" && this.layout) {
+        const tools = this.log.flatMap((line) =>
+          line.kind === "activity" && line.activity !== undefined
+            ? line.activity.tools.map((tool) => ({ tool, group: line.activity!, turn: line.turn }))
+            : []);
+        if (tools.length > 0) {
+          this.toolFocus = this.toolFocus <= 0 ? tools.length - 1 : this.toolFocus - 1;
+          this.captureHistoryAnchor();
+          const chosen = tools[this.toolFocus]!;
+          chosen.tool.detailsExpanded = !chosen.tool.detailsExpanded;
+          chosen.group.expanded = true;
+          if (chosen.turn !== undefined) chosen.turn.expanded = true;
+          this.renderNow();
+        }
+        return;
+      }
+
       // Ctrl+O 依次切换最近、上一段等组的展开状态；已有展开项不会被强制收起。
       // 从已保留的日志锚点收集组，因而上一轮任务的活动也能查看。
       if (key?.ctrl && name === "o" && this.layout && this.currentTurn !== undefined) {
@@ -587,6 +663,8 @@ export class Tui {
           // 浏览旧记录时展开详情也不能把视口跳到最新消息。
           this.captureHistoryAnchor();
           group.expanded = !group.expanded;
+          const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
+          if (owner !== undefined) owner.expanded = true;
           this.renderNow();
         }
         return;
@@ -659,8 +737,11 @@ export class Tui {
       this.scheduleInputChrome();
     };
     if (options.interactive) {
-      emitKeypressEvents(options.input);
-      (options.input as NodeJS.EventEmitter).on("keypress", this.onKeypress);
+      const editorInput = this.mouseInput ?? options.input;
+      emitKeypressEvents(editorInput);
+      (editorInput as NodeJS.EventEmitter).on("keypress", this.onKeypress);
+      // 测试夹具会显式向原始 input 发送键事件；生产运行只由 editorInput 解析字节。
+      if (this.mouseInput) (options.input as NodeJS.EventEmitter).on("keypress", this.onKeypress);
     }
 
     this.onResize = () => {
@@ -677,6 +758,107 @@ export class Tui {
     };
     this.controller.signal.addEventListener("abort", this.onAbort, { once: true });
     if (this.controller.signal.aborted) this.rl.close();
+  }
+
+  /**
+   * 从原始终端字节中取走 SGR 鼠标报告，不能让 readline 将“0;20;9M”加入任务。
+   * 用 latin1 往返只为保留 UTF-8 原始字节；残缺鼠标序列只暂存有限字符。
+   */
+  private filterMouseInput(chunk: Buffer): Buffer {
+    if (this.mousePartialTimer !== undefined) {
+      clearTimeout(this.mousePartialTimer);
+      this.mousePartialTimer = undefined;
+    }
+    const data = this.mousePartial + chunk.toString("latin1");
+    this.mousePartial = "";
+    let output = "";
+    let cursor = 0;
+    const prefix = "\x1b[<";
+    const pattern = /^\x1b\[<(\d{1,3});(\d{1,4});(\d{1,4})([Mm])/;
+    while (cursor < data.length) {
+      const at = data.indexOf("\x1b", cursor);
+      if (at < 0) {
+        output += data.slice(cursor);
+        break;
+      }
+      output += data.slice(cursor, at);
+      const remainder = data.slice(at);
+      // 终端可能在 ESC 或 ESC[ 处分片；不能提前把这些鼠标前缀交给 readline。
+      if (prefix.startsWith(remainder) && remainder.length < prefix.length) {
+        this.mousePartial = remainder;
+        break;
+      }
+      if (remainder.startsWith(prefix)) {
+        const match = pattern.exec(remainder);
+        if (match !== null) {
+          this.handleMouse(Number(match[1]), Number(match[2]), Number(match[3]), match[4] === "M");
+          cursor = at + match[0].length;
+          continue;
+        }
+        if (remainder.length <= 40 && /^\x1b\[<[0-9;]*$/.test(remainder)) {
+          this.mousePartial = remainder;
+          break;
+        }
+        // 畸形或超长鼠标报告不应变成用户任务；跳过直到消息终止符。
+        const end = remainder.search(/[Mm]/);
+        if (end >= 0 && end < 256) {
+          cursor = at + end + 1;
+          continue;
+        }
+        if (remainder.length <= 40) {
+          this.mousePartial = remainder;
+          break;
+        }
+        cursor = at + Math.min(remainder.length, 256);
+        continue;
+      }
+      // 非鼠标的 ANSI/普通 Esc 保持原样，交由 readline 处理键盘。
+      output += "\x1b";
+      cursor = at + 1;
+    }
+    if (this.mousePartial !== "") {
+      this.mousePartialTimer = setTimeout(() => {
+        const pending = this.mousePartial;
+        this.mousePartial = "";
+        this.mousePartialTimer = undefined;
+        // 孤立 ESC 仍应保留键盘语义；不完整鼠标坐标则直接丢弃。
+        if (!this.closed && pending !== "" && !pending.startsWith(prefix)) {
+          this.mouseInput?.push(Buffer.from(pending, "latin1"));
+        }
+      }, 80);
+      this.mousePartialTimer.unref();
+    }
+    return Buffer.from(output, "latin1");
+  }
+
+  private handleMouse(button: number, column: number, row: number, pressed: boolean): void {
+    if (!this.layout || !this.started || this.closed) return;
+    if ((button & 64) !== 0 && pressed) {
+      if ((button & 3) === 0 || (button & 3) === 1) {
+        this.scrollWheel((button & 3) === 0 ? "up" : "down");
+      }
+      return;
+    }
+    // 鼠标绝不替代权限审批：审批时只有菜单键盘能够作出授权决定。
+    if (this.approvalMenuActive || !pressed || button !== 0) return;
+    const target = this.mouseTargets.get(row);
+    if (target === undefined || target.column !== column) return;
+    this.captureHistoryAnchor();
+    if (target.tool !== undefined) {
+      target.tool.detailsExpanded = !target.tool.detailsExpanded;
+    } else if (target.group !== undefined) {
+      target.group.expanded = !target.group.expanded;
+    } else if (target.turn !== undefined) {
+      target.turn.expanded = !target.turn.expanded;
+    }
+    this.renderNow();
+  }
+
+  /** 鼠标滚轮一次翻三行，比 PageUp 整屏跳转更容易定位上下文。 */
+  private scrollWheel(direction: "up" | "down"): void {
+    this.scrollOffset = Math.max(0, Math.min(this.maxScroll(),
+      this.scrollOffset + (direction === "up" ? 3 : -3)));
+    this.redrawKeepingInput();
   }
 
   /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
@@ -723,7 +905,8 @@ export class Tui {
     this.started = true;
     if (this.ownedScreen) {
       // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
-      this.output.write("\x1b[?1049h\x1b[?25l");
+      // X10 按钮/滚轮事件 + SGR 1006 坐标；不启用运动跟踪，避免高频重绘。
+      this.output.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
       this.altScreenActive = true;
     }
     if (this.layout) {
@@ -838,10 +1021,20 @@ export class Tui {
 
   /** 用于 CLI 的会话命令提示，语言跟随最近一轮任务。 */
   helpText(permissionModes: string): string {
-    return this.uiText(
+    const commands = this.uiText(
       `commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this\n          /permission [mode]  show or switch permission (${permissionModes})`,
       `命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助\n      /permission [模式]  查看或切换权限（${permissionModes}）`,
     );
+    // 折叠箭头是终端字符，不是可点击组件；只有固定布局支持这些快捷键。
+    const shortcut = this.uiText(
+      "timeline: Ctrl+E turns · Ctrl+O activity groups · Ctrl+G tool details · PageUp/PageDown scroll",
+      "时间线：Ctrl+E 任务 · Ctrl+O 活动组 · Ctrl+G 工具详情 · PageUp/PageDown 浏览",
+    );
+    const mouse = this.ownedScreen ? `\n${this.uiText(
+      "mouse: click trailing arrows to fold/unfold · wheel scrolls three lines",
+      "鼠标：点击文字末尾箭头展开/收起 · 滚轮每次滚动三行",
+    )}` : "";
+    return this.layout ? `${commands}\n${shortcut}${mouse}` : commands;
   }
 
   /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */
@@ -955,17 +1148,23 @@ export class Tui {
     const elapsed = Math.max(0, (turn.endedAt ?? Date.now()) - turn.startedAt);
     const duration = formatActivityDuration(elapsed, turn.language);
     const zh = turn.language === "zh";
+    const arrow = this.foldArrow(turn.expanded);
     if (turn.outcome === "completed") return {
-      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}`,
+      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}  ${arrow}`,
       tone: "success",
     };
     if (turn.outcome === "failed" || turn.outcome === "cancelled") {
       const outcome = turn.outcome === "failed" ? (zh ? "执行失败" : "Failed") : (zh ? "已取消" : "Cancelled");
-      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}`,
+      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}  ${arrow}`,
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
-    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}`, tone: "muted" };
-    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}`, tone: "accent" };
+    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}  ${arrow}`, tone: "muted" };
+    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}  ${arrow}`, tone: "accent" };
+  }
+
+  /** 只在显示层拼接折叠指示符，始终位于对应文字后面。 */
+  private foldArrow(expanded: boolean): string {
+    return this.glyphs === UNICODE_GLYPHS ? (expanded ? "▾" : "▸") : (expanded ? "v" : ">");
   }
 
   private activitySummary(group: ActivityGroup): string {
@@ -1002,33 +1201,112 @@ export class Tui {
   }
 
   private activityToolLines(item: ActivityTool, group: ActivityGroup): LogLine[] {
-    if (item.result === undefined && group.finished) return [this.activityUnfinishedLine(item, group.language)];
-    if (item.result === undefined) {
-      const title = this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted");
-      title.kind = "tool";
-      const lines = [title];
-      if (!this.approvalBlocksRunning) lines.push(this.makeLogLine(
-        `      ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, "muted"));
-      return lines;
-    }
-    const failed = this.activityFailureLine(item, group.language);
-    if (failed !== undefined) {
-      const raw = item.result.split("\n").map((line) => line.trim()).filter(Boolean);
-      const lines: LogLine[] = [failed];
-      // 摘要中错误原因始终在命令同一行；展开后再展示实际返回的原始内容。
-      for (const line of raw.slice(0, 20)) {
-        lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${line}`, "muted"));
+    const ended = item.result !== undefined;
+    const failure = ended ? this.activityFailureLine(item, group.language) : undefined;
+    const unfinished = !ended && group.finished ? this.activityUnfinishedLine(item, group.language) : undefined;
+    const result = ended ? toolResultLines(item.call, item.result!, this.glyphs, group.language) : [];
+    const title = failure ?? unfinished ?? (!ended
+      ? this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted")
+      : this.makeLogLine(result[0]!.text.replace(/^  /, "    ") +
+        ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`,
+        result[0]!.tone));
+    title.kind = failure?.kind ?? unfinished?.kind ?? "tool";
+    title.text += `  ${this.foldArrow(item.detailsExpanded === true)}`;
+    title.tool = item;
+    const lines: LogLine[] = [title];
+    // 摘要始终保留成功/失败事实；详情层才展开原始结果。
+    if (ended && failure === undefined && result[1] !== undefined) {
+      lines.push(this.makeLogLine(`  ${result[1].text}`, result[1].tone));
+      // read 的截断警告由 toolResultLines 根据真实尾注生成，不能在活动层漏掉。
+      // 即使工具原始输出默认收起，用户也必须知道读取结果并不完整。
+      for (const warning of result.slice(2)) {
+        lines.push(this.makeLogLine(`  ${warning.text}`, warning.tone));
       }
-      if (raw.length > 20) lines.push(this.makeLogLine(`      … ${raw.length - 20} ${this.uiText("more lines in the tool result", "行原始输出未预览")}`, "muted"));
-      return lines;
+      if (item.diff?.unavailable === true) {
+        lines.push(this.makeLogLine(`      ${this.uiText(
+          "Diff preview unavailable: write succeeded, but the file exceeds 2,000,000 bytes or the previous snapshot could not be read.",
+          "Diff 预览已降级：写入成功，但文件超过 2,000,000 字节 或旧内容无法安全读取。")}`, "warning"));
+      }
     }
-    const result = toolResultLines(item.call, item.result, this.glyphs, group.language);
-    return result.map((entry, index) => ({
-      ...this.makeLogLine(index === 0
-        ? entry.text.replace(/^  /, "    ") + ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`
-        : `  ${entry.text}`, entry.tone),
-      kind: index === 0 ? entry.kind : undefined,
-    }));
+    if (!ended && !group.finished && !this.approvalBlocksRunning) {
+      const awaitingResult = item.call.function.name === "shell" ||
+        item.call.function.name === "write" || item.call.function.name === "edit";
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${awaitingResult
+        ? this.uiText("Awaiting tool result...", "等待工具结果...")
+        : this.uiText("Running...", "运行中...")}`, "muted"));
+    }
+    if (!item.detailsExpanded) return lines;
+    const raw = ended ? item.result! : "";
+    // 真实参数和返回来自 ToolCall/ToolResult；不从编辑路径猜测 Diff 或图片预览。
+    lines.push(this.makeLogLine(`      ${this.uiText("Call:", "调用：")} ${formatToolCall(item.call)}`, "muted"));
+    // 第四层明确提供真实参数摘录；上面的 Call 只是简短标题，不是完整参数。
+    // 输入可能包含大块文件内容，限制解析/展示规模，避免每帧重排拖慢终端。
+    const rawArguments = item.call.function.arguments || "{}";
+    let argumentText = rawArguments.slice(0, 12_000);
+    if (rawArguments.length <= 12_000) {
+      try { argumentText = JSON.stringify(JSON.parse(rawArguments), null, 2); } catch {
+        // 不合法的参数仍展示实际收到的文字，不伪造结构。
+      }
+    }
+    const argumentLines = splitDisplayLines(argumentText);
+    lines.push(this.makeLogLine(`      ${this.uiText("Arguments (excerpt):", "原始参数（摘录）：")}`, "muted"));
+    for (const line of argumentLines.slice(0, 12)) {
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${clip(line, 160)}`, "muted"));
+    }
+    if (argumentLines.length > 12 || rawArguments.length > 12_000) {
+      lines.push(this.makeLogLine(
+        `      … ${this.uiText("arguments truncated for display", "参数过长，展示已截断")}`, "muted"));
+    }
+    if (ended && failure === undefined && item.image !== undefined) {
+      const image = item.image;
+      const size = image.width !== undefined && image.height !== undefined
+        ? ` · ${image.width} × ${image.height}` : "";
+      lines.push(this.makeLogLine(
+        `      ${this.uiText("Actual image preview:", "真实图片预览：")} ${image.format}${size}`, "muted"));
+      if (image.rows.length === 0) {
+        lines.push(this.makeLogLine(`      ${this.uiText(
+          "Image bytes verified; terminal thumbnail decoding is not supported for this format.",
+          "已确认真实图片字节；此格式暂不支持终端文字缩略图解码。")}`, "warning"));
+      } else {
+        for (const row of image.rows) {
+          lines.push(this.makeLogLine(`      │ ${row}`, "assistant"));
+        }
+      }
+    }
+    if (ended && failure === undefined && item.diff !== undefined && !item.diff.unavailable) {
+      lines.push(this.makeLogLine(`      ${this.uiText("Committed unified diff:", "实际提交的 Unified Diff：")}`, "muted"));
+      for (const text of item.diff.lines) {
+        lines.push(this.makeLogLine(`      ${text}`,
+          text.startsWith("+") && !text.startsWith("+++") ? "success"
+            : text.startsWith("-") && !text.startsWith("---") ? "error" : "muted"));
+      }
+      if (item.diff.truncated) {
+        lines.push(this.makeLogLine(`      … ${this.uiText("diff too large to display in full", "Diff 过大，终端预览已截断")}`, "warning"));
+      }
+    } else if (ended && failure === undefined && item.call.function.name === "edit") {
+      // 未收到 Workspace 的提交快照时，仅展示真实请求片段，不冒充带行号的文件 Diff。
+      try {
+        const args: unknown = JSON.parse(item.call.function.arguments);
+        if (isRecord(args) && typeof args.old_string === "string" && typeof args.new_string === "string") {
+          lines.push(this.makeLogLine(`      ${this.uiText("Replacement fragments (not a full diff):", "替换片段（非完整 Diff）：")}`, "muted"));
+          for (const line of splitDisplayLines(args.old_string).slice(0, 8)) {
+            lines.push(this.makeLogLine(`      - ${clip(line, 180)}`, "error"));
+          }
+          for (const line of splitDisplayLines(args.new_string).slice(0, 8)) {
+            lines.push(this.makeLogLine(`      + ${clip(line, 180)}`, "success"));
+          }
+        }
+      } catch {
+        // 参数格式不合法时保持工具原始结果，不为了装饰界面猜测编辑内容。
+      }
+    }
+    for (const line of splitDisplayLines(raw).slice(0, 20)) {
+      lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${line}`, failure === undefined ? "muted" : "error"));
+    }
+    const count = splitDisplayLines(raw).length;
+    if (count > 20) lines.push(this.makeLogLine(
+      `      … ${count - 20} ${this.uiText("additional result lines", "行结果未展示")}`, "muted"));
+    return lines;
   }
 
   /**
@@ -1042,10 +1320,16 @@ export class Tui {
     this.runToolResults = 0;
     this.activeActivity = undefined;
     this.activityFocus = -1;
+    this.toolFocus = -1;
+    this.turnFocus = -1;
     this.activityPending.clear();
     if (this.fixedLayoutAllowed) {
+      // 上轮已折叠时，其结尾空行也被隐藏；补一条轮次外间距，避免新问题紧贴最终回复。
+      if (this.currentTurn?.endedAt !== undefined && !this.currentTurn.expanded) {
+        this.appendLog({ text: "", tone: "plain" });
+      }
       this.currentTurn = { language: this.uiLanguage, startedAt: this.runStartedAt,
-        outcome: "preparing", groups: [] };
+        expanded: true, outcome: "preparing", groups: [] };
       // 即使任务后来失败或被取消，旧轮标题也保留独立状态，不受新轮计时影响。
       if (this.layout) {
         this.stopThinking();
@@ -1088,6 +1372,17 @@ export class Tui {
       const text = index === 0 ? `${label}${line}` : `${" ".repeat(displayWidth(label))}${line}`;
       this.writeRaw(`${escapeControlCharacters(text)}${this.newline()}`);
     });
+  }
+
+  /**
+   * 每次模型请求开始时划清阶段边界。模型没有输出可见文字，也不能把下一次
+   * 请求里的工具继续记进上一组；否则整轮过程会失去真实的执行顺序。
+   * 同一次模型回复里的多个工具仍按原顺序归入同组。
+   */
+  beginModelRequest(): void {
+    if (this.currentTurn?.endedAt === undefined && this.activeActivity?.tools.length) {
+      this.activeActivity = undefined;
+    }
   }
 
   /** 模型正文增量。固定布局只累积、限频重绘；行式聊天直接写。 */
@@ -1168,8 +1463,9 @@ export class Tui {
    * 撤回已写字节，必须追加明确的更正提示与权威正文，而不是悄悄忽略差异。
    * 与 finishAssistant() 不同：null 表示模型确认没有正文，不是“未知正文”。
    */
-  confirmAssistant(content: string | null): void {
+  confirmAssistant(content: string | null, final = false): void {
     const confirmed = normalizeNewlines(content ?? "");
+    if (final && this.layout && confirmed !== "") this.finalResponsePending = true;
     if (this.layout) {
       if (this.streamingText !== confirmed || (!this.assistantOpen && confirmed !== "")) {
         if (!this.assistantOpen && confirmed !== "") this.activeActivity = undefined;
@@ -1224,19 +1520,55 @@ export class Tui {
     this.assistantAtLineStart = true;
   }
 
+  /** 本阶段有模型可见说明时优先使用原文，不再用工具行为重复解释。 */
+  private hasVisibleStageNarration(turn: TurnActivity): boolean {
+    for (let index = this.log.length - 1; index >= 0; index--) {
+      const line = this.log[index]!;
+      if (line.turn !== turn || line.kind === "activity" || line.kind === "turn-status") break;
+      if (line.tone === "assistant" && line.kind !== "final-reply" && line.text.trim() !== "") return true;
+    }
+    return false;
+  }
+
+  /**
+   * 仅在 Workspace.edit 原子提交成功后才收到这份快照；全量对照算出真实行号。
+   * UI 只保存有界补丁，不能把项目源代码另存到 Transcript 或用户历史任务。
+   */
+  recordEditDiff(callId: string, path: string, before: string | undefined, after: string | undefined, created = false): void {
+    const item = this.activityPending.get(callId);
+    if (item === undefined || (item.call.function.name !== "edit" && item.call.function.name !== "write")) return;
+    item.diff = before === undefined || after === undefined
+      ? { lines: [], truncated: false, unavailable: true }
+      : committedEditDiff(path, before, after, created, item.call.function.name === "write");
+    if (this.layout) this.renderNow();
+  }
+
+  /** 仅由获准 Workspace.read 提供原始字节；失败或未知格式不会生成虚假预览。 */
+  recordImagePreview(callId: string, _path: string, bytes: Buffer): void {
+    const item = this.activityPending.get(callId);
+    if (item?.call.function.name !== "read") return;
+    const preview = previewImage(bytes);
+    if (preview === undefined) return;
+    item.image = preview;
+    if (this.layout) this.renderNow();
+  }
+
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
   toolCall(call: ToolCall): void {
     this.approvalBlocksRunning = false;
     this.setThinking(false);
     this.finishAssistant();
-    this.setActivityState(moodStateForTool(call));
+    // Shell/write/edit 的 ToolCall 发生在 Permission 检查之前，不能提前声称执行中。
+    const needsPermission = ["shell", "write", "edit"].includes(call.function.name);
+    this.setActivityState(needsPermission ? "working" : moodStateForTool(call));
     const turn = this.currentTurn;
     if (this.fixedLayoutAllowed && turn !== undefined && turn.endedAt === undefined) {
       let group = this.activeActivity;
       if (group === undefined) {
         // AI 的说明与其下方的 ↳ 摘要紧邻；通用 commitAssistant 会多留一个空行。
         if (this.log.at(-1)?.text === "" && this.log.at(-2)?.tone === "assistant") this.log.pop();
-        group = { language: this.uiLanguage, tools: [], expanded: true };
+        group = { language: this.uiLanguage, tools: [], expanded: true,
+          fallbackOverview: !this.hasVisibleStageNarration(turn) };
         turn.groups.push(group);
         this.activeActivity = group;
         // 非空锚点让下一段 AI 发言自动与本阶段之间留一行。
@@ -1310,6 +1642,10 @@ export class Tui {
 
   /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed, cancelled = false }: { failed: boolean; cancelled?: boolean }): void {
+    // 先收尾可见正文，再决定折叠；没有通过 CLI 显式标记时也识别末尾的正式回复。
+    if (this.layout) this.commitAssistant();
+    // 失败与取消时尾部文字可能只是上一条阶段说明，不能冒充成功后的最终答复。
+    if (!failed && !cancelled && this.currentTurn?.endedAt === undefined) this.markTrailingReply();
     this.stats = session;
     this.runStartedAt = undefined;
     this.retryStatus = undefined;
@@ -1317,12 +1653,14 @@ export class Tui {
     if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
       this.currentTurn.endedAt = Date.now();
       this.currentTurn.outcome = cancelled ? "cancelled" : failed ? "failed" : "completed";
-      // 完成后只折叠工具明细，AI 的真实阶段说明和每一段摘要仍常驻。
+      this.currentTurn.expanded = false;
+      // 结束后自动收起整轮时间线；原始事件保留在 TUI 的内存日志中。
       for (const group of this.currentTurn.groups) {
         group.expanded = false;
         group.finished = true;
       }
       this.activityFocus = -1;
+      this.toolFocus = -1;
       this.activeActivity = undefined;
       this.activityPending.clear();
     }
@@ -1561,6 +1899,15 @@ export class Tui {
     this.historyTrimmedNotice = false;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
+    this.mouseInput?.removeListener("keypress", this.onKeypress);
+    if (this.mousePartialTimer !== undefined) {
+      clearTimeout(this.mousePartialTimer);
+      this.mousePartialTimer = undefined;
+    }
+    this.mousePartial = "";
+    this.input.unpipe?.(this.mouseInput);
+    this.mouseInput?.destroy();
+    this.mouseTargets.clear();
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
     if (!this.started) return;
@@ -1569,7 +1916,7 @@ export class Tui {
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.altScreenActive) {
       // Leave 恢复终端原来的 Shell 画面；这里不额外向主屏幕输出聊天帧。
-      this.output.write("\x1b[?25h\x1b[?1049l");
+      this.output.write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l");
       this.altScreenActive = false;
     } else if (this.layout) {
       // 旧版内联固定布局仅用于显式兼容测试。
@@ -1664,7 +2011,8 @@ export class Tui {
         // 原 ID 已被 2000 行裁剪：退到最靠近的存活项，给用户明确提示。
         top = lines.findIndex((line) => line.id !== undefined && line.id > entryId);
         if (top < 0) top = lines.findLastIndex((line) => line.id !== undefined);
-        this.historyTrimmedNotice = true;
+        // 若只是手动收起了该日志所在的任务，并非真的被裁剪，不显示误导性警告。
+        if (!this.log.some((entry) => entry.id === entryId)) this.historyTrimmedNotice = true;
       }
       if (top >= 0) this.scrollOffset = Math.max(0, lines.length - this.logHeight - top);
       this.resizeAnchor = undefined;
@@ -1687,9 +2035,16 @@ export class Tui {
     const end = total - this.scrollOffset;
     const start = Math.max(0, end - this.logHeight);
     const visible = lines.slice(start, end);
+    this.mouseTargets.clear();
     // v0.3：对话从视口顶部开始，内容不足一屏时空白留在下方，不再贴底。
     for (let index = 0; index < this.logHeight; index++) {
       const line = visible[index];
+      if (line !== undefined && /  [▸▾>v]$/.test(line.text) &&
+          (line.kind === "turn-status" || line.kind === "activity" || line.tool !== undefined)) {
+        this.mouseTargets.set(LOG_TOP + index, {
+          column: displayWidth(line.text), turn: line.turn, group: line.activity, tool: line.tool,
+        });
+      }
       rows[LOG_TOP - 1 + index] = line === undefined
         ? ""
         : this.paintLogLine(line, width);
@@ -1835,12 +2190,28 @@ export class Tui {
     });
   }
 
+  /** 没有工具跟在后面的末尾模型正文属于正式答复，不能被完成后的折叠隐藏。 */
+  private markTrailingReply(): void {
+    const turn = this.currentTurn;
+    if (turn === undefined) return;
+    let end = this.log.length - 1;
+    while (end >= 0 && this.log[end]?.text === "" && this.log[end]?.turn === turn) end--;
+    let start = end;
+    while (start >= 0 && this.log[start]?.tone === "assistant" && this.log[start]?.turn === turn) start--;
+    for (let index = start + 1; index <= end; index++) {
+      const line = this.log[index];
+      if (line !== undefined) line.kind = "final-reply";
+    }
+  }
+
   private commitAssistant(): void {
     if (!this.assistantOpen) return;
     this.pushBlank();
     for (const line of this.assistantDisplayLines()) {
-      this.appendLog({ text: line, tone: "assistant" });
+      this.appendLog({ text: line, tone: "assistant",
+        kind: this.finalResponsePending ? "final-reply" : undefined });
     }
+    this.finalResponsePending = false;
     this.streamingText = "";
     this.assistantOpen = false;
     this.pushBlank();
@@ -1890,6 +2261,8 @@ export class Tui {
   /** 每条持久展示日志只分配一次 ID；动态台词不占号，也不影响 Agent Transcript。 */
   private appendLog(line: LogLine): void {
     line.id = this.nextLogId++;
+    // 用户问题属于对话正文，不随过程折叠；其余事件归属于当前 Run。
+    if (line.tone !== "user" && this.currentTurn?.endedAt === undefined) line.turn = this.currentTurn;
     this.log.push(line);
   }
 
@@ -1922,16 +2295,31 @@ export class Tui {
     };
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
-        append(line, [this.turnStatusLine(line.turn),
-          { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]);
+        // 展开中的标题下保留旧布局的节奏；折叠后只占一行。
+        const status = { ...this.turnStatusLine(line.turn), kind: "turn-status" as const, turn: line.turn };
+        append(line, line.turn.expanded
+          ? [status, { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
+          : [status]);
         continue;
       }
+      // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
+      if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
         const group = line.activity;
-        const children: LogLine[] = [
-          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`),
-            tone: "muted", kind: "activity" },
-        ];
+        const children: LogLine[] = [];
+        // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
+        if (group.fallbackOverview && group.tools.length > 0) {
+          const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
+          children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
+            current.call, current.result, group.language, group.finished === true,
+            this.approvalMenuActive && current.call.function.name === "shell",
+          )}`),
+            tone: "info" });
+        }
+        children.push(
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)}`),
+            tone: "muted", kind: "activity", activity: group },
+        );
         if (group.expanded) {
           for (const item of group.tools) children.push(...this.activityToolLines(item, group));
         } else {
@@ -1952,12 +2340,12 @@ export class Tui {
       }
       append(line, children);
     }
-    if (this.assistantOpen) {
+    if (this.assistantOpen && this.currentTurn?.expanded !== false) {
       for (const line of this.assistantDisplayLines()) {
         logical.push({ text: line, tone: "assistant" });
       }
     }
-    if (this.thinking) {
+    if (this.thinking && this.currentTurn?.expanded !== false) {
       if (this.retryStatus !== undefined) {
         const { attempt, maxRetries } = this.retryStatus;
         logical.push({ text: `  ${this.glyphs.running} ${this.uiText(
@@ -1979,8 +2367,9 @@ export class Tui {
       // 中文对照：Ctrl-C 取消。
       logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
       }
-    } else if (this.currentTurn?.endedAt === undefined && this.activityState !== undefined &&
-               this.activityState !== "preparing" && !this.assistantOpen && !this.approvalMenuActive) {
+    } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
+               this.activityState !== undefined && this.activityState !== "preparing" &&
+               !this.assistantOpen && !this.approvalMenuActive) {
       // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。
       this.maybeRotateMood();
       const status = formatActivityStateLabel(this.activityState, this.uiLanguage);
@@ -1994,13 +2383,18 @@ export class Tui {
       const indent = line.text.match(/^\s*/)?.[0] ?? "";
       const continuation = line.kind === "tool" ? "    "
         : line.tone === "assistant" || line.tone === "user" ? "  " : indent;
-      const parts = line.kind === "activity-error" || line.kind === "activity"
-        ? [clip(line.text, width)]
+      // 单行活动过长时保留末尾折叠箭头，不能因为裁剪而失去操作入口。
+      const foldable = line.kind === "turn-status" || line.kind === "activity" || line.tool !== undefined;
+      const arrow = foldable ? line.text.match(/  [▸▾>v]$/)?.[0] : undefined;
+      const parts = foldable
+        ? [arrow === undefined ? clip(line.text, width)
+          : clip(line.text.slice(0, -arrow.length), width - displayWidth(arrow)) + arrow]
         : wrapLine(line.text, width, continuation);
       let offset = line.charOffset ?? 0;
       for (const [index, part] of parts.entries()) {
         wrapped.push({ text: part, tone: index > 0 && line.kind === "tool" ? "assistant" : line.tone,
-          kind: index === 0 ? line.kind : undefined, id: line.id, charOffset: offset });
+          kind: index === 0 ? line.kind : undefined, id: line.id, charOffset: offset,
+          turn: line.turn, activity: line.activity, tool: index === 0 ? line.tool : undefined });
         // 续行的缩进只是展示前缀，不属于源文本。偏移因此不会随终端宽度漂移。
         const prefix = index === 0 ? "" : takeByWidth(continuation, Math.max(0, width - 2));
         offset += Math.max(0, part.length - prefix.length);
@@ -2450,6 +2844,193 @@ function oneLine(text: string): string {
 }
 
 
+/** 工具事实兜底：只说明“正在/已做什么”，不猜测原因、发现或下一步计划。 */
+function toolProgressOverview(
+  call: ToolCall, result: string | undefined, language: UiLanguage,
+  finished = false, awaitingApproval = false,
+): string {
+  const zh = language === "zh";
+  let args: unknown;
+  try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* 不猜测非法参数 */ }
+  const params: Record<string, unknown> = isRecord(args) ? args : {};
+  const name = call.function.name;
+  const rawTarget = name === "shell" ? params.command
+    : name === "grep" || name === "glob" ? params.pattern : params.path;
+  const target = typeof rawTarget === "string" && rawTarget.trim() !== ""
+    ? ` ${clip(oneLine(rawTarget), 54)}` : "";
+  if (result === undefined && finished) {
+    return zh ? `未收到${target || ` ${name}`}的操作结果，执行状态未知。`
+      : `No result received for${target || ` ${name}`}; execution status unknown.`;
+  }
+  if (result === undefined && awaitingApproval) {
+    return zh ? `正在等待命令${target}的执行授权。` : `Awaiting approval to run command${target}.`;
+  }
+  // ToolCall 先于 Permission 的判定到达 TUI；缺少 ToolResult 时不能宣称 Shell 已运行。
+  if (result === undefined && name === "shell") {
+    return zh ? `正在处理命令请求${target}。` : `Handling command request${target}.`;
+  }
+  if (result === undefined && (name === "write" || name === "edit")) {
+    return zh ? `正在处理文件${name === "write" ? "写入" : "编辑"}请求${target}。`
+      : `Handling file ${name === "write" ? "write" : "edit"} request${target}.`;
+  }
+  const status = result === undefined ? "running" : (() => {
+    const summary = summarizeToolResult(call, result);
+    return summary.denied ? "denied" : summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
+  })();
+  if (status === "denied") return zh ? `未获授权，无法执行${target || ` ${name}`}。`
+    : `Permission denied for${target || ` ${name}`}.`;
+  if (status === "not-run") return zh ? `未执行${target || ` ${name}`}。`
+    : `Did not run${target || ` ${name}`}.`;
+  const verbs: Record<string, [string, string, string, string, string, string]> = {
+    read: ["正在查看文件", "已读取文件", "读取文件失败", "Reading file", "Read file", "Could not read file"],
+    grep: ["正在搜索代码", "已搜索代码", "搜索代码失败", "Searching code", "Searched code", "Code search failed"],
+    glob: ["正在匹配文件", "已完成文件匹配", "匹配文件失败", "Matching files", "Matched files", "File matching failed"],
+    ls: ["正在列出目录", "已列出目录", "列出目录失败", "Listing directory", "Listed directory", "Directory listing failed"],
+    write: ["正在写入文件", "已写入文件", "写入文件失败", "Writing file", "Wrote file", "Could not write file"],
+    edit: ["正在修改文件", "已修改文件", "修改文件失败", "Editing file", "Edited file", "Could not edit file"],
+    shell: ["正在执行命令", "命令执行结束", "命令执行失败", "Running command", "Command finished", "Command failed"],
+  };
+  const forms = verbs[name] ?? ["正在调用工具", "工具调用已返回", "工具调用失败",
+    "Calling tool", "Tool call returned", "Tool call failed"];
+  const offset = zh ? 0 : 3;
+  const position = status === "running" ? 0 : status === "failed" ? 2 : 1;
+  const suffix = target || (verbs[name] === undefined ? ` ${clip(name, 40)}` : "");
+  return `${forms[offset + position]}${suffix}${zh ? "。" : "."}`;
+}
+
+/** 记录每一行是否真实以换行结尾，避免丢失文件末尾的换行变化。 */
+function unifiedFileLines(content: string): Array<{ text: string; ended: boolean }> {
+  if (content === "") return [];
+  const lines = content.split("\n");
+  const ended = content.endsWith("\n");
+  if (ended) lines.pop();
+  return lines.map((text, index) => ({ text, ended: ended || index < lines.length - 1 }));
+}
+
+/** EOF 无换行的真实文件须附标准补丁标记。 */
+function unifiedDiffBody(prefix: " " | "-" | "+", line: { text: string; ended: boolean }): string[] {
+  return line.ended ? [`${prefix}${line.text}`] : [`${prefix}${line.text}`, "\\ No newline at end of file"];
+}
+/** 一次 edit 只有一个连续替换区域，因此可用共同前后缀准确产生完整统一补丁。 */
+function committedEditDiff(
+  path: string, before: string, after: string, created = false, multiHunk = false,
+): { lines: string[]; truncated: boolean } {
+  // 限制单个可视化的分配成本；不读取额外磁盘数据，也不保留原始文件全文。
+  const MAX_SOURCE_CHARS = 320_000;
+  const MAX_PREVIEW_LINES = 800;
+  const MAX_PREVIEW_LINE_CHARS = 240;
+  if (before.length > MAX_SOURCE_CHARS || after.length > MAX_SOURCE_CHARS) {
+    return { lines: ["File change exceeds the bounded terminal diff preview limit."], truncated: true };
+  }
+  const oldLines = unifiedFileLines(before);
+  const newLines = unifiedFileLines(after);
+  if (before === after && !created) return { lines: [], truncated: false };
+  const name = oneLine(path);
+  const lines: string[] = [];
+  let truncated = false;
+  const append = (line: string): void => {
+    if (line.length > MAX_PREVIEW_LINE_CHARS) {
+      line = `${line.slice(0, MAX_PREVIEW_LINE_CHARS)} … [line truncated]`;
+      truncated = true;
+    }
+    if (lines.length < MAX_PREVIEW_LINES) lines.push(line);
+    else truncated = true;
+  };
+  const appendRange = (prefix: " " | "-" | "+", body: Array<{ text: string; ended: boolean }>): void => {
+    for (const line of body) {
+      if (lines.length >= MAX_PREVIEW_LINES) { truncated = true; break; }
+      for (const item of unifiedDiffBody(prefix, line)) append(item);
+    }
+  };
+  if (created) {
+    append("--- /dev/null");
+    append(`+++ b/${name}`);
+    append(`@@ -0,0 +1,${newLines.length} @@`);
+    appendRange("+", newLines);
+    return { lines, truncated };
+  }
+  const same = (a: { text: string; ended: boolean }, b: { text: string; ended: boolean }): boolean =>
+    a.text === b.text && a.ended === b.ended;
+  // write 可能一次覆盖多个不连续的位置：基于有界 LCS 产生真实的多个 hunk，
+  // 而不是用首尾公共片段把中间大量未改变的行全部画成删除再新增。
+  if (multiHunk) {
+    const oldCount = oldLines.length;
+    const newCount = newLines.length;
+    if (oldCount + newCount <= 2_400 && oldCount * newCount <= 800_000) {
+      const table = Array.from({ length: oldCount + 1 }, () => new Uint32Array(newCount + 1));
+      for (let i = oldCount - 1; i >= 0; i--) {
+        for (let j = newCount - 1; j >= 0; j--) {
+          table[i]![j] = same(oldLines[i]!, newLines[j]!) ? table[i + 1]![j + 1]! + 1
+            : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+        }
+      }
+      const operations: Array<{ mark: " " | "-" | "+"; line: { text: string; ended: boolean } }> = [];
+      let i = 0;
+      let j = 0;
+      while (i < oldCount || j < newCount) {
+        if (i < oldCount && j < newCount && same(oldLines[i]!, newLines[j]!)) {
+          operations.push({ mark: " ", line: oldLines[i++]! });
+          j++;
+        } else if (i < oldCount && (j === newCount || table[i + 1]![j]! >= table[i]![j + 1]!)) {
+          operations.push({ mark: "-", line: oldLines[i++]! });
+        } else {
+          operations.push({ mark: "+", line: newLines[j++]! });
+        }
+      }
+      const ranges: Array<{ start: number; end: number }> = [];
+      for (let index = 0; index < operations.length; index++) {
+        if (operations[index]!.mark === " ") continue;
+        const start = Math.max(0, index - 3);
+        const end = Math.min(operations.length, index + 4);
+        const last = ranges.at(-1);
+        if (last !== undefined && start <= last.end) last.end = Math.max(end, last.end);
+        else ranges.push({ start, end });
+      }
+      const oldPositions = [0];
+      const newPositions = [0];
+      for (const op of operations) {
+        oldPositions.push(oldPositions.at(-1)! + (op.mark === "+" ? 0 : 1));
+        newPositions.push(newPositions.at(-1)! + (op.mark === "-" ? 0 : 1));
+      }
+      append(`--- a/${name}`);
+      append(`+++ b/${name}`);
+      for (const range of ranges) {
+        const oldSize = oldPositions[range.end]! - oldPositions[range.start]!;
+        const newSize = newPositions[range.end]! - newPositions[range.start]!;
+        const oldStart = oldPositions[range.start]! + (oldSize === 0 ? 0 : 1);
+        const newStart = newPositions[range.start]! + (newSize === 0 ? 0 : 1);
+        append(`@@ -${oldStart},${oldSize} +${newStart},${newSize} @@`);
+        for (const op of operations.slice(range.start, range.end)) {
+          for (const line of unifiedDiffBody(op.mark, op.line)) append(line);
+        }
+      }
+      return { lines, truncated };
+    }
+    // 对极端长的写入避免 O(N*M) 的比较开销；退化为现有真实单 hunk 预览，
+    // 显示明确提示，不能声称这就是完整的多处编辑差异。
+    append("Diff preview simplified: multi-hunk comparison exceeded the bounded line budget.");
+    truncated = true;
+  }
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && same(oldLines[prefix]!, newLines[prefix]!)) prefix++;
+  let suffix = 0;
+  while (suffix < oldLines.length - prefix && suffix < newLines.length - prefix &&
+    same(oldLines[oldLines.length - suffix - 1]!, newLines[newLines.length - suffix - 1]!)) suffix++;
+  const leading = Math.min(prefix, 3);
+  const trailing = Math.min(suffix, 3);
+  const oldStart = prefix - leading;
+  const oldEnd = oldLines.length - suffix + trailing;
+  const newEnd = newLines.length - suffix + trailing;
+  append(`--- a/${name}`);
+  append(`+++ b/${name}`);
+  append(`@@ -${oldStart + 1},${oldEnd - oldStart} +${oldStart + 1},${newEnd - oldStart} @@`);
+  appendRange(" ", oldLines.slice(oldStart, prefix));
+  appendRange("-", oldLines.slice(prefix, oldLines.length - suffix));
+  appendRange("+", newLines.slice(prefix, newLines.length - suffix));
+  appendRange(" ", newLines.slice(newLines.length - suffix, newEnd));
+  return { lines, truncated };
+}
+
 /** 真实操作类型映射为自然语言；仅根据工具名及结果分类，不虚构工作进展。 */
 function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSummary): string {
   const zh = lang === "zh";
@@ -2464,6 +3045,9 @@ function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSumm
     edit: [zh ? "已修改代码" : "Edited code", zh ? "正在修改代码" : "Editing code", zh ? "尝试修改代码" : "Tried editing code"],
     shell: [zh ? "已执行命令" : "Ran commands", zh ? "正在执行命令" : "Running commands", zh ? "尝试执行命令" : "Tried running commands"],
   };
+  if (pending && call.function.name === "shell") return zh ? "正在处理命令请求" : "Handling command request";
+  if (pending && call.function.name === "write") return zh ? "正在处理文件写入请求" : "Handling file write request";
+  if (pending && call.function.name === "edit") return zh ? "正在处理文件编辑请求" : "Handling file edit request";
   if (call.function.name === "shell" && summary?.denied) return zh ? "请求了命令授权" : "Requested command approval";
   if (call.function.name === "shell" && summary?.notRun) return zh ? "命令未执行" : "Command not run";
   const words = labels[call.function.name] ?? [zh ? "已使用工具" : "Used tools",
@@ -2609,10 +3193,14 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, languag
       { text: `  ${glyphs.success} ${event}`, tone: "success", kind: "tool" },
       { text: `    ${glyphs.boxBottomLeft} ${detail}`, tone: "muted" },
     ];
-    const last = resultLines.at(-1);
-    // read 的部分成功必须可见，不能只用行数摘要把读取上限藏掉。
-    if (call.function.name === "read" && last?.startsWith("… [")) {
-      lines.push({ text: `      ${last}`, tone: "warning" });
+    // read 的 8 KiB 输出截断与 32 KiB 读取截断是两种不同上限。
+    // 尾部可能同时含两个警告；都保留，不让行数摘要误导用户。
+    if (call.function.name === "read") {
+      for (const warning of resultLines.slice(-2)) {
+        if (/^… \[(?:truncated \d+ chars|stopped after \d+ bytes)\]$/.test(warning)) {
+          lines.push({ text: `      ${warning}`, tone: "warning" });
+        }
+      }
     }
     return lines;
   }

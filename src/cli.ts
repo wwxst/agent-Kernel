@@ -301,6 +301,20 @@ let activePresenter: RunPresenter | undefined;
  * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（REPL、一次性任务）；
  * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
  */
+/** 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。 */
+const TUI_PROGRESS_GUIDANCE = [
+  // 在重要的一组工具调用之前，向用户简短说明当前准备做什么。
+  "In this interactive TUI, briefly tell the user what you are doing before a meaningful group of tool calls.",
+  // 有实际结果以后，简短说明观察到的结果，以及已经明确的下一步。
+  "After a meaningful result, briefly explain the observed outcome and your next step if known.",
+  // 用用户的语言，每次只说一句；合并相关操作，不逐个工具播报。
+  "Keep each visible progress update to one short sentence in the user's language; group related operations instead of narrating every tool.",
+  // 只说有证据的事实和计划；不伪造结果，也不暴露模型内部推理。
+  "Only describe verified facts and plans, never invent results or reveal private chain-of-thought.",
+  // 正式回答与临时进度说明分离。
+  "Keep the final response separate from these progress updates.",
+].join(" ");
+
 interface AgentCallbacks {
   onRequestStart?: (step: number) => void;
   onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
@@ -323,10 +337,15 @@ function createAgent(
   config: Config,
   signal: AbortSignal,
   permission: Permission,
-  options: { announce?: boolean; callbacks?: AgentCallbacks } = {},
+  options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean;
+    onEditCommitted?: (path: string, before: string, after: string) => void;
+    onWriteCommitted?: (path: string, before: string | undefined, after: string | undefined, created: boolean) => void;
+    onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
   const tools = new ToolRegistry(
-    createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal })),
+    createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
+      onEditCommitted: options.onEditCommitted, onWriteCommitted: options.onWriteCommitted,
+      onImageRead: options.onImageRead })),
     { permission },
   );
 
@@ -354,7 +373,7 @@ function createAgent(
     tools,
     // 权限说明只指导模型；真正的放行/拒绝仍由 ToolRegistry 执行。
     // 函数在每次请求前求值，/permission 切换后下一次请求自动使用新规则。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}`,
+    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
@@ -639,19 +658,33 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   let current: Agent | undefined;
   // 工具开始展示时会把本次 assistant 段落提交到运行记录；Run 后续失败不能重复补写。
   let toolStartedInLatestResponse = false;
+  // ToolRegistry 串行执行每条调用；只把该次真实 edit 提交对应到当前 ToolCall。
+  let pendingEditId: string | undefined;
+  let pendingWriteId: string | undefined;
+  let pendingImageId: string | undefined;
   const callbacks: AgentCallbacks = {
     onRequestStart: () => {
       toolStartedInLatestResponse = false;
+      pendingEditId = undefined;
+      pendingWriteId = undefined;
+      pendingImageId = undefined;
+      tui.beginModelRequest();
       tui.setThinking(true);
     },
     onToolCall: (call, confirmedContent) => {
       // 同一条 assistant 可以带多个工具；只确认一次阶段说明，不能重复展示。
       if (!toolStartedInLatestResponse) tui.confirmAssistant(confirmedContent);
       toolStartedInLatestResponse = true;
+      pendingEditId = call.function.name === "edit" ? call.id : undefined;
+      pendingWriteId = call.function.name === "write" ? call.id : undefined;
+      pendingImageId = call.function.name === "read" ? call.id : undefined;
       tui.toolCall(call);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
     onToolResult: (call, result) => {
+      if (call.id === pendingEditId) pendingEditId = undefined;
+      if (call.id === pendingWriteId) pendingWriteId = undefined;
+      if (call.id === pendingImageId) pendingImageId = undefined;
       tui.toolResult(call, result);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
@@ -660,7 +693,17 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   };
 
   const newAgent = (): Agent => {
-    current = createAgent(config, signal, permission, { announce: false, callbacks });
+    current = createAgent(config, signal, permission, { announce: false, callbacks, narrateProgress: true,
+      onEditCommitted: (path, before, after) => {
+        if (pendingEditId !== undefined) tui.recordEditDiff(pendingEditId, path, before, after);
+      },
+      onWriteCommitted: (path, before, after, created) => {
+        if (pendingWriteId !== undefined) tui.recordEditDiff(pendingWriteId, path, before, after, created);
+      },
+      onImageRead: (path, bytes) => {
+        if (pendingImageId !== undefined) tui.recordImagePreview(pendingImageId, path, bytes);
+      },
+    });
     return current;
   };
 
@@ -687,7 +730,8 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
     try {
       const reply = await agent.run(task);
-      tui.confirmAssistant(reply.content);
+      // 只有 Agent.run 的最终回复独立于可折叠的执行时间线；工具前阶段说明保持原位。
+      tui.confirmAssistant(reply.content, true);
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: false });
       return true;
     } catch (error) {

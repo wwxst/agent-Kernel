@@ -570,6 +570,29 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
   });
 });
 
+test("TUI 过程概述：仅交互式 TUI 给模型可见进度指导，不新增请求或污染普通 CLI", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("finished")]);
+    try {
+      const env = { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir };
+      const tui = await runCli(env, { args: ["--tui", "inspect"], input: "/exit\n" });
+      assert.equal(tui.code, 0, tui.stderr);
+      assert.equal(mock.requests.length, 1);
+      assert.match(mock.requests[0].messages[0].content, /briefly tell the user what you are doing/);
+      assert.match(mock.requests[0].messages[0].content, /never invent results/);
+      assert.match(tui.stdout, /model: finished/);
+
+      const ordinary = await runCli(env, { args: ["inspect"] });
+      assert.equal(ordinary.code, 0, ordinary.stderr);
+      assert.equal(mock.requests.length, 2, "进度说明不引入额外的模型请求");
+      assert.doesNotMatch(mock.requests[1].messages[0].content, /interactive TUI|progress update/);
+      assert.match(ordinary.stdout, /finished/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("initial task done")]);
