@@ -3184,10 +3184,14 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, languag
       { text: `  ${glyphs.success} ${event}`, tone: "success", kind: "tool" },
       { text: `    ${glyphs.boxBottomLeft} ${detail}`, tone: "muted" },
     ];
-    const last = resultLines.at(-1);
-    // read 的部分成功必须可见，不能只用行数摘要把读取上限藏掉。
-    if (call.function.name === "read" && last?.startsWith("… [")) {
-      lines.push({ text: `      ${last}`, tone: "warning" });
+    // read 的 8 KiB 输出截断与 32 KiB 读取截断是两种不同上限。
+    // 尾部可能同时含两个警告；都保留，不让行数摘要误导用户。
+    if (call.function.name === "read") {
+      for (const warning of resultLines.slice(-2)) {
+        if (/^… \[(?:truncated \d+ chars|stopped after \d+ bytes)\]$/.test(warning)) {
+          lines.push({ text: `      ${warning}`, tone: "warning" });
+        }
+      }
     }
     return lines;
   }
