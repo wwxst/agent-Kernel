@@ -2905,7 +2905,9 @@ function unifiedDiffBody(prefix: " " | "-" | "+", line: { text: string; ended: b
   return line.ended ? [`${prefix}${line.text}`] : [`${prefix}${line.text}`, "\\ No newline at end of file"];
 }
 /** 一次 edit 只有一个连续替换区域，因此可用共同前后缀准确产生完整统一补丁。 */
-function committedEditDiff(path: string, before: string, after: string, created = false): { lines: string[]; truncated: boolean } {
+function committedEditDiff(
+  path: string, before: string, after: string, created = false, multiHunk = false,
+): { lines: string[]; truncated: boolean } {
   // 限制单个可视化的分配成本；不读取额外磁盘数据，也不保留原始文件全文。
   const MAX_SOURCE_CHARS = 320_000;
   const MAX_PREVIEW_LINES = 800;
@@ -2942,6 +2944,66 @@ function committedEditDiff(path: string, before: string, after: string, created 
   }
   const same = (a: { text: string; ended: boolean }, b: { text: string; ended: boolean }): boolean =>
     a.text === b.text && a.ended === b.ended;
+  // write 可能一次覆盖多个不连续的位置：基于有界 LCS 产生真实的多个 hunk，
+  // 而不是用首尾公共片段把中间大量未改变的行全部画成删除再新增。
+  if (multiHunk) {
+    const oldCount = oldLines.length;
+    const newCount = newLines.length;
+    if (oldCount + newCount <= 2_400 && oldCount * newCount <= 800_000) {
+      const table = Array.from({ length: oldCount + 1 }, () => new Uint32Array(newCount + 1));
+      for (let i = oldCount - 1; i >= 0; i--) {
+        for (let j = newCount - 1; j >= 0; j--) {
+          table[i]![j] = same(oldLines[i]!, newLines[j]!) ? table[i + 1]![j + 1]! + 1
+            : Math.max(table[i + 1]![j]!, table[i]![j + 1]!);
+        }
+      }
+      const operations: Array<{ mark: " " | "-" | "+"; line: { text: string; ended: boolean } }> = [];
+      let i = 0;
+      let j = 0;
+      while (i < oldCount || j < newCount) {
+        if (i < oldCount && j < newCount && same(oldLines[i]!, newLines[j]!)) {
+          operations.push({ mark: " ", line: oldLines[i++]! });
+          j++;
+        } else if (i < oldCount && (j === newCount || table[i + 1]![j]! >= table[i]![j + 1]!)) {
+          operations.push({ mark: "-", line: oldLines[i++]! });
+        } else {
+          operations.push({ mark: "+", line: newLines[j++]! });
+        }
+      }
+      const ranges: Array<{ start: number; end: number }> = [];
+      for (let index = 0; index < operations.length; index++) {
+        if (operations[index]!.mark === " ") continue;
+        const start = Math.max(0, index - 3);
+        const end = Math.min(operations.length, index + 4);
+        const last = ranges.at(-1);
+        if (last !== undefined && start <= last.end) last.end = Math.max(end, last.end);
+        else ranges.push({ start, end });
+      }
+      const oldPositions = [0];
+      const newPositions = [0];
+      for (const op of operations) {
+        oldPositions.push(oldPositions.at(-1)! + (op.mark === "+" ? 0 : 1));
+        newPositions.push(newPositions.at(-1)! + (op.mark === "-" ? 0 : 1));
+      }
+      append(`--- a/${name}`);
+      append(`+++ b/${name}`);
+      for (const range of ranges) {
+        const oldSize = oldPositions[range.end]! - oldPositions[range.start]!;
+        const newSize = newPositions[range.end]! - newPositions[range.start]!;
+        const oldStart = oldPositions[range.start]! + (oldSize === 0 ? 0 : 1);
+        const newStart = newPositions[range.start]! + (newSize === 0 ? 0 : 1);
+        append(`@@ -${oldStart},${oldSize} +${newStart},${newSize} @@`);
+        for (const op of operations.slice(range.start, range.end)) {
+          for (const line of unifiedDiffBody(op.mark, op.line)) append(line);
+        }
+      }
+      return { lines, truncated };
+    }
+    // 对极端长的写入避免 O(N*M) 的比较开销；退化为现有真实单 hunk 预览，
+    // 显示明确提示，不能声称这就是完整的多处编辑差异。
+    append("Diff preview simplified: multi-hunk comparison exceeded the bounded line budget.");
+    truncated = true;
+  }
   let prefix = 0;
   while (prefix < oldLines.length && prefix < newLines.length && same(oldLines[prefix]!, newLines[prefix]!)) prefix++;
   let suffix = 0;
