@@ -52,7 +52,7 @@ test("write 文件差异：新建和覆盖均在原子提交后提供真实前�
   });
 });
 
-test("P2 write：超过 2 MiB 的新文件和旧文件覆盖成功后均报告 Diff 快照不可用", async () => {
+test("P2 write：超过 2,000,000 字节 的新文件和旧文件覆盖成功后均报告 Diff 快照不可用", async () => {
   await withWorkspace(async (root) => {
     const events = [];
     const workspace = new Workspace({ root, onWriteCommitted: (file, before, after, created) => {
