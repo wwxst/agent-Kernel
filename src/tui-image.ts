@@ -20,17 +20,28 @@ const MAX_RAW_BYTES = 12_000_000;
 const PALETTE = " .:-=+*#%@";
 const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
-function samplePixel(row: Buffer, x: number, colorType: number, palette: Buffer): number {
-  if (colorType === 0 || colorType === 4) return row[x * (colorType === 0 ? 1 : 2)]!;
-  if (colorType === 3) {
-    const at = (row[x] ?? 0) * 3;
-    if (at + 2 >= palette.length) return 0;
-    return Math.round((palette[at]! * 299 + palette[at + 1]! * 587 + palette[at + 2]! * 114) / 1000);
+function samplePixel(row: Buffer, x: number, colorType: number, palette: Buffer, transparency: Buffer): number {
+  let luminance = 0;
+  let alpha = 255;
+  if (colorType === 0) {
+    luminance = row[x] ?? 0;
+  } else if (colorType === 4) {
+    luminance = row[x * 2] ?? 0;
+    alpha = row[x * 2 + 1] ?? 255;
+  } else if (colorType === 3) {
+    const index = row[x] ?? 0;
+    const at = index * 3;
+    if (at + 2 >= palette.length) return 255;
+    luminance = Math.round((palette[at]! * 299 + palette[at + 1]! * 587 + palette[at + 2]! * 114) / 1000);
+    alpha = transparency[index] ?? 255;
+  } else {
+    const at = x * (colorType === 2 ? 3 : 4);
+    luminance = Math.round(((row[at] ?? 0) * 299 + (row[at + 1] ?? 0) * 587 + (row[at + 2] ?? 0) * 114) / 1000);
+    if (colorType === 6) alpha = row[at + 3] ?? 255;
   }
-  const at = x * (colorType === 2 ? 3 : 4);
-  return Math.round(((row[at] ?? 0) * 299 + (row[at + 1] ?? 0) * 587 + (row[at + 2] ?? 0) * 114) / 1000);
+  // 终端缩略图是文字亮度：把透明像素合成到白色背景，而不是当作不透明黑色。
+  return Math.round((luminance * alpha + 255 * (255 - alpha)) / 255);
 }
-
 function paeth(a: number, b: number, c: number): number {
   const prediction = a + b - c;
   const left = Math.abs(prediction - a);
@@ -48,6 +59,7 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
   let colorType = -1;
   let valid = false;
   let palette: Buffer = Buffer.alloc(0);
+  let transparency: Buffer = Buffer.alloc(0);
   const chunks: Buffer[] = [];
   while (offset + 12 <= bytes.length) {
     const length = bytes.readUInt32BE(offset);
@@ -62,10 +74,12 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
       const depth = value[8];
       colorType = value[9]!;
       bpp = colorType === 0 || colorType === 3 ? 1 : colorType === 2 ? 3 : colorType === 4 ? 2 : colorType === 6 ? 4 : 0;
-      if (depth !== 8 || bpp === 0 || value[12] !== 0 ||
+      if (depth !== 8 || bpp === 0 || value[10] !== 0 || value[11] !== 0 || value[12] !== 0 ||
           width === 0 || height === 0 || width * height > MAX_PIXELS) return undefined;
     } else if (kind === "PLTE") {
       palette = value;
+    } else if (kind === "tRNS") {
+      transparency = value;
     } else if (kind === "IDAT") {
       chunks.push(value);
     } else if (kind === "IEND") {
@@ -104,7 +118,7 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
     const targetY = Math.min(targetHeight - 1, Math.floor(y * targetHeight / height));
     for (let x = 0; x < width; x++) {
       const targetX = Math.min(targetWidth - 1, Math.floor(x * targetWidth / width));
-      samples[targetY]![targetX]! += samplePixel(current, x, colorType, palette);
+      samples[targetY]![targetX]! += samplePixel(current, x, colorType, palette, transparency);
       counts[targetY]![targetX]!++;
     }
     above = current;
@@ -119,7 +133,21 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
 /** 文件签名而非扩展名决定实际格式；不可信或超大图像直接明确拒绝预览。 */
 export function previewImage(bytes: Buffer): ImagePreview | undefined {
   if (bytes.length < 12 || bytes.length > 4_000_000) return undefined;
-  if (bytes.subarray(0, 8).equals(PNG_SIGNATURE)) return decodePng(bytes);
+  if (bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {
+    const decoded = decodePng(bytes);
+    if (decoded !== undefined) return decoded;
+    // 16 位、隔行 PNG 等无法解码时，只在完整 PNG 头尾存在时明确显示格式降级。
+    if (bytes.length >= 45 && bytes.readUInt32BE(8) === 13 &&
+        bytes.toString("ascii", 12, 16) === "IHDR" &&
+        bytes.toString("ascii", bytes.length - 8, bytes.length - 4) === "IEND") {
+      const width = bytes.readUInt32BE(16);
+      const height = bytes.readUInt32BE(20);
+      if (width > 0 && height > 0 && width * height <= MAX_PIXELS) {
+        return { format: "PNG", width, height, rows: [] };
+      }
+    }
+    return undefined;
+  }
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return { format: "JPEG", rows: [] };
   if (bytes.toString("ascii", 0, 6) === "GIF89a" || bytes.toString("ascii", 0, 6) === "GIF87a") {
     return { format: "GIF", width: bytes.readUInt16LE(6), height: bytes.readUInt16LE(8), rows: [] };
