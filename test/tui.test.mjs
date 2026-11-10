@@ -2274,6 +2274,26 @@ test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行",
   assert.match(screen, /\+two/);
 });
 
+test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("修改大文件");
+  const call = { id: "large-diff", type: "function", function: {
+    name: "edit", arguments: '{"path":"large.txt","old_string":"old","new_string":"new"}',
+  } };
+  ui.tui.toolCall(call);
+  ui.tui.recordEditDiff(call.id, "large.txt", "a".repeat(1500) + "\n", "b".repeat(1500) + "\n");
+  ui.tui.toolResult(call, "edited large.txt");
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  const screen = screenRows(ui, 45).join("\n");
+  assert.match(screen, /line truncated|Diff 过大/, "很长的一行也必须截断，而非无限制重绘");
+  assert.doesNotMatch(screen, /a{400}/, "不能把整条超长原始行推入终端");
+  ui.tui.recordEditDiff(call.id, "large.txt", "a\n".repeat(200_000), "b\n".repeat(200_000));
+  const huge = screenRows(ui, 45).join("\n");
+  assert.match(huge, /bounded terminal diff preview limit/, "超大文件不能分配数十万条行对象");
+});
+
 test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少换行标记", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 108 });
   t.after(() => ui.cleanup());
