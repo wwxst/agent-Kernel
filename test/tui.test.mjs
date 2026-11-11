@@ -706,10 +706,12 @@ test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", asy
   ui.output.emit("resize");
   await settledResize();
   assert.match(ui.text(), /echo TAIL/);
-  assert.match(lastRow(ui.text(), 5), /^Shell permission$/);
-  assert.match(lastRow(ui.text(), 6), /^Workspace: C:\\work\\repo$/);
-  for (let row = 4; row < 34; row++) {
-    assert.ok(lastRow(ui.text(), row).length <= 34, `第 ${row} 行不应超宽`);
+  // 按内容定位：审批时输入框隐藏，整体行号会变，但内容不能变。
+  assert.match(rowWith(ui, /^Shell permission$/), /^Shell permission$/);
+  assert.match(rowWith(ui, /^Workspace: C:\\work\\repo$/), /^Workspace: C:\\work\\repo$/);
+  // 前 3 行是 resize 之前就打印好的标题栏，不参与重排。
+  for (const line of screenRows(ui, 40).slice(3)) {
+    assert.ok(line.length <= 34, `行不应超宽：${line}`);
   }
   ui.input.write("n\r");
   assert.equal(await pending, false);
@@ -2404,4 +2406,36 @@ test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次�
   ui.input.write("\r");
 
   assert.equal(await pending, "第一行\n第二行\n第三行", "粘贴内容是一条消息，换行保留");
+});
+
+test("TUI：不支持括号粘贴的终端，同一批到达的多行也合并成一条消息", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  // 老 conhost 不发 ESC[200~：三个换行就是三个 line 事件，但它们是同一批数据。
+  ui.input.write("第一行\n第二行\n第三行\n");
+
+  assert.equal(await pending, "第一行\n第二行\n第三行", "同一批多行合并为一条消息");
+});
+
+test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑命令");
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+
+  const rows = screenRows(ui, 30);
+  const menuRow = rows.findIndex((line) => /Shell permission|Shell 权限审批/.test(line));
+  assert.ok(menuRow >= 0, "审批面板出现");
+  // 面板之后不该再有一条空的输入行：按键此时全归菜单。
+  const afterMenu = rows.slice(menuRow);
+  assert.equal(afterMenu.filter((line) => /^>\s*$/.test(line)).length, 0, "审批时不画输入行");
+
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
 });

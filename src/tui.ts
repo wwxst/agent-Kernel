@@ -388,6 +388,11 @@ export class Tui {
 
   private pastedPlaceholder = "";
 
+  /** 同一批到达的行（粘贴兜底用）：人工按键不会在一个事件循环里连发多个回车。 */
+  private burstLines: string[] = [];
+
+  private burstFlush?: NodeJS.Immediate;
+
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
 
@@ -583,31 +588,26 @@ export class Tui {
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
+    // 兜底：不支持括号粘贴的终端（老 conhost）会把粘贴里的每个换行都变成一个 line 事件。
+    // 这些事件在同一个事件循环里连续到达，而人工按键做不到——所以同一批里的多行
+    // 合并成一条消息，换行保留。
     this.rl.on("line", (rawLine) => {
-      // 多行粘贴在输入框里是一行占位提示，提交时才换成原文。
-      const line = rawLine;
-      // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
-      // 也不能在审批结束后进入下一轮任务队列。
+      // 审批期间的按键（y/1/回车、粘贴）不是任务输入：直接丢弃，
+      // 不能进批处理缓冲，否则会在审批结束后冒充下一轮任务。
       if (this.approvalMenuActive) return;
-      // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
-      const candidates = this.slashMenuCandidates(line);
-      const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
-        ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
-        : line;
-      this.slashDismissed = false;
-      this.slashSelected = 0;
-      this.slashDraft = "";
-      this.slashDraftCursor = 0;
-      // 占位提示对应一段多行粘贴：真正交给模型的是原文。
-      const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
-      if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
-      const resolve = this.waiting.shift();
-      if (resolve === undefined) {
-        this.lines.push(payload);
-        this.inputDirty = true;
-      } else {
-        resolve(payload);
+      // 只在交互式主视图里合并：脚本 / 管道输入的多行是多个命令，合并会吃掉它们。
+      if (!this.layout) {
+        this.submitLine(rawLine);
+        return;
       }
+      this.burstLines.push(rawLine);
+      if (this.burstFlush !== undefined) return;
+      this.burstFlush = setImmediate(() => {
+        this.burstFlush = undefined;
+        const merged = this.burstLines.join("\n");
+        this.burstLines = [];
+        this.submitLine(merged);
+      });
     });
     this.rl.on("close", () => {
       this.ended = true;
@@ -2022,6 +2022,32 @@ export class Tui {
     return this.uiText(`[Pasted text +${lines} lines]`, `[已粘贴 ${lines} 行]`);
   }
 
+  /** 提交一行：审批不消费文本行；占位提示换成多行粘贴的原文。 */
+  private submitLine(line: string): void {
+    // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
+    // 也不能在审批结束后进入下一轮任务队列。
+    if (this.approvalMenuActive) return;
+    // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
+    const candidates = this.slashMenuCandidates(line);
+    const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
+      ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
+      : line;
+    this.slashDismissed = false;
+    this.slashSelected = 0;
+    this.slashDraft = "";
+    this.slashDraftCursor = 0;
+    // 占位提示对应一段多行粘贴：真正交给模型的是原文。
+    const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
+    if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
+    const resolve = this.waiting.shift();
+    if (resolve === undefined) {
+      this.lines.push(payload);
+      this.inputDirty = true;
+    } else {
+      resolve(payload);
+    }
+  }
+
   /** 冻结活动区重绘，把视口交给终端；PgDn / Esc 恢复。 */
   private pauseOutput(): void {
     if (this.outputPaused) return;
@@ -2275,7 +2301,11 @@ export class Tui {
     this.printedLines = commitTo;
 
     for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
-    frame += `${this.dividerLine(width)}\r\n${this.inputLine(width)}\r\n${this.dividerLine(width)}\r\n`;
+    // 审批时隐藏输入框：菜单独占这块区域，和 Claude Code 一致。
+    // 留着输入框会让人以为「还能打字」，而按键其实全给了菜单。
+    frame += this.approvalMenuActive
+      ? `${this.dividerLine(width)}\r\n`
+      : `${this.dividerLine(width)}\r\n${this.inputLine(width)}\r\n${this.dividerLine(width)}\r\n`;
     if (menuRows > 0) {
       const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
         Math.max(0, slashCandidates.length - menuRows));
@@ -2286,9 +2316,12 @@ export class Tui {
     frame += this.footerLine(width);
 
     // 光标从状态行回到输入行：下边框 + 菜单 + 状态行都在它下面。
-    frame += `\x1b[${1 + menuRows + 1}A\r`;
-    if (!this.approvalMenuActive) frame += this.inputColumnSequence();
-    frame += this.approvalMenuActive ? "" : "\x1b[?25h";
+    // 审批时没有输入行，少退一行，并且不显示光标（按键全归菜单）。
+    if (this.approvalMenuActive) {
+      frame += `\x1b[${1 + menuRows}A\r\x1b[?25l`;
+    } else {
+      frame += `\x1b[${1 + menuRows + 1}A\r${this.inputColumnSequence()}\x1b[?25h`;
+    }
     frame += "\x1b[?2026l";
 
     this.lastRowsAboveInput = rowsAboveInput;
