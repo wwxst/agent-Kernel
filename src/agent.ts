@@ -59,8 +59,10 @@ function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
 
-/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */
-function cancellationError(signal: AbortSignal): Error {
+/** 同一个操作连续被拒几次就停下：对齐 Claude Code 的 3 次阈值。 */
+const MAX_CONSECUTIVE_DENIALS = 3;
+
+/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */function cancellationError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   const detail = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
   return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
@@ -204,6 +206,9 @@ export class Agent {
 
   /** 已经过 ToolRegistry 的调用次数，含拒绝与校验失败，预算跳过不计；供限额与失败报告使用。 */
   private runToolCalls = 0;
+
+  /** 连续被拒次数：达到上限就中止本轮，避免模型换个写法无限重试。 */
+  private consecutiveDenials = 0;
 
   /** 本次 Run 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
   private runRequests = 0;
@@ -431,6 +436,7 @@ export class Agent {
     this.runRequests = 0;
     this.runRetries = 0;
     this.runToolCalls = 0;
+    this.consecutiveDenials = 0;
     this.runUsage = emptyUsage();
   }
 
@@ -547,6 +553,20 @@ export class Agent {
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
         this.notifyObserver(this.onToolResult, structuredClone(call), result);
+        // 连续被拒是死循环的前兆：模型看到「被拒绝」会换个写法重试，再被拒，再重试。
+        // Claude Code 的做法是同一个操作连续被拒 3 次就停下问人；这里没有「问人」的通道，
+        // 所以第 3 次直接中止本轮，把原因说清楚——比烧掉几万 token 重试 20 次好。
+        if (result.startsWith("ERROR: permission denied")) {
+          this.consecutiveDenials++;
+          if (this.consecutiveDenials >= MAX_CONSECUTIVE_DENIALS) {
+            throw new Error(
+              `tool "${call.function.name}" was denied ${this.consecutiveDenials} times in a row; ` +
+                "stopping instead of retrying the same operation",
+            );
+          }
+        } else {
+          this.consecutiveDenials = 0;
+        }
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
