@@ -2446,10 +2446,11 @@ export class Tui {
         }
         const children: LogLine[] = [];
         // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
-        if (group.fallbackOverview && group.tools.length > 0) {
+        // 这一组已经结束就不再补叙述：摘要行和工具行已经说清了做过什么，再写一句「已列出目录」是第三遍。
+        if (group.fallbackOverview && group.tools.length > 0 && !group.finished) {
           const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
           children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
-            current.call, current.result, group.language, group.finished === true,
+            current.call, current.result, group.language, false,
             this.approvalMenuActive && current.call.function.name === "shell",
           )}`),
             tone: "info" });

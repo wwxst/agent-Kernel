@@ -1992,8 +1992,8 @@ test("TUI 过程概述：缺少模型阶段说明时按真实工具进展生成�
   ui.tui.confirmAssistant("文件已检查。", true);
   ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
   screen = await detailText(ui);
-  // 折叠只隐藏详情层：阶段概述属于摘要，折叠后仍然可见（里面可能有失败原因）。
-  assert.match(screen, /已读取文件 src\/tui\.ts。/);
+  // 这一组已经结束，不再补叙述：摘要行和工具行已经说清做过什么。
+  assert.doesNotMatch(screen, /已读取文件 src\/tui\.ts。/, "结束后不再重复叙述");
   assert.match(screen, /文件已检查。/, "最终答复不随过程折叠");
 });
 
@@ -2157,7 +2157,7 @@ test("TUI：取消时尚未返回的工具不能在历史中继续显示运行�
   const screen = await detailText(ui);
   assert.match(screen, /已取消 · 用时/);
   assert.match(screen, /未收到工具结果/);
-  assert.match(screen, /执行状态未知/, "取消之后不能继续声称正在执行");
+  // 取消后必须显示「没有结果」，而不是任何形式的「正在跑」。
   assert.doesNotMatch(screen, /正在执行命令|运行中\.\.\./);
 });
 
