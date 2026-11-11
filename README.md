@@ -263,6 +263,19 @@ Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功�
 
 规则**只在 `workspace-write` 生效**：`full-access` 的语义就是全部直接执行，`read-only` 连 shell 都不给，两边都不该被一份项目配置改写。任何一层的规则文件写坏了都会在启动时直接报错，而不是被当成「没有规则」静默忽略。
 
+### 项目层的规则要当代码 review
+
+项目层的 `permissions.json` 进版本库，它描述的是**这个仓库允许 agent 干什么**——那是一份团队共用的信任决策，不是个人设置。改它应该和改代码一样，在 PR 里被看见、被问一句「为什么这条要放行」。
+
+一条经验分界：
+
+| 适合放进 `allow` | 不该进 `allow` |
+| --- | --- |
+| 只读、幂等、输出可预期的命令：`git status` / `git diff` / `git log`、`npm test`、`ls`、`rg` | 写操作和出网：`rm`、`mv`、`git push`、`git reset`、`curl`、`npm publish` |
+| 团队每个人都愿意让它自动跑 | 你个人图省事，但别人可能想看一眼 |
+
+后者放**本地层**——它不进 git，改起来没有心理负担，也不会替别人做决定。真要禁止某类操作，写进项目层的 `deny`：它跨层最强，谁也覆盖不掉。
+
 检查发生在 `ToolRegistry.execute()` 里：参数校验通过之后、`tool.run()` 之前。被拒绝的调用不会执行，结果是一条 `ERROR: permission denied: ...` 回灌给模型，模型可以在下一轮自己换个做法。
 
 `ToolRegistry` 构造时必须显式传 `permission: Permission | null`：传 `Permission` 启用策略，传 `null` 表示宿主主动关闭检查；漏传、`undefined`、字符串等非法值在装配阶段直接报错。CLI 默认 `workspace-write`（`--permission` 可覆盖），评测显式传 `full-access`，测试按需显式传 `null` 或 `Permission`。
