@@ -2389,3 +2389,19 @@ test("TUI 主视图：审批借用输入区，已有草稿在决定后原样恢�
   await tick();
   assert.match(inputLine(ui), /草稿内容/, "决定之后草稿回到输入框，没有被吃掉");
 });
+
+test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次回车", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  // 终端开启括号粘贴后，整段粘贴被 ESC[200~ ... ESC[201~ 包住。
+  ui.input.write("\x1b[200~第一行\n第二行\n第三行\x1b[201~");
+  await tick();
+  // 输入框只显示一行占位提示，不把三行原文铺开。
+  assert.match(inputLine(ui), /已粘贴 3 行|Pasted text \+3 lines/, "多行粘贴折叠成占位提示");
+  ui.input.write("\r");
+
+  assert.equal(await pending, "第一行\n第二行\n第三行", "粘贴内容是一条消息，换行保留");
+});

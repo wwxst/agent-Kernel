@@ -42,6 +42,7 @@ const MAX_LOG_LINES = 2_000;
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
+
 /** 右对齐的模型名和统计与窗口右边缘之间留的呼吸空间，避免文字贴边难读。 */
 const RIGHT_MARGIN = 2;
 
@@ -382,6 +383,11 @@ export class Tui {
   /** 用户往上翻历史时冻结活动区重绘，避免每帧把视口拉回底部。 */
   private outputPaused = false;
 
+  /** 多行粘贴的原文：输入框只显示占位提示，提交时用原文。 */
+  private pasted: string | null = null;
+
+  private pastedPlaceholder = "";
+
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
 
@@ -490,6 +496,50 @@ export class Tui {
     this.boxBottomRow = 0;
     this.statusRow = 0;
     this.logHeight = 1;
+    // 粘贴归一化：开启括号粘贴后，终端把整段粘贴包在 ESC[200~ ... ESC[201~ 之间。
+    // 里面的换行不是「发送」。多行粘贴整段收下、输入框只显示一行占位提示
+    // （Claude Code 的 [Pasted text +N lines]），提交时再把原文交给模型——
+    // 否则一段多行文本会被当成多次回车，一行一行发出去。
+    const pasteSource = options.input as NodeJS.ReadableStream & {
+      emit: (event: string, ...args: unknown[]) => boolean;
+    };
+    const originalEmit = pasteSource.emit.bind(pasteSource);
+    let pasting = false;
+    let pasteBuffer = "";
+    pasteSource.emit = (event: string, ...args: unknown[]): boolean => {
+      if (event === "data" && args[0] !== undefined) {
+        // 必须按顺序处理：同一块数据里可能同时有开始和结束标记，
+        // 先统一替换标记会把状态弄反（结束标记先把 pasting 置回 false）。
+        const parts = String(args[0]).split(/(\x1b\[20[01]~)/);
+        let out = "";
+        for (const part of parts) {
+          if (part === "\x1b[200~") {
+            pasting = true;
+            pasteBuffer = "";
+            continue;
+          }
+          if (part === "\x1b[201~") {
+            pasting = false;
+            const text = pasteBuffer;
+            pasteBuffer = "";
+            if (text.includes("\n")) {
+              this.pasted = text;
+              this.pastedPlaceholder = this.pastePlaceholder(text);
+              const placeholder = this.pastedPlaceholder;
+              setImmediate(() => this.setEditorLine(placeholder, placeholder.length));
+            } else {
+              out += text;
+            }
+            continue;
+          }
+          if (pasting) pasteBuffer += part;
+          else out += part;
+        }
+        args[0] = out;
+      }
+      return originalEmit(event, ...args);
+    };
+
     this.recomputeGeometry();
 
     const colorMode = options.colorMode ?? "mono";
@@ -533,7 +583,9 @@ export class Tui {
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
-    this.rl.on("line", (line) => {
+    this.rl.on("line", (rawLine) => {
+      // 多行粘贴在输入框里是一行占位提示，提交时才换成原文。
+      const line = rawLine;
       // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
       // 也不能在审批结束后进入下一轮任务队列。
       if (this.approvalMenuActive) return;
@@ -546,12 +598,15 @@ export class Tui {
       this.slashSelected = 0;
       this.slashDraft = "";
       this.slashDraftCursor = 0;
+      // 占位提示对应一段多行粘贴：真正交给模型的是原文。
+      const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
+      if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
       const resolve = this.waiting.shift();
       if (resolve === undefined) {
-        this.lines.push(submitted);
+        this.lines.push(payload);
         this.inputDirty = true;
       } else {
-        resolve(submitted);
+        resolve(payload);
       }
     });
     this.rl.on("close", () => {
@@ -916,6 +971,9 @@ export class Tui {
     if (this.layout) {
       // 光标在活动区里由 TUI 自己摆；不捕获鼠标，滚轮和选中复制保持终端原生行为。
       this.output.write("\x1b[?25l");
+      // 开启括号粘贴：终端会把整段粘贴包在 ESC[200~ ... ESC[201~ 里，
+      // 我们才分得清「粘贴里的换行」和「用户按了回车」。
+      this.output.write("\x1b[?2004h");
       this.printHeader();
       this.clearBeforeNextFrame = true;
       this.renderNow();
@@ -1918,7 +1976,8 @@ export class Tui {
     if (this.layout) {
       // 只清底部活动区：已打印的历史留在 Shell 里，光标落到新行。
       const up = this.lastRowsAboveInput;
-      this.output.write(`${up > 0 ? `\x1b[${up}A` : ""}\r\x1b[J\x1b[?25h`);
+      // 关掉括号粘贴，别把终端留在我们自定义的模式里。
+      this.output.write(`${up > 0 ? `\x1b[${up}A` : ""}\r\x1b[J\x1b[?2004l\x1b[?25h`);
       this.lastRowsAboveInput = 0;
     }
   }
@@ -1955,6 +2014,12 @@ export class Tui {
     if (this.outputPaused && !force) return;
     if (this.transcriptMode) this.renderTranscript();
     else this.renderInline();
+  }
+
+  /** 多行粘贴在输入框里的占位提示（Claude Code 的 [Pasted text +N lines]）。 */
+  private pastePlaceholder(text: string): string {
+    const lines = text.split("\n").length;
+    return this.uiText(`[Pasted text +${lines} lines]`, `[已粘贴 ${lines} 行]`);
   }
 
   /** 冻结活动区重绘，把视口交给终端；PgDn / Esc 恢复。 */
