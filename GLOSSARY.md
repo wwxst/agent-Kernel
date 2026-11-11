@@ -96,6 +96,10 @@ _Avoid_: cwd, working directory, project root, sandbox
 `shell` 带 `background:true` 起的一次脱离进程，由宿主登记成一个编号（`job-1`）。它的输出写进系统临时目录的日志文件，**不写工作区**；`shell-output` 按字节游标只返回新长出来的部分，`shell-kill` 停整棵进程树。日志接文件而不是管道，是因为管道的 handle 会让宿主进程退不出去（见 [踩坑记录](./docs/notes/background-jobs.md)）。
 _Avoid_: daemon, service, task queue, session（它不是会话，也不排队）
 
+**Permission rule**:
+项目级的「这条命令要不要问」，写在 `.agent-kernel/permissions.json`。一条规则是工具名加参数前缀（`shell:git status`），**按参数数组比较**，不是按字符串前缀——后者会让 `git status && rm -rf /` 也命中。`&&` `||` `;` `|` 连起来的复合命令会拆开逐条判，拆不动（含 `$`、通配、重定向）的命令一律要问。裁决顺序 `deny → ask → allow`，只在 `workspace-write` 生效。见 [ADR-0018](./docs/adr/0018-project-permission-rules.md)。
+_Avoid_: allowlist（它听起来只放行不拒绝）, ACL, policy file
+
 **Step limit**:
 一次 Run 允许的最大 Step 数（模型请求数）；到达即失败，而不是返回半成品。它不限制工具执行次数，后者是 **Tool call budget**。
 _Avoid_: deadline, budget, timeout

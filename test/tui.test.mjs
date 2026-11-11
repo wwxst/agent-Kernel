@@ -694,7 +694,7 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   assert.doesNotMatch(rowWith(ui, /Thinking\.\.\./), /Thinking/, "正文后不再残留等待态");
 });
 
-test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) => {
+test("TUI：Shell 审批三项菜单，简单命令可以「以后不再问」，空回车默认拒绝", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, color: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -703,7 +703,8 @@ test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) =
   await tick();
   assert.match(ui.text(), /Do you want to proceed\?/);
   assert.match(ui.text(), /1\. Yes, allow once/);
-  assert.match(ui.text(), /2\. No \(default\)/);
+  assert.match(ui.text(), /2\. Yes, and don't ask again for "echo safe" in this workspace/);
+  assert.match(ui.text(), /3\. No \(default\)/);
   assert.match(ui.text(), /Esc to cancel/);
   assert.doesNotMatch(ui.text(), /↑↓ select · Enter · Esc >/, "审批期间没有额外文字输入行");
   assert.match(ui.text(), /\x1b\[\?25l/, "审批期间隐藏终端光标");
@@ -714,6 +715,22 @@ test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) =
   assert.match(ui.text(), /\x1b\[\?25h/, "审批结束必须恢复终端光标");
   assert.doesNotMatch(finalInput, /Esc to cancel/, "审批结束后恢复普通聊天输入提示");
 });
+
+test("TUI 审批菜单：记不成规则的命令不显示「以后不再问」", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, color: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  // 通配符命令切不开，记成规则只会放行比这次更多的东西，所以菜单里干脆不给这一项。
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "ls *.ts" } });
+  pending.catch(() => {});
+  await tick();
+  assert.match(ui.text(), /1\. Yes, allow once/);
+  assert.doesNotMatch(ui.text(), /don't ask again/, "记不下来就不该给这个选项");
+  assert.match(ui.text(), /2\. No \(default\)/);
+  ui.input.write("\x1b");
+  assert.equal(await pending, false);
+});
+
 
 test("TUI：错误和非流式正文到达同样清除等待计时", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
@@ -1326,25 +1343,28 @@ test("TUI：颜色开关生效，无颜色终端输出纯文本", async (t) => {
 
 
 
-test("TUI 审批菜单：上键选允许、下键选拒绝，Enter 只确认当前选择", async (t) => {
+test("TUI 审批菜单：上下键在三项间移动，Enter 只确认当前选择", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
 
   const allow = ui.tui.approve({ tool: "shell", args: { command: "echo once" } });
   allow.catch(() => {});
-  assert.match(ui.text(), /(?:❯|>) 2\. No \(default\)/);
+  assert.match(ui.text(), /(?:❯|>) 3\. No \(default\)/);
+  ui.input.write("\x1b[A");
+  await tick();
+  assert.match(ui.text(), /(?:❯|>) 2\. Yes, and don't ask again for "echo once"/, "上移一项是「以后不再问」");
   ui.input.write("\x1b[A");
   await tick();
   assert.match(ui.text(), /(?:❯|>) 1\. Yes, allow once/);
   ui.input.write("\r");
-  assert.equal(await allow, true, "明确上移并按 Enter 才允许一次");
+  assert.equal(await allow, true, "明确上移两次并按 Enter 才允许一次");
 
   const deny = ui.tui.approve({ tool: "shell", args: { command: "echo second" } });
   deny.catch(() => {});
-  assert.match(ui.text(), /(?:❯|>) 2\. No \(default\)/, "下次审批不得继承上次允许");
+  assert.match(ui.text(), /(?:❯|>) 3\. No \(default\)/, "下次审批不得继承上次允许");
   ui.input.write("\x1b[A\x1b[B\r");
-  assert.equal(await deny, false, "下移到 No 后按 Enter 拒绝");
+  assert.equal(await deny, false, "下移回 No 后按 Enter 拒绝");
 });
 
 test("TUI 审批菜单：Esc 和空回车拒绝，粘贴 y/1 不能变成隐形授权", async (t) => {
@@ -1492,7 +1512,7 @@ test("TUI Shift+Tab：审批中、模型运行中和普通 Tab 都不能改变�
   ui.input.write("\x1b[Z");
   await tick();
   assert.deepEqual(modes, [], "Shell 审批期间绝不能用 Shift+Tab 改权限");
-  assert.match(ui.text(), /2\. No \(default\)/);
+  assert.match(ui.text(), /3\. No \(default\)/);
   ui.input.write("\x1b");
   assert.equal(await pending, false);
 
@@ -1618,7 +1638,8 @@ test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Think
   assert.match(ui.text(), /命令：/);
   assert.match(ui.text(), /是否允许执行？/);
   assert.match(ui.text(), /1\. 是，仅允许本次/);
-  assert.match(ui.text(), /2\. 否（默认）/);
+  assert.match(ui.text(), /2\. 是，以后不再问「echo safe」（本工作区）/);
+  assert.match(ui.text(), /3\. 否（默认）/);
   assert.match(ui.text(), /Esc 取消/);
   assert.match(ui.text(), /echo safe/, "Shell 命令保持原文");
   ui.input.write("\r");

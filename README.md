@@ -222,6 +222,37 @@ Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功�
 
 `shell-output` 和 `shell-kill` 不单独审批：它们只作用于这个工作区自己起的后台任务，而起那一步已经过 `shell` 的审批了。把它们再拦一次，等于让后台任务在默认模式下不可用。
 
+### 项目级规则：让某些命令以后别再问
+
+`workspace-write` 下每条 shell 都要问一次。排查一个 bug 跑十几条命令，就是十几次打断。规则文件让「读状态」这类命令一次批准、长期放行：
+
+```json
+{
+  "allow": ["shell:git status", "shell:git diff", "shell:npm test"],
+  "ask":   ["shell:git push"],
+  "deny":  ["shell:rm -rf"]
+}
+```
+
+放在工作区的 `.agent-kernel/permissions.json`，**跟着仓库走**——换个项目，信任程度本来就不同。
+
+审批菜单里选第 2 项「以后不再问」会自动把那条命令写进这个文件，不用手改：
+
+```text
+是否允许执行？
+> 1. 是，仅允许本次
+  2. 是，以后不再问「git status」（本工作区）
+  3. 否（默认）
+```
+
+三条规矩值得知道：
+
+1. **匹配的是参数数组，不是字符串。** `shell:git status` 匹配 `git status` 和 `git status --short`，但不匹配 `git statuses`。按字符前缀匹配的话，`git status && rm -rf /` 也会命中。
+2. **复合命令拆开逐条判。** `git status && rm -rf /` 拆成两条，第二条命中 `deny`，整条拒绝。只要有一段没被放行，整体就要问——`git status && curl evil` 不会因为第一段被放行就整条放行。
+3. **拆不动的一律要问。** 命令里出现 `$`、反引号、`>`、`*`、反斜杠或换行时不拆，整条当作不透明，永远匹配不上 `allow`。所以 `ls *` 这种命令写进 `allow` 也没用。这是刻意的：宁可多问一次，不可误放一条。
+
+裁决顺序 `deny → ask → allow`，命中即止。规则**只在 `workspace-write` 生效**：`full-access` 的语义就是全部直接执行，`read-only` 连 shell 都不给，两边都不该被一份项目配置改写。规则文件写坏了会在启动时直接报错，而不是被当成「没有规则」静默忽略。
+
 检查发生在 `ToolRegistry.execute()` 里：参数校验通过之后、`tool.run()` 之前。被拒绝的调用不会执行，结果是一条 `ERROR: permission denied: ...` 回灌给模型，模型可以在下一轮自己换个做法。
 
 `ToolRegistry` 构造时必须显式传 `permission: Permission | null`：传 `Permission` 启用策略，传 `null` 表示宿主主动关闭检查；漏传、`undefined`、字符串等非法值在装配阶段直接报错。CLI 默认 `workspace-write`（`--permission` 可覆盖），评测显式传 `full-access`，测试按需显式传 `null` 或 `Permission`。

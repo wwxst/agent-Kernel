@@ -10,6 +10,7 @@
  * 这样「什么时候问人」和「问人时怎么读一行」分开，一次性任务的审批才能复用同一个 readline。
  */
 import { describeError } from "./errors.ts";
+import type { PermissionRules } from "./permission-rules.ts";
 
 /** 三档权限，顺序就是帮助文案里的顺序。 */
 export const PERMISSION_MODES = ["read-only", "workspace-write", "full-access"] as const;
@@ -56,10 +57,13 @@ export interface PermissionRequest {
 }
 
 /**
- * 审批器的返回值只认 `true`：字符串 "yes"、1、对象都按拒绝处理。
+ * 审批器的返回值只认 `true` 与 `"always"`：字符串 "yes"、1、对象都按拒绝处理。
  * 审批是安全默认值，宁可多问一次，也不要把「看起来像同意」当成同意。
+ *
+ * `"always"` 表示「以后别再问这条命令」，由 `Permission` 写进项目级规则；
+ * 没有规则存储时它等价于 `true`（只放行这一次）。
  */
-export type PermissionApprover = (request: PermissionRequest) => boolean | Promise<boolean>;
+export type PermissionApprover = (request: PermissionRequest) => boolean | "always" | Promise<boolean | "always">;
 
 export type PermissionResult =
   | { allowed: true }
@@ -157,9 +161,17 @@ export class Permission {
 
   private readonly approve?: PermissionApprover;
 
-  constructor(mode: PermissionMode = DEFAULT_PERMISSION_MODE, approve?: PermissionApprover) {
+  /** 项目级规则；没有就是「一条规则都没有」，一切按模式默认动作走。 */
+  private readonly rules?: PermissionRules;
+
+  constructor(
+    mode: PermissionMode = DEFAULT_PERMISSION_MODE,
+    approve?: PermissionApprover,
+    rules?: PermissionRules,
+  ) {
     this.current = mode;
     this.approve = approve;
+    this.rules = rules;
   }
 
   get mode(): PermissionMode {
@@ -191,13 +203,25 @@ export class Permission {
           reason: `tool "${request.tool}" is not allowed in read-only mode (allowed: ${READ_ONLY_TOOL_LIST})`,
         };
 
-      case "workspace-write":
+      case "workspace-write": {
+        // 项目级规则先说话：deny 直接拒、allow 直接放，ask 与「没命中」继续往下走。
+        // 规则只在 workspace-write 生效——full-access 的语义就是「全部直接执行」，
+        // read-only 则是「连 shell 都不给」，两边都不该被一份项目配置改写。
+        const decision = this.rules?.decide(request.tool, request.args) ?? "none";
+        if (decision === "deny") {
+          return {
+            allowed: false,
+            reason: `tool "${request.tool}" is denied by a project rule (${this.rules?.filePath ?? "permissions.json"})`,
+          };
+        }
+        if (decision === "allow") return { allowed: true };
         if (READ_ONLY_TOOLS.has(request.tool) || WRITE_TOOLS.has(request.tool)) return { allowed: true };
         if (request.tool === SHELL_TOOL) return this.askForShell(request);
         return {
           allowed: false,
           reason: `tool "${request.tool}" is not allowed in workspace-write mode`,
         };
+      }
 
       default:
         // 类型上到不了这里；JS 调用方传了未知模式时，拒绝比放行安全。
@@ -210,6 +234,8 @@ export class Permission {
    *
    * 不缓存是有意的 —— 「允许一次」是给用户看一条具体命令再决定，
    * 缓存之后第二次的命令可能完全不同，却沿用了上一次的同意。
+   * 要长期放行，得走 `"always"`：那条路径会把**这一条具体命令**写成项目级规则，
+   * 下次由规则匹配命中，而不是复用某次点头。
    */
   private async askForShell(request: PermissionRequest): Promise<PermissionResult> {
     if (this.approve === undefined) {
@@ -226,6 +252,19 @@ export class Permission {
       const approved = await this.approve(request);
       if (this.modeVersion !== approvedUnderVersion || this.current !== "workspace-write") {
         return { allowed: false, reason: "permission mode changed during approval; denied" };
+      }
+      if (approved === "always") {
+        // 记不下来（复合命令、写盘失败）不能连累这次执行：用户已经明确点头了，
+        // 代价只是下次还要再问一遍，而不是把这次也拒掉。
+        if (this.rules !== undefined) {
+          const command = typeof request.args.command === "string" ? request.args.command : "";
+          try {
+            await this.rules.remember(command);
+          } catch {
+            // 只有单条简单命令能变成规则；写不进去就退化成「仅本次」。
+          }
+        }
+        return { allowed: true };
       }
       if (approved === true) return { allowed: true };
       return { allowed: false, reason: `user denied tool "${SHELL_TOOL}"` };

@@ -39,6 +39,7 @@ import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, is
 import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./tui.ts";
+import { PermissionRules } from "./permission-rules.ts";
 import type { ToolCall } from "./types.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 import { projectInstructionsPrompt, readProjectInstructions } from "./project-instructions.ts";
@@ -545,9 +546,12 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   // 审批和任务输入共用 Tui 的同一个 readline/行队列；权限策略本身仍是会话级对象。
   // 无 TTY 时不注入审批器：Permission 会明确说「没有审批通道」，而不是把
   // 「读不到终端」误报成「审批失败」或「用户拒绝」。
+  // 规则文件坏了在这里就抛：一份读不懂的安全配置不能当成「没有规则」继续跑。
+  const rules = await PermissionRules.load(config.root);
   const permission = new Permission(
     config.permission,
     interactive ? (request) => tui.approve(request) : undefined,
+    rules,
   );
 
   // Agent 在回调创建时还没赋值，但回调只会在 run() 期间触发；用 current 拿最新实例的账。
@@ -762,7 +766,12 @@ if (cli.error !== undefined) {
       const approvalPrompt = createApprovalPrompt(controller, config.root);
       try {
         // 一次性任务同样使用会话级 Permission：审批器负责「怎么问」，Permission 负责「放不放行」。
-        const permission = new Permission(config.permission, approvalPrompt.approve);
+        // 行式审批没有「以后不再问」那一项（没有菜单可点），但已有的规则照样生效。
+        const permission = new Permission(
+          config.permission,
+          approvalPrompt.approve,
+          await PermissionRules.load(config.root),
+        );
         await runTurn(createAgent(config, controller.signal, permission), cli.task, config, controller.signal);
       } finally {
         approvalPrompt.close();

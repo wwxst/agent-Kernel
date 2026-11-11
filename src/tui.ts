@@ -22,6 +22,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
+import { isRememberable } from "./permission-rules.ts";
 import { describeError } from "./errors.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
@@ -239,6 +240,14 @@ export function parseTuiTheme(value: string | undefined): TuiTheme {
   if (value === "light" || value === "ansi") return value;
   throw new Error(`invalid AGENT_TUI_THEME "${value}" (expected: dark, light, ansi)`);
 }
+
+/**
+ * 审批菜单的三档结果。
+ *
+ * `"always"` 不是「记住我点过头」，而是「把**这一条命令**写成项目级规则」——
+ * 下次靠规则匹配命中，命令变了就不会命中。这两件事的区别是整套权限设计的地基。
+ */
+export type ApprovalChoice = "allow" | "always" | "deny";
 
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
@@ -467,13 +476,16 @@ export class Tui {
   private approvalRequest?: PermissionRequest;
 
   /** 菜单默认拒绝：空回车不会授权；只影响 TUI，不改 Permission 策略。 */
-  private approvalChoice: "allow" | "deny" = "deny";
+  private approvalChoice: ApprovalChoice = "deny";
+
+  /** 这条命令能不能被记成项目规则；不能时菜单里就不出现「以后不再问」那一项。 */
+  private approvalRememberable = false;
 
   /** 仅固定布局启用键盘菜单；普通 REPL/行式审批继续使用 y/N。 */
   private approvalMenuActive = false;
 
   /** 专用菜单按键结果；与 readline 的任务输入队列完全隔离。 */
-  private approvalMenuResolve?: (decision: boolean | null) => void;
+  private approvalMenuResolve?: (decision: ApprovalChoice | null) => void;
 
   /** 仅审批时隐藏终端原生光标，退出与取消必须恢复。 */
   private approvalCursorHidden = false;
@@ -678,18 +690,23 @@ export class Tui {
 
       if (this.approvalMenuActive) {
         if (name === "up" || name === "down") {
-          this.approvalChoice = name === "up" ? "allow" : "deny";
+          const options = this.approvalOptions();
+          const current = Math.max(0, options.indexOf(this.approvalChoice));
+          const next = name === "up"
+            ? (current - 1 + options.length) % options.length
+            : (current + 1) % options.length;
+          this.approvalChoice = options[next]!;
           if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
           if (this.layout) this.renderNow();
-          else this.writeRaw(`\n> ${this.approvalChoice === "allow" ? this.uiText("1. Yes, allow once", "1. 是，仅允许本次") : this.uiText("2. No (default)", "2. 否（默认）")}\n`);
+          else this.writeRaw(`\n> ${this.approvalLabel(options[next]!)}\n`);
           return;
         }
         if (name === "return" || name === "enter") {
-          this.approvalMenuResolve?.(this.approvalChoice === "allow");
+          this.approvalMenuResolve?.(this.approvalChoice);
           return;
         }
         if (name === "escape") {
-          this.approvalMenuResolve?.(false);
+          this.approvalMenuResolve?.("deny");
           return;
         }
         if (name === "pageup" || name === "pagedown") {
@@ -1875,6 +1892,23 @@ export class Tui {
   }
 
   /** 完整、安全的命令展示 + 两项菜单。菜单只修改显示与输入映射，不修改权限判定。 */
+  /** 菜单里当前可选的项。「以后不再问」只在命令能记成规则时出现。 */
+  private approvalOptions(): ApprovalChoice[] {
+    return this.approvalRememberable ? ["allow", "always", "deny"] : ["allow", "deny"];
+  }
+
+  /** 菜单项文案。编号由位置决定，所以这里不带序号。 */
+  private approvalLabel(choice: ApprovalChoice): string {
+    if (choice === "allow") return this.uiText("Yes, allow once", "是，仅允许本次");
+    if (choice === "deny") return this.uiText("No (default)", "否（默认）");
+    const command = typeof this.approvalRequest?.args.command === "string" ? this.approvalRequest.args.command : "";
+    // 只显示这一条命令，并说清作用域：写进的是**这个工作区**的规则，不是全局。
+    return this.uiText(
+      `Yes, and don't ask again for "${clip(oneLine(command), 40)}" in this workspace`,
+      `是，以后不再问「${clip(oneLine(command), 40)}」（本工作区）`,
+    );
+  }
+
   private approvalPanelLines(request: PermissionRequest): LogLine[] {
     const width = this.contentWidth();
     const rawCommand = typeof request.args.command === "string" ? request.args.command : "";
@@ -1891,10 +1925,10 @@ export class Tui {
       ...commandLines.map((line) => ({ text: `  | ${line}`, tone: "assistant" as Tone })),
       { text: "", tone: "plain" },
       { text: this.uiText("Do you want to proceed?", "是否允许执行？"), tone: "assistant" },
-      { text: `${this.approvalChoice === "allow" ? select : " "} ${this.uiText("1. Yes, allow once", "1. 是，仅允许本次")}`,
-        tone: this.approvalChoice === "allow" ? "accent" : "muted" },
-      { text: `${this.approvalChoice === "deny" ? select : " "} ${this.uiText("2. No (default)", "2. 否（默认）")}`,
-        tone: this.approvalChoice === "deny" ? "accent" : "muted" },
+      ...this.approvalOptions().map((choice, index) => ({
+        text: `${this.approvalChoice === choice ? select : " "} ${index + 1}. ${this.approvalLabel(choice)}`,
+        tone: (this.approvalChoice === choice ? "accent" : "muted") as Tone,
+      })),
       { text: "", tone: "plain" },
       { text: this.uiText("Esc to cancel", "Esc 取消"), tone: "muted" },
     ];
@@ -1913,7 +1947,7 @@ export class Tui {
     return panel;
   }
 
-  async approve(request: PermissionRequest): Promise<boolean> {
+  async approve(request: PermissionRequest): Promise<boolean | "always"> {
     // Claude Code 的做法：审批提示借用输入区，用户已经打了一半的草稿先暂存，
     // 决定之后原样放回去。这样「用户正在输入」就不是冲突，不需要把审批跳掉。
     const draft = this.rl.line;
@@ -1932,16 +1966,20 @@ export class Tui {
       this.approvalBlocksRunning = true;
       this.approvalRequest = request;
       this.approvalChoice = "deny";
+      // 复合命令、带通配符或重定向的命令记不成规则，菜单里就不给这一项——
+      // 给了却记不下来，等于骗用户点了一下。
+      this.approvalRememberable = request.tool === "shell" &&
+        isRememberable(typeof request.args.command === "string" ? request.args.command : "");
       this.approvalMenuActive = this.layout;
       this.scrollOffset = 0;
     }
-    let approved: boolean;
+    let approved: boolean | "always";
     try {
       if (this.layout) {
         this.setApprovalCursor(true);
         this.renderNow();
-        // 菜单仅处理导航按键，默认 No。没有隐形文本输入和自动记住授权。
-        const decision = await new Promise<boolean | null>((resolve) => {
+        // 菜单仅处理导航按键，默认 No。没有隐形文本输入，也不复用上一次的点头。
+        const decision = await new Promise<ApprovalChoice | null>((resolve) => {
           this.approvalMenuResolve = resolve;
           if (this.ended || this.controller.signal.aborted) resolve(null);
         });
@@ -1952,7 +1990,7 @@ export class Tui {
               : "shell approval skipped: approval prompt closed",
           );
         }
-        approved = decision;
+        approved = decision === "deny" ? false : decision === "always" ? "always" : true;
       } else {
         const formatted = formatApproval(request, this.workspace);
         const header = formatted.endsWith(APPROVAL_QUESTION)
@@ -1974,6 +2012,7 @@ export class Tui {
       if (this.ownedScreen) {
         this.approvalMenuActive = false;
         this.approvalRequest = undefined;
+        this.approvalRememberable = false;
         this.setApprovalCursor(false);
         this.promptText = COMMAND_PROMPT;
         this.promptPlaceholder = true;
@@ -1986,13 +2025,19 @@ export class Tui {
 
     if (approved) this.approvalBlocksRunning = false;
     this.setActivityState(approved ? "running" : "working");
+    // 「以后不再问」和「仅本次」必须说得不一样：一个是长期改变了策略，
+    // 另一个只对刚才那条命令有效。混着写，用户下次不知道为什么会自动跑起来。
+    const remembered = this.uiText("remembered for this workspace", "已记住这条命令（本工作区）");
     if (this.layout) {
-      this.logLine(
-        `  ${approved ? this.glyphs.success : this.glyphs.denied} ${approved ? this.uiText("Allowed once", "已允许本次执行") : this.uiText("Denied", "已拒绝")}`,
-        approved ? "success" : "warning",
-      );
+      const outcome = approved === "always"
+        ? this.uiText(`Allowed, ${remembered}`, `已允许，${remembered}`)
+        : approved ? this.uiText("Allowed once", "已允许本次执行") : this.uiText("Denied", "已拒绝");
+      this.logLine(`  ${approved ? this.glyphs.success : this.glyphs.denied} ${outcome}`, approved ? "success" : "warning");
     } else {
-      this.logLine(`${this.uiText("approval:", "审批：")} ${approved ? this.uiText("allowed once", "已允许本次执行") : this.uiText("denied", "已拒绝")}`, approved ? "success" : "error");
+      const outcome = approved === "always"
+        ? `allowed, ${remembered}`
+        : approved ? "allowed once" : "denied";
+      this.logLine(`${this.uiText("approval:", "审批：")} ${outcome}`, approved ? "success" : "error");
     }
     return approved;
   }
