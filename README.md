@@ -49,6 +49,7 @@ agent --permission read-only "看看这个项目怎么跑"
 | `Enter` | 发送当前输入 |
 | `Shift+Enter` | 换行（现代终端 `ESC[13;2u`；老终端 `ESC\r`） |
 | `Ctrl+J` | 换行（所有终端可用，兜底） |
+| `@` | 补全工作区文件路径（回车插入，不提交） |
 | `Ctrl+C` | 取消本轮 |
 | `Ctrl+E` | 打开历史视图（transcript） |
 | `PgUp` | 暂停活动区刷新，可自由往上翻历史 |

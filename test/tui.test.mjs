@@ -164,7 +164,7 @@ function rowWith(ui, pattern) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model", workspace = "C:\\work\\repo" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -183,7 +183,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     input,
     output,
     model,
-    workspace: "C:\\work\\repo",
+    workspace,
     permission: "workspace-write",
     controller,
     interactive,
@@ -2479,4 +2479,27 @@ test("TUI 主视图：Shift+Enter 的两种终端编码都当换行，不是提�
   ui.input.write("\r");
 
   assert.equal(await pending, "第一行\n第二行\n第三行", "两种编码都产生换行");
+});
+
+test("TUI 主视图：输入 @ 列出工作区文件，回车补全路径但不提交", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, workspace: process.cwd() });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+
+  ui.input.write("@");
+  await tick();
+  assert.match(ui.text(), /@\S+/, "输入 @ 后列出工作区文件");
+
+  ui.input.write("package");
+  await tick();
+  assert.match(ui.text(), /@package\.json/, "按片段过滤到目标文件");
+  ui.input.write("\r");
+  await tick();
+
+  // 补全进输入框，而不是把半句话发出去。
+  assert.match(inputLine(ui), /@package\.json/, "回车把路径补进输入框");
+  ui.input.write(" 看一下版本");
+  ui.input.write("\r");
+  assert.match(await pending, /@package\.json 看一下版本/, "补全后继续输入，整句才提交");
 });

@@ -13,6 +13,7 @@
  * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
+import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
 import type { Interface, Key } from "node:readline";
 import { Transform, Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
@@ -63,6 +64,13 @@ const SLASH_COMMANDS = [
   { command: "/exit", en: "Exit agent-Kernel", zh: "退出 agent-Kernel" },
   { command: "/quit", en: "Exit (alias of /exit)", zh: "退出（/exit 的别名）" },
 ] as const;
+
+/** 补全菜单的一项：斜杠命令和 @ 文件共用同一套渲染。 */
+export interface MenuItem {
+  readonly command: string;
+  readonly en: string;
+  readonly zh: string;
+}
 
 export type UiLanguage = "zh" | "en";
 
@@ -925,17 +933,30 @@ export class Tui {
   }
 
   /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
-  private slashMenuCandidates(line: string): readonly (typeof SLASH_COMMANDS)[number][] {
+  private slashMenuCandidates(line: string): readonly MenuItem[] {
     if (!/^\/[^\s]*$/.test(line)) return [];
     return SLASH_COMMANDS.filter((item) => item.command.startsWith(line));
   }
 
+  /**
+   * 补全候选：`/` 给命令，`@` 给工作区文件。
+   *
+   * 两者的接受方式不同——命令替换整行，文件只替换末尾片段——所以候选里带着
+   * 最终要插入的文本（`@path`），由 submitLine 决定怎么拼。
+   */
+  private completionCandidates(line: string): readonly MenuItem[] {
+    if (line.startsWith("/")) return this.slashMenuCandidates(line);
+    const tail = /@([^\s@]*)$/.exec(line);
+    if (tail === null) return [];
+    return matchFiles(listWorkspaceFiles(this.workspace), tail[1]!, 6)
+      .map((file) => ({ command: `@${file}`, en: "", zh: "" }));
+  }
+
   /** 固定布局下至多显示五项；小窗口至少给日志与输入留出一行。 */
-  private slashMenuItems(): readonly (typeof SLASH_COMMANDS)[number][] {
+  private slashMenuItems(): readonly MenuItem[] {
     if (!this.layout || !this.promptActive || this.promptText !== COMMAND_PROMPT ||
         this.approvalMenuActive || this.slashDismissed) return [];
-    const candidates = this.slashMenuCandidates(this.rl.line);
-    return candidates;
+    return this.completionCandidates(this.rl.line);
   }
 
   /** 显式恢复 readline 编辑缓存（不创建历史记录）。 */
@@ -950,7 +971,7 @@ export class Tui {
   }
 
   /** 候选菜单的显示宽度按终端字符列计算，选中项使用强调色。 */
-  private slashMenuLine(item: (typeof SLASH_COMMANDS)[number], selected: boolean, width: number): string {
+  private slashMenuLine(item: MenuItem, selected: boolean, width: number): string {
     const prefix = selected ? this.glyphs.user : " ";
     const nameWidth = Math.min(18, Math.max(12, width - 1));
     const name = padRight(` ${item.command}`, nameWidth);
@@ -1048,8 +1069,8 @@ export class Tui {
     if (!this.layout) return commands;
     // 按键表：规范要求「写进 README，并在 /help 里可见」，用户不该靠读源码发现快捷键。
     const keys = this.uiText(
-      "input:  Enter send · Shift+Enter or Ctrl+J newline · Ctrl+C cancel the run",
-      "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · Ctrl+C 取消本轮",
+      "input:  Enter send · Shift+Enter or Ctrl+J newline · @ completes a file path · Ctrl+C cancel the run",
+      "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · @ 补全文件路径 · Ctrl+C 取消本轮",
     );
     const view = this.uiText(
       "view:   Ctrl+E history · PgUp pause live output · PgDn or Esc resume · Shift+Tab permission",
@@ -2027,11 +2048,23 @@ export class Tui {
     // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
     // 也不能在审批结束后进入下一轮任务队列。
     if (this.approvalMenuActive) return;
-    // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
-    const candidates = this.slashMenuCandidates(line);
-    const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
-      ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
-      : line;
+    // Enter 提交当前高亮项：`/` 是整行替换并执行，`@` 只把路径补进输入框、不提交——
+    // 用户通常还要接着写「这个文件里的 X 怎么改」。
+    const candidates = this.completionCandidates(line);
+    const chosen = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
+      ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!
+      : undefined;
+    if (chosen !== undefined && chosen.command.startsWith("@")) {
+      const completed = line.replace(/@[^\s@]*$/, chosen.command);
+      this.slashSelected = 0;
+      // 补完之后先把菜单关掉，否则下一次回车又会重新选中同一个文件。
+      this.slashDismissed = true;
+      this.slashDraft = completed;
+      this.slashDraftCursor = completed.length;
+      this.setEditorLine(completed);
+      return;
+    }
+    const submitted = chosen === undefined ? line : chosen.command;
     this.slashDismissed = false;
     this.slashSelected = 0;
     this.slashDraft = "";
