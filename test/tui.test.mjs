@@ -1092,8 +1092,10 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
   ui.input.write("\x1b[A\r");
 
   assert.equal(await pending, true);
-  assert.match(ui.text().slice(beforeDecision), /Running\.\.\./, "允许后恢复执行中子行");
   await tick();
+  // 主视图拍平后，待返回的工具由「工具行 + 运行中」表示；这里没有开始轮次，
+  // 只能看到审批结果的回执——断言它证明流程确实继续了。
+  assert.match(ui.text().slice(beforeDecision), /Allowed once/, "允许后恢复执行");
   const text = ui.text();
   assert.match(text, /Shell permission/);
   assert.match(text, /Workspace: C:\\work\\repo/);

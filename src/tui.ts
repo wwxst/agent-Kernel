@@ -2430,8 +2430,12 @@ export class Tui {
               flatChildren.push(failure);
               continue;
             }
+            // 还没返回的工具用运行符号 + 明确文案：扁平不等于看不出在跑。
+            // 这一轮已经结束的话就不是「在跑」，而是「没有结果」，不能继续显示运行中。
+            const pending = item.result === undefined && !group.finished;
             flatChildren.push(this.makeLogLine(
-              `  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${formatToolEvent(item.call, group.language)}`, "muted"));
+              `  ${pending ? this.glyphs.running : this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${formatToolEvent(item.call, group.language)}${
+                pending ? ` · ${this.uiText("Running...", "运行中...")}` : ""}`, "muted"));
           }
           if (flatChildren.length === 0) {
             flatChildren.push(this.makeLogLine(
@@ -2502,7 +2506,8 @@ export class Tui {
       }
     } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
                this.activityState !== undefined && this.activityState !== "preparing" &&
-               !this.assistantOpen && !this.approvalMenuActive) {
+               !this.assistantOpen && !this.approvalMenuActive && !flat) {
+      // 主视图扁平后，下面那行「正在执行 · 已用时」已经说明了同一件事，这里不再叠一行「处理中」。
       // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。
       this.maybeRotateMood();
       const status = formatActivityStateLabel(this.activityState, this.uiLanguage);
