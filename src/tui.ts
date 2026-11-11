@@ -15,8 +15,13 @@
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
 import type { Interface, Key } from "node:readline";
+import { spawnSync } from "node:child_process";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Transform, Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
+import { describeError } from "./errors.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
 import { selectMood } from "./tui-mood.ts";
@@ -394,6 +399,12 @@ export class Tui {
   /** 用户往上翻历史时冻结活动区重绘，避免每帧把视口拉回底部。 */
   private outputPaused = false;
 
+  /** 外部编辑器占用终端期间，不渲染、不接收按键。 */
+  private editorRunning = false;
+
+  /** Ctrl+X 前缀的按下时间：超过两秒就不再认后面的 Ctrl+E。 */
+  private ctrlXPendingAt = 0;
+
   /** 多行粘贴的原文：输入框只显示占位提示，提交时用原文。 */
   private pasted: string | null = null;
 
@@ -673,6 +684,19 @@ export class Tui {
       // 和 Codex 的 Ctrl+T / Claude Code 的 Ctrl+O 是同一个设计。
       if (key?.ctrl && name === "t" && this.layout) {
         this.toggleTranscript();
+        return;
+      }
+
+      // Ctrl+X 是前缀键（readline/bash 习惯）：Ctrl+X Ctrl+E 打开外部编辑器。
+      // 不用 Ctrl+G——它在这里已经有「定位工具详情」的含义，5 条测试依赖它。
+      if (key?.ctrl && name === "x" && this.layout) {
+        this.ctrlXPendingAt = Date.now();
+        return;
+      }
+      if (key?.ctrl && name === "e" && this.layout && this.ctrlXPendingAt !== 0 &&
+          Date.now() - this.ctrlXPendingAt < 2_000 && !this.transcriptMode) {
+        this.ctrlXPendingAt = 0;
+        this.openExternalEditor();
         return;
       }
 
@@ -1069,8 +1093,8 @@ export class Tui {
     if (!this.layout) return commands;
     // 按键表：规范要求「写进 README，并在 /help 里可见」，用户不该靠读源码发现快捷键。
     const keys = this.uiText(
-      "input:  Enter send · Shift+Enter or Ctrl+J newline · @ completes a file path · Ctrl+C cancel the run",
-      "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · @ 补全文件路径 · Ctrl+C 取消本轮",
+      "input:  Enter send · Shift+Enter or Ctrl+J newline · @ completes a file path · Ctrl+X Ctrl+E opens $EDITOR · Ctrl+C cancel the run",
+      "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · @ 补全文件路径 · Ctrl+X Ctrl+E 用 $EDITOR 编辑 · Ctrl+C 取消本轮",
     );
     const view = this.uiText(
       "view:   Ctrl+E history · PgUp pause live output · PgDn or Esc resume · Shift+Tab permission",
@@ -2079,6 +2103,68 @@ export class Tui {
     } else {
       resolve(payload);
     }
+  }
+
+  /**
+   * 把当前输入交给外部编辑器（Ctrl+G）。
+   *
+   * 长 prompt 在终端里改很难受，两家同类产品都提供这条路径：Claude Code 用 Ctrl+G，
+   * Codex 读 VISUAL/EDITOR。这里把内容写进临时文件、让编辑器接管终端、保存后读回。
+   * 编辑器没配置就给出明确提示，而不是静默失败。
+   */
+  private openExternalEditor(): void {
+    if (this.editorRunning) return;
+    const command = (process.env.VISUAL ?? "").trim() || (process.env.EDITOR ?? "").trim() ||
+      (process.platform === "win32" ? "notepad" : "vi");
+    const file = path.join(tmpdir(), `agent-prompt-${process.pid}.md`);
+    try {
+      writeFileSync(file, this.rl.line.split(NEWLINE_MARK).join("\n"), "utf8");
+    } catch (error) {
+      this.pushLog(this.uiText(
+        `could not prepare the editor buffer: ${describeError(error)}`,
+        `无法准备编辑器缓冲区：${describeError(error)}`,
+      ), "error");
+      this.renderNow(true);
+      return;
+    }
+
+    this.editorRunning = true;
+    // 让出终端：显示光标、清掉底部活动区，编辑器自己会占满屏幕。
+    this.output.write("\x1b[?25h");
+    const result = spawnSync(command, [file], { stdio: "inherit", shell: true });
+    this.editorRunning = false;
+    this.output.write("\x1b[?25l");
+
+    if (result.error !== undefined) {
+      this.pushLog(this.uiText(
+        `could not start "${command}": ${result.error.message}`,
+        `无法启动 "${command}"：${result.error.message}`,
+      ), "error");
+    } else if (result.status !== 0) {
+      this.pushLog(this.uiText(
+        `editor exited with ${result.status}; the input was left unchanged`,
+        `编辑器退出码 ${result.status}；输入内容保持不变`,
+      ), "warning");
+    } else {
+      try {
+        const edited = readFileSync(file, "utf8").replace(/\r\n/g, "\n").replace(/\n+$/, "");
+        if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
+          this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
+        }
+      } catch (error) {
+        this.pushLog(this.uiText(
+          `could not read the edited text: ${describeError(error)}`,
+          `无法读取编辑结果：${describeError(error)}`,
+        ), "error");
+      }
+    }
+
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // 临时文件删不掉不影响输入内容，下一次会覆盖同名文件。
+    }
+    this.renderNow(true);
   }
 
   /** 冻结活动区重绘，把视口交给终端；PgDn / Esc 恢复。 */

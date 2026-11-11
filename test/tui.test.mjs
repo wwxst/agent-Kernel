@@ -6,6 +6,10 @@
  * 真实终端行为留给手动验收 —— 没有 TTY 的 CI 不该假装自己验过光标。
  */
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import { Tui, detectUiLanguage, parseTuiColorMode, uiLanguageFromLocale } from "../src/tui.ts";
@@ -2502,4 +2506,33 @@ test("TUI 主视图：输入 @ 列出工作区文件，回车补全路径但不�
   ui.input.write(" 看一下版本");
   ui.input.write("\r");
   assert.match(await pending, /@package\.json 看一下版本/, "补全后继续输入，整句才提交");
+});
+
+test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-${process.pid}.mjs`);
+  // 假编辑器：把文件内容改成固定文本，模拟「用户在编辑器里写完保存」。
+  await writeFile(script, "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], '编辑后的内容');\n", "utf8");
+  const previous = process.env.EDITOR;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previous === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previous;
+    rmSync(script, { force: true });
+  });
+
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("原始内容");
+  await tick();
+
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.match(inputLine(ui), /编辑后的内容/, "编辑器保存后内容回到输入框");
+  ui.input.write("\r");
+  assert.equal(await pending, "编辑后的内容");
 });
