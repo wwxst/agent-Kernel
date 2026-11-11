@@ -2345,3 +2345,26 @@ test("TUI 主视图：运行中的状态行与流式正文之间留一行空白"
   // 贴着正文会被读成同一段话的续行。
   assert.equal(rows[statusRow - 1].trim(), "", "正文与状态行之间留一行空白");
 });
+
+test("TUI 主视图：PgUp 暂停刷新，翻历史时不再抢视口，PgDn 恢复", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑起来");
+  await tick();
+
+  const beforePause = ui.text().length;
+  ui.input.emit("keypress", "", { name: "pageup" });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.match(ui.text().slice(beforePause), /已暂停刷新|paused/, "暂停时给出明确提示");
+
+  // 暂停期间收到流式增量也不能往底部写，否则终端会把视口拉回底部。
+  const pausedAt = ui.text().length;
+  ui.tui.assistantDelta("PAUSED_DELTA");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(ui.text().slice(pausedAt).includes("PAUSED_DELTA"), false, "暂停期间不重绘活动区");
+
+  ui.input.emit("keypress", "", { name: "pagedown" });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.match(ui.text().slice(pausedAt), /PAUSED_DELTA/, "恢复后继续输出");
+});

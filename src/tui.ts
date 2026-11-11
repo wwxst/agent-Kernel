@@ -379,6 +379,9 @@ export class Tui {
   /** 历史滚动偏移：0 = 跟随最新；正数 = 向上查看旧记录。 */
   private scrollOffset = 0;
 
+  /** 用户往上翻历史时冻结活动区重绘，避免每帧把视口拉回底部。 */
+  private outputPaused = false;
+
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
 
@@ -593,7 +596,11 @@ export class Tui {
           return;
         }
         if (name === "pageup" || name === "pagedown") {
-          if (this.layout) this.scrollPage(name === "pageup" ? "up" : "down");
+          // transcript 里是整屏网格，可以自己滚；主视图是追加进 scrollback，
+          // 滚动由终端负责——我们能做的是「别再往底部写」，否则每帧重画都会把视口拉回底部。
+          if (this.transcriptMode) this.scrollPage(name === "pageup" ? "up" : "down");
+          else if (name === "pageup") this.pauseOutput();
+          else this.resumeOutput();
           return;
         }
         // 审批只接受菜单按键；误输入的任意文本不改变决定、不写入下一个任务。
@@ -730,8 +737,11 @@ export class Tui {
       }
 
       if (!this.layout) return;
-      if (name === "pageup") this.scrollPage("up");
-      else if (name === "pagedown") this.scrollPage("down");
+      if (this.transcriptMode) {
+        if (name === "pageup") this.scrollPage("up");
+        else if (name === "pagedown") this.scrollPage("down");
+      } else if (name === "pageup") this.pauseOutput();
+      else if (name === "pagedown" || name === "escape") this.resumeOutput();
       // 等 readline 处理完按键后，读取新的 line/cursor 重画输入。
       this.scheduleInputChrome();
     };
@@ -1932,10 +1942,29 @@ export class Tui {
   // ---- 固定布局 ----
 
   /** 主视图与 transcript 视图共用的入口：主视图只追加，transcript 重画整屏。 */
-  private renderNow(): void {
+  private renderNow(force = false): void {
     if (!this.started || !this.layout || this.closed || this.resizeTimer !== undefined) return;
+    // 用户正在往上翻历史：别再往底部写，否则终端会把视口拉回底部。
+    if (this.outputPaused && !force) return;
     if (this.transcriptMode) this.renderTranscript();
     else this.renderInline();
+  }
+
+  /** 冻结活动区重绘，把视口交给终端；PgDn / Esc 恢复。 */
+  private pauseOutput(): void {
+    if (this.outputPaused) return;
+    this.outputPaused = true;
+    this.pushLog(this.uiText(
+      "Live output paused - scroll freely, PgDn or Esc resumes",
+      "已暂停刷新 · 可以自由翻看历史，PgDn 或 Esc 恢复",
+    ), "muted");
+    this.renderNow(true);
+  }
+
+  private resumeOutput(): void {
+    if (!this.outputPaused) return;
+    this.outputPaused = false;
+    this.renderNow(true);
   }
 
   /** 结束后内容已提交进 scrollback，改不了：历史详情只能去 transcript 视图看。 */
