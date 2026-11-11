@@ -583,12 +583,34 @@ export class Workspace {
    * 已知边界：Windows taskkill 失败后的直接 child.kill 不能清理全部后代；必须在有界等待后报错，
    * 而不是把「已经尝试停止」冒充「已完成进程树清理」。
    */
-  async run(command: string): Promise<string> {
+  /**
+   * 后台执行：起服务这类永不退出的命令。
+   *
+   * 不并入 run 的等待逻辑：后台进程本来就不会 close，等它就是等超时。
+   * 返回 pid，让模型自己负责收尾（taskkill /PID <pid> /T /F），
+   * 因为脱离进程组之后我们没法可靠地回收它。
+   */
+  private runInBackground(command: string): string {
+    const child = spawn(command, {
+      cwd: this.root,
+      shell: true,
+      windowsHide: true,
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    return `started in background (pid ${child.pid ?? "unknown"}); it keeps running after this call - stop it explicitly`;
+  }
+
+  async run(command: string, options: { background?: boolean; timeoutMs?: number } = {}): Promise<string> {
     const signal = this.signal;
     if (signal?.aborted) {
       // 取消之后不再启动新进程：这是「不能在取消后继续启动新工具」的最后一道闸门。
       throw new Error("cancelled before the command started");
     }
+    // 后台进程：起服务这类永不退出的命令必须走这里，否则会一直等到超时，
+    // 再被判成「进程树没杀干净」而终止整个任务。Claude Code 的 run_in_background 同理。
+    if (options.background === true) return this.runInBackground(command);
 
     const { status, output, dropped } = await new Promise<{
       status: string;
@@ -623,7 +645,8 @@ export class Workspace {
         }
       };
 
-      const timer = setTimeout(() => stop(`timeout after ${this.timeoutMs}ms`), this.timeoutMs);
+      const effectiveTimeout = options.timeoutMs ?? this.timeoutMs;
+      const timer = setTimeout(() => stop(`timeout after ${effectiveTimeout}ms`), effectiveTimeout);
       const onAbort = () => stop("cancelled by signal");
       signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -1267,16 +1290,33 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     {
       name: "shell",
       // 在工作区根目录跑一条 shell 命令；返回 exit code 和 stdout/stderr。
-      description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr.",
+      // 起服务这类不退出命令必须用 background，否则会阻塞到超时。
+      description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr. " +
+        "Use background:true for servers or anything that never exits - a foreground call blocks until it times out.",
       parameters: {
         type: "object",
         properties: {
           // 要执行的命令；工作区根目录就是它的 cwd。
           command: { type: "string", description: "Shell command, executed with the workspace root as cwd." },
+          // 后台执行：立即返回 pid，进程不会随这次调用结束。
+          background: {
+            type: "boolean",
+            description: "Start detached and return immediately with a pid; the process keeps running, so stop it yourself.",
+          },
+          // 前台命令的超时（毫秒），默认 120000，上限 600000。
+          timeout: {
+            type: "number",
+            description: "Timeout in milliseconds for a foreground command (default 120000, max 600000).",
+          },
         },
         required: ["command"],
       },
-      run: async (args) => workspace.run(String(args.command)),
+      run: async (args) => workspace.run(String(args.command), {
+        background: args.background === true,
+        timeoutMs: typeof args.timeout === "number"
+          ? Math.min(600_000, Math.max(1_000, args.timeout))
+          : undefined,
+      }),
     },
   ];
 }

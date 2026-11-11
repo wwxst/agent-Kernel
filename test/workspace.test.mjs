@@ -1040,3 +1040,18 @@ test("edit：写回时保留文件开头的 UTF-8 BOM", async () => {
     assert.equal(bytes.toString("utf8"), "\uFEFFhello there\n");
   });
 });
+
+test("shell 后台执行：立即返回 pid，不等待进程结束", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    const started = Date.now();
+    // 起服务这类命令永远不会退出：前台跑会等到超时，后台必须立刻返回。
+    const result = await workspace.run("node -e \"setTimeout(()=>{},60000)\"", { background: true });
+    assert.match(result, /started in background \(pid \d+\)/);
+    assert.ok(Date.now() - started < 5000, "后台调用不能等进程结束");
+    // 收尾：后台进程会占住工作区目录，不杀掉就删不掉临时目录。
+    const pid = Number(/pid (\d+)/.exec(result)?.[1]);
+    try { process.kill(pid); } catch { /* 已经退出 */ }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  });
+});
