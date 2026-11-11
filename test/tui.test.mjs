@@ -367,7 +367,7 @@ test("TUI：输入区仅用两条横线，提示与正文共用左边界，中�
   const pending = ui.tui.readLine();
   ui.input.write("中文A");
   await tick();
-  assert.match(boxTopLine(ui), /^(?:-{79}|─{79})$/);
+  assert.match(boxTopLine(ui), /^(?:-{78}|─{78})$/);
   assert.match(inputLine(ui), /^(?:>|❯) 中文A/);
   assert.equal(boxBottomLine(ui), boxTopLine(ui));
   // 主视图用相对列偏移把光标放回输入位置（不再有绝对行号）。
@@ -694,7 +694,7 @@ test("TUI：长正文续行保持正文缩进，工具和回复间留白", async
   assert.ok(toolRow >= 0, "工具结果行在屏幕上");
   assert.equal(rows[toolRow + 1].trim(), "", "工具结果与回复之间留一行空白");
   assert.match(rows[toolRow + 2], /(?:✻|\*) abcdef/);
-  assert.equal(rowWith(ui, /56789/), "  56789", "续行保持正文缩进");
+  assert.equal(rowWith(ui, /456789/), "  456789", "续行保持正文缩进");
 });
 
 test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", async (t) => {
@@ -1478,9 +1478,9 @@ test("TUI 布局：顶部模型名和底部统计与窗口右边缘留 2 列余�
   t.after(() => ui.cleanup());
   ui.tui.setStats(session);
   ui.tui.start();
-  // 可用内容宽 = columns - 1（末列留空防折行），再让出 2 列右边距。
-  assert.equal(screenRows(ui)[0].length, 77, "顶部模型名不能贴右边框");
-  assert.equal(statusLine(ui).length, 77, "底部统计不能贴右边框");
+  // 可用内容宽 = columns - 2（末列留空防折行，再多留一列给模糊宽度字符），再让出 2 列右边距。
+  assert.equal(screenRows(ui)[0].length, 76, "顶部模型名不能贴右边框");
+  assert.equal(statusLine(ui).length, 76, "底部统计不能贴右边框");
 });
 
 test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {

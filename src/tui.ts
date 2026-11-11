@@ -2187,8 +2187,11 @@ export class Tui {
     const commitTarget = Math.max(0, Math.min(lines.length - tailBudget, boundary));
     const commitTo = Math.min(Math.max(this.printedLines, commitTarget), lines.length);
     const tail = lines.slice(commitTo);
-    // 输入框上方 = 活动区尾部 + 输入框上边框；下一帧靠它回到活动区顶端。
-    const rowsAboveInput = tail.length + 1;
+    // 输入框上方 = 活动区尾部实际占用的终端行数 + 输入框上边框。
+    // 不能直接用 tail.length：终端在行尾会自动折行，一条逻辑行可能占两行；
+    // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
+    const rowsAboveInput = tail.reduce(
+      (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0) + 1;
 
     let frame = "\x1b[?2026h";
     if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
@@ -2702,7 +2705,9 @@ export class Tui {
     // 表现就是轮次之间的空行被擦掉、续行贴左。
     const stream = this.output as NodeJS.WriteStream;
     const live = typeof stream.columns === "number" && stream.columns > 0 ? stream.columns : this.columns;
-    return Math.max(1, Math.min(this.columns, live) - 1);
+    // 留两列而不是一列：终端实际可用宽度可能比我们读到的少 1（滚动条、行尾自动折行、
+    // 模糊宽度的中文标点被渲染成两列）。差一列就会让每行多折一行，进而让活动区错位。
+    return Math.max(1, Math.min(this.columns, live) - 2);
   }
 
   private recomputeGeometry(menuRows = 0): void {
