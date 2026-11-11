@@ -216,9 +216,11 @@ Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功�
 
 | 模式 | 文件工具 | `shell` |
 | --- | --- | --- |
-| `read-only` | 只放行 `read` / `ls` / `glob` / `grep` | 拒绝 |
-| `workspace-write`（默认） | `read` / `ls` / `glob` / `grep` / `write` / `edit` | 每次执行前问一次 |
+| `read-only` | 只放行 `read` / `ls` / `glob` / `grep` / `shell-output` | 拒绝 |
+| `workspace-write`（默认） | `read` / `ls` / `glob` / `grep` / `shell-output` / `write` / `edit` / `shell-kill` | 每次执行前问一次 |
 | `full-access` | 全部工具 | 直接执行 |
+
+`shell-output` 和 `shell-kill` 不单独审批：它们只作用于这个工作区自己起的后台任务，而起那一步已经过 `shell` 的审批了。把它们再拦一次，等于让后台任务在默认模式下不可用。
 
 检查发生在 `ToolRegistry.execute()` 里：参数校验通过之后、`tool.run()` 之前。被拒绝的调用不会执行，结果是一条 `ERROR: permission denied: ...` 回灌给模型，模型可以在下一轮自己换个做法。
 

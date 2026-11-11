@@ -115,9 +115,23 @@ test("workspace-write：读与写工具直接放行，不触发审批", async ()
     return true;
   });
 
-  for (const name of ["read", "ls", "glob", "grep", "write", "edit"]) {
+  for (const name of ["read", "ls", "glob", "grep", "write", "edit", "shell-output", "shell-kill"]) {
     assert.deepEqual(await permission.check(request(name)), { allowed: true });
   }
+  assert.equal(asked, 0);
+});
+
+test("workspace-write：后台任务的读输出与停止不需要再审批", async () => {
+  // 起后台进程本身走 shell，那一步已经问过了；之后读它自己的日志、停它自己起的进程，
+  // 不该再打断用户一次。漏掉这两项会让后台任务在默认模式下完全不可用。
+  let asked = 0;
+  const permission = new Permission("workspace-write", () => {
+    asked++;
+    return true;
+  });
+
+  assert.deepEqual(await permission.check(request("shell-output", { job_id: "job-1" })), { allowed: true });
+  assert.deepEqual(await permission.check(request("shell-kill", { job_id: "job-1" })), { allowed: true });
   assert.equal(asked, 0);
 });
 
@@ -264,7 +278,7 @@ test("permissionPrompt：三档都说明当前限制，且不混入其他模式"
   const readOnly = permissionPrompt("read-only");
   assert.match(readOnly, /Permission mode: read-only/);
   assert.match(readOnly, /This overrides the base tool list/);
-  assert.match(readOnly, /write, edit, and shell are denied/);
+  assert.match(readOnly, /write, edit, shell-kill, and shell are denied/);
   assert.match(readOnly, /skip it and explain why/);
   assert.doesNotMatch(readOnly, /workspace-write|full-access/);
 

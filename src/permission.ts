@@ -19,7 +19,13 @@ export type PermissionMode = (typeof PERMISSION_MODES)[number];
 /** CLI 不传 `--permission` 时的默认值：能改工作区文件，shell 每次都要问。 */
 export const DEFAULT_PERMISSION_MODE: PermissionMode = "workspace-write";
 
-const READ_ONLY_TOOL_NAMES = ["read", "ls", "glob", "grep"] as const;
+/**
+ * 只读工具：不改变任何东西，read-only 和 workspace-write 都直接放行。
+ *
+ * `shell-output` 放在这里：它只读一个后台任务自己的日志，而那个任务是在 `shell`
+ * 那一步已经批准过的。把它算成需要审批，会让后台任务在默认模式下彻底不可用。
+ */
+const READ_ONLY_TOOL_NAMES = ["read", "ls", "glob", "grep", "shell-output"] as const;
 const READ_ONLY_TOOLS = new Set<string>(READ_ONLY_TOOL_NAMES);
 const READ_ONLY_TOOL_LIST = READ_ONLY_TOOL_NAMES.join(", ");
 
@@ -27,7 +33,13 @@ const READ_ONLY_TOOL_LIST = READ_ONLY_TOOL_NAMES.join(", ");
  * 只改文件的工具；它们是否真的留在工作区由 Workspace 的路径守卫决定，不归 Permission 管。
  * 工具名清单同时供策略和模型提示使用：加工具只改这里，避免提示与实际放行悄悄分叉。
  */
-const WRITE_TOOL_NAMES = ["write", "edit"] as const;
+/**
+ * 写工具：workspace-write 放行。
+ *
+ * `shell-kill` 放在这里：它只能停掉这个工作区自己起的后台任务（编号是 Workspace 内部的），
+ * 而起那一步已经批准过了。停自己起的进程比让它一直跑着更安全，不该再拦一次。
+ */
+const WRITE_TOOL_NAMES = ["write", "edit", "shell-kill"] as const;
 const WRITE_TOOLS = new Set<string>(WRITE_TOOL_NAMES);
 const WRITE_TOOL_LIST = WRITE_TOOL_NAMES.join(", ");
 const SHELL_TOOL = "shell";
