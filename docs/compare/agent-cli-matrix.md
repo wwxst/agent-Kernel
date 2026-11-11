@@ -43,8 +43,8 @@
 | glob / grep | ✅ | ✅ | ✅ | 持平 |
 | shell 前台 + 超时 | ✅ 默认 120s，可配 | ✅ | ✅ 今天补的 `timeout` | 持平 |
 | shell 后台执行 | ✅ `run_in_background` | ✅ | ✅ 今天补的 `background` | 持平 |
-| 后台进程输出读取 | ✅ `BashOutput` | ✅ | ❌ 只能返回 pid | 差 |
-| 杀掉后台任务 | ✅ `KillShell` | ✅ | ⚠️ 靠模型自己 `taskkill` | 差（没有专用工具） |
+| 后台进程输出读取 | ✅ `BashOutput` | ✅ | ✅ `shell-output`（增量、有界） | 持平 |
+| 杀掉后台任务 | ✅ `KillShell` | ✅ | ✅ `shell-kill`（停不干净会报错） | 持平 |
 | 网络搜索 | ✅ WebSearch | ✅ `--search` | ❌ | **差（硬缺口）** |
 | 网页抓取 | ✅ WebFetch | ✅ | ❌ | **差** |
 | 子 agent | ✅ subagents | ✅ subagents | ❌ | 差 |
@@ -140,6 +140,8 @@
 | 插件 / skills / hooks | 扩展机制 |
 
 **仍在做**：错误与恢复（超时不再毁掉整轮 ✅）、输入与编辑、渲染、工具细节、权限规则、命令。
+
+**本轮已补**：后台任务的输出读取与收尾（`shell-output` / `shell-kill`）——它们不算能力扩张，是 `shell` 那半个功能的收尾。
 
 ## 汇总 A：他们有、我们没有（按影响排序）
 

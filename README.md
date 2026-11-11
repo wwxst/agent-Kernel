@@ -149,7 +149,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
-## 七个工具
+## 九个工具
 
 工具名是模型看到的接口，所以用的是 agent 生态里的通用叫法（`read` / `write` / `edit` / `glob` / `grep` / `ls` / `shell`），不是本仓库方法名的直译：
 
@@ -162,8 +162,29 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `grep` | 按正则搜文件内容，回 `路径:行号: 内容`；匹配跑在 worker 里，超时中断 | `Workspace.grep` |
 | `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
 | `shell` | 在工作区根目录跑 shell；超时/取消杀整棵进程树，输出有上限 | `Workspace.run` |
+| `shell-output` | 读后台任务自上次调用之后的新输出；第一行是它的状态 | `Workspace.readJobOutput` |
+| `shell-kill` | 停掉后台任务连同它的后代进程 | `Workspace.killJob` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
+
+后两个不是新能力，是 `shell` 那半个功能的收尾。`shell` 带 `background:true` 时立刻返回一个任务编号（`job-1`），进程继续跑：
+
+```text
+shell { command: "npm run dev", background: true }
+→ started job-1 (pid 12345) in the background; read new output with shell-output, stop it with shell-kill
+
+shell-output { job_id: "job-1", wait: 3000 }
+→ job-1 (running, pid 12345) ran: npm run dev
+  VITE v5.4.0  ready in 312 ms
+  ➜  Local:   http://localhost:5173/
+
+shell-kill { job_id: "job-1" }
+→ stopped job-1
+```
+
+三条边界值得知道：**只返回新增的部分**（第二次调 `shell-output` 不会把同一段日志再读一遍，否则既烧 token 又让模型以为「这条错误又出现了」）；**单次最多 8k 字符**，超出的留在日志里并明说「还有，再调一次」；**日志落在系统临时目录**（`%TEMP%\agent-kernel-jobs` 或 `$TMPDIR`），不落工作区，所以模型不能拿 `read` 直接看，必须走 `shell-output`。
+
+`shell-kill` 停不干净时**报错而不是假装成功**：`taskkill /T` 只杀外层、POSIX 上回退只杀直接子进程，这两种情况后代可能还活着。冒充成功会让模型以为端口已经释放，然后在一个还占着端口的世界里继续排查。
 
 `write` 和 `edit` 的分工就是名字说的那件事：改几行用 `edit`（省 token，也不会因为「只改三行却重写整个文件」把长文件改坏），新建文件或整体重写才用 `write`。
 

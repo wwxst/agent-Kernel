@@ -118,7 +118,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 ## 7. 测试
 
-- **打在缝上**：`Agent.run`、`ToolRegistry.execute`、`Workspace` 的七个方法、`Llm.chat`、CLI 进程。五处都有现成用例可参照。
+- **打在缝上**：`Agent.run`、`ToolRegistry.execute`、`Workspace` 的九个方法、`Llm.chat`、CLI 进程。五处都有现成用例可参照。
 - **断言外部行为**，不测私有函数，也不 mock 自己的模块。只有跨缝的外部依赖才用替身：`ChatClient` 的假实现、mock HTTP 服务。
 - **期望值写死字面量**，不要用被测代码算出来（同义反复的测试永远绿，也永远没用）。
 - 一个用例钉一件事；测试名写「什么情况下、发生什么」。
@@ -295,7 +295,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 **什么时候写**：修完就写，不要攒。攒到最后只会记得结论，忘了当时的现象和错误假设——而现象才是下次识别同类问题的线索。
 
-**当前已有的三份**：[展示分层](../design/display-layers.md)（概览层与详情层怎么分，含前端落地建议）、[TUI 踩坑记录](../notes/tui-pitfalls.md)（十四条真实事故 + 四条底层规则）、[CLI 与工程链路踩坑](../notes/cli-and-tooling.md)（参数、全局安装、测试迁移）。
+**当前已有的四份**：[展示分层](../design/display-layers.md)（概览层与详情层怎么分，含前端落地建议）、[TUI 踩坑记录](../notes/tui-pitfalls.md)（十四条真实事故 + 四条底层规则）、[CLI 与工程链路踩坑](../notes/cli-and-tooling.md)（参数、全局安装、测试迁移）、[后台任务踩坑](../notes/background-jobs.md)（管道卡住宿主、Windows `shell+detached` 丢输出、增量读的字节边界）。
 
 ## 复查清单
 

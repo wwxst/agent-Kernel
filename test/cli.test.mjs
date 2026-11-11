@@ -219,7 +219,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
-        ["read", "write", "edit", "glob", "grep", "ls", "shell"],
+        ["read", "write", "edit", "glob", "grep", "ls", "shell", "shell-output", "shell-kill"],
       );
 
       // mock 不回 usage：成本摘要必须写 at least，不能把「已统计到 0」说成「只花了 0」。

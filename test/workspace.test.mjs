@@ -12,6 +12,25 @@ import { test } from "node:test";
 import { fillBuffer, terminateTree, Workspace } from "../src/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
 
+/**
+ * 等一个进程真的消失。
+ *
+ * `taskkill` 返回成功只代表系统接受了请求，Windows 上它还要一会儿才释放 cwd ——
+ * 测试紧接着删临时目录就会撞上 EBUSY，所以收尾必须等进程退场，不能靠 sleep 猜。
+ */
+async function waitGone(pid, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  return false;
+}
+
 test("编辑提交事件：真实前后文件快照一致，显示观察者抛错不改变工具结果", async () => {
   await withWorkspace(async (dir) => {
     const file = path.join(dir, "edit.txt");
@@ -1041,17 +1060,175 @@ test("edit：写回时保留文件开头的 UTF-8 BOM", async () => {
   });
 });
 
-test("shell 后台执行：立即返回 pid，不等待进程结束", async () => {
+/**
+ * 去掉第一行状态，只留正文。
+ *
+ * 状态行会把命令原样带出来（`ran: node -e "...second..."`），
+ * 正文断言如果连状态行一起匹配，就会因为命令里的字样而假通过或假失败。
+ */
+function body(output) {
+  return output.slice(output.indexOf("\n") + 1);
+}
+
+/**
+ * 后台任务必须在收尾时停掉，而且要在 finally 里停。
+ *
+ * 进程活着就占着工作区目录，`withWorkspace` 的清理会抛 EBUSY ——
+ * 那个 EBUSY 会把真正的断言失败盖掉，让人以为是「目录删不掉」而不是「行为不对」。
+ */
+async function stopJob(workspace, pid) {
+  try {
+    await workspace.killJob("job-1");
+  } catch {
+    // 可能已经自己退出，或清理未确认；收尾失败不该盖住测试真正想证明的事。
+  }
+  if (pid !== undefined) await waitGone(pid);
+}
+
+test("shell 后台执行：返回任务编号，立即返回不等待进程结束", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
     const started = Date.now();
     // 起服务这类命令永远不会退出：前台跑会等到超时，后台必须立刻返回。
     const result = await workspace.run("node -e \"setTimeout(()=>{},60000)\"", { background: true });
-    assert.match(result, /started in background \(pid \d+\)/);
-    assert.ok(Date.now() - started < 5000, "后台调用不能等进程结束");
-    // 收尾：后台进程会占住工作区目录，不杀掉就删不掉临时目录。
     const pid = Number(/pid (\d+)/.exec(result)?.[1]);
-    try { process.kill(pid); } catch { /* 已经退出 */ }
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      assert.match(result, /started job-1 \(pid \d+\) in the background/);
+      assert.ok(Date.now() - started < 5000, "后台调用不能等进程结束");
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：读到输出后，第二次只返回新增的部分", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    // 第二行由测试写 go.txt 触发，不靠时间窗口：负载一高，几百毫秒的间隔根本不够，
+    // 第一次读会把两行一起拿走，测试就假失败了。
+    const script = [
+      "console.log('first')",
+      "const fs=require('fs')",
+      "const t=setInterval(()=>{if(fs.existsSync('go.txt')){clearInterval(t);console.log('second')}},50)",
+      "setTimeout(()=>{},30000)",
+    ].join(";");
+    await workspace.run(`node -e "${script}"`, { background: true });
+
+    const first = await workspace.readJobOutput("job-1", 5000);
+    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    try {
+      assert.match(first, /^job-1 \(running, pid \d+\) ran: /, "第一行必须是状态");
+      assert.match(body(first), /first/);
+      assert.doesNotMatch(body(first), /second/, "还没产生的内容不能提前出现");
+
+      await workspace.write("go.txt", "");
+      const second = await workspace.readJobOutput("job-1", 5000);
+      assert.match(body(second), /second/);
+      assert.doesNotMatch(body(second), /first/, "已经读过的内容不能重复返回");
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：进程自己退出时报告 exit code，且没有新输出时明确说没有", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "console.log(\'bye\');process.exit(3)"', { background: true });
+
+    const output = await workspace.readJobOutput("job-1", 5000);
+    const pid = Number(/pid (\d+)/.exec(output)?.[1]);
+    try {
+      assert.match(output, /bye/);
+
+      // 第二次没有新字节，等到进程退场再返回：状态行必须换成 exit code。
+      const after = await workspace.readJobOutput("job-1", 5000);
+      assert.match(after, /^job-1 \(exited with code 3, pid \d+\)/);
+      assert.match(after, /\(no new output\)/);
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-kill：停掉后台任务，进程真的不在了", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "setInterval(()=>{},1000)"', { background: true });
+    const pid = Number(/pid (\d+)/.exec(await workspace.readJobOutput("job-1", 3000))?.[1]);
+    try {
+      assert.ok(Number.isInteger(pid), "状态行里必须带 pid");
+
+      assert.match(await workspace.killJob("job-1"), /stopped job-1/);
+
+      assert.equal(await waitGone(pid), true, "kill 之后进程必须真的消失");
+      assert.match(await workspace.killJob("job-1"), /job-1 is already stopped/);
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：未知任务编号报错，并列出已知编号", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await assert.rejects(() => workspace.readJobOutput("job-9"), /unknown background job "job-9" \(known: none\)/);
+
+    await workspace.run("node -e \"setTimeout(()=>{},5000)\"", { background: true });
+    const pid = Number(/pid (\d+)/.exec(await workspace.readJobOutput("job-1", 0))?.[1]);
+    try {
+      await assert.rejects(() => workspace.readJobOutput("job-9"), /unknown background job "job-9" \(known: job-1\)/);
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：单次最多 8000 字符，剩下的明确说还有并留给下一次", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "process.stdout.write(\'x\'.repeat(9000))"', { background: true });
+
+    const first = await workspace.readJobOutput("job-1", 5000);
+    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    try {
+      assert.match(first, /1000 chars not shown; call shell-output again/);
+      // 只数正文那一行：状态行里的命令本身也带 x，整段数会多数两个。
+      assert.equal(first.split("\n")[1].length, 8000, "一次只能给 8000 个字符");
+
+      const second = await workspace.readJobOutput("job-1", 5000);
+      assert.match(second, /x{1000}/);
+      assert.doesNotMatch(second, /not shown/, "读完就不该再提示还有");
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：被切断的多字节字符不会读成替换字符，补齐后才返回", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    // "中" = e4 b8 ad：先只写前两个字节，等测试写 go.txt 才补上第三个。
+    const script = [
+      "process.stdout.write(Buffer.from([0xe4,0xb8]))",
+      "const fs=require('fs')",
+      "const t=setInterval(()=>{if(fs.existsSync('go.txt')){clearInterval(t);process.stdout.write(Buffer.from([0xad]))}},50)",
+      "setTimeout(()=>{},30000)",
+    ].join(";");
+    await workspace.run(`node -e "${script}"`, { background: true });
+
+    const first = await workspace.readJobOutput("job-1", 1500);
+    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    try {
+      assert.doesNotMatch(first, /\uFFFD/, "半个字符不能变成替换字符");
+      assert.doesNotMatch(first, /中/, "只有两个字节时还不能算读到这个字");
+
+      await workspace.write("go.txt", "");
+      const second = await workspace.readJobOutput("job-1", 5000);
+      assert.match(second, /中/, "补齐之后才能读出完整字符");
+      assert.doesNotMatch(second, /\uFFFD/);
+    } finally {
+      await stopJob(workspace, pid);
+    }
   });
 });
