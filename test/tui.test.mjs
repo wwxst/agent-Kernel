@@ -2368,3 +2368,24 @@ test("TUI 主视图：PgUp 暂停刷新，翻历史时不再抢视口，PgDn 恢
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.match(ui.text().slice(pausedAt), /PAUSED_DELTA/, "恢复后继续输出");
 });
+
+test("TUI 主视图：审批借用输入区，已有草稿在决定后原样恢复", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑命令");
+
+  // 用户打了一半还没回车：这是草稿，不是排队任务。
+  ui.input.write("草稿内容");
+  await tick();
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+  // 审批提示占用输入区（Claude Code 的做法），而不是因为「有草稿」就跳过审批。
+  assert.match(ui.text(), /Shell permission|Shell 权限审批/, "审批面板必须出现");
+
+  ui.input.write("\r");
+  assert.equal(await pending, false, "默认选择是拒绝");
+  await tick();
+  assert.match(inputLine(ui), /草稿内容/, "决定之后草稿回到输入框，没有被吃掉");
+});

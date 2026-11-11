@@ -1779,8 +1779,15 @@ export class Tui {
   }
 
   async approve(request: PermissionRequest): Promise<boolean> {
-    const gate = approvalGate(this.controller.signal, this.interactive, this.lines.length > 0);
+    // Claude Code 的做法：审批提示借用输入区，用户已经打了一半的草稿先暂存，
+    // 决定之后原样放回去。这样「用户正在输入」就不是冲突，不需要把审批跳掉。
+    const draft = this.rl.line;
+    const draftCursor = this.rl.cursor;
+    // 主视图（layout）能暂存草稿、借用输入区，所以排队输入不再是冲突；
+    // 逐行模式共用同一个 stdin，排队的那一行会被审批当成答案吃掉，仍然要拦。
+    const gate = approvalGate(this.controller.signal, this.interactive, !this.layout && this.lines.length > 0);
     if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
+    this.setEditorLine("", 0);
 
     this.setThinking(false);
     this.finishAssistant();
@@ -1832,12 +1839,12 @@ export class Tui {
       if (this.ownedScreen) {
         this.approvalMenuActive = false;
         this.approvalRequest = undefined;
-        // 清理 readline 对方向键、误输入和回车的内部缓冲，禁止污染下一轮任务。
-        if (!this.ended && this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
         this.setApprovalCursor(false);
         this.promptText = COMMAND_PROMPT;
         this.promptPlaceholder = true;
         this.trimLog();
+        // 把审批前暂存的草稿放回去：审批借用输入区，但不能吃掉用户已经打的字。
+        if (!this.ended) this.setEditorLine(draft, Math.min(draftCursor, draft.length));
         this.renderNow();
       }
     }
