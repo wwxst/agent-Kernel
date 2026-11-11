@@ -1045,16 +1045,17 @@ export class Tui {
       `commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this\n          /permission [mode]  show or switch permission (${permissionModes})`,
       `命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助\n      /permission [模式]  查看或切换权限（${permissionModes}）`,
     );
-    // 折叠箭头是终端字符，不是可点击组件；只有固定布局支持这些快捷键。
-    const shortcut = this.uiText(
-      "timeline: Ctrl+E turns · Ctrl+O activity groups · Ctrl+G tool details · PageUp/PageDown scroll",
-      "时间线：Ctrl+E 任务 · Ctrl+O 活动组 · Ctrl+G 工具详情 · PageUp/PageDown 浏览",
+    if (!this.layout) return commands;
+    // 按键表：规范要求「写进 README，并在 /help 里可见」，用户不该靠读源码发现快捷键。
+    const keys = this.uiText(
+      "input:  Enter send · Shift+Enter or Ctrl+J newline · Ctrl+C cancel the run",
+      "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · Ctrl+C 取消本轮",
     );
-    const mouse = this.ownedScreen ? `\n${this.uiText(
-      "mouse: click trailing arrows to fold/unfold · wheel scrolls three lines",
-      "鼠标：点击文字末尾箭头展开/收起 · 滚轮每次滚动三行",
-    )}` : "";
-    return this.layout ? `${commands}\n${shortcut}${mouse}` : commands;
+    const view = this.uiText(
+      "view:   Ctrl+E history · PgUp pause live output · PgDn or Esc resume · Shift+Tab permission",
+      "视图：Ctrl+E 历史 · PgUp 暂停刷新 · PgDn 或 Esc 恢复 · Shift+Tab 切换权限",
+    );
+    return `${commands}\n${keys}\n${view}`;
   }
 
   /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */

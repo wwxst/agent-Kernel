@@ -42,6 +42,22 @@ agent --permission read-only "看看这个项目怎么跑"
 
 `AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。输入区支持多行：`Shift+Enter` 或 `Ctrl+J` 换行、`Enter` 提交（粘贴多行同样折叠成一条消息）。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。工作区根目录的 `AGENTS.md` 会在启动时读入系统提示（超过 32000 字符截断）；没有该文件就不注入。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
 
+### 快捷键
+
+| 键 | 作用 |
+| --- | --- |
+| `Enter` | 发送当前输入 |
+| `Shift+Enter` | 换行（现代终端 `ESC[13;2u`；老终端 `ESC\r`） |
+| `Ctrl+J` | 换行（所有终端可用，兜底） |
+| `Ctrl+C` | 取消本轮 |
+| `Ctrl+E` | 打开历史视图（transcript） |
+| `PgUp` | 暂停活动区刷新，可自由往上翻历史 |
+| `PgDn` / `Esc` | 恢复刷新 |
+| `Shift+Tab` | 切换权限模式 |
+| `Esc`（审批中） | 拒绝并关闭审批 |
+
+`/help` 里同样能看到这张表。
+
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
 
 CLI 默认流式输出：模型生成正文时逐段打印，长回复不再是黑屏等一段。评测走非流式，保证跨轮对比的是同样的完整响应（见 [ADR-0012](./docs/adr/0012-streaming-is-display-only.md)）。
