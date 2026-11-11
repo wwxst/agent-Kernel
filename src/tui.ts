@@ -495,8 +495,14 @@ export class Tui {
       (options.color ??
         (process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"));
     this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono");
-    // 现代终端用 ❯/✻，有限字形环境仍可选择 ASCII 字形，但不降级布局。
-    this.glyphs = process.platform !== "win32" || prefersRichColor() ? UNICODE_GLYPHS : ASCII_GLYPHS;
+    // 现代终端用 ❯/✻，有限字形环境退回 ASCII，但不降级布局。
+    // 显式开关优先：老 conhost 配上 UTF-8 代码页其实能显示 Unicode，可环境变量探测不出来，
+    // 所以留一个 AGENT_TUI_GLYPHS=unicode|ascii 的逃生口（Claude Code / Codex 都是直接用 Unicode，
+    // 不提供降级；我们保守一点，默认仍然探测）。
+    const glyphMode = process.env.AGENT_TUI_GLYPHS;
+    this.glyphs = glyphMode === "unicode" ? UNICODE_GLYPHS
+      : glyphMode === "ascii" ? ASCII_GLYPHS
+      : process.platform !== "win32" || prefersRichColor() ? UNICODE_GLYPHS : ASCII_GLYPHS;
 
     // readline 仍负责编辑/历史/信号，但它的清屏和自动换行不能写入固定区域。
     // 这是一层输出适配器，不改 readline 的缓存，也不接管键盘或输入法。
