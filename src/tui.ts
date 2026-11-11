@@ -1902,10 +1902,13 @@ export class Tui {
     if (choice === "allow") return this.uiText("Yes, allow once", "是，仅允许本次");
     if (choice === "deny") return this.uiText("No (default)", "否（默认）");
     const command = typeof this.approvalRequest?.args.command === "string" ? this.approvalRequest.args.command : "";
+    // 命令原文要转义再嵌进菜单：里面可能有 ANSI、RTL 覆写或换行，
+    // 直接拼会把菜单本身冲掉（和审批面板正文同一条规矩）。
+    const shown = clip(escapeControlCharacters(oneLine(command)).trim(), 40);
     // 只显示这一条命令，并说清作用域：写进的是**这个工作区**的规则，不是全局。
     return this.uiText(
-      `Yes, and don't ask again for "${clip(oneLine(command), 40)}" in this workspace`,
-      `是，以后不再问「${clip(oneLine(command), 40)}」（本工作区）`,
+      `Yes, and don't ask again for "${shown}" in this workspace`,
+      `是，以后不再问「${shown}」（本工作区）`,
     );
   }
 

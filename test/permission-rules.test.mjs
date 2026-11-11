@@ -47,10 +47,10 @@ test("规则解析：工具名与参数前缀，只写工具名表示该工具�
     deny: ["shell:rm -rf"],
   }), "t");
   assert.deepEqual(rules.allow, [
-    { tool: "shell", argv: ["git", "status"], exact: false },
-    { tool: "write", argv: [], exact: false },
+    { tool: "shell", kind: "prefix", argv: ["git", "status"] },
+    { tool: "write", kind: "prefix", argv: [] },
   ]);
-  assert.deepEqual(rules.deny, [{ tool: "shell", argv: ["rm", "-rf"], exact: false }]);
+  assert.deepEqual(rules.deny, [{ tool: "shell", kind: "prefix", argv: ["rm", "-rf"] }]);
   assert.deepEqual(rules.ask, []);
 });
 
@@ -137,11 +137,15 @@ test("deny 跨层最强：项目写了 deny，本地 allow 也压不住", async 
   });
 });
 
-test("能记住的只有能安全切分、且参数能原样写回的命令", () => {
+test("几乎什么命令都能被记住，只有空命令例外", () => {
   assert.equal(isRememberable("git status"), true);
   assert.equal(isRememberable("cd demo && node server.js"), true, "复合命令按整条精确记住");
-  assert.equal(isRememberable("ls *.ts"), false, "通配符切不开，记不成规则");
-  assert.equal(isRememberable(`echo 'it"s'`), false, "带引号的参数写不回文件");
+  assert.equal(
+    isRememberable('curl -i http://localhost:8099/ 2>&1; echo "---EXIT $?---"'),
+    true,
+    "切不开的命令按整条原文记住",
+  );
+  assert.equal(isRememberable("   "), false, "空命令没有可记的内容");
 });
 
 test("记住一条命令：写进本地层，不动项目层，并把自己加进 .gitignore", async () => {
@@ -196,6 +200,35 @@ test("复合命令按整条精确记住：改一个参数就重新问", async ()
       "allow",
       "换了第二段就不再命中",
     );
+  });
+});
+
+test("切不开的命令也能记住：按整条原文逐字比较", async () => {
+  await withRoot(async (root) => {
+    const command = 'curl -i http://localhost:8099/ 2>&1; echo "---EXIT $?---"';
+    const rules = await PermissionRules.load(root);
+    await rules.remember(command);
+
+    const saved = JSON.parse(
+      await readFile(path.join(root, ".agent-kernel", "permissions.local.json"), "utf8"),
+    );
+    assert.deepEqual(saved, { allow: [`shell:${command}`] }, "整条原文进文件");
+
+    const reloaded = await PermissionRules.load(root);
+    assert.equal(reloaded.decide("shell", { command }), "allow");
+    assert.notEqual(
+      reloaded.decide("shell", { command: command.replace("8099", "8100") }),
+      "allow",
+      "端口不同就是另一条命令",
+    );
+  });
+});
+
+test("deny 对切不开的命令也生效：按原始 token 前缀拦", async () => {
+  await withRoot(async (root) => {
+    await writeRuleFile(root, ".agent-kernel/permissions.json", { deny: ["shell:rm -rf"] });
+    const rules = await PermissionRules.load(root);
+    assert.equal(rules.decide("shell", { command: "rm -rf / 2>&1" }), "deny", "带重定向也要拦住");
   });
 });
 

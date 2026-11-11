@@ -49,20 +49,18 @@ const TOOL_NAME = /^[a-z][a-z0-9-]*$/;
  */
 const UNSAFE_FOR_SPLITTING = /[$`<>*?\\\n\r]/;
 
-/** 一条规则：工具名 + 参数前缀。`shell:git status` 只放行以 `git status` 开头的命令。 */
-export interface PermissionRule {
-  tool: string;
-  /** 参数 token；空数组表示「这个工具的任意调用」（规则只写工具名时）。 */
-  argv: string[];
-  /**
-   * true 表示**整条命令精确匹配**，false 表示参数前缀匹配。
-   *
-   * 复合命令（`cd demo && node server.js`）只能走精确匹配：按前缀记只能记第一段，
-   * 第二段就没人管了，`cd demo && rm -rf /` 会被一起放行。精确匹配的代价是
-   * 参数一变就要重新批准——这是刻意的，宁可多问，不可多放。
-   */
-  exact: boolean;
-}
+/**
+ * 一条规则。放行的宽度必须可预测，所以只有两种形状：
+ *
+ * - `prefix`：单条简单命令的参数前缀。`shell:git status` 也放行 `git status --short`，
+ *   因为多一个参数不改变「这条命令在干什么」。
+ * - `exact`：整条命令的原文，逐字比较。复合命令（`cd demo && node server.js`）和
+ *   切不开的命令（`curl x 2>&1; echo $?`）都走这里——按前缀记只能记第一段，
+ *   第二段就没人管了；而切不开的命令硬拆就是猜。
+ */
+export type PermissionRule =
+  | { tool: string; kind: "prefix"; argv: string[] }
+  | { tool: string; kind: "exact"; command: string };
 
 export type RuleDecision = "allow" | "ask" | "deny";
 
@@ -86,32 +84,17 @@ function stricter(a: RuleDecision | "none", b: RuleDecision | "none"): RuleDecis
 }
 
 /**
- * 把切开的若干段重新串成一串 token，用 `&&` 当分隔符。
+ * 空白归一：去首尾空白，把连续空白压成一个空格。
  *
- * 规则里存的就是这个形状：`cd demo && node server.js` → `["cd","demo","&&","node","server.js"]`。
- * 比较时两边都过同一个函数，所以原来用的是 `;` 还是 `&&` 不影响结果。
+ * 精确规则靠它比较——模型偶尔在参数之间多打一个空格，那不该算「另一条命令」。
+ * 但**不碰其他任何字符**：多一个参数、换一个引号，都必须重新问。
  */
-function flatten(segments: readonly string[][]): string[] {
-  const tokens: string[] = [];
-  for (const [index, segment] of segments.entries()) {
-    if (index > 0) tokens.push("&&");
-    tokens.push(...segment);
-  }
-  return tokens;
+function normalize(command: string): string {
+  return command.trim().replace(/\s+/g, " ");
 }
 
 function sameTokens(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((token, index) => token === b[index]);
-}
-
-/**
- * 一个 token 能不能被原样写回规则文件。
- *
- * 引号会被重新解析成「引号开始」，所以带引号的 token 存不回去；带空格的可以靠加引号保住。
- * 存不回去的命令就不该出现在「以后不再问」里——点了却记不下来，比不给这个选项更糟。
- */
-function serializable(token: string): boolean {
-  return !/["']/.test(token);
 }
 
 /** 写回文件时给带空白的 token 加引号，否则 `git commit -m "fix bug"` 会被拆成两段。 */
@@ -119,12 +102,25 @@ function quoteToken(token: string): string {
   return /\s/.test(token) ? `"${token}"` : token;
 }
 
+/** 规则写回文件的形状：精确规则原样写，前缀规则把参数拼起来。 */
+function serialize(rule: PermissionRule): string {
+  if (rule.kind === "exact") return `${rule.tool}:${rule.command}`;
+  return rule.argv.length === 0 ? rule.tool : `${rule.tool}:${rule.argv.map(quoteToken).join(" ")}`;
+}
+
+function sameRule(a: PermissionRule, b: PermissionRule): boolean {
+  if (a.tool !== b.tool || a.kind !== b.kind) return false;
+  if (a.kind === "exact" && b.kind === "exact") return a.command === b.command;
+  if (a.kind === "prefix" && b.kind === "prefix") return sameTokens(a.argv, b.argv);
+  return false;
+}
+
 /**
  * 把一条规则文本拆成工具名与命令 token。
  *
- * 命令部分用**和真实命令同一个切分器**解析：单段就是前缀规则（`shell:git status`），
- * 多段就是精确规则（`shell:cd demo && node server.js`）。写几条就是几条，
- * 不会出现「写了复合命令却只匹配第一段」这种错觉。
+ * 命令部分用**和真实命令同一个切分器**解析：切成单段就是前缀规则（`shell:git status`），
+ * 其余一律整条精确规则（`shell:cd demo && node server.js`、`shell:curl x 2>&1; echo $?`）。
+ * 写几条就是几条，不会出现「写了复合命令却只匹配第一段」这种错觉。
  */
 function parseRule(text: string, where: string): PermissionRule {
   const colon = text.indexOf(":");
@@ -140,17 +136,13 @@ function parseRule(text: string, where: string): PermissionRule {
     // 「shell:」既可能被读成「所有 shell 命令」也可能被读成写漏了，不能猜。
     throw new Error(`${where}: rule "${text}" ends with ":" but no argument prefix`);
   }
-  if (rest === "") return { tool, argv: [], exact: false };
+  if (rest === "") return { tool, kind: "prefix", argv: [] };
   const segments = splitCommand(rest);
-  if (segments === null) {
-    // 切分器自己就判为「无法安全解析」的命令，规则也表达不出来：写了也永远匹配不上。
-    throw new Error(
-      `${where}: rule "${text}" contains characters that cannot be matched safely ` +
-      `($, *, >, backtick, quotes); write the plain command instead`,
-    );
+  if (segments !== null && segments.length === 1) {
+    return { tool, kind: "prefix", argv: segments[0]! };
   }
-  if (segments.length === 0) throw new Error(`${where}: rule "${text}" has no command`);
-  return { tool, argv: flatten(segments), exact: segments.length > 1 };
+  // 多段或切不开：整条原文精确匹配。一个字符不同就不命中，所以这里不需要理解它。
+  return { tool, kind: "exact", command: normalize(rest) };
 }
 
 /** 解析规则文件正文；形状不对就报错，绝不静默忽略一份安全配置。 */
@@ -251,39 +243,54 @@ function matchesPrefix(argv: readonly string[], segment: readonly string[]): boo
 /**
  * 一条规则能不能整条管住这条命令。
  *
- * 前缀规则只对**单段**命令生效。多段命令要么被一条精确规则整条管住，要么退回逐段裁决——
+ * 前缀规则只对**单段**命令生效。多段或切不开的命令只能被精确规则整条管住——
  * 否则 `shell:git status` 会顺带放行 `git status && curl evil`。
  */
-function matchesCommand(rule: PermissionRule, tool: string, segments: readonly string[][]): boolean {
+function matchesCommand(
+  rule: PermissionRule,
+  tool: string,
+  raw: string,
+  segments: readonly string[][] | null,
+): boolean {
   if (rule.tool !== tool) return false;
-  if (rule.exact) return sameTokens(rule.argv, flatten(segments));
-  return segments.length === 1 && matchesPrefix(rule.argv, segments[0]!);
+  if (rule.kind === "exact") return normalize(raw) === rule.command;
+  return segments !== null && segments.length === 1 && matchesPrefix(rule.argv, segments[0]!);
 }
 
 /** 前缀规则对单段命令的命中判定。 */
 function matchesSegment(rule: PermissionRule, tool: string, segment: readonly string[]): boolean {
-  return rule.tool === tool && !rule.exact && matchesPrefix(rule.argv, segment);
+  return rule.tool === tool && rule.kind === "prefix" && matchesPrefix(rule.argv, segment);
 }
 
 /**
  * deny 跨层最强：任何一层写了 deny 就拒绝。团队写了 `deny: rm -rf`，
  * 你本地再写 allow 也不生效——安全方向的例外值得这个不一致。
  *
- * deny 对多段命令也逐段检查：`git status && rm -rf /` 必须被 `deny: shell:rm` 拦住。
+ * 切不开的命令也要被拦住：`rm -rf / 2>&1` 里有 `>`，拆不开，但它的开头就是 `rm -rf`。
+ * deny 方向上宁可多拦——漏拦一次是灾难，多拦一次只是多问一句。
  */
-function deniesAny(layers: readonly RuleLayer[], tool: string, segments: readonly string[][]): boolean {
+function deniesAny(
+  layers: readonly RuleLayer[],
+  tool: string,
+  raw: string,
+  segments: readonly string[][] | null,
+): boolean {
   return layers.some((layer) => layer.rules.deny.some((rule) => {
     if (rule.tool !== tool) return false;
-    if (rule.exact) return sameTokens(rule.argv, flatten(segments));
-    return segments.some((segment) => matchesPrefix(rule.argv, segment));
+    if (rule.kind === "exact") return normalize(raw) === rule.command;
+    if (segments !== null) return segments.some((segment) => matchesPrefix(rule.argv, segment));
+    return matchesPrefix(rule.argv, normalize(raw).split(" "));
   }));
 }
 
-/** 一条命令能不能被「以后不再问」记住：能安全切分，且每个 token 都能原样写回文件。 */
+/**
+ * 一条命令能不能被「以后不再问」记住。
+ *
+ * 现在几乎什么都能记：切不开的命令按整条原文存，逐字比较，一个字符都不放宽。
+ * 唯一不收的是空命令——它没有可记的内容。
+ */
 export function isRememberable(command: string): boolean {
-  const segments = splitCommand(command);
-  if (segments === null || segments.length === 0) return false;
-  return flatten(segments).every(serializable);
+  return normalize(command) !== "";
 }
 
 /**
@@ -291,28 +298,28 @@ export function isRememberable(command: string): boolean {
  *
  * 返回 `none` 表示**没有任何规则命中**，由调用方按模式决定默认动作。
  *
- * 三步：先看 deny（跨层、逐段），再看整条精确规则（按层序），最后逐段做前缀裁决。
- * 复合命令里只要有一段没被放行，整体就不算放行——否则 `git status && curl evil`
- * 会被第一条的 allow 带过去。
+ * 顺序：先看 deny（跨层），再看整条精确规则（按层序），最后逐段做前缀裁决。
+ * 切不开的命令到此为止——它们永远不会被 allow 放过，只能问。
  */
 export function decideRules(
   layers: readonly RuleLayer[],
   tool: string,
   args: Record<string, unknown>,
 ): RuleDecision | "none" {
-  const segments = tool === SHELL_TOOL
-    ? splitCommand(typeof args.command === "string" ? args.command : "")
-    // 非 shell 工具没有命令可切，当作一段空命令：只有「整个工具」粒度的规则能命中。
-    : [[]];
-  if (segments === null || segments.length === 0) return "ask";
+  const raw = tool === SHELL_TOOL && typeof args.command === "string" ? args.command : "";
+  // 非 shell 工具没有命令可切，当作一段空命令：只有「整个工具」粒度的规则能命中。
+  const segments = tool === SHELL_TOOL ? splitCommand(raw) : [[]];
 
-  if (deniesAny(layers, tool, segments)) return "deny";
+  if (deniesAny(layers, tool, raw, segments)) return "deny";
 
   // 整条精确规则：按层序，第一个命中的层说话。
   for (const layer of layers) {
-    if (layer.rules.ask.some((rule) => rule.exact && matchesCommand(rule, tool, segments))) return "ask";
-    if (layer.rules.allow.some((rule) => rule.exact && matchesCommand(rule, tool, segments))) return "allow";
+    if (layer.rules.ask.some((rule) => matchesCommand(rule, tool, raw, segments))) return "ask";
+    if (layer.rules.allow.some((rule) => matchesCommand(rule, tool, raw, segments))) return "allow";
   }
+
+  // 切不开的命令到此为止：没有精确规则命中，就不能放行。
+  if (segments === null || segments.length === 0) return "ask";
 
   let matched = false;
   let decision: RuleDecision | "none" = "none";
@@ -359,8 +366,7 @@ async function writeLayer(layer: RuleLayer): Promise<void> {
   await mkdir(path.dirname(layer.file), { recursive: true });
   const body: Record<string, string[]> = {};
   for (const field of RULE_FIELDS) {
-    const entries = layer.rules[field].map((rule) =>
-      rule.argv.length === 0 ? rule.tool : `${rule.tool}:${rule.argv.map(quoteToken).join(" ")}`);
+    const entries = layer.rules[field].map(serialize);
     if (entries.length > 0) body[field] = entries;
   }
   // 末尾留换行：项目层的规则文件要提交进仓库，别让它成为 diff 里的噪音源。
@@ -436,28 +442,26 @@ export class PermissionRules {
    * 把一条命令记成 allow 规则并落盘，返回写进去的规则文本。
    *
    * 写的是**本地层**：菜单里的一次点头属于个人偏好，不该进团队的规则文件。
-   * 只接受能安全解析的单条简单命令——复合命令记成一条前缀规则会放行比用户点的那次更多的东西。
+   *
+   * 单条简单命令记成前缀规则（`git status` 顺带放行 `git status --short`）；
+   * 其余——复合命令、带重定向/通配/命令替换的命令——记成整条精确规则，按原文比较。
+   * 后者是「几乎什么都能记住」的关键：切不开的命令不需要被理解，只需要被一模一样地认出来。
    */
   async remember(command: string): Promise<string> {
+    const normalized = normalize(command);
+    if (normalized === "") throw new Error("cannot remember an empty command");
     const segments = splitCommand(command);
-    if (segments === null || segments.length === 0) {
-      throw new Error(`cannot remember "${command}": the command cannot be split safely`);
-    }
-    const argv = flatten(segments);
-    if (!argv.every(serializable)) {
-      throw new Error(`cannot remember "${command}": an argument contains a quote and cannot be written back`);
-    }
-    const exact = segments.length > 1;
-    const text = `${SHELL_TOOL}:${argv.map(quoteToken).join(" ")}`;
+    const prefix = segments !== null && segments.length === 1 ? segments[0]! : undefined;
+    const rule: PermissionRule = prefix !== undefined
+      ? { tool: SHELL_TOOL, kind: "prefix", argv: prefix }
+      : { tool: SHELL_TOOL, kind: "exact", command: normalized };
     const local = this.layers[0]!;
-    const exists = local.rules.allow.some((rule) =>
-      rule.tool === SHELL_TOOL && rule.exact === exact && sameTokens(rule.argv, argv));
-    if (!exists) {
-      local.rules.allow.push({ tool: SHELL_TOOL, argv, exact });
+    if (!local.rules.allow.some((existing) => sameRule(existing, rule))) {
+      local.rules.allow.push(rule);
       await writeLayer(local);
     }
     // 即使规则已经在，也补一次忽略：文件可能是用户手工建的。
     await ensureGitIgnored(this.root, LOCAL_FILE.split(path.sep).join("/"));
-    return text;
+    return serialize(rule);
   }
 }

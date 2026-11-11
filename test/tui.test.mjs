@@ -716,17 +716,21 @@ test("TUI：Shell 审批三项菜单，简单命令可以「以后不再问」�
   assert.doesNotMatch(finalInput, /Esc to cancel/, "审批结束后恢复普通聊天输入提示");
 });
 
-test("TUI 审批菜单：记不成规则的命令不显示「以后不再问」", async (t) => {
+test("TUI 审批菜单：带重定向和 $? 的命令也能「以后不再问」", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, color: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
-  // 通配符命令切不开，记成规则只会放行比这次更多的东西，所以菜单里干脆不给这一项。
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "ls *.ts" } });
+  // 这类命令切不开，但可以按整条原文记住。真实命令几乎都长这样——
+  // 不给这一项，等于让「以后不再问」在实战里从不出现。
+  const pending = ui.tui.approve({
+    tool: "shell",
+    args: { command: 'curl -i http://localhost:8099/ 2>&1; echo "---EXIT $?---"' },
+  });
   pending.catch(() => {});
   await tick();
   assert.match(ui.text(), /1\. Yes, allow once/);
-  assert.doesNotMatch(ui.text(), /don't ask again/, "记不下来就不该给这个选项");
-  assert.match(ui.text(), /2\. No \(default\)/);
+  assert.match(ui.text(), /2\. Yes, and don't ask again for "curl -i http/);
+  assert.match(ui.text(), /3\. No \(default\)/);
   ui.input.write("\x1b");
   assert.equal(await pending, false);
 });
@@ -1194,7 +1198,8 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
     args: { command: "echo hi\necho bye" },
   });
   const beforeDecision = ui.text().length;
-  ui.input.write("\x1b[A\r");
+  // 三项菜单：上移两次才是「仅允许本次」（中间那一项是「以后不再问」）。
+  ui.input.write("\x1b[A\x1b[A\r");
 
   assert.equal(await pending, true);
   await tick();
@@ -1208,7 +1213,7 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
   assert.match(text, /[|│]\s+echo hi/);
   assert.match(text, /[|│]\s+echo bye/);
   assert.match(text, /1\. Yes, allow once/);
-  assert.match(text, /2\. No \(default\)/);
+  assert.match(text, /3\. No \(default\)/);
   assert.match(text, /(?:✓|\+) Allowed once/);
 });
 

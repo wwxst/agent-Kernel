@@ -51,7 +51,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序。
 - `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，漏传 / `undefined` / 非法 permission 在构造阶段报错，以及每个失败分支都折成文本。
 - `Permission`：三档策略、`permissionPrompt` 三档说明、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝；项目级规则的 allow / deny / ask 命中、「复合命令有一段没放行就整体要问」、`"always"` 写回规则后第二次直接放行、规则只在 `workspace-write` 生效。
-- `PermissionRules`：规则文件形状校验（坏文件必须报错）、argv 前缀不按字符匹配、单段前缀 / 多段精确两种规则、四种连接符切分、`$`/通配/重定向/未闭合引号一律判为不可解析、三层优先级（本地压过项目压过用户、`deny` 跨层最强且逐段生效）、`remember` 把复合命令记成精确整条并写本地层、自动补 `.gitignore`（已有条目不重复、末尾缺换行不粘行、非 git 仓库不动）、带空格的参数加引号后能往返。
+- `PermissionRules`：规则文件形状校验（坏文件必须报错）、argv 前缀不按字符匹配、单段前缀 / 多段精确两种规则、四种连接符切分、`$`/通配/重定向/未闭合引号一律判为不可解析、三层优先级（本地压过项目压过用户、`deny` 跨层最强且逐段生效）、`remember` 单段记前缀、其余（复合 / 切不开）记整条原文精确规则并写本地层、自动补 `.gitignore`（已有条目不重复、末尾缺换行不粘行、非 git 仓库不动）、带空格的参数加引号后能往返。
 - `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
 - `Workspace` 的九个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。

@@ -97,7 +97,7 @@ _Avoid_: cwd, working directory, project root, sandbox
 _Avoid_: daemon, service, task queue, session（它不是会话，也不排队）
 
 **Permission rule**:
-「这条命令要不要问」，分三层：本地 `.agent-kernel/permissions.local.json`（只有你，自动 gitignore）、项目 `.agent-kernel/permissions.json`（团队共享，进版本库）、用户 `~/.agent-kernel/permissions.json`（跨项目习惯）。一条规则是工具名加命令（`shell:git status`），**按参数数组比较**，不是按字符串前缀——后者会让 `git status && rm -rf /` 也命中。单段命令是前缀规则（`git status` 也放行 `git status --short`）；多段命令是**整条精确规则**（`cd demo && node server.js` 只认一模一样的那条）。`&&` `||` `;` `|` 连起来的命令在裁决时会拆开逐条判，拆不动（含 `$`、通配、重定向）的一律要问。`deny` 跨层最强，其余按层序（本地压过项目压过用户），只在 `workspace-write` 生效。见 [ADR-0018](./docs/adr/0018-project-permission-rules.md)。
+「这条命令要不要问」，分三层：本地 `.agent-kernel/permissions.local.json`（只有你，自动 gitignore）、项目 `.agent-kernel/permissions.json`（团队共享，进版本库）、用户 `~/.agent-kernel/permissions.json`（跨项目习惯）。一条规则是工具名加命令（`shell:git status`），**按参数数组比较**，不是按字符串前缀——后者会让 `git status && rm -rf /` 也命中。单段命令是前缀规则（`git status` 也放行 `git status --short`）；多段命令是**整条精确规则**（`cd demo && node server.js` 只认一模一样的那条）。`&&` `||` `;` `|` 连起来的命令在裁决时会拆开逐条判；拆不动（含 `$`、通配、重定向）的命令只能用**整条精确规则**，前缀规则永远匹配不上它们。`deny` 跨层最强，其余按层序（本地压过项目压过用户），只在 `workspace-write` 生效。见 [ADR-0018](./docs/adr/0018-project-permission-rules.md)。
 _Avoid_: allowlist（它听起来只放行不拒绝）, ACL, policy file
 
 **Step limit**:
