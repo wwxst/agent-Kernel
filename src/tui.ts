@@ -538,10 +538,17 @@ export class Tui {
           if (pasting) pasteBuffer += part;
           else out += part;
         }
-        // Ctrl+J（\n）是换行，不是提交：换成占位符，readline 就不会把它当回车。
+        // 换行的三条来源，统一换成占位符（readline 见到它不会当成回车）：
+        //   1. Shift+Enter 的 CSI-u 编码：ESC [ 13 ; 2 u
+        //   2. 老终端把 Shift+Enter 发成 ESC + CR
+        //   3. Ctrl+J 就是裸 \n（Claude Code 也把它当兜底）
         // 只在交互式主视图这么做：管道 / 脚本里的换行是「一行一个命令」，不能合并。
         if (this.layout && this.interactive) {
-          out = out.replace(/\r\n/g, "\r").replace(/\n/g, NEWLINE_MARK);
+          out = out
+            .replace(/\x1b\[13;2u/g, NEWLINE_MARK)
+            .replace(/\x1b\r/g, NEWLINE_MARK)
+            .replace(/\r\n/g, "\r")
+            .replace(/\n/g, NEWLINE_MARK);
         }
         args[0] = out;
       }

@@ -2461,3 +2461,20 @@ test("TUI 主视图：Ctrl+J 换行，输入区变成多行，回车一次提交
   ui.input.write("\r");          // 回车才提交
   assert.equal(await pending, "第一行\n第二行", "整段作为一条消息提交，换行保留");
 });
+
+test("TUI 主视图：Shift+Enter 的两种终端编码都当换行，不是提交", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  ui.input.write("第一行");
+  ui.input.write("\x1b[13;2u");   // 支持 CSI-u 的终端
+  ui.input.write("第二行");
+  ui.input.write("\x1b\r");       // 老终端把 Shift+Enter 发成 ESC + CR
+  ui.input.write("第三行");
+  await tick();
+  ui.input.write("\r");
+
+  assert.equal(await pending, "第一行\n第二行\n第三行", "两种编码都产生换行");
+});
