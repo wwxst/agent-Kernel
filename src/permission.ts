@@ -211,7 +211,7 @@ export class Permission {
         if (decision === "deny") {
           return {
             allowed: false,
-            reason: `tool "${request.tool}" is denied by a project rule (${this.rules?.filePath ?? "permissions.json"})`,
+            reason: `tool "${request.tool}" is denied by a permission rule (${this.rules?.sources.join(", ") ?? "permissions.json"})`,
           };
         }
         if (decision === "allow") return { allowed: true };

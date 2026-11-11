@@ -31,7 +31,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、显式权限注入（`Permission` 或 `null`）、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/tool-result-status.ts` | 纯展示事实判断：非 Shell 的 `ERROR:` 与 Shell 的 exit / timeout / cancelled；CLI/TUI 复用，不改工具结果文本 | `isToolResultFailure` |
 | `src/permission.ts` | 三档权限策略、项目级规则的裁决入口、`permissionPrompt` 模型指导、shell 的一次性审批、审批期间撤权后的版本复验；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`approvalGate`、`permissionPrompt` |
-| `src/permission-rules.ts` | 项目级权限规则：解析 `.agent-kernel/permissions.json`、保守切分复合命令、argv 前缀匹配、`deny → ask → allow` 裁决、把「以后不再问」写回文件；不依赖任何模块 | `PermissionRules`、`decideRules`、`splitCommand`、`isRememberable`、`parseRules` |
+| `src/permission-rules.ts` | 权限规则三层（本地 / 项目 / 用户）：解析规则文件、保守切分复合命令、argv 前缀匹配、`deny` 跨层最强 + 其余按层序、把「以后不再问」写进本地层并自动 gitignore；不依赖任何模块 | `PermissionRules`、`decideRules`、`splitCommand`、`isRememberable`、`parseRules` |
 | `src/approval.ts` | 审批提示格式化与读取：完整命令、实际 cwd、控制字符转义；`AbortSignal` / readline close / 正常回答的竞态收口 | `formatApproval`、`askWithSignal` |
 | `src/workspace.ts` | 工作区文件与 Shell：真实路径守卫、临时文件原子替换与取消检查、grep 物理扫描起点、有界读取/扫描、进程树清理期限及失败告警、后台任务登记与增量输出（日志落系统临时目录）；父目录 TOCTOU 仍有已知边界 | `Workspace.read/write/edit/glob/grep/list/run/readJobOutput/killJob`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
@@ -51,7 +51,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序。
 - `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，漏传 / `undefined` / 非法 permission 在构造阶段报错，以及每个失败分支都折成文本。
 - `Permission`：三档策略、`permissionPrompt` 三档说明、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝；项目级规则的 allow / deny / ask 命中、「复合命令有一段没放行就整体要问」、`"always"` 写回规则后第二次直接放行、规则只在 `workspace-write` 生效。
-- `PermissionRules`：规则文件形状校验（坏文件必须报错）、argv 前缀不按字符匹配、四种连接符切分、`$`/通配/重定向/未闭合引号一律判为不可解析、`remember` 只接受单条简单命令并落盘。
+- `PermissionRules`：规则文件形状校验（坏文件必须报错）、argv 前缀不按字符匹配、四种连接符切分、`$`/通配/重定向/未闭合引号一律判为不可解析、三层优先级（本地压过项目压过用户、`deny` 跨层最强）、`remember` 只接受单条简单命令、写本地层并自动补 `.gitignore`（已有条目不重复、末尾缺换行不粘行、非 git 仓库不动）。
 - `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
 - `Workspace` 的九个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。

@@ -1,8 +1,19 @@
 /**
- * 项目级权限规则：把「这条命令以后别再问」写成一个文件。
+ * 权限规则：把「这条命令以后别再问」写成一个文件。
  *
  * 为什么需要它：`Permission` 只有三档整体模式。`workspace-write` 下每条 shell 都要问一次，
  * 排查一个 bug 跑十几条命令就是十几次打断。规则让「读状态」这类命令一次批准、长期放行。
+ *
+ * 为什么分三层：**「跟着我走」和「跟着项目走」不是一回事**。
+ * 团队约定放行 `git status` 该进版本库；你个人图省事放行 `npm run dev` 不该让整个团队继承。
+ * 所以三层，优先级从高到低：
+ *
+ *   1. 本地 `.agent-kernel/permissions.local.json` —— 只有你，自动进 `.gitignore`
+ *   2. 项目 `.agent-kernel/permissions.json` —— 团队共享，进版本库
+ *   3. 用户 `~/.agent-kernel/permissions.json` —— 跨项目的个人习惯
+ *
+ * 菜单里点「以后不再问」写的是**本地层**：点一百次也不会污染团队的规则文件。
+ * 参照 Claude Code 的 user / project / local 三层（它连 gitignore 都帮你配好）。
  *
  * 为什么不按字符串前缀匹配：`Bash(ls *)` 那种写法里，`ls && rm -rf /` 也以 `ls ` 开头，
  * 照样命中。所以这里把命令切成**参数数组**，并且把 `&&` `||` `;` `|` 连起来的复合命令拆开
@@ -11,14 +22,21 @@
  * 保守边界：出现 `$`、反引号、重定向、通配符、反斜杠或换行时**不拆**，整条命令当作不透明。
  * 不透明命令永远匹配不上 allow，只能问你——宁可多问一次，不可误放一条。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import * as path from "node:path";
-
-/** 规则文件相对工作区的位置。跟 `.claude/settings.json` 一样是项目级：换个仓库，信任程度也不同。 */
-const RULES_FILE = path.join(".agent-kernel", "permissions.json");
 
 /** 唯一需要切分命令的工具；其他工具只支持「整个工具」粒度的规则。 */
 const SHELL_TOOL = "shell";
+
+/** 本地层相对工作区的位置。它永远不该进版本库，`remember` 会顺手写进 `.gitignore`。 */
+const LOCAL_FILE = path.join(".agent-kernel", "permissions.local.json");
+
+/** 项目层相对工作区的位置。 */
+const PROJECT_FILE = path.join(".agent-kernel", "permissions.json");
+
+/** 用户层相对 home 的位置。 */
+const USER_FILE = path.join(".agent-kernel", "permissions.json");
 
 const RULE_FIELDS = ["allow", "ask", "deny"] as const;
 
@@ -44,6 +62,12 @@ export interface RuleSet {
   allow: PermissionRule[];
   ask: PermissionRule[];
   deny: PermissionRule[];
+}
+
+/** 一层规则：来源文件 + 三张表。数组顺序就是优先级，靠前的赢。 */
+export interface RuleLayer {
+  file: string;
+  rules: RuleSet;
 }
 
 /** 裁决强度：数值大的赢。`none` 表示没有任何规则命中。 */
@@ -172,10 +196,20 @@ function matches(rule: PermissionRule, tool: string, argv: string[]): boolean {
   return rule.argv.every((part, index) => part === argv[index]);
 }
 
-function decideOne(rules: RuleSet, tool: string, argv: string[]): RuleDecision | "none" {
-  if (rules.deny.some((rule) => matches(rule, tool, argv))) return "deny";
-  if (rules.ask.some((rule) => matches(rule, tool, argv))) return "ask";
-  if (rules.allow.some((rule) => matches(rule, tool, argv))) return "allow";
+/**
+ * 单条简单命令的裁决。
+ *
+ * 两条规则同时决定一件事：
+ *   - **deny 跨层最强**：任何一层写了 deny 就拒绝。团队写了 `deny: rm -rf`，
+ *     你本地再写 allow 也不生效——安全方向的例外值得这个不一致。
+ *   - 其余按层序，靠前的层先说话：本地压过项目，项目压过用户。
+ */
+function decideOne(layers: readonly RuleLayer[], tool: string, argv: string[]): RuleDecision | "none" {
+  if (layers.some((layer) => layer.rules.deny.some((rule) => matches(rule, tool, argv)))) return "deny";
+  for (const layer of layers) {
+    if (layer.rules.ask.some((rule) => matches(rule, tool, argv))) return "ask";
+    if (layer.rules.allow.some((rule) => matches(rule, tool, argv))) return "allow";
+  }
   return "none";
 }
 
@@ -193,18 +227,18 @@ export function isRememberable(command: string): boolean {
  * 会被第一条的 allow 带过去。
  */
 export function decideRules(
-  rules: RuleSet,
+  layers: readonly RuleLayer[],
   tool: string,
   args: Record<string, unknown>,
 ): RuleDecision | "none" {
-  if (tool !== SHELL_TOOL) return decideOne(rules, tool, []);
+  if (tool !== SHELL_TOOL) return decideOne(layers, tool, []);
   const command = typeof args.command === "string" ? args.command : "";
   const segments = splitCommand(command);
   if (segments === null || segments.length === 0) return "ask";
   let matched = false;
   let decision: RuleDecision | "none" = "none";
   for (const segment of segments) {
-    const one = decideOne(rules, tool, segment);
+    const one = decideOne(layers, tool, segment);
     if (one === "none") {
       // 这一段没有任何规则命中：它不能被别的段的 allow 带过去。
       decision = stricter(decision, "ask");
@@ -218,51 +252,102 @@ export function decideRules(
   return matched ? decision : "none";
 }
 
+/** 读一份规则文件；不存在就是这一层没有规则，不算错误。 */
+async function readLayer(file: string): Promise<RuleLayer> {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === "ENOENT") return { file, rules: { allow: [], ask: [], deny: [] } };
+    throw error;
+  }
+  return { file, rules: parseRules(text, file) };
+}
+
+/** 把一层规则写成文件；空层也照写，删掉规则时文件要跟着变空。 */
+async function writeLayer(layer: RuleLayer): Promise<void> {
+  await mkdir(path.dirname(layer.file), { recursive: true });
+  const body: Record<string, string[]> = {};
+  for (const field of RULE_FIELDS) {
+    const entries = layer.rules[field].map((rule) =>
+      rule.argv.length === 0 ? rule.tool : `${rule.tool}:${rule.argv.join(" ")}`);
+    if (entries.length > 0) body[field] = entries;
+  }
+  // 末尾留换行：项目层的规则文件要提交进仓库，别让它成为 diff 里的噪音源。
+  await writeFile(layer.file, `${JSON.stringify(body, null, 2)}\n`, "utf8");
+}
+
 /**
- * 项目级规则集合。加载一次，之后由 `Permission` 查询；「以后不再问」会写回同一个文件。
+ * 把本地层文件加进 `.gitignore`。
+ *
+ * 只有真的是 git 仓库才动手；已经有这一行就不重复写。追加而不是覆盖——
+ * 这是用户的文件，不是我们的。
+ */
+async function ensureGitIgnored(root: string, entry: string): Promise<void> {
+  try {
+    await stat(path.join(root, ".git"));
+  } catch {
+    return;
+  }
+  const file = path.join(root, ".gitignore");
+  let text = "";
+  try {
+    text = await readFile(file, "utf8");
+  } catch (error) {
+    if ((error as { code?: string }).code !== "ENOENT") throw error;
+  }
+  if (text.split("\n").some((line) => line.trim() === entry)) return;
+  // 原文件末尾没有换行时先补一个，否则会把最后一行和我们的条目粘成一行。
+  const prefix = text === "" || text.endsWith("\n") ? "" : "\n";
+  await writeFile(file, `${text}${prefix}${entry}\n`, "utf8");
+}
+
+/**
+ * 三层规则集合。加载一次，之后由 `Permission` 查询；「以后不再问」写回本地层。
  */
 export class PermissionRules {
-  private readonly file: string;
+  /** 优先级从高到低：本地、项目、用户。 */
+  private readonly layers: RuleLayer[];
 
-  private rules: RuleSet;
+  /** 工作区根目录：`remember` 要往这里写本地层和 `.gitignore`。 */
+  private readonly root: string;
 
-  private constructor(file: string, rules: RuleSet) {
-    this.file = file;
-    this.rules = rules;
+  private constructor(layers: RuleLayer[], root: string) {
+    this.layers = layers;
+    this.root = root;
   }
 
   /**
-   * 读工作区的规则文件。文件不存在就是没有规则，不算错误；
-   * 文件存在但内容不合法**直接报错**——静默忽略一份安全配置比没有它更危险。
+   * 读三层规则。任何一层文件存在但内容不合法都**直接报错**——
+   * 静默忽略一份安全配置比没有它更危险。
    */
   static async load(root: string): Promise<PermissionRules> {
-    const file = path.join(root, RULES_FILE);
-    let text: string;
-    try {
-      text = await readFile(file, "utf8");
-    } catch (error) {
-      const code = (error as { code?: string }).code;
-      if (code === "ENOENT") return new PermissionRules(file, { allow: [], ask: [], deny: [] });
-      throw error;
-    }
-    return new PermissionRules(file, parseRules(text, file));
+    const [local, project, user] = await Promise.all([
+      readLayer(path.join(root, LOCAL_FILE)),
+      readLayer(path.join(root, PROJECT_FILE)),
+      readLayer(path.join(process.env.AGENT_KERNEL_HOME ?? homedir(), USER_FILE)),
+    ]);
+    return new PermissionRules([local, project, user], root);
   }
 
-  get filePath(): string {
-    return this.file;
+  /** 三层文件的位置，用于把「是哪份配置拦的」说清楚。 */
+  get sources(): string[] {
+    return this.layers.map((layer) => layer.file);
   }
 
   /**
    * 判断一次工具调用该走哪条路。语义见 `decideRules`。
    */
   decide(tool: string, args: Record<string, unknown>): RuleDecision | "none" {
-    return decideRules(this.rules, tool, args);
+    return decideRules(this.layers, tool, args);
   }
 
   /**
    * 把一条命令记成 allow 规则并落盘，返回写进去的规则文本。
    *
-   * 只接受能安全解析的单条简单命令：复合命令记成一条前缀规则会放行比用户点的那次更多的东西。
+   * 写的是**本地层**：菜单里的一次点头属于个人偏好，不该进团队的规则文件。
+   * 只接受能安全解析的单条简单命令——复合命令记成一条前缀规则会放行比用户点的那次更多的东西。
    */
   async remember(command: string): Promise<string> {
     const segments = splitCommand(command);
@@ -271,26 +356,17 @@ export class PermissionRules {
     }
     const argv = segments[0]!;
     const text = `${SHELL_TOOL}:${argv.join(" ")}`;
-    const exists = this.rules.allow.some(
+    const local = this.layers[0]!;
+    const exists = local.rules.allow.some(
       (rule) => rule.tool === SHELL_TOOL && rule.argv.length === argv.length &&
         rule.argv.every((part, index) => part === argv[index]),
     );
     if (!exists) {
-      this.rules.allow.push({ tool: SHELL_TOOL, argv });
-      await this.save();
+      local.rules.allow.push({ tool: SHELL_TOOL, argv });
+      await writeLayer(local);
     }
+    // 即使规则已经在，也补一次忽略：文件可能是用户手工建的。
+    await ensureGitIgnored(this.root, LOCAL_FILE.split(path.sep).join("/"));
     return text;
-  }
-
-  private async save(): Promise<void> {
-    await mkdir(path.dirname(this.file), { recursive: true });
-    const body: Record<string, string[]> = {};
-    for (const field of RULE_FIELDS) {
-      const entries = this.rules[field].map((rule) =>
-        rule.argv.length === 0 ? rule.tool : `${rule.tool}:${rule.argv.join(" ")}`);
-      if (entries.length > 0) body[field] = entries;
-    }
-    // 末尾留换行：规则文件是要提交进仓库的，别让它成为 diff 里的噪音源。
-    await writeFile(this.file, `${JSON.stringify(body, null, 2)}\n`, "utf8");
   }
 }
