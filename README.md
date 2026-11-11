@@ -51,6 +51,7 @@ agent --permission read-only "看看这个项目怎么跑"
 | `Ctrl+J` | 换行（所有终端可用，兜底） |
 | `@` | 补全工作区文件路径（回车插入，不提交） |
 | `Ctrl+X` `Ctrl+E` | 用 `$VISUAL` / `$EDITOR` 编辑当前输入（未设置时 Windows 用 notepad，其他用 vi） |
+| `↑` / `↓` | 翻历史（跨进程保存，存在 `~/.agent-kernel/history.jsonl`） |
 | `Ctrl+C` | 取消本轮 |
 | `Ctrl+E` | 打开历史视图（transcript） |
 | `PgUp` | 暂停活动区刷新，可自由往上翻历史 |

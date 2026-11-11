@@ -14,6 +14,7 @@
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
+import { appendHistory, loadHistory } from "./prompt-history.ts";
 import type { Interface, Key } from "node:readline";
 import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -615,6 +616,9 @@ export class Tui {
       options.input.pipe(this.mouseInput);
     }
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
+    // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
+    // 读不到或文件损坏都只是「没有历史」，不影响启动。
+    (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     // 兜底：不支持括号粘贴的终端（老 conhost）会把粘贴里的每个换行都变成一个 line 事件。
@@ -2096,6 +2100,8 @@ export class Tui {
     // 占位提示对应一段多行粘贴：真正交给模型的是原文。
     const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
     if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
+    // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /permission 没有意义）。
+    if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
     if (resolve === undefined) {
       this.lines.push(payload);

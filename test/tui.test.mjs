@@ -15,6 +15,10 @@ import { test } from "node:test";
 import { Tui, detectUiLanguage, parseTuiColorMode, uiLanguageFromLocale } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
+// 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
+// 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
+process.env.AGENT_HISTORY_FILE = path.join(tmpdir(), `agent-kernel-test-history-${process.pid}.jsonl`);
+
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
 function tick() {
   // 主视图的输入刷新走 scheduleInputChrome（setImmediate）再进 renderNow，
@@ -2535,4 +2539,19 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
   assert.match(inputLine(ui), /编辑后的内容/, "编辑器保存后内容回到输入框");
   ui.input.write("\r");
   assert.equal(await pending, "编辑后的内容");
+});
+
+test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次的任务", async (t) => {
+  const file = process.env.AGENT_HISTORY_FILE;
+  await writeFile(file, `${JSON.stringify({ ts: 1, cwd: "/w", text: "上一次的任务" })}\n`, "utf8");
+
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+
+  // 方向键要走真实转义序列：合成的 keypress 事件不带 sequence，readline 不认。
+  ui.input.write("\x1b[A");
+  await tick();
+  assert.match(inputLine(ui), /上一次的任务/, "上键翻出上一次的输入");
 });
