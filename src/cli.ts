@@ -40,6 +40,7 @@ import { ToolRegistry } from "./tool-registry.ts";
 import { Tui, parseTuiColorMode, uiLanguageFromLocale } from "./tui.ts";
 import type { ToolCall } from "./types.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
+import { projectInstructionsPrompt, readProjectInstructions } from "./project-instructions.ts";
 
 /** 帮助文案、错误文案和 usage 共用同一份模式列表，避免四处各写一遍。 */
 const PERMISSION_MODE_LIST = PERMISSION_MODES.join(", ");
@@ -392,6 +393,10 @@ function createAgent(
 
   const callbacks = options.callbacks;
 
+  // 项目指令：仓库里的 AGENTS.md 注入系统提示（Claude Code 读 CLAUDE.md、Codex 读 AGENTS.md 的同类机制）。
+  // 启动时读一次；文件不存在就是「没有项目规范」，不是错误。
+  const projectInstructions = readProjectInstructions(config.root);
+
   return new Agent({
     llm: new Llm({
       baseUrl: config.baseUrl,
@@ -405,7 +410,7 @@ function createAgent(
     tools,
     // 权限说明只指导模型；真正的放行/拒绝仍由 ToolRegistry 执行。
     // 函数在每次请求前求值，/permission 切换后下一次请求自动使用新规则。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
+    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,

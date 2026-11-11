@@ -956,3 +956,31 @@ test("TUI：HTTP 404 不触发自动重连，展示统一类别并保留实际 H
     }
   });
 });
+
+test("项目指令：工作区的 AGENTS.md 注入系统提示，没有该文件时不注入", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "AGENTS.md"), "# 项目规范\n\n- 提交前必须跑 npm run check\n");
+    const mock = await startMock([finalReply("ok")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      const system = mock.requests[0].messages[0];
+      assert.equal(system.role, "system");
+      assert.match(system.content, /Project instructions \(AGENTS\.md\)/, "注入时必须标明来源");
+      assert.match(system.content, /提交前必须跑 npm run check/, "项目规范正文要原样进入提示");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("ok")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.doesNotMatch(mock.requests[0].messages[0].content, /Project instructions/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
