@@ -66,6 +66,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - [docs/design/display-layers.md](./docs/design/display-layers.md)：概览层与详情层怎么分，终端与未来前端共用。
 - [docs/notes/tui-pitfalls.md](./docs/notes/tui-pitfalls.md)：TUI 踩过的十四个坑 + 四条底层规则，动渲染层前必读。
 - [docs/notes/cli-and-tooling.md](./docs/notes/cli-and-tooling.md)：命令行参数、全局安装、测试迁移的九个坑。
+- [docs/compare/agent-cli-matrix.md](./docs/compare/agent-cli-matrix.md)：与 Claude Code / Codex 的逐项能力对照，缺口清单。
 - [docs/agents/domain.md](./docs/agents/domain.md)：探索代码前该读什么。
 
 ## Agent skills
