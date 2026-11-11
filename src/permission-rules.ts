@@ -245,6 +245,10 @@ function matchesPrefix(argv: readonly string[], segment: readonly string[]): boo
  *
  * 前缀规则只对**单段**命令生效。多段或切不开的命令只能被精确规则整条管住——
  * 否则 `shell:git status` 会顺带放行 `git status && curl evil`。
+ *
+ * 例外是**空参数规则**（只写工具名，如 `shell`）：它的意思是「这个工具的任意调用」，
+ * 所以连切不开的命令也算。这是 Claude Code 裸 `Bash` 规则的等价物——
+ * 少了这条，`"allow": ["shell"]` 对 `curl x 2>&1` 这种命令就不生效，等于形同虚设。
  */
 function matchesCommand(
   rule: PermissionRule,
@@ -254,6 +258,7 @@ function matchesCommand(
 ): boolean {
   if (rule.tool !== tool) return false;
   if (rule.kind === "exact") return normalize(raw) === rule.command;
+  if (rule.argv.length === 0) return true;
   return segments !== null && segments.length === 1 && matchesPrefix(rule.argv, segments[0]!);
 }
 

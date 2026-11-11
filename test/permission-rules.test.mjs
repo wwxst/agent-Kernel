@@ -224,6 +224,24 @@ test("切不开的命令也能记住：按整条原文逐字比较", async () =>
   });
 });
 
+test("放行整个工具：只写工具名的规则覆盖所有命令，包括切不开的", () => {
+  const rules = parseRules(JSON.stringify({ allow: ["shell"] }), "t");
+  assert.equal(decide(rules, "ls -la"), "allow");
+  assert.equal(decide(rules, "cd demo && node server.js"), "allow", "复合命令也放行");
+  assert.equal(
+    decide(rules, "curl -i http://x/ 2>&1 | head -40"),
+    "allow",
+    "切不开的命令也要放行，否则「放行整个工具」形同虚设",
+  );
+});
+
+test("放行整个工具时 deny 仍然压得住", () => {
+  const rules = parseRules(JSON.stringify({ allow: ["shell"], deny: ["shell:rm -rf"] }), "t");
+  assert.equal(decide(rules, "ls"), "allow");
+  assert.equal(decide(rules, "rm -rf /"), "deny");
+  assert.equal(decide(rules, "rm -rf / 2>&1"), "deny", "带重定向也拦得住");
+});
+
 test("deny 对切不开的命令也生效：按原始 token 前缀拦", async () => {
   await withRoot(async (root) => {
     await writeRuleFile(root, ".agent-kernel/permissions.json", { deny: ["shell:rm -rf"] });

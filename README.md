@@ -277,6 +277,28 @@ Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功�
 
 后者放**本地层**——它不进 git，改起来没有心理负担，也不会替别人做决定。真要禁止某类操作，写进项目层的 `deny`：它跨层最强，谁也覆盖不掉。
 
+### 想彻底不问
+
+`workspace-write` 下 shell 永远要问。如果你信任某个目录、不想再被打断，只有两种做法：
+
+| 做法 | 范围 | 怎么写 |
+| --- | --- | --- |
+| 放行整个工具 | 这个工作区 | 规则里只写工具名：`"allow": ["shell"]` |
+| 提权限 | 这一轮会话 | `Shift+Tab` 连按到「完全访问」，或启动时 `--permission full-access` |
+
+第一条跟 Claude Code 的裸 `Bash` 规则等价：**只写工具名 = 这个工具的任意命令**，连 `curl x 2>&1` 这种切不开的也算。它管的是**这个目录**，换个仓库不生效。
+
+代价必须说清楚：`"allow": ["shell"]` 之后，`rm -rf`、`curl`、写工作区外面都不会再问。唯一还拦得住的是 `deny`，建议同时写一条底线：
+
+```json
+{
+  "allow": ["shell"],
+  "deny":  ["shell:rm -rf", "shell:git push"]
+}
+```
+
+**注意 `full-access` 不读规则**（它的语义就是全部直接执行），所以这条底线只在 `workspace-write` 下有效。
+
 检查发生在 `ToolRegistry.execute()` 里：参数校验通过之后、`tool.run()` 之前。被拒绝的调用不会执行，结果是一条 `ERROR: permission denied: ...` 回灌给模型，模型可以在下一轮自己换个做法。
 
 `ToolRegistry` 构造时必须显式传 `permission: Permission | null`：传 `Permission` 启用策略，传 `null` 表示宿主主动关闭检查；漏传、`undefined`、字符串等非法值在装配阶段直接报错。CLI 默认 `workspace-write`（`--permission` 可覆盖），评测显式传 `full-access`，测试按需显式传 `null` 或 `Permission`。
