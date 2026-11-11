@@ -241,7 +241,7 @@ test("onRequestStart step 在每个 Run 从 1 重新开始，而不是累积 Ses
   assert.equal(agent.sessionStats.requests, 2);
 });
 
-test("进程树清理未确认：禁止同批后续工具，记录完整配对并终止 Run", async () => {
+test("进程树清理未确认：跳过同批后续工具，把错误交回模型而不是毁掉整轮", async () => {
   let touched = false;
   const cleanup = {
     name: "broken_shell", description: "simulated cleanup failure",
@@ -260,10 +260,12 @@ test("进程树清理未确认：禁止同批后续工具，记录完整配对�
   const chat = createScriptedChat([{ role: "assistant", content: null, tool_calls: calls }, finalReply("unsafe success")]);
   const agent = new Agent({ llm: chat, tools: makeRegistry([cleanup, write]) });
 
-  await assert.rejects(() => agent.run("do it"), ProcessCleanupError);
+  // 一次命令超时不该毁掉前面所有工作：错误回灌给模型，由它收尾报告。
+  const reply = await agent.run("do it");
+  assert.equal(reply.content, "unsafe success");
   assert.equal(touched, false, "清理未确认后严禁执行有副作用的后续工具");
-  assert.equal(chat.requests.length, 1, "清理未确认后不得继续请求模型");
-  assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "tool"]);
+  assert.equal(chat.requests.length, 2, "把错误交回模型，让它决定怎么收尾");
+  assert.deepEqual(roles(agent.transcript), ["system", "user", "assistant", "tool", "tool", "assistant"]);
   const results = agent.transcript.filter((message) => message.role === "tool");
   assert.deepEqual(results.map((message) => message.tool_call_id), ["shell", "write"]);
   assert.match(results[0].content, /cleanup unverified/);
