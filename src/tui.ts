@@ -42,6 +42,9 @@ const MAX_LOG_LINES = 2_000;
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
+/** Ctrl+J 换行在输入行里的占位符：readline 见到它不会当成回车。 */
+const NEWLINE_MARK = "\u240A";
+
 
 /** 右对齐的模型名和统计与窗口右边缘之间留的呼吸空间，避免文字贴边难读。 */
 const RIGHT_MARGIN = 2;
@@ -388,11 +391,6 @@ export class Tui {
 
   private pastedPlaceholder = "";
 
-  /** 同一批到达的行（粘贴兜底用）：人工按键不会在一个事件循环里连发多个回车。 */
-  private burstLines: string[] = [];
-
-  private burstFlush?: NodeJS.Immediate;
-
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
 
@@ -540,6 +538,11 @@ export class Tui {
           if (pasting) pasteBuffer += part;
           else out += part;
         }
+        // Ctrl+J（\n）是换行，不是提交：换成占位符，readline 就不会把它当回车。
+        // 只在交互式主视图这么做：管道 / 脚本里的换行是「一行一个命令」，不能合并。
+        if (this.layout && this.interactive) {
+          out = out.replace(/\r\n/g, "\r").replace(/\n/g, NEWLINE_MARK);
+        }
         args[0] = out;
       }
       return originalEmit(event, ...args);
@@ -593,21 +596,9 @@ export class Tui {
     // 合并成一条消息，换行保留。
     this.rl.on("line", (rawLine) => {
       // 审批期间的按键（y/1/回车、粘贴）不是任务输入：直接丢弃，
-      // 不能进批处理缓冲，否则会在审批结束后冒充下一轮任务。
+      // 不能进下一轮任务队列。
       if (this.approvalMenuActive) return;
-      // 只在交互式主视图里合并：脚本 / 管道输入的多行是多个命令，合并会吃掉它们。
-      if (!this.layout) {
-        this.submitLine(rawLine);
-        return;
-      }
-      this.burstLines.push(rawLine);
-      if (this.burstFlush !== undefined) return;
-      this.burstFlush = setImmediate(() => {
-        this.burstFlush = undefined;
-        const merged = this.burstLines.join("\n");
-        this.burstLines = [];
-        this.submitLine(merged);
-      });
+      this.submitLine(rawLine);
     });
     this.rl.on("close", () => {
       this.ended = true;
@@ -2023,7 +2014,8 @@ export class Tui {
   }
 
   /** 提交一行：审批不消费文本行；占位提示换成多行粘贴的原文。 */
-  private submitLine(line: string): void {
+  private submitLine(rawSubmitted: string): void {
+    const line = rawSubmitted.split(NEWLINE_MARK).join("\n");
     // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
     // 也不能在审批结束后进入下一轮任务队列。
     if (this.approvalMenuActive) return;
@@ -2288,8 +2280,10 @@ export class Tui {
     // 输入框上方 = 活动区尾部实际占用的终端行数 + 输入框上边框。
     // 不能直接用 tail.length：终端在行尾会自动折行，一条逻辑行可能占两行；
     // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
-    const rowsAboveInput = tail.reduce(
-      (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0) + 1;
+    const tailRows = tail.reduce(
+      (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
+    // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
+    const rowsAboveInput = tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
 
     let frame = "\x1b[?2026h";
     if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
@@ -2303,9 +2297,13 @@ export class Tui {
     for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
     // 审批时隐藏输入框：菜单独占这块区域，和 Claude Code 一致。
     // 留着输入框会让人以为「还能打字」，而按键其实全给了菜单。
-    frame += this.approvalMenuActive
-      ? `${this.dividerLine(width)}\r\n`
-      : `${this.dividerLine(width)}\r\n${this.inputLine(width)}\r\n${this.dividerLine(width)}\r\n`;
+    // 输入区可以是多行（Ctrl+J 换行），行数变化要同时反映到光标回退的行数上。
+    const inputRows = this.approvalMenuActive ? [] : this.inputLines(width);
+    if (this.approvalMenuActive) {
+      frame += `${this.dividerLine(width)}\r\n`;
+    } else {
+      frame += `${this.dividerLine(width)}\r\n${inputRows.join("\r\n")}\r\n${this.dividerLine(width)}\r\n`;
+    }
     if (menuRows > 0) {
       const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
         Math.max(0, slashCandidates.length - menuRows));
@@ -2401,23 +2399,42 @@ export class Tui {
   }
 
   /**
-   * 只展示光标附近的输入片段，完整文字仍在 readline 里；横向滚动不移动固定栏位。
+   * 输入区的每一行。
+   *
+   * Ctrl+J 换行后内容里带 NEWLINE_MARK，这里按它切行：第一行带提示符，
+   * 后续行缩进对齐。Enter 才提交，所以多行任务可以先铺开再一次性发出。
    */
-  private inputLine(width: number): string {
+  private inputLines(width: number): string[] {
     const prompt = this.promptText === COMMAND_PROMPT ? `${this.glyphs.user} ` : singleLine(this.promptText);
-    const room = Math.max(1, width - displayWidth(prompt));
-    const cursor = this.rl.cursor;
-    if (cursor < this.inputOffset) this.inputOffset = cursor;
-    while (displayWidth(escapeControlCharacters(this.rl.line.slice(this.inputOffset, cursor))) >= room) {
-      this.inputOffset += (this.rl.line.codePointAt(this.inputOffset) ?? 0) > 0xffff ? 2 : 1;
-    }
-    if (this.rl.line === "") this.inputOffset = 0;
-    const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT && this.log.length === 0;
-    const text = placeholder ? ` ${this.uiText(PLACEHOLDER, "输入任务，或输入 /help...")}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
-    const shown = takeByWidth(text, room);
-    // 提示符用默认色（mono 下就是普通白），只有占位提示保留灰色，避免和已输入内容混淆。
-    return this.style.inputPrompt(prompt) +
-      (placeholder ? this.style.inputHint(padRight(shown, room)) : padRight(shown, room));
+    const segments = this.rl.line.split(NEWLINE_MARK);
+    // 光标所在的那一段要横向滚动，保证光标始终可见；其他段从头裁剪即可。
+    const beforeCursor = this.rl.line.slice(0, this.rl.cursor);
+    const cursorSegment = beforeCursor.split(NEWLINE_MARK).length - 1;
+    const cursorInSegment = beforeCursor.length - (beforeCursor.lastIndexOf(NEWLINE_MARK) + 1);
+    return segments.map((segment, index) => {
+      const prefix = index === 0 ? prompt : "  ";
+      const room = Math.max(1, width - displayWidth(prefix));
+      const placeholder = index === 0 && this.promptPlaceholder && this.rl.line === "" &&
+        this.promptText === COMMAND_PROMPT && this.log.length === 0;
+      if (placeholder) {
+        return this.style.inputPrompt(prefix) +
+          this.style.inputHint(padRight(` ${this.uiText(PLACEHOLDER, "输入任务，或输入 /help...")}`, room));
+      }
+      let shown = segment;
+      if (index === cursorSegment) {
+        // 光标前面的内容超出宽度就左移起点，直到光标能落在框内。
+        let start = 0;
+        while (displayWidth(escapeControlCharacters(shown.slice(start, cursorInSegment))) >= room) start++;
+        shown = shown.slice(start);
+      }
+      return this.style.inputPrompt(prefix) + padRight(takeByWidth(escapeControlCharacters(shown), room), room);
+    });
+  }
+
+  /** 单行版本：整屏网格只有一行输入位，取最后一行（光标所在行）。 */
+  private inputLine(width: number): string {
+    const rows = this.inputLines(width);
+    return rows[rows.length - 1]!;
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
@@ -2425,7 +2442,9 @@ export class Tui {
     const plainPrompt = this.promptText === COMMAND_PROMPT
       ? `${this.glyphs.user} `
       : singleLine(this.promptText);
-    const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
+    // 多行输入时光标在最后一行：列偏移只算最后一个换行之后的部分。
+    const beforeCursor = this.rl.line.slice(this.inputOffset, this.rl.cursor);
+    const before = escapeControlCharacters(beforeCursor.slice(beforeCursor.lastIndexOf(NEWLINE_MARK) + 1));
     const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
     return `\x1b[${this.inputRow};${column}H`;
   }

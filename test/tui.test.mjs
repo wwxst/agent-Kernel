@@ -929,7 +929,7 @@ test("TUI：审批完整显示多行命令和 cwd，y 只放行这一次", async
     tool: "shell",
     args: { command: "echo hi\necho bye" },
   });
-  ui.input.write("y\n");
+  ui.input.write("y\r");
 
   assert.equal(await pending, true);
   await tick();
@@ -948,7 +948,7 @@ test("TUI：审批回答 n 是拒绝，并写出 denied", async (t) => {
 
   ui.tui.start();
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo nope" } });
-  ui.input.write("n\n");
+  ui.input.write("n\r");
 
   assert.equal(await pending, false);
   await tick();
@@ -972,7 +972,7 @@ test("TUI：已有排队输入时不把下一行当成审批答案", async (t) =
   t.after(() => ui.cleanup());
 
   ui.tui.start();
-  ui.input.write("queued task\n");
+  ui.input.write("queued task\r");
   await tick();
 
   await assert.rejects(
@@ -2408,16 +2408,17 @@ test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次�
   assert.equal(await pending, "第一行\n第二行\n第三行", "粘贴内容是一条消息，换行保留");
 });
 
-test("TUI：不支持括号粘贴的终端，同一批到达的多行也合并成一条消息", async (t) => {
+test("TUI：不支持括号粘贴的终端，裸换行当换行处理，回车才提交", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
 
   const pending = ui.tui.readLine();
-  // 老 conhost 不发 ESC[200~：三个换行就是三个 line 事件，但它们是同一批数据。
-  ui.input.write("第一行\n第二行\n第三行\n");
+  // 老 conhost 不发 ESC[200~：裸换行现在是 Ctrl+J 语义（换行），不是提交。
+  ui.input.write("第一行\n第二行\n第三行");
+  ui.input.write("\r");
 
-  assert.equal(await pending, "第一行\n第二行\n第三行", "同一批多行合并为一条消息");
+  assert.equal(await pending, "第一行\n第二行\n第三行", "整段是一条消息，换行保留");
 });
 
 test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", async (t) => {
@@ -2438,4 +2439,25 @@ test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", a
 
   ui.input.write("n\r");
   assert.equal(await pending, false);
+});
+
+test("TUI 主视图：Ctrl+J 换行，输入区变成多行，回车一次提交整段", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  ui.input.write("第一行");
+  ui.input.write("\n");          // Ctrl+J：换行，不提交
+  ui.input.write("第二行");
+  await tick();
+
+  const rows = screenRows(ui, 30);
+  assert.ok(rows.some((line) => /第一行/.test(line)), "第一行显示在输入区");
+  assert.ok(rows.some((line) => /第二行/.test(line)), "第二行显示在输入区");
+  assert.ok(rows.indexOf(rows.find((line) => /第二行/.test(line))) >
+    rows.indexOf(rows.find((line) => /第一行/.test(line))), "第二行在第一行下面");
+
+  ui.input.write("\r");          // 回车才提交
+  assert.equal(await pending, "第一行\n第二行", "整段作为一条消息提交，换行保留");
 });
