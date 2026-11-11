@@ -398,14 +398,14 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   ui.tui.setThinking(true);
   const first = rowWith(ui, /Thinking\.\.\./);
   assert.match(first, /Thinking\.\.\. \(0s\)/);
-  // 主视图拍平后，取消提示并进 Thinking 那一行，不再单独占一行。
-  assert.match(rowWith(ui, /Thinking\.\.\./), /Ctrl-C to cancel/);
+  // 「怎么取消」在底部状态栏，不占内容行。
+  assert.match(ui.text(), /Ctrl-C (?:to cancel|cancel|取消)/);
   t.mock.timers.tick(200);
   assert.notEqual(rowWith(ui, /Thinking\.\.\./), first);
   ui.tui.assistantDelta("hello");
   t.mock.timers.tick(1000);
   assert.match(rowWith(ui, /hello/), /hello/);
-  assert.doesNotMatch(rowWith(ui, /Ctrl-C to cancel/), /Ctrl-C/);
+  assert.doesNotMatch(rowWith(ui, /Thinking\.\.\./), /Thinking/, "正文到达后不再残留等待态");
 });
 
 test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息不左右跳动", async (t) => {
@@ -419,7 +419,7 @@ test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息�
   let previousSymbol = "";
   for (let frame = 0; frame < 5; frame++) {
     const line = rowWith(ui, /Thinking\.\.\./);
-    assert.match(line, /Thinking\.\.\. \(0s\)(?: · Ctrl-C to cancel)?(?: │ .+)?$/);
+    assert.match(line, /Thinking\.\.\. \(0s\)(?: │ .+)?$/);
     assert.equal(line.indexOf("("), detailColumn);
     const symbol = line.split(" ")[0];
     assert.notEqual(symbol, previousSymbol);
@@ -599,7 +599,7 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
-  assert.match(rowWith(ui, /Ctrl-C to cancel/), /Ctrl-C to cancel/);
+  assert.match(ui.text(), /Ctrl-C (?:to cancel|cancel|取消)/);
   t.mock.timers.tick(2000);
   assert.match(ui.text(), /Thinking\.\.\. \(2s\)/);
   ui.tui.assistantDelta("hello");
@@ -1540,7 +1540,8 @@ test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Think
   assert.equal(ui.tui.uiText("Allowed once", "已允许本次执行"), "Allowed once");
   ui.tui.setThinking(true);
   assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
-  assert.match(ui.text(), /Ctrl-C to cancel/);
+  // 英文环境同样把「怎么取消」放在状态栏。
+  assert.match(ui.text(), /Ctrl-C cancel/);
 
   const englishRead = { ...read, id: "english-read" };
   ui.tui.toolCall(englishRead);

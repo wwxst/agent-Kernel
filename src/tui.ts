@@ -2497,11 +2497,8 @@ export class Tui {
       // 中文对照：等待中，已经过 {seconds} 秒，以及已收到的工具结果数。
       this.maybeRotateMood();
       const waiting = `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`;
-      // 主视图是扁平的一行：把「怎么取消」并进去，不再单独占一行。
-      const cancelHint = this.uiText("Ctrl-C to cancel", "Ctrl-C 取消");
-      logical.push({ text: this.withMood(flat ? `${waiting} · ${cancelHint}` : waiting, this.contentWidth()),
-        tone: "accent", kind: "thinking" });
-      if (!flat) logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${cancelHint}`, tone: "muted" });
+      // 「怎么取消」是全局提示，放底部状态栏；塞进内容行只会每帧重复一遍。
+      logical.push({ text: this.withMood(waiting, this.contentWidth()), tone: "accent", kind: "thinking" });
       }
     } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
                this.activityState !== undefined && this.activityState !== "preparing" &&
@@ -2615,8 +2612,13 @@ export class Tui {
       right = `${requests}r ${lower}${formatNumber(this.stats?.usage.totalTokens ?? 0)}tok`;
     }
 
-    const rightText = clip(right, Math.max(1, innerWidth));
-    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
+    // 运行中才提示「怎么中断」：它属于全局状态，放状态栏；放进内容流就是每帧重复一行。
+    // 用内容宽度判断而不是逐项量宽：状态栏本身会被 clip 兜底，这里只决定要不要加这一段。
+    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined && this.contentWidth() >= 40) {
+      right = `${right} · ${this.uiText("Ctrl-C cancel", "Ctrl-C 取消")}`;
+    }
+
+    const rightText = clip(right, Math.max(1, innerWidth));    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
     const gap = Math.max(1, innerWidth - displayWidth(leftText) - displayWidth(rightText));
     return (
       this.style.paint(this.fullAccessConfirmationPending || this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
