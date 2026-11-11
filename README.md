@@ -40,7 +40,7 @@ agent --permission read-only "看看这个项目怎么跑"
 
 不捕获鼠标：滚轮、滚动条、选中复制、终端搜索全部保持原生行为；展开历史走 `Ctrl+T` + 键盘。若终端明确声明 `TERM=dumb`，交互式 TUI 会报错，请改用支持 ANSI 控制序列的终端。
 
-`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。输入区支持多行：`Shift+Enter` 或 `Ctrl+J` 换行、`Enter` 提交（粘贴多行同样折叠成一条消息）。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。工作区根目录的 `AGENTS.md` 会在启动时读入系统提示（超过 32000 字符截断）；没有该文件就不注入。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
+`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。配色方案另由 `AGENT_TUI_THEME=dark|light|ansi` 决定：`dark`（默认）按深色背景配色，`light` 换成浅底深字（浅色终端上 `info` 的近白灰等于没写字），`ansi` 强制只用终端自己的 16 色。两者正交——先选用哪套色，再选上不上色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。输入区支持多行：`Shift+Enter` 或 `Ctrl+J` 换行、`Enter` 提交（粘贴多行同样折叠成一条消息）。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。工作区根目录的 `AGENTS.md` 会在启动时读入系统提示（超过 32000 字符截断）；没有该文件就不注入。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
 
 ### 快捷键
 

@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiColorMode, uiLanguageFromLocale } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
 
 // 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
@@ -172,7 +172,7 @@ function rowWith(ui, pattern) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model", workspace = "C:\\work\\repo" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", theme = "dark", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model", workspace = "C:\\work\\repo" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -199,6 +199,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     rows,
     color,
     colorMode,
+    theme,
     flowInput,
     language,
     onPermissionChange,
@@ -245,6 +246,37 @@ test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色",
   assert.doesNotMatch(mono.text(), /\x1b\[(?:90|38;5;244)m[-─]/, "分隔线不再使用灰色层次色");
   assert.match(full.text(), /\x1b\[(?:90|38;5;244)m(?:❯|>) /, "full 模式提示符仍用灰色强调");
   assert.match(full.text(), /\x1b\[(?:33|38;5;215)m/, "full 模式恢复强调色");
+});
+
+
+test("TUI 主题：light 换成浅底深字，ansi 强制 16 色", async (t) => {
+  assert.equal(parseTuiTheme(undefined), "dark");
+  assert.equal(parseTuiTheme(""), "dark");
+  assert.equal(parseTuiTheme("dark"), "dark");
+  assert.equal(parseTuiTheme("light"), "light");
+  assert.equal(parseTuiTheme("ansi"), "ansi");
+  assert.throws(() => parseTuiTheme("solarized"), /invalid AGENT_TUI_THEME/);
+
+  const light = makeTui({ interactive: true, tty: true, color: true, colorMode: "full", theme: "light" });
+  const ansi = makeTui({ interactive: true, tty: true, color: true, colorMode: "full", theme: "ansi" });
+  t.after(() => { light.cleanup(); ansi.cleanup(); });
+  light.tui.start();
+  ansi.tui.start();
+  light.tui.beginTurn("你好");
+  ansi.tui.beginTurn("你好");
+  await tick();
+
+  // 任务条：浅色终端用浅灰底黑字，深灰底在白色背景上像一块污渍。
+  assert.match(light.text(), /\x1b\[30;47m\x1b\[38;5;240;48;5;254m(?:❯|>) /, "浅色主题的任务条要反过来");
+  assert.doesNotMatch(light.text(), /48;5;237m/, "不能再用深色主题的底色");
+
+  // 强调色：浅色 34 / 166，深色 33 / 215。两组不重叠，能证明换的是色系不是开关。
+  assert.match(light.text(), /\x1b\[(?:34|38;5;166)m/);
+  assert.doesNotMatch(light.text(), /\x1b\[(?:33|38;5;215)m/, "浅色主题不能沿用深色终端的强调色");
+
+  // ansi：就是要终端自己那套 16 色，rich 探测说了不算。
+  assert.match(ansi.text(), /\x1b\[33m/);
+  assert.doesNotMatch(ansi.text(), /\x1b\[38;5;215m/, "ansi 主题不能落到 256 色强调色");
 });
 
 

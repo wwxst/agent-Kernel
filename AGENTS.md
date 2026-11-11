@@ -16,7 +16,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
 | `npm run agent --` | 不带任务：直接进全屏 TUI（唯一交互界面）；`--repl` 已移除，传入会报错 |
-| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色；需 `.env` |
+| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色，`AGENT_TUI_THEME=dark/light/ansi` 选配色方案；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |

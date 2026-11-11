@@ -26,12 +26,12 @@
 | 能力 | Claude Code | Codex | 我们 | 评估 |
 | --- | --- | --- | --- | --- |
 | 主视图模型 | 就地追加（`<Static>`） | 就地追加 | ✅ 就地追加 | 持平 |
-| 历史浏览 | 原生 scrollback + `Ctrl+O` | 原生 scrollback | ⚠️ scrollback + `Ctrl+E` transcript + `PgUp` 暂停 | 持平（暂停是自研） |
+| 历史浏览 | 原生 scrollback + `Ctrl+O` | 原生 scrollback | ⚠️ scrollback + `Ctrl+T` transcript + `PgUp` 暂停 | 持平（暂停是自研） |
 | 工具调用折叠 | ✅ | ✅ | ✅（主视图拍平） | 持平 |
 | 层级深度 | 2 层 | 2 层 | 2 层（transcript 3 层） | 持平 |
 | Diff 展示 | ✅ 行内 | ✅ 行内 | ✅ Unified Diff | 持平 |
-| 图片预览 | ✅ | ✅ | ⚠️ 有界文字缩略图 | 弱 |
-| 主题 | ✅ 多套 | ✅ 多套 | ⚠️ mono/full | 差 |
+| 图片预览 | ✅ | ✅ | ⚠️ 有界文字缩略图 | 弱（只能读 PNG 文件，没有图片输入，暂时够用） |
+| 主题 | ✅ `/theme`：dark / light / 色盲友好 / ANSI | ✅ 多套 | ✅ `AGENT_TUI_THEME`：dark / light / ansi | 持平（缺色盲友好） |
 | 字形降级 | ❌ 只用 Unicode | ❓ | ✅ 探测 + `AGENT_TUI_GLYPHS` | **我们有他们没有** |
 | 运行中滚动历史 | ❌ 已知未解（issue #826/#769/#1486/#367/#33814） | ❓ | ⚠️ `PgUp` 暂停刷新 | **行业未解**，我们给了逃生口 |
 
@@ -147,6 +147,7 @@
 | 类别 | 补了什么 |
 | --- | --- |
 | 输入与编辑 | 多行输入（`Shift+Enter` + `Ctrl+J`）、跨进程输入历史、`@` 文件补全、`Ctrl+X Ctrl+E` 外部编辑器。只剩「粘贴图片」，已按上面的理由推迟 |
+| 渲染与视图 | 配色方案从「mono/full 一个开关」拆成 `AGENT_TUI_THEME=dark\|light\|ansi`，浅色终端不再把近白灰当正文色；顺手修掉文档里把 transcript 键写成 `Ctrl+E` 的错误（实际是 `Ctrl+T`） |
 | 工具细节 | 后台任务的输出读取与收尾（`shell-output` / `shell-kill`）——不算能力扩张，是 `shell` 那半个功能的收尾 |
 | 错误与恢复 | 进程树清理失败不再终止整轮，改成返回错误让模型继续 |
 

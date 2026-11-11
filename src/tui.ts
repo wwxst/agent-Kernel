@@ -222,6 +222,24 @@ export function parseTuiColorMode(value: string | undefined): TuiColorMode {
   throw new Error(`invalid AGENT_TUI_COLOR "${value}" (expected: full, mono)`);
 }
 
+/**
+ * 配色方案。和 `TuiColorMode` 是**两件事**，不要合并：
+ *
+ *   - `colorMode` 管「上不上色」（mono 只给用户消息条上色）；
+ *   - `theme` 管「用哪套色」（同一处文字在深色和浅色终端里该是什么颜色）。
+ *
+ * 之前的实现把两者混成了一个开关，结果只有「深色背景 + 有层次」和「深色背景 + 没层次」两种，
+ * 浅色终端上 `info` 的 250 号浅灰几乎看不见。参照 Claude Code 的 `/theme`（dark / light / ANSI）。
+ */
+export type TuiTheme = "dark" | "light" | "ansi";
+
+/** 默认 dark；`ansi` 强制走 16 色，老终端和「就要终端自己那套配色」的场景用得上。 */
+export function parseTuiTheme(value: string | undefined): TuiTheme {
+  if (value === undefined || value === "" || value === "dark") return "dark";
+  if (value === "light" || value === "ansi") return value;
+  throw new Error(`invalid AGENT_TUI_THEME "${value}" (expected: dark, light, ansi)`);
+}
+
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
@@ -236,6 +254,8 @@ export interface TuiOptions {
   rows?: number;
   /** 层次配色开关；默认 mono，只保留用户消息任务条的颜色，其余文字纯白。 */
   colorMode?: TuiColorMode;
+  /** 配色方案；默认 dark。和 colorMode 正交：先定用哪套色，再定上不上色。 */
+  theme?: TuiTheme;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
   /** 初始界面语言；缺省英文，交互式 CLI 按系统 locale 传入；之后仍按任务正文切换。 */
@@ -578,11 +598,12 @@ export class Tui {
     this.recomputeGeometry();
 
     const colorMode = options.colorMode ?? "mono";
+    const theme = options.theme ?? "dark";
     const colorEnabled =
       this.ownedScreen &&
       (options.color ??
         (process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"));
-    this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono");
+    this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono", theme);
     // 现代终端用 ❯/✻，有限字形环境退回 ASCII，但不降级布局。
     // 显式开关优先：老 conhost 配上 UTF-8 代码页其实能显示 Unicode，可环境变量探测不出来，
     // 所以留一个 AGENT_TUI_GLYPHS=unicode|ascii 的逃生口（Claude Code / Codex 都是直接用 Unicode，
@@ -3017,28 +3038,36 @@ export class Tui {
 class Style {
   private readonly enabled: boolean;
 
-  private readonly rich: boolean;
-
   private readonly mono: boolean;
 
   private readonly palette: Record<Tone, string>;
 
-  constructor(enabled: boolean, rich: boolean, mono = false) {
+  /** 用户消息任务条：前缀色、正文色。底色已经编在这两串里。 */
+  private readonly band: { marker: string; body: string };
+
+  constructor(enabled: boolean, rich: boolean, mono = false, theme: TuiTheme = "dark") {
     this.enabled = enabled;
-    this.rich = rich;
     this.mono = mono;
-    this.palette = rich ? RICH_PALETTE : BASIC_PALETTE;
+    // 先按主题选色系，再按终端能力降级。`ansi` 主题就是「要终端自己那套 16 色」，
+    // 所以它优先于 rich 探测；浅色主题在没有 256 色的终端上退到 16 色版本。
+    this.palette = theme === "light"
+      ? (rich ? LIGHT_PALETTE : LIGHT_BASIC_PALETTE)
+      : theme === "ansi" || !rich ? BASIC_PALETTE : RICH_PALETTE;
+    this.band = theme === "light" ? LIGHT_BAND : DARK_BAND;
   }
 
   /**
-   * 用户消息整行：Claude Code 风格任务条——深灰底色、灰色前缀、白色粗体正文。
-   * 先叠一层 16 色退化（亮黑底 + 亮白粗体），能认 256 色的终端再用精确颜色覆盖；
+   * 用户消息整行：Claude Code 风格任务条——一块底色、灰色前缀、粗体正文。
+   * 先叠一层 16 色退化，能认 256 色的终端再用精确颜色覆盖；
    * 这样传统 conhost 和 Windows Terminal 都能一眼看出「这一行是用户发的」。
+   *
+   * 深浅两套底色：深色终端用深底白字，浅色终端用浅底黑字。
+   * 浅色终端上继续压一块深灰，看着像屏幕上的一块污渍。
    */
   userMessage(text: string, marker = ""): string {
     if (!this.enabled || text === "") return text;
-    const markerPaint = "\x1b[37;100m\x1b[38;5;246;48;5;237m";
-    const bodyPaint = "\x1b[1;97;100m\x1b[38;5;255;48;5;237m";
+    const markerPaint = this.band.marker;
+    const bodyPaint = this.band.body;
     if (marker !== "" && text.startsWith(marker)) {
       return `${markerPaint}${marker}${bodyPaint}${text.slice(marker.length)}\x1b[0m`;
     }
@@ -3096,6 +3125,49 @@ const RICH_PALETTE: Record<Tone, string> = {
   warning: "38;5;221",
   info: "38;5;250",
   plain: "0",
+};
+
+/**
+ * 浅色终端用的 256 色板。
+ *
+ * 不是把深色板反相——色相要保住，只把亮度压下来：深色板里 `info` 用 250 号近白灰，
+ * 在白底上等于没写字；浅色板换成 238 号深灰。`accent` 同理从 215（浅橙）换到 166（深橙）。
+ */
+const LIGHT_PALETTE: Record<Tone, string> = {
+  accent: "38;5;166",
+  assistant: "39",
+  user: "39",
+  muted: "38;5;240",
+  success: "38;5;28",
+  error: "38;5;160",
+  warning: "38;5;130",
+  info: "38;5;238",
+  plain: "0",
+};
+
+/** 浅色终端 + 只有 16 色：黄（33）在白底上几乎读不出来，换成蓝（34）保住对比度。 */
+const LIGHT_BASIC_PALETTE: Record<Tone, string> = {
+  accent: "34",
+  assistant: "39",
+  user: "39",
+  muted: "90",
+  success: "32",
+  error: "31",
+  warning: "35",
+  info: "90",
+  plain: "0",
+};
+
+/** 深色终端：深灰底 + 白字。 */
+const DARK_BAND = {
+  marker: "\x1b[37;100m\x1b[38;5;246;48;5;237m",
+  body: "\x1b[1;97;100m\x1b[38;5;255;48;5;237m",
+};
+
+/** 浅色终端：浅灰底 + 黑字。 */
+const LIGHT_BAND = {
+  marker: "\x1b[30;47m\x1b[38;5;240;48;5;254m",
+  body: "\x1b[1;30;47m\x1b[38;5;235;48;5;254m",
 };
 
 function prefersRichColor(): boolean {
