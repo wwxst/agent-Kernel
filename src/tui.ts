@@ -1250,6 +1250,14 @@ export class Tui {
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
     if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}${suffix}`, tone: "muted" };
+    // 审批期间这一轮并没有在跑，是在等你按 Enter。继续说「正在执行」会让人以为
+    // 命令已经跑起来了（它甚至可能已经跑了一分多钟），于是去排查一个不存在的卡顿。
+    if (this.approvalBlocksRunning) {
+      return {
+        text: `  ${this.glyphs.running} ${zh ? "等待审批 · 已等待" : "Waiting for approval · "} ${duration}${suffix}`,
+        tone: "warning",
+      };
+    }
     return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}${suffix}`, tone: "accent" };
   }
 
@@ -2437,7 +2445,13 @@ export class Tui {
     const tailRows = tail.reduce(
       (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
     // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
-    const rowsAboveInput = tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
+    //
+    // 审批时输入框被菜单顶掉，光标锚点变成那条分隔线本身，它上面只剩活动区：
+    // 仍然按「活动区 + 输入框上边框」上移就会每帧多吃一行，表现为审批期间
+    // 上面的日志一行一行被擦掉（活动计时器每秒重绘一次，所以是一秒一行）。
+    const rowsAboveInput = this.approvalMenuActive
+      ? tailRows
+      : tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
 
     let frame = "\x1b[?2026h";
     if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;

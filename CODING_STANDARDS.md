@@ -295,7 +295,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 **什么时候写**：修完就写，不要攒。攒到最后只会记得结论，忘了当时的现象和错误假设——而现象才是下次识别同类问题的线索。
 
-**当前已有的四份**：[展示分层](../design/display-layers.md)（概览层与详情层怎么分，含前端落地建议）、[TUI 踩坑记录](../notes/tui-pitfalls.md)（十四条真实事故 + 四条底层规则）、[CLI 与工程链路踩坑](../notes/cli-and-tooling.md)（参数、全局安装、测试迁移）、[后台任务踩坑](../notes/background-jobs.md)（管道卡住宿主、Windows `shell+detached` 丢输出、增量读的字节边界）。
+**当前已有的四份**：[展示分层](../design/display-layers.md)（概览层与详情层怎么分，含前端落地建议）、[TUI 踩坑记录](../notes/tui-pitfalls.md)（十五条真实事故 + 四条底层规则）、[CLI 与工程链路踩坑](../notes/cli-and-tooling.md)（参数、全局安装、测试迁移）、[后台任务踩坑](../notes/background-jobs.md)（管道卡住宿主、Windows `shell+detached` 丢输出、增量读的字节边界）。
 
 ## 复查清单
 

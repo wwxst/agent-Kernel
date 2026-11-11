@@ -64,7 +64,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - [GLOSSARY.md](./GLOSSARY.md)：概念、关系、要避开的同义词。
 - [docs/adr/](./docs/adr/)：已经定下、别在评审里重新讨论的决定。
 - [docs/design/display-layers.md](./docs/design/display-layers.md)：概览层与详情层怎么分，终端与未来前端共用。
-- [docs/notes/tui-pitfalls.md](./docs/notes/tui-pitfalls.md)：TUI 踩过的十四个坑 + 四条底层规则，动渲染层前必读。
+- [docs/notes/tui-pitfalls.md](./docs/notes/tui-pitfalls.md)：TUI 踩过的十五个坑 + 四条底层规则，动渲染层前必读。
 - [docs/notes/cli-and-tooling.md](./docs/notes/cli-and-tooling.md)：命令行参数、全局安装、测试迁移的九个坑。
 - [docs/notes/background-jobs.md](./docs/notes/background-jobs.md)：后台任务六个坑（管道卡住宿主、Windows `shell+detached` 丢输出、增量读的字节边界），动 `shell` 前后台路径前必读。
 - [docs/compare/agent-cli-matrix.md](./docs/compare/agent-cli-matrix.md)：与 Claude Code / Codex 的逐项能力对照，缺口清单。

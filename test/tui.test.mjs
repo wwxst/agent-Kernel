@@ -280,6 +280,52 @@ test("TUI 主题：light 换成浅底深字，ansi 强制 16 色", async (t) => 
 });
 
 
+test("TUI 审批期间状态行说「等待审批」，不说「正在执行」", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑一条命令");
+  await tick();
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+  const screen = screenRows(ui, 30).join("\n");
+  assert.match(screen, /等待审批/);
+  assert.doesNotMatch(screen, /正在执行/, "审批时命令一条都还没跑，不能显示正在执行");
+
+  ui.input.write("\r");
+  await pending;
+});
+
+
+test("TUI 审批期间重绘不能吃掉已经打印的历史行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑一条命令");
+  for (let i = 0; i < 12; i++) ui.tui.logLine(`HIST_${String(i).padStart(2, "0")}`);
+  await tick();
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+  const count = () => screenRows(ui, 30).filter((line) => /HIST_\d\d/.test(line)).length;
+  const before = count();
+  assert.ok(before > 0, "审批前应当已经有历史行");
+
+  // 审批期间活动计时器每秒重绘一次（「已等待 N 秒」就是这么走的）。
+  // 每次重绘都必须从同一个位置回退；退多了就会把上方的历史一行一行擦掉。
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const afterOne = count();
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const afterTwo = count();
+
+  ui.input.write("\r");
+  await pending;
+  assert.equal(afterOne, before, "第一次重绘就吃掉了一行历史");
+  assert.equal(afterTwo, before, "重绘次数越多，被吃掉的行越多");
+});
+
+
 test("TUI：start 前 close 不清屏、不移动光标、不进入备用屏幕，之后也不能启动", (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
