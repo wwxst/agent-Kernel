@@ -398,7 +398,8 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   ui.tui.setThinking(true);
   const first = rowWith(ui, /Thinking\.\.\./);
   assert.match(first, /Thinking\.\.\. \(0s\)/);
-  assert.match(rowWith(ui, /Ctrl-C to cancel/), /^  [└+] Ctrl-C to cancel$/);
+  // 主视图拍平后，取消提示并进 Thinking 那一行，不再单独占一行。
+  assert.match(rowWith(ui, /Thinking\.\.\./), /Ctrl-C to cancel/);
   t.mock.timers.tick(200);
   assert.notEqual(rowWith(ui, /Thinking\.\.\./), first);
   ui.tui.assistantDelta("hello");
@@ -418,7 +419,7 @@ test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息�
   let previousSymbol = "";
   for (let frame = 0; frame < 5; frame++) {
     const line = rowWith(ui, /Thinking\.\.\./);
-    assert.match(line, /Thinking\.\.\. \(0s\)(?: │ .+)?$/);
+    assert.match(line, /Thinking\.\.\. \(0s\)(?: · Ctrl-C to cancel)?(?: │ .+)?$/);
     assert.equal(line.indexOf("("), detailColumn);
     const symbol = line.split(" ")[0];
     assert.notEqual(symbol, previousSymbol);
@@ -767,7 +768,8 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   await settledResize();
   const screen = screenRows(ui).join("\n");
   assert.match(screen, /TASK_NARROW/);
-  assert.match(screen, /Read file a\.txt\./, "事实性过程概述在活动摘要之前");
+  // 主视图不重复描述：只有工具行，不再有「已读取文件…」这种同义概述。
+  assert.match(screen, /(?:✓|\+) Read a\.txt/);
   assert.match(screen, /(?:✓|\+) Read a\.txt/);
   // 工具结果属于详情层：主视图只留一行工具，结果去 transcript 看。
   assert.match(await detailText(ui), /Received 1 line/);
@@ -1710,8 +1712,9 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   ui.tui.toolCall(statusTool);
   ui.tui.toolResult(statusTool, "file 1 a.txt");
   ui.tui.setThinking(true);
-  assert.match(screenRows(ui, 38).join("\n"), /正在执行 · 已用时/);
-  assert.match(screenRows(ui, 38).join("\n"), /Thinking\.\.\./);
+  // 主视图拍平：等待模型时只留 Thinking 一行（带秒数和工具结果数），不再叠一行「正在执行」。
+  assert.match(screenRows(ui, 38).join("\n"), /Thinking\.\.\. \(0s/);
+  assert.doesNotMatch(screenRows(ui, 38).join("\n"), /正在执行 · 已用时/);
   ui.tui.finishAssistant("检查完毕。");
   ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
   const final = screenRows(ui, 38).join("\n");

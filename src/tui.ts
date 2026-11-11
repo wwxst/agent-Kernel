@@ -2422,14 +2422,8 @@ export class Tui {
         if (flat) {
           // 主视图拍平：一个工具一行（动词 + 目标），没有第三层、没有展开箭头。
           const flatChildren: LogLine[] = [];
-          // 阶段概述先出现，形成「先说做什么，再列做了什么」的对话式时间线。
-          if (group.fallbackOverview && group.tools.length > 0) {
-            const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
-            flatChildren.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
-              current.call, current.result, group.language, group.finished === true,
-              this.approvalMenuActive && current.call.function.name === "shell",
-            )}`), tone: "info" });
-          }
+          // 主视图不重复描述：工具行已经写了「读取 你好世界.txt」，
+          // 再来一句「已读取文件 你好世界.txt。」就是同一件事说两遍。
           for (const item of group.tools) {
             const failure = this.activityFailureLine(item, group.language);
             if (failure !== undefined) {
@@ -2503,9 +2497,11 @@ export class Tui {
       // 中文对照：等待中，已经过 {seconds} 秒，以及已收到的工具结果数。
       this.maybeRotateMood();
       const waiting = `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`;
-      logical.push({ text: this.withMood(waiting, this.contentWidth()), tone: "accent", kind: "thinking" });
-      // 中文对照：Ctrl-C 取消。
-      logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
+      // 主视图是扁平的一行：把「怎么取消」并进去，不再单独占一行。
+      const cancelHint = this.uiText("Ctrl-C to cancel", "Ctrl-C 取消");
+      logical.push({ text: this.withMood(flat ? `${waiting} · ${cancelHint}` : waiting, this.contentWidth()),
+        tone: "accent", kind: "thinking" });
+      if (!flat) logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${cancelHint}`, tone: "muted" });
       }
     } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
                this.activityState !== undefined && this.activityState !== "preparing" &&
@@ -2525,7 +2521,8 @@ export class Tui {
     while (logical.length > 0 && logical[0]!.text === "") logical.shift();
 
     // 运行中的状态行只作为活动区尾部显示，不进日志；本轮结束时它才落账（排在回复之后）。
-    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined) {
+    // 主视图在等待模型时已经有 Thinking 那一行（带秒数和工具结果数），再叠一行「正在执行」纯属重复。
+    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined && !(flat && this.thinking)) {
       logical.push({ ...this.turnStatusLine(this.currentTurn, flat), kind: "turn-status", turn: this.currentTurn });
     }
 
