@@ -47,10 +47,10 @@ test("规则解析：工具名与参数前缀，只写工具名表示该工具�
     deny: ["shell:rm -rf"],
   }), "t");
   assert.deepEqual(rules.allow, [
-    { tool: "shell", argv: ["git", "status"] },
-    { tool: "write", argv: [] },
+    { tool: "shell", argv: ["git", "status"], exact: false },
+    { tool: "write", argv: [], exact: false },
   ]);
-  assert.deepEqual(rules.deny, [{ tool: "shell", argv: ["rm", "-rf"] }]);
+  assert.deepEqual(rules.deny, [{ tool: "shell", argv: ["rm", "-rf"], exact: false }]);
   assert.deepEqual(rules.ask, []);
 });
 
@@ -137,10 +137,11 @@ test("deny 跨层最强：项目写了 deny，本地 allow 也压不住", async 
   });
 });
 
-test("只有单条简单命令才能被记住", () => {
+test("能记住的只有能安全切分、且参数能原样写回的命令", () => {
   assert.equal(isRememberable("git status"), true);
-  assert.equal(isRememberable("git add . && npm test"), false, "复合命令记成一条前缀会放行更多");
-  assert.equal(isRememberable("ls *.ts"), false);
+  assert.equal(isRememberable("cd demo && node server.js"), true, "复合命令按整条精确记住");
+  assert.equal(isRememberable("ls *.ts"), false, "通配符切不开，记不成规则");
+  assert.equal(isRememberable(`echo 'it"s'`), false, "带引号的参数写不回文件");
 });
 
 test("记住一条命令：写进本地层，不动项目层，并把自己加进 .gitignore", async () => {
@@ -170,7 +171,46 @@ test("记住一条命令：写进本地层，不动项目层，并把自己加�
     const reloaded = await PermissionRules.load(root);
     assert.equal(reloaded.decide("shell", { command: "git status --short" }), "allow");
 
-    await assert.rejects(() => rules.remember("git add . && npm test"), /only a single simple command/);
+  });
+});
+
+test("复合命令按整条精确记住：改一个参数就重新问", async () => {
+  await withRoot(async (root) => {
+    const rules = await PermissionRules.load(root);
+    assert.equal(await rules.remember("cd demo && node server.js"), "shell:cd demo && node server.js");
+
+    const saved = JSON.parse(
+      await readFile(path.join(root, ".agent-kernel", "permissions.local.json"), "utf8"),
+    );
+    assert.deepEqual(saved, { allow: ["shell:cd demo && node server.js"] }, "写回去的是一条整命令");
+
+    const reloaded = await PermissionRules.load(root);
+    assert.equal(reloaded.decide("shell", { command: "cd demo && node server.js" }), "allow");
+    assert.notEqual(
+      reloaded.decide("shell", { command: "cd demo && node server.js --port 3000" }),
+      "allow",
+      "多一个参数就不再命中",
+    );
+    assert.notEqual(
+      reloaded.decide("shell", { command: "cd demo && rm -rf /" }),
+      "allow",
+      "换了第二段就不再命中",
+    );
+  });
+});
+
+test("带空格的参数写回时加引号，重新加载仍然匹配", async () => {
+  await withRoot(async (root) => {
+    const rules = await PermissionRules.load(root);
+    await rules.remember('git commit -m "fix bug"');
+
+    const saved = JSON.parse(
+      await readFile(path.join(root, ".agent-kernel", "permissions.local.json"), "utf8"),
+    );
+    assert.deepEqual(saved, { allow: ['shell:git commit -m "fix bug"'] });
+
+    const reloaded = await PermissionRules.load(root);
+    assert.equal(reloaded.decide("shell", { command: 'git commit -m "fix bug"' }), "allow");
   });
 });
 
