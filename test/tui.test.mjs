@@ -2326,3 +2326,20 @@ test("TUI transcript：Ctrl+T 进入后必须真的画出历史内容", async (t
   await tick();
   assert.match(ui.text(), /\x1b\[\?1049l/, "Esc 退出并还原主屏");
 });
+
+test("TUI 主视图：运行中的状态行与流式正文之间留一行空白", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("做个游戏");
+  ui.tui.assistantDelta("流式正文内容");
+  await tick();
+
+  const rows = screenRows(ui, 24);
+  const textRow = rows.findIndex((line) => /流式正文内容/.test(line));
+  const statusRow = rows.findIndex((line) => /准备执行|正在执行/.test(line));
+  assert.ok(textRow >= 0, "流式正文在屏幕上");
+  assert.ok(statusRow > textRow, "状态行排在正文之后");
+  // 贴着正文会被读成同一段话的续行。
+  assert.equal(rows[statusRow - 1].trim(), "", "正文与状态行之间留一行空白");
+});

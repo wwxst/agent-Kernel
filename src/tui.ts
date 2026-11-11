@@ -2520,6 +2520,10 @@ export class Tui {
     // 运行中的状态行只作为活动区尾部显示，不进日志；本轮结束时它才落账（排在回复之后）。
     // 主视图在等待模型时已经有 Thinking 那一行（带秒数和工具结果数），再叠一行「正在执行」纯属重复。
     if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined && !(flat && this.thinking)) {
+      // 状态行是独立的一块，和上面的正文之间留一行：贴着正文会读成同一段话的续行。
+      if (logical.length > 0 && logical[logical.length - 1]!.text !== "") {
+        logical.push({ text: "", tone: "plain" });
+      }
       logical.push({ ...this.turnStatusLine(this.currentTurn, flat), kind: "turn-status", turn: this.currentTurn });
     }
 
