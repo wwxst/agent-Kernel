@@ -599,7 +599,12 @@ export class Workspace {
       stdio: "ignore",
     });
     child.unref();
-    return `started in background (pid ${child.pid ?? "unknown"}); it keeps running after this call - stop it explicitly`;
+    // pid 是 shell 包装进程（Windows 上 cmd.exe），真正干活的是它的子进程；
+    // /T 会连子进程一起杀，所以按这里给出的命令收尾是安全的。
+    const hint = process.platform === "win32"
+      ? `stop it with: taskkill /PID ${child.pid ?? "<pid>"} /T /F`
+      : `stop it with: kill -- -${child.pid ?? "<pid>"}`;
+    return `started in background (pid ${child.pid ?? "unknown"}); it keeps running after this call - ${hint}`;
   }
 
   async run(command: string, options: { background?: boolean; timeoutMs?: number } = {}): Promise<string> {
