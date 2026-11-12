@@ -1,8 +1,23 @@
 /**
- * 测试夹具：脚本化的假模型 + 临时工作区。
+ * 文件目的：测试用的公共夹具 —— 一个按剧本回话的假模型，加一个临时目录当工作区。
  *
- * 假模型实现了 ChatClient 这个接口（也就是 Agent 唯一依赖的那条缝），
- * 所以循环可以在同一个进程里被完整驱动：不需要 API Key、不联网、毫秒级。
+ * 假模型实现了核心循环唯一依赖的那个「能聊天的客户端」，
+ * 所以一整轮可以在同一个进程里跑完：不用密钥、不联网、几毫秒出结果。
+ *
+ * 文件职责：负责造消息、造假客户端、造最小工具、造临时工作区。
+ * 不负责断言、不负责启动进程 —— 那些留给各个测试文件自己写。
+ *
+ * 内容目录：
+ *   - `callTool()` / `finalReply()`：造「要调工具」与「收尾」两种 assistant 消息。
+ *   - `createScriptedChat()`：按脚本回放的假客户端；脚本超出长度就重复最后一条，
+ *     每次请求都深拷贝存档，否则断言会看到「未来」的历史。
+ *   - `echoTool()`：最小可用工具，把参数原样回显。
+ *   - `makeRegistry()`：直接装配 `ToolRegistry`（注册表已没有权限层）。
+ *   - `withWorkspace()`：每个用例一个临时目录，跑完就删。
+ *
+ * 模块关系：依赖 `src/core/tool-registry.ts` 与 Node 内置模块。
+ * 被 `agent.test.mjs`、`tool-registry.test.mjs`、`workspace.test.mjs`、`cli.test.mjs`、
+ * `cli-pty.test.mjs`、`eval-diagnostics.test.mjs` 共用；不参与 `npm test` 之外的事情。
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

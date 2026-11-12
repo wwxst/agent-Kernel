@@ -1,8 +1,17 @@
 /**
- * 跨进程输入历史：坏行跳过、文件缺失不算错、超长截断。
+ * 文件目的：测输入历史 —— 坏行跳过、文件不存在不算错、超长截断、条数上限。
  *
- * Codex 的 history.jsonl 有过「损坏导致启动失败」的 issue——历史文件坏了
- * 只能让历史变少，不能让 agent 起不来。
+ * 历史文件坏了，只能让能翻到的记录变少，不能让程序起不来。
+ *
+ * 文件职责：只测 `loadHistory()` / `appendHistory()` 的容错与上限。
+ * 不测上下键在界面里的行为（那是 `tui.test.mjs`）。
+ *
+ * 内容目录：
+ *   - `withFile()`：临时目录里的一个 `history.jsonl`，跑完删掉。
+ *   - 五个用例：文件不存在；坏行跳过；非对象 / 空文本 / 缺字段忽略；追加后读回、空文本不写；
+ *     只返回最近 N 条。
+ *
+ * 模块关系：依赖 `src/ui/prompt-history.ts` 与 `node:test`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

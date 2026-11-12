@@ -1,9 +1,21 @@
 /**
- * Optional diagnostics for real-model eval runs.
+ * 文件目的：评测时的「旁听记录」—— 悄悄记下每次请求花了多少、工具返回了多大、
+ * 工作区里哪些文件被改了。
  *
- * This module is deliberately outside src/: it observes the existing ChatClient,
- * ToolRegistry.execute(), and Agent.onToolResult seams without changing Agent Loop behavior.
- * It stores token counts, bounded tool arguments, result sizes, and workspace file deltas.
+ * 为什么放在主程序外面：它只是趴在旁边看，不该被主程序依赖。评测要复盘「模型为什么没做成」，
+ * 这些事实只能在这里抓；但主程序不能为了评测多背一份逻辑。
+ *
+ * 文件职责：负责包装 `Llm` 与 `ToolRegistry` 收集旁听数据、给工作区拍前后快照、脱敏。
+ * 不负责判分（`run.mjs`）、不负责改主程序行为 —— 包装后行为与原对象一致。
+ *
+ * 内容目录：
+ *   - `createEvalDiagnostics()`：唯一导出，返回包好的 `llm` / `tools` 与读取记录的入口。
+ *   - 内部：`snapshotFiles()` 拍文件快照、`diffSnapshots()` 对比前后、`sanitizeValue()` /
+ *     `sanitizeArguments()` 抹掉密钥、`safeJsonLength()` 只算长度不存全文。
+ *   - 上限常量：文件数、条目数、单文件与总计哈希字节；`SKIP_DIRECTORIES` 跳过 `.git` / `node_modules`。
+ *
+ * 模块关系：依赖 `src/protocol/errors.ts`（`ChatResponseError`、`describeError`）与 Node 内置模块。
+ * 被 `run.mjs` 使用，`test/eval-diagnostics.test.mjs` 覆盖记录与脱敏行为。
  */
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile } from "node:fs/promises";

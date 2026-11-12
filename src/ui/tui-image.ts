@@ -1,9 +1,23 @@
 /**
- * 本地 PNG 预览：由真实 read 工具获准读取的图像字节生成终端文字缩略图。
+ * 文件目的：在终端里用字符拼一个粗略的图片预览，让人确认「模型到底看到了哪张图」。
  *
- * Kitty / Sixel / iTerm2 图形协议各有不同的窗口与重绘语义；这层使用 PNG
- * 解码后的亮度网格作为跨 Windows Terminal / conhost 的无依赖兜底。
- * 不读取文件、不修改模型 ToolResult，也绝不把原始二进制塞进 Transcript。
+ * 只在模型真的读了图片文件时才用。格式不认识或读不了，就明说一句，不假装成功 ——
+ * 一张糊掉的缩略图比一句「不支持」更容易误导人。
+ *
+ * 图片的原始数据绝不塞进对话记录：那会瞬间把额度撑爆，而且模型也看不懂。
+ *
+ * 文件职责：负责从真实字节里解析 PNG、生成有界的文字缩略图；其他格式只验证签名后降级。
+ * 不负责决定什么时候预览（那是 `ui/tui.ts`）、不负责读文件、不负责上色。
+ *
+ * 内容目录：
+ *   - `ImagePreview`：预览结果（格式、宽高、若干行文字）。
+ *   - `previewImage()`：唯一导出；PNG 走真实解码，JPEG / GIF / WebP 只认签名后给降级说明。
+ *   - 内部：`decodePng()` 解 PNG、`inspectPng()` 读文件头、`samplePixel()` 算亮度（透明像素合成到白底）、
+ *     `paeth()` 是 PNG 的行过滤算法之一。
+ *   - 上限：`MAX_PIXELS`、`MAX_RAW_BYTES`；`PALETTE` 是那十档字符。
+ *
+ * 模块关系：只依赖 `node:zlib`（解压 PNG 数据块），不依赖项目里任何模块。
+ * 被 `ui/tui.ts` 调用；`test/tui-image.test.mjs` 用构造出来的 PNG 字节覆盖各分支。
  */
 import { inflateSync } from "node:zlib";
 
@@ -219,7 +233,7 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
   return { format: "PNG", width, height, rows };
 }
 
-/** 文件签名而非扩展名决定实际格式；不可信或超大图像直接明确拒绝预览。 */
+/** 界面函数 previewImage（图片预览）：看文件内容而不是扩展名来决定格式；内容不可信或图片太大，直接明说不能预览。 */
 export function previewImage(bytes: Buffer): ImagePreview | undefined {
   if (bytes.length < 12 || bytes.length > 4_000_000) return undefined;
   if (bytes.subarray(0, 8).equals(PNG_SIGNATURE)) {

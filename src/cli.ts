@@ -1,29 +1,27 @@
 #!/usr/bin/env node
 /**
- * 命令行入口：读环境变量 → 组装 Workspace / ToolRegistry / Agent → 跑一次任务或进入 TUI。
+ * 文件目的：程序的入口 —— 读配置，把各个零件装到一起，然后跑一次任务或进入全屏界面。
  *
- * 用法：
- *   npm run agent -- "给这个仓库加一个 /health 接口并写测试"
- *   npm run agent -- --tui         # 交互式全屏 TUI；不带任务时默认就进这里
- *   node src/cli.ts "解释一下 src/agent.ts 里的循环"
- *   node src/cli.ts --cwd /path/to/other-repo "看看这个项目怎么跑"  # 工作区指向别的目录，不用先 cd
+ * 这里是唯一直接碰 `process` 的地方：命令行参数、环境变量、信号、退出码都收在这一层，
+ * 所以内核与界面都不需要知道「自己是被谁启动的」。
  *
- * 环境变量（可写进 .env，由 --env-file-if-exists 自动加载）：
- *   BASE_URL        OpenAI 兼容端点，默认 https://api.openai.com/v1
- *   API_KEY         必填，也可以用 OPENAI_API_KEY
- *   MODEL           模型名，默认 gpt-4o-mini
- *   WORKDIR         相对路径的基准目录，默认当前目录；--cwd 优先于它
- *   MAX_STEPS       单次 Run 的循环上限，默认 30
- *   MAX_TOOL_CALLS  单次 Run 最多执行多少次工具调用，默认 60
- *   MAX_TOTAL_TOKENS 单次 Run 累计 token 预算，默认 500000；0 表示不限制
- *   MAX_OUTPUT_TOKENS 单次模型响应最多生成多少 token，默认 8192
- *   TOOL_TIMEOUT_MS 单条命令超时，默认 120000
- *   AGENT_VIEW      compact / detailed；也可传 --details
- *   AGENT_VOICE     balanced / energetic / playful / tsundere / curious / gentle / confident
- *   AGENT_TUI_COLOR  mono（默认，只保留用户消息任务条颜色）/ full（状态与提示层次配色）
- *   AGENT_TUI_THEME  dark（默认）/ light（浅色终端）/ ansi（强制 16 色）
+ * 文件职责：负责组装与收尾 —— 解析参数与环境变量、创建 `Workspace` / `ToolRegistry` /
+ * `Llm` / `Agent` / `Tui`、装观察回调、把致命错误变成一句人话加非零退出码。
+ * 不负责循环逻辑、不负责工具实现、不负责渲染细节。完整的参数与环境变量表在 `README.md`，这里不重复。
  *
- * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
+ * 内容目录：
+ *   - `Config` / `CliArgs` / `AgentCallbacks` / `SessionCommand`：装配用到的几种形状。
+ *   - `parseArgs()`：命令行参数；`--permission` / `--repl` 已移除，传入即报错。
+ *   - `loadConfig()`：环境变量 → `Config`；占位 API Key 在发请求前就拒绝。
+ *   - `createAgent()`：把客户端、工具注册表、系统提示、预算、回调装成一个 `Agent`。
+ *   - `runTurn()`：跑一次任务并打印结果；`printUsage()`：打印统计。
+ *   - `tuiSession()`：TUI 会话，含 `/help`、`/reset` 等命令的分发。
+ *   - `describeForUser()`：把模型类错误翻成「标题 + 建议 + 详情」三段。
+ *   - 文件末尾：顶层入口 —— 决定进 TUI 还是单次任务，接 SIGINT / SIGTERM，设置退出码。
+ *
+ * 模块关系：依赖 `core/`（`Agent`、`ToolRegistry`）、`tools/`（`Workspace`、`createWorkspaceTools`）、
+ * `model/`（`Llm`、项目指令）、`ui/`（`Tui`、`RunPresenter`）、`protocol/`。
+ * 由 `bin/agent.mjs`（`npm link` 后的全局命令）与 `test/cli.test.mjs` 启动。
  */
 import { statSync } from "node:fs";
 import * as path from "node:path";

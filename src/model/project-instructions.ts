@@ -1,10 +1,21 @@
 /**
- * 项目指令文件（`AGENTS.md`）的读取。
+ * 文件目的：把仓库根目录的 `AGENTS.md` 读出来，塞进给模型的系统提示。
  *
- * Claude Code 读 `CLAUDE.md`（仓库里已有 `AGENTS.md` 时优先用它），Codex 读 `AGENTS.md`。
- * 作用相同：把项目自己的规范、命令、约定注入系统提示，模型不必每轮靠用户口头交代。
+ * 有了它，模型不用每轮靠用户口头重复项目规矩；项目自己写下的约定跟着仓库走。
  *
- * 这里只做「读 + 有界截断」，不做解析：内容原样进提示，避免我们发明一套没人维护的格式。
+ * 文件职责：负责读文件、去空白、按上限截断、拼成提示段落。
+ * 不负责解析内容格式 —— 原样送进去，免得自己发明一套没人维护的格式。
+ * 也不负责决定什么时候注入，那是 `cli.ts` 装配时的事。
+ *
+ * 内容目录：
+ *   - `PROJECT_INSTRUCTIONS_FILE`：约定的文件名。
+ *   - `MAX_INSTRUCTIONS_CHARS`：32000 字符上限，整份塞进系统提示会挤掉对话预算。
+ *   - `ProjectInstructions`：读取结果（真实路径、正文、是否被截断）。
+ *   - `readProjectInstructions()`：读工作区根目录下的项目指令。
+ *   - `projectInstructionsPrompt()`：把结果拼成系统提示里的一段。
+ *
+ * 模块关系：只依赖 `node:fs` 与 `node:path`。
+ * 由 `cli.ts` 在装配时调用，拼好的文本随系统提示交给 `core/agent.ts`。
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";

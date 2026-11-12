@@ -1,8 +1,21 @@
 /**
- * 工作区文件索引：给 `@` 补全用。
+ * 文件目的：把工作区里的文件列成一张清单，给输入框的 `@` 补全用。
  *
- * 只做「列出来 + 前缀过滤」，不做模糊打分：路径补全的价值是**避免猜文件名**，
- * 不是替用户搜代码内容。真要搜内容，模型有 grep 工具。
+ * 补全是为了让人少打字。它只认文件名，不读文件内容 —— 真要搜内容，那是搜索工具的事，
+ * 在这里做只会又慢又不准。
+ *
+ * 文件职责：负责递归列路径、按片段过滤排序、短暂缓存结果。
+ * 不负责搜文件内容，不负责读文件，也不负责把结果画到屏幕上（那是 `ui/tui.ts`）。
+ *
+ * 内容目录：
+ *   - `MAX_INDEXED_FILES`：最多索引 2000 个，再多也不适合在一个下拉里选。
+ *   - `listWorkspaceFiles()`：递归列出相对路径，跳过 `.git` / `node_modules` 这类目录，5 秒缓存。
+ *   - `matchFiles()`：按搜索片段筛选候选文件。
+ *   - `resetFileIndexCache()`：清缓存，只给测试用。
+ *   - 内部：`SKIP_DIRS`、`CACHE_TTL_MS`、`cache`。
+ *
+ * 模块关系：只依赖 `node:fs` 与 `node:path`。
+ * 被 `ui/tui.ts` 的 `@` 补全调用；`test/file-index.test.mjs` 覆盖过滤与缓存行为。
  */
 import { readdirSync } from "node:fs";
 import path from "node:path";
@@ -32,7 +45,7 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>();
 
-/** 递归列出工作区文件（相对路径，正斜杠），有界且跳过常见重目录。 */
+/** 界面函数 listWorkspaceFiles（列文件清单）：递归列出工作区里的文件（相对路径），有数量上限，跳过常见的大目录。 */
 export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): string[] {
   const cached = cache.get(root);
   const now = Date.now();
@@ -66,7 +79,7 @@ export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): str
   return files;
 }
 
-/** 按片段过滤并排序：文件名精确 > 文件名前缀 > 文件名包含 > 路径包含，同档短的优先。 */
+/** 界面函数 matchFiles（按名字过滤）：按片段过滤并排序——文件名完全一样 > 文件名开头一样 > 文件名里包含 > 路径里包含，同档短的优先。 */
 export function matchFiles(files: readonly string[], fragment: string, limit = 20): string[] {
   const needle = fragment.toLowerCase();
   if (needle === "") return files.slice(0, limit);

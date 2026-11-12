@@ -1,6 +1,17 @@
 /**
- * 评测自检自身的单元测试：它最容易犯的错，是把「检查器崩了」当成「初始状态确实失败」。
- * 这里用临时任务目录造出五种情况，钉死 ok / broken / infra 三类结果。
+ * 文件目的：测「评测自检」自己 —— 它最容易犯的错，是把「检查器崩了」当成「这个任务本来就该失败」。
+ *
+ * 这里造出各种情况，钉死三种结论：正常、任务无效、工具出问题。
+ *
+ * 文件职责：只测 `runSelfcheck()` 的分类判断。
+ * 不测真实评测任务是否出得对（那是 `eval:check` 干的事）。
+ *
+ * 内容目录：
+ *   - `withTasks()` / `addTask()`：临时任务目录，`files/` 必须是现成的目录（真实任务都有）。
+ *   - 六个用例：断言失败 → 正常；初始就通过 → 任务无效；抛非断言错误 → 工具问题；
+ *     依赖缺失 → 工具问题；`check.mjs` 加载失败 → 工具问题；没有默认导出 → 任务无效。
+ *
+ * 模块关系：依赖 `eval/selfcheck.mjs` 与 `node:test`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

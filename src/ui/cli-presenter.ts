@@ -1,8 +1,23 @@
 /**
- * CLI 展示层：把真实的 Run 事件排成可读的阶段和工具日志。
+ * 文件目的：命令行（非 TUI）模式下，把一次任务的过程整理成看得懂的阶段、台词和工具日志。
  *
- * 台词只给用户看，不写入 Transcript，不参与模型决策；同一阶段轮换短句，
- * 让语气有变化而不假装知道模型在想什么。详细模式展开的是工具真实返回值。
+ * 没有全屏界面时，用户只能看一行行滚过去的文字。这个文件负责让它读起来像「在做事的记录」，
+ * 而不是一堆碎行。
+ *
+ * 文件职责：负责阶段提示、动态台词、工具调用与结果的日志、流式正文的收尾更正。
+ * 不负责 Agent 循环（那是 `core/agent.ts`）、不负责全屏渲染（那是 `ui/tui.ts`）、
+ * 也不负责决定任务成功与否。
+ *
+ * 内容目录：
+ *   - `RunPresenter`：一次运行的展示器，方法跟着事件走：`start` / `thinking` / `toolStart` /
+ *     `toolResult` / `delta` / `confirmAssistant` / `discardAssistantDraft` / `finalAnswer` / `finish`。
+ *   - `AgentVoice` / `AgentView`：台词风格与输出详略（由环境变量选择）。
+ *   - `PHRASES`：按场景分组的台词池；`SCENES` 一类的场景名。
+ *   - 内部：`describeTarget()` 从工具调用里取一句「在动哪个文件 / 跑什么命令」、`elapsedTime()` 计时。
+ *
+ * 模块关系：依赖 `protocol/types.ts` 的 `ToolCall`、`ui/text.ts` 的转义、
+ * `core/tool-result-status.ts` 的成败判断。由 `cli.ts` 创建并作为观察者挂到 `Agent` 上；
+ * 它只读事件，不写 Transcript。
  */
 import type { ToolCall } from "../protocol/types.ts";
 import { escapeControlCharacters } from "./text.ts";
@@ -176,21 +191,25 @@ export class RunPresenter {
     this.streamOpen = false;
   }
 
+  /** 命令行展示方法 start（开场）：打一行「准备中」。 */
   start(): void {
     this.status("◇ Preparing", "preparing");
   }
 
+  /** 命令行展示方法 thinking（思考中）：打一行「思考中」，并带上第几轮。 */
   thinking(step: number): void {
     this.streamedCurrentStep = false;
     this.streamedText = "";
     this.status("✻ Thinking...", this.toolCalls === 0 ? "thinking" : "reviewing", "step " + step);
   }
 
+  /** 命令行展示方法 toolStart（工具开始）：工具计数加一，打一行「第几个工具、叫什么、对哪个目标」。 */
   toolStart(call: ToolCall): void {
     this.toolCalls++;
     this.status("⚙ Tool #" + this.toolCalls, "working", call.function.name + describeTarget(call));
   }
 
+  /** 命令行展示方法 toolResult（工具结果）：打一行 ✓ 或 ✗，再跟一句结果摘要；详细模式展开完整返回。 */
   toolResult(call: ToolCall, result: string): void {
     const output = escapeControlCharacters(result);
     const firstLine = output.split("\n", 1)[0] ?? "";
@@ -210,6 +229,7 @@ export class RunPresenter {
     }
   }
 
+  /** 命令行展示方法 delta（收到正文片段）：第一段先打「回答中」，然后边收边写。 */
   delta(text: string): void {
     if (!this.streamOpen) {
       this.status("✎ Answering...", "answering");
@@ -221,7 +241,7 @@ export class RunPresenter {
     process.stdout.write(escapeControlCharacters(text));
   }
 
-  /** 已确认回复覆盖流式草稿；行式 CLI 不能撤回旧字节，只能显式更正。 */
+  /** 命令行展示方法 confirmAssistant（校对回复）：已确认的回复覆盖流式草稿；行式命令行不能撤回旧字节，只能显式更正。 */
   confirmAssistant(content: string | null): void {
     const finalText = content ?? "";
     this.closeStreamLine();
@@ -237,7 +257,7 @@ export class RunPresenter {
     this.streamedCurrentStep = true;
   }
 
-  /** 失败的模型请求只有临时增量、没有已确认消息时，必须声明其失效。 */
+  /** 命令行展示方法 discardAssistantDraft（丢弃草稿）：模型请求失败、只有临时增量没有确认消息时，必须声明那些字作废。 */
   discardAssistantDraft(announce = true): void {
     this.closeStreamLine();
     // 已分类的模型失败由外层给出明确原因，避免重复的泛化流式警告。
@@ -246,10 +266,12 @@ export class RunPresenter {
     this.streamedText = "";
   }
 
+  /** 命令行展示方法 finalAnswer（最终答复）：按已确认回复处理，相当于收尾时再校对一次。 */
   finalAnswer(content: string): void {
     this.confirmAssistant(content);
   }
 
+  /** 命令行展示方法 finish（收尾）：打一行「完成 / 失败 / 取消」，带上用时和工具调用次数。 */
   finish(toolCalls: number, cancelled = false, failed = false): void {
     const scene = cancelled ? "cancelled" : failed ? "failed" : "completed";
     const label = cancelled ? "◌ Cancelled" : failed ? "✕ Failed" : "✓ Completed";

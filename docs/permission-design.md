@@ -340,7 +340,7 @@ Full Access 是高信任模式。它可能读取密钥、修改其他项目、�
 | glob 指定搜索根 | `Workspace.glob(pattern, path)`；默认 `path="."`；绝对模式由 `splitAbsoluteGlob` 拆分 |
 | grep 工作区外搜索 | `Workspace.grep(pattern, path)`；默认目录外结果用绝对路径 |
 | Shell 无审批、可出工作区 | `Workspace.run()` 直接 `spawn`；默认 cwd 为 `WORKDIR`，命令内可 `cd` |
-| 没有网络白名单 | `src/llm.ts` 只有发往 `BASE_URL` 的 `fetch`；没有域名过滤或网络开关 |
+| 没有网络白名单 | `src/model/llm.ts` 只有发往 `BASE_URL` 的 `fetch`；没有域名过滤或网络开关 |
 | 稳定性保护保留 | 超时、8k 输出上限、`AbortSignal`、进程树清理、原子写入、有界读取、扫描预算、正则 worker 超时 |
 | CLI 移除 `--permission` | `parseArgs` 对 `--permission` / `AGENT_PERMISSION` 直接报错 |
 | TUI 固定状态 | 状态栏 `权限：完全访问` / `access: full-access`；没有审批 UI、`Shift+Tab`、`/permission` |

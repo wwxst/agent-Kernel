@@ -1,11 +1,22 @@
 /**
- * 真实 PTY 回归测试：覆盖真实终端里的 TUI 启动与输入。
+ * 文件目的：测真实终端里的启动和打字（只在 Linux 上跑）。
  *
- * 为什么需要 PTY：readline 的 raw mode 和 Ctrl-C / EOF 在管道里模拟不了。
- * 这里用 Linux 自带的 script(1) 分配伪终端；Windows 没有等价的零依赖工具，
- * 对应逻辑由 tui.test.mjs 的假终端覆盖。
+ * 为什么要单独测：管道里模拟不了真实终端的行为，比如按 Ctrl-C、按 Ctrl-D 结束输入。
+ * 为什么只在 Linux 跑：Windows 上没有现成的工具能造出这种「假终端」，
+ * 那部分行为改由 `tui.test.mjs` 用模拟的输入输出覆盖。
  *
- * 这些用例的价值是「不挂住」：超时会直接判失败，而不是让 CI 一起卡死。
+ * 这些用例的价值是「不会卡住」—— 一旦卡住，超时直接判失败，不会把整个检查拖死。
+ *
+ * 文件职责：负责在真 PTY 里启动 `src/cli.ts`、喂按键、断言屏幕输出。
+ * 不负责布局细节、颜色、折叠（那些在假终端里测更快更稳）。
+ *
+ * 内容目录：
+ *   - `startMock()`：按脚本回放的流式假端点；`shellQuote()` / `killTree()`：起停辅助。
+ *   - 用例一：没配模型也能进 TUI，右上角显示状态，且不发出虚假请求。
+ *   - 用例二：不抢鼠标、不进备用屏，杂散的鼠标字节不会污染输入。
+ *
+ * 模块关系：依赖 `src/cli.ts`（作为子进程启动）、`test/support/harness.mjs` 与 Node 内置模块。
+ * 由 `npm test` 启动，非 Linux 平台自动跳过。
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";

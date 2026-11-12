@@ -1,8 +1,15 @@
 /**
- * 评测器自身的测试：检查器里没 await 的 promise 必须把整轮判成基础设施失败，
- * 而不是在任务表上留下一个 PASS、后台却已经炸了。
+ * 文件目的：测「评测工具」自己 —— 检查器里如果有个异步任务没等就跑了，
+ * 必须把整轮判成「工具坏了」，而不是在成绩单上留一个假的「通过」。
  *
- * 用子进程跑完整一轮，避免 node:test 自己对 unhandledRejection 的监视抢先失败。
+ * 文件职责：只测「一轮评测的结论是否可信」这一件事，通过子进程跑真实夹具来验证。
+ * 不测具体任务的判分、不测模型表现。
+ *
+ * 内容目录：
+ *   - `runFixture()`：用子进程跑 `test/support/eval-floating-check.mjs`，读它最后一行 JSON。
+ *   - 两个用例：没有泄漏异步错误时整轮通过；有泄漏时任务虽过、整轮仍判失败。
+ *
+ * 模块关系：依赖 `test/support/eval-floating-check.mjs`（夹具）与 `node:test`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
