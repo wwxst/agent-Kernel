@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
 import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/errors.ts";
+import { ToolRegistry } from "../src/tool-registry.ts";
+import { Permission } from "../src/permission.ts";
 import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */
@@ -822,4 +824,26 @@ test("HTTP 401 不重试；收到取消时等待退避会立即停手", async ()
   assert.equal(networkCalls, 1, "取消后不得发起第二次请求");
   assert.equal(interrupted.stats.requests, 1);
   assert.equal(interrupted.retryAttempts, 0, "等待期间取消尚未发出的重试不得计数");
+});
+
+test("Agent：同一个工具连续被拒 3 次就中止，不再烧 token 重试", async () => {
+  // 模型看到「被拒绝」会换个写法重试，再被拒，再重试——不设上限就是死循环。
+  const deniedCall = (id) => ({ id, type: "function", function: { name: "shell", arguments: '{"value":"x"}' } });
+  const chat = createScriptedChat([
+    { role: "assistant", content: null, tool_calls: [deniedCall("d1")] },
+    { role: "assistant", content: null, tool_calls: [deniedCall("d2")] },
+    { role: "assistant", content: null, tool_calls: [deniedCall("d3")] },
+    { role: "assistant", content: null, tool_calls: [deniedCall("d4")] },
+  ]);
+  const agent = new Agent({
+    llm: chat,
+    // 权限层始终拒绝：模拟用户拒绝 / 审批被跳过。
+    // 审批通道永远拒绝：模拟用户拒绝 / 审批被跳过。
+    tools: new ToolRegistry([{ ...echoTool(), name: "shell" }], {
+      permission: new Permission("workspace-write", async () => false),
+    }),
+  });
+
+  await assert.rejects(() => agent.run("go"), /denied 3 times in a row/);
+  assert.equal(chat.requests.length, 3, "第三次被拒就停下，不再发第四次请求");
 });

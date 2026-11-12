@@ -7,7 +7,7 @@
  * 把 Permission 当成 Sandbox 是这类设计里最常见的误读 —— 两者不是一回事。
  *
  * 模块只做策略判断，不碰 stdin/stdout：审批回调由宿主（CLI）注入，测试可以注入假实现。
- * 这样「什么时候问人」和「问人时怎么读一行」分开，REPL 才能把同一个 readline 传给审批。
+ * 这样「什么时候问人」和「问人时怎么读一行」分开，一次性任务的审批才能复用同一个 readline。
  */
 import { describeError } from "./errors.ts";
 

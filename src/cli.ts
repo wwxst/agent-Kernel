@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 /**
- * 命令行入口：读环境变量 → 组装 Workspace / ToolRegistry / Agent → 跑一次任务或进入 REPL。
+ * 命令行入口：读环境变量 → 组装 Workspace / ToolRegistry / Agent → 跑一次任务或进入 TUI。
  *
  * 用法：
  *   npm run agent -- "给这个仓库加一个 /health 接口并写测试"
- *   npm run agent -- --repl        # 多轮会话：/exit 退出、/reset 清空上下文、/help 看命令
+ *   npm run agent -- --tui         # 交互式全屏 TUI；不带任务时默认就进这里
  *   node src/cli.ts "解释一下 src/agent.ts 里的循环"
+ *   node src/cli.ts --cwd /path/to/other-repo "看看这个项目怎么跑"  # 工作区指向别的目录，不用先 cd
  *
  * 环境变量（可写进 .env，由 --env-file-if-exists 自动加载）：
  *   BASE_URL        OpenAI 兼容端点，默认 https://api.openai.com/v1
  *   API_KEY         必填，也可以用 OPENAI_API_KEY
  *   MODEL           模型名，默认 gpt-4o-mini
- *   WORKDIR         工具能碰的根目录，默认当前目录
+ *   WORKDIR         工具能碰的根目录，默认当前目录；--cwd 优先于它
  *   MAX_STEPS       单次 Run 的循环上限，默认 30
  *   MAX_TOOL_CALLS  单次 Run 最多执行多少次工具调用，默认 60
  *   MAX_TOTAL_TOKENS 单次 Run 累计 token 预算，默认 500000；0 表示不限制
@@ -23,11 +24,12 @@
  *
  * 这里只做组装，不含任何 agent 逻辑：换模型、换工具集、换提示词，改的都是这一层。
  */
+import { statSync } from "node:fs";
 import * as path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { askWithSignal, formatApproval } from "./approval.ts";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
-import type { AgentSessionStats, AgentStats } from "./agent.ts";
+import type { AgentStats } from "./agent.ts";
 import { RunPresenter } from "./cli-presenter.ts";
 import type { AgentView, AgentVoice } from "./cli-presenter.ts";
 import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./errors.ts";
@@ -77,7 +79,7 @@ function nonNegativeIntFromEnv(name: string, fallback: number): number {
   return value;
 }
 
-/** 一次进程的环境配置。读一次、校验一次，REPL 里每轮复用。 */
+/** 一次进程的环境配置。读一次、校验一次，TUI 会话里每轮复用。 */
 interface Config {
   apiKey: string;
   baseUrl: string;
@@ -120,7 +122,7 @@ function viewFromEnv(): AgentView {
   throw new Error('invalid AGENT_VIEW: "' + view + '" (expected compact or detailed)');
 }
 
-function loadConfig(permission: PermissionMode, details: boolean, allowMissingModel = false): Config {
+function loadConfig(permission: PermissionMode, details: boolean, allowMissingModel = false, cwd?: string): Config {
   // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
   const candidateKeys = [process.env.API_KEY, process.env.OPENAI_API_KEY];
   const apiKey = firstNonEmpty(...candidateKeys.filter((value) =>
@@ -137,7 +139,8 @@ function loadConfig(permission: PermissionMode, details: boolean, allowMissingMo
     // 显式演示标记仅供外部 Mock 服务展示；不提供内置模拟端点。
     demo: process.env.AGENT_DEMO === "1",
     // 工作区根目录固定成绝对路径，后面所有相对路径都相对它解析。
-    root: path.resolve(process.env.WORKDIR ?? process.cwd()),
+    // 优先级：--cwd（显式打开的目录）> WORKDIR（环境变量）> 当前目录。
+    root: path.resolve(cwd ?? process.env.WORKDIR ?? process.cwd()),
     maxSteps: positiveIntFromEnv("MAX_STEPS", 30),
     maxToolCalls: positiveIntFromEnv("MAX_TOOL_CALLS", 60),
     maxTotalTokens: nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000),
@@ -152,34 +155,44 @@ function loadConfig(permission: PermissionMode, details: boolean, allowMissingMo
 /** 一次进程的启动参数。和 Config 分开：命令行是输入，Config 是校验后的运行配置。 */
 interface CliArgs {
   help: boolean;
-  repl: boolean;
   tui: boolean;
   details: boolean;
   permission: PermissionMode;
+  /** 已解析成绝对路径的工作区根目录；没给就是 undefined，回落到 WORKDIR / 当前目录。 */
+  cwd?: string;
   task: string;
   error?: string;
 }
 
+/** 只判断「是不是一个已存在的目录」：路径越界由 Workspace 负责，这里只管启动参数写没写对。 */
+function isDirectory(candidate: string): boolean {
+  try {
+    return statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * 解析命令行：`--permission` 支持空格和等号两种写法，剩下的位置参数拼成任务文本。
+ * 解析命令行：`--permission` / `--cwd` 支持空格和等号两种写法，剩下的位置参数拼成任务文本。
  *
- * 不用现成的参数解析库：运行时零依赖，而且这里只有五个选项。
+ * 不用现成的参数解析库：运行时零依赖，而且这里只有几个选项。
  * 模式在解析时就校验，非法值不会拖到 loadConfig 之后才报。
  */
 function parseArgs(argv: readonly string[]): CliArgs {
   let help = false;
-  let repl = false;
   let tui = false;
   let details = false;
   let permission: PermissionMode = DEFAULT_PERMISSION_MODE;
+  let cwd: string | undefined;
   const taskParts: string[] = [];
 
   const result = (error?: string): CliArgs => ({
     help,
-    repl,
     tui,
     details,
     permission,
+    cwd,
     task: taskParts.join(" ").trim(),
     error,
   });
@@ -189,10 +202,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
 
     if (arg === "--help" || arg === "-h") {
       help = true;
-      continue;
-    }
-    if (arg === "--repl") {
-      repl = true;
       continue;
     }
     if (arg === "--tui") {
@@ -221,16 +230,40 @@ function parseArgs(argv: readonly string[]): CliArgs {
       permission = parsed;
       continue;
     }
+    // 这就是 Claude Code / Codex 的「打开某个目录」：从本仓库启动，但把工作区根目录指向别处。
+    // 不这么做就只能把整个 agent 复制到目标目录里跑，源码和 .env 会被一起带过去。
+    if (arg === "--cwd" || arg === "-C" || arg.startsWith("--cwd=")) {
+      let raw: string | undefined;
+      if (arg.startsWith("--cwd=")) {
+        raw = arg.slice("--cwd=".length);
+      } else {
+        index++;
+        raw = argv[index];
+      }
+      if (raw === undefined || raw === "" || raw.startsWith("--")) {
+        return result("missing value for --cwd (expected a directory)");
+      }
+      // 启动前就解析成绝对路径并确认存在：写错目录名时立刻报错，而不是等第一次工具调用才炸。
+      const resolved = path.resolve(raw);
+      if (!isDirectory(resolved)) {
+        return result(`--cwd is not a directory: ${raw}`);
+      }
+      cwd = resolved;
+      continue;
+    }
+    // --repl 已经移除。不能把它当普通任务文本吞下去：那会拿 "--repl" 当任务发给模型，
+    // 用户以为进了会话，实际是一次莫名其妙的请求。
+    if (arg === "--repl" || arg.startsWith("--repl=")) {
+      return result("--repl was removed; the full-screen TUI is the only interactive mode (run without a task, or pass --tui)");
+    }
     // 其余位置参数保留原样：任务文本里可以有空格，最后统一 join。
     taskParts.push(arg);
   }
 
-  // 两个交互壳不能同时选：一个是逐行 REPL，一个是固定栏位 TUI，混在一起没有可解释的行为。
-  if (repl && tui) return result("cannot combine --repl and --tui");
   return result();
 }
 
-/** 审批和 REPL 提示都要求 stdin / stdout 都是 TTY：没有输出终端没法问，没有输入终端没法答。 */
+/** 审批提示要求 stdin / stdout 都是 TTY：没有输出终端没法问，没有输入终端没法答。 */
 function hasInteractiveTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
 }
@@ -293,11 +326,11 @@ function describeForUser(error: unknown): string {
     : `${failure.title}: ${failure.advice} [detail: ${failure.detail}]`;
 }
 
-/** 一次只显示一个普通 CLI / REPL Run；TUI 通过 callbacks 走自己的展示层。 */
+/** 一次只显示一个普通 CLI Run；TUI 通过 callbacks 走自己的展示层。 */
 let activePresenter: RunPresenter | undefined;
 
 /**
- * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（REPL、一次性任务）；
+ * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（一次性任务）；
  * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
  */
 /** 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。 */
@@ -323,7 +356,7 @@ interface AgentCallbacks {
 }
 
 /**
- * 组装一个 Agent。REPL 的 /reset 也走这里 —— 换一个全新的 Agent，
+ * 组装一个 Agent。TUI 的 /reset 也走这里 —— 换一个全新的 Agent，
  * 但复用同一份配置和取消信号（Ctrl-C 应该停掉整个进程，而不是只停一轮）。
  *
  * signal 是这次会话唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
@@ -440,28 +473,11 @@ function printUsage(stats: AgentStats, { failed }: { failed: boolean }): void {
   );
 }
 
-/** 会话结束时的总账：跨 Run 累计，和每一轮的 [usage] 是两个口径。 */
-function printSession(stats: AgentSessionStats): void {
-  const lower = stats.usage.unknown > 0 ? "at least " : "";
-  console.log(
-    `\n[session] runs=${stats.runs} requests=${stats.requests} tool_calls=${stats.toolCalls} ` +
-      `tokens=${lower}${stats.usage.totalTokens} (prompt=${lower}${stats.usage.promptTokens} ` +
-      `completion=${lower}${stats.usage.completionTokens})`,
-  );
-}
-
-const REPL_HELP = [
-  // 中文对照：命令：/exit 退出、/reset 清空上下文并重开一个 Agent、/permission 查看或切换权限、/help 显示这段帮助
-  "commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this",
-  // 中文对照：/permission [模式] 查看或切换权限（read-only、workspace-write、full-access）
-  `          /permission [mode]  show or switch permission (${PERMISSION_MODE_LIST})`,
-].join("\n");
-
 /**
- * REPL 和 TUI 共用同一套会话命令解析。
+ * TUI 两条路径共用同一套会话命令解析：固定栏位模式，以及非 TTY 的逐行输出模式。
  *
- * 两个壳的输出方式不同（console vs 运行记录），但「/exit 是退出、/permission 后面
- * 跟什么、非法模式怎么报」这类规则只能有一份；否则两个界面会悄悄分叉。
+ * 两种显示方式不同（运行记录 vs console），但「/exit 是退出、/permission 后面
+ * 跟什么、非法模式怎么报」这类规则只能有一份；否则两条路径会悄悄分叉。
  */
 type SessionCommand =
   | { kind: "exit" | "help" | "reset" | "task" }
@@ -480,131 +496,6 @@ function parseSessionCommand(input: string): SessionCommand {
   const mode = parsePermissionMode(value);
   // 非法值保留原文，交给各壳用同一份可用模式列表报错。
   return mode === undefined ? { kind: "permission", value } : { kind: "permission", mode };
-}
-
-/**
- * 多轮会话。
- *
- * 每一行输入是一次 Run；Transcript 留在同一个 Agent 里，所以模型记得前面说过什么。
- * 失败的一轮不会结束会话：打印错误、继续等下一行输入。唯一的例外是取消 ——
- * Ctrl-C 停掉的是整个进程，所以循环跟着退出。
- */
-async function repl(config: Config, controller: AbortController): Promise<void> {
-  const signal = controller.signal;
-  const interactive = process.stdin.isTTY === true;
-  const canPrompt = hasInteractiveTerminal();
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: interactive });
-
-  // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT。
-  // 显式接住，仍然走同一条取消链：abort 控制器、关掉 readline、循环退出。
-  rl.on("SIGINT", () => {
-    controller.abort(new Error("received SIGINT"));
-    rl.close();
-  });
-
-  // 自己维护一条「已读到的行」队列，而不是用 rl.question：
-  // 管道输入会在任务还没跑完时就读到 EOF 并 close，question 会直接拒绝，缓冲里的后续行就丢了；
-  // for await 又和审批的第二个消费者抢同一行。一个 line 监听器同时服务 REPL 和审批，
-  // 谁先 await 谁拿到下一行，顺序才明确。
-  const lines: string[] = [];
-  const waiting: Array<(line: string | null) => void> = [];
-  let ended = false;
-
-  rl.on("line", (line) => {
-    const resolve = waiting.shift();
-    if (resolve === undefined) lines.push(line);
-    else resolve(line);
-  });
-  rl.on("close", () => {
-    ended = true;
-    // close 之后不会再有 line：所有等输入的人统一拿到 null，循环自然结束。
-    for (const resolve of waiting.splice(0)) resolve(null);
-  });
-
-  const nextLine = (prompt: string): Promise<string | null> => {
-    // 和旧 REPL 一样，每次读下一行前画提示符；管道里已经排着行时也不改变输出节奏。
-    if (!ended) {
-      rl.setPrompt(prompt);
-      rl.prompt();
-    }
-    const queued = lines.shift();
-    if (queued !== undefined) return Promise.resolve(queued);
-    if (ended) return Promise.resolve(null);
-    return new Promise((resolve) => waiting.push(resolve));
-  };
-
-  // 取消发生在「等输入」而不是「跑任务」时，也要能把循环叫醒。
-  const onAbort = () => rl.close();
-  signal.addEventListener("abort", onAbort, { once: true });
-
-  const approve: PermissionApprover = async (request) => {
-    const gate = approvalGate(signal, canPrompt, lines.length > 0);
-    if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
-    const answer = await nextLine(formatApproval(request, config.root));
-    if (answer === null) {
-      // EOF/readline 关闭不是「用户拒绝」；让 Permission 的 catch 折成审批通道错误。
-      throw new Error(
-        signal.aborted ? "shell approval skipped: task cancelled" : "shell approval skipped: approval prompt closed",
-      );
-    }
-    return isApproved(answer);
-  };
-
-  // 权限是会话级的：/reset 只换 Agent，不换这个对象，所以模式不会被重置。
-  // 无 TTY 时不注入审批器：Permission 会明确说「没有审批通道」，而不是假装用户拒绝。
-  const permission = new Permission(config.permission, canPrompt ? approve : undefined);
-  let agent = createAgent(config, signal, permission);
-
-  try {
-    while (!signal.aborted) {
-      const line = await nextLine("> ");
-      if (line === null) break;
-      const input = line.trim();
-      const command = parseSessionCommand(input);
-
-      if (command.kind === "exit") break;
-      if (command.kind === "help") {
-        console.log(REPL_HELP);
-        continue;
-      }
-      if (command.kind === "reset") {
-        agent = createAgent(config, signal, permission);
-        console.log("(session reset)\n");
-        continue;
-      }
-      if (command.kind === "permission") {
-        if (command.value !== undefined) {
-          // 中文对照：未知权限模式 "{值}"（可用：…）
-          console.log(`unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`);
-        } else if (command.mode !== undefined) {
-          permission.setMode(command.mode);
-          console.log(`permission: ${permission.mode}`);
-        } else {
-          console.log(`permission: ${permission.mode}`);
-        }
-        continue;
-      }
-
-      if (input === "") continue;
-
-      try {
-        await runTurn(agent, input, config, signal);
-      } catch (error) {
-        if (signal.aborted) {
-          console.error(`[agent] cancelled: ${describeError(error)}`);
-          break;
-        }
-        // 一轮失败不等于会话失败：这里的错误已经进过账单，继续等输入。
-        console.error(`[agent] turn failed: ${describeForUser(error)}`);
-      }
-    }
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    rl.close();
-  }
-
-  printSession(agent.sessionStats);
-  if (signal.aborted) process.exitCode = 130;
 }
 
 /**
@@ -819,12 +710,15 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 }
 
 const usage = [
-  // 中文对照：用法：node src/cli.ts "<任务>" [--permission <模式>]；node src/cli.ts --repl 进入多轮会话
-  'usage: node src/cli.ts "<task>" [--permission <mode>]',
-  "       node src/cli.ts --repl [--permission <mode>]     # multi-turn session; /exit, /reset, /permission, /help",
-  // 中文对照：node src/cli.ts --tui [--permission <模式>] 进入轻量 TUI；可带一个初始任务
-  "       node src/cli.ts --tui [--permission <mode>] [task]  # lightweight TUI session",
+  // 中文对照：用法：node src/cli.ts "<任务>" [--permission <模式>] [--cwd <目录>]
+  'usage: node src/cli.ts "<task>" [--permission <mode>] [--cwd <dir>]',
+  // 中文对照：不带任务时进入全屏 TUI（TUI 是唯一的交互界面）
+  "       node src/cli.ts [--permission <mode>] [--cwd <dir>]           # no task: full-screen TUI (only interactive mode)",
+  // 中文对照：node src/cli.ts --tui [--permission <模式>] [--cwd <目录>] 进入 TUI；可带一个初始任务
+  "       node src/cli.ts --tui [--permission <mode>] [--cwd <dir>] [task]  # TUI, optional first task",
   "       node src/cli.ts --details \"<task>\"  # expanded tool logs",
+  // 中文对照：--cwd <目录> 把工作区根目录指向另一个目录（等于先 cd 再启动）；优先于 WORKDIR
+  "       --cwd <dir>  open another directory as the workspace root (like cd before start); overrides WORKDIR",
   // 中文对照：权限模式：…（默认：…）
   `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
@@ -832,10 +726,9 @@ const usage = [
 ].join("\n");
 
 const cli = parseArgs(process.argv.slice(2));
-// 没给任务、又是在终端里直接运行：默认进 REPL。管道/CI 里没有输入，给用法更安全。
-// --tui 是显式选择：它自己会处理初始任务，不能因为 task 为空就退回 usage。
-const replMode = cli.repl || (!cli.tui && cli.task === "" && process.stdin.isTTY === true);
-const tuiMode = cli.tui;
+// 没给任务、又在真终端里：直接进 TUI。TUI 是唯一的交互界面，不再有逐行 REPL。
+// 管道/CI 里没有交互输入，给用法更安全；--tui 显式指定时照旧处理它自己的初始任务。
+const tuiMode = cli.tui || (cli.task === "" && process.stdin.isTTY === true);
 
 if (cli.error !== undefined) {
   // 中文对照：[agent] 致命错误：{原因}
@@ -844,7 +737,7 @@ if (cli.error !== undefined) {
   process.exitCode = 1;
 } else if (cli.help) {
   console.log(usage);
-} else if (cli.task === "" && !replMode && !tuiMode) {
+} else if (cli.task === "" && !tuiMode) {
   console.log(usage);
   process.exitCode = 1;
 } else {
@@ -855,11 +748,9 @@ if (cli.error !== undefined) {
   }
 
   try {
-    const config = loadConfig(cli.permission, cli.details, tuiMode && hasInteractiveTerminal());
+    const config = loadConfig(cli.permission, cli.details, tuiMode && hasInteractiveTerminal(), cli.cwd);
     if (tuiMode) {
       await tuiSession(config, controller, cli.task === "" ? undefined : cli.task);
-    } else if (replMode) {
-      await repl(config, controller);
     } else {
       const approvalPrompt = createApprovalPrompt(controller, config.root);
       try {
