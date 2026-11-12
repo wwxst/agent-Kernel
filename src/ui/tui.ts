@@ -2189,10 +2189,24 @@ export class Tui {
     const commitTarget = Math.max(0, Math.min(lines.length - tailBudget, boundary));
     const commitTo = Math.min(Math.max(this.printedLines, commitTarget), lines.length);
     const tail = lines.slice(commitTo);
+    // 未确认的流式正文不能提前提交到 Shell scrollback：模型可能中断或校正它。
+    // 但也不能让整条长回复一直留在可变区，否则活动区会超过终端高度，光标上移越界并重复刷历史。
+    // 因此流式期间只显示尾部窗口；确认后 commitAssistant 会把完整正文一次性写入日志。
+    let visibleTail = tail;
+    if (this.assistantOpen && tail.length > tailBudget) {
+      const visibleCount = Math.max(1, tailBudget - 1);
+      const hiddenCount = tail.length - visibleCount;
+      visibleTail = tailBudget > 1
+        ? [{ text: this.uiText(
+          `… ${hiddenCount} earlier streaming lines pending confirmation`,
+          `… 还有 ${hiddenCount} 行较早的流式正文待确认`,
+        ), tone: "muted" }, ...tail.slice(-visibleCount)]
+        : tail.slice(-1);
+    }
     // 输入框上方 = 活动区尾部实际占用的终端行数 + 输入框上边框。
     // 不能直接用 tail.length：终端在行尾会自动折行，一条逻辑行可能占两行；
     // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
-    const tailRows = tail.reduce(
+    const tailRows = visibleTail.reduce(
       (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
     // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
     const rowsAboveInput = tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
@@ -2206,7 +2220,7 @@ export class Tui {
     }
     this.printedLines = commitTo;
 
-    for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
+    for (const line of visibleTail) frame += `${this.paintLogLine(line, width)}\r\n`;
     // 输入区可以是多行（Ctrl+J 换行），行数变化要同时反映到光标回退的行数上。
     const inputRows = this.inputLines(width);
     frame += `${this.dividerLine(width)}\r\n${inputRows.join("\r\n")}\r\n${this.dividerLine(width)}\r\n`;

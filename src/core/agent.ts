@@ -234,6 +234,12 @@ export class Agent {
   private running = false;
 
   /**
+   * 进程树清理未确认后，整个 Agent Session 禁止再次启动工具。
+   * 只有宿主确认遗留进程已处理并创建新的 Agent，才能恢复工具执行。
+   */
+  private processCleanupUnverified = false;
+
+  /**
    * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
    * 注意「重发」：模型是无状态的，它记得多少，完全取决于我们发过去多少。
    * 对外只读：调用方可以看，但不能绕过循环往里塞消息。
@@ -467,7 +473,7 @@ export class Agent {
         this.runRequests++;
         this.sessionRequests++;
         try {
-          response = await this.llm.chat(this.messages, this.tools.definitions, {
+          response = await this.llm.chat(this.messages, this.processCleanupUnverified ? [] : this.tools.definitions, {
             onDelta: this.onDelta === undefined ? undefined : (text) => this.notifyObserver(this.onDelta, text),
           });
           break;
@@ -499,6 +505,13 @@ export class Agent {
           throw new Error("model returned an empty final answer");
         }
         return message;
+      }
+
+      // 进程树清理未确认是 Session 级安全故障：后续请求不再暴露工具，
+      // 即使模型仍返回工具调用，也只补 not-run 结果，绝不再启动副作用。
+      if (this.processCleanupUnverified) {
+        this.skipCalls(calls, "process tree cleanup unverified; tool execution remains disabled for this Agent session");
+        continue;
       }
 
       // 5) 这一轮可能刚好把预算用光：后面的工具没有下一次请求去验证，不能执行。
@@ -541,15 +554,15 @@ export class Agent {
           result = await this.tools.execute(call);
         } catch (error) {
           if (!(error instanceof ProcessCleanupError)) throw error;
+          this.processCleanupUnverified = true;
           // 整棵进程树未确认停止：记录当前调用的错误并跳过整批剩余工具，不能继续写文件。
           this.runToolCalls++;
           this.sessionToolCalls++;
           this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
           this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
-          // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作（Claude Code 的
-          // 超时只是把错误交回模型，任务继续）。但本批剩余调用全部跳过——进程树没确认
-          // 停掉之前，不能再启动新的工具去写文件。模型看到这条错误后应当收尾报告。
+          // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作。
+          // 本批与后续所有 Run 的工具都被禁止，模型只负责根据错误收尾报告。
           break;
         }
         this.runToolCalls++;

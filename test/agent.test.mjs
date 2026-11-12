@@ -291,6 +291,44 @@ test("进程树清理未确认：跳过同批后续工具，把错误交回模�
   assert.equal(agent.stats.toolCalls, 1);
 });
 
+
+test("进程树清理未确认后：后续模型轮次和后续 Run 都不能再执行工具", async () => {
+  let touched = 0;
+  const cleanup = {
+    name: "broken_shell", description: "simulated cleanup failure",
+    parameters: { type: "object", properties: {} },
+    run: async () => { throw new ProcessCleanupError("process tree cleanup unverified"); },
+  };
+  const write = {
+    name: "write", description: "side effect",
+    parameters: { type: "object", properties: {} },
+    run: async () => { touched++; return "wrote"; },
+  };
+  const chat = createScriptedChat([
+    callTool("shell", "broken_shell", {}),
+    callTool("write-after-cleanup", "write", {}),
+    finalReply("cleanup failed; no more tools were run"),
+    callTool("write-next-run", "write", {}),
+    finalReply("the session remains tool-disabled"),
+  ]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([cleanup, write]) });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "the session remains tool-disabled");
+  assert.equal(touched, 0, "进程树清理未确认后，后续 Run 也不能启动副作用");
+  assert.deepEqual(chat.requests.map((request) => request.tools.length), [2, 0, 0, 0, 0]);
+  const results = agent.transcript.filter((message) => message.role === "tool");
+  assert.deepEqual(results.map((message) => message.tool_call_id), [
+    "shell", "write-after-cleanup", "write-next-run",
+  ]);
+  assert.match(results[1].content, /tool execution remains disabled for this Agent session/);
+  assert.match(results[2].content, /tool execution remains disabled for this Agent session/);
+  assert.equal(agent.stats.toolCalls, 0, "第二个 Run 没有实际执行工具");
+  assert.equal(agent.sessionStats.toolCalls, 1, "只统计首次进入 ToolRegistry 的失败调用");
+});
+
 test("展示回调可改自己的工具对象，不能篡改执行参数或 transcript 配对", async () => {
   let executed = "";
   const tool = {

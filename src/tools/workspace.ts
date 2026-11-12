@@ -218,6 +218,7 @@ interface BackgroundJob {
   cursor: number;
   status: "running" | "exited" | "killed" | "unverified";
   exitCode: number | null;
+  error?: string;
 }
 
 /**
@@ -751,7 +752,7 @@ export class Workspace {
    * 管道的 handle 仍然挂在宿主的 event loop 上，任务跑完了 agent 也退不出去（要等 4 秒硬杀）。
    * 写文件则一个句柄都不留，`unref()` 的语义才真的成立。
    */
-  private runInBackground(command: string): string {
+  private async runInBackground(command: string): Promise<string> {
     const id = `job-${++this.jobSeq}`;
     // 带上宿主 pid：同一台机器上同时开着两个 agent 时，日志文件不会互相覆盖。
     const logPath = path.join(JOB_LOG_DIR, `${process.pid}-${id}.log`);
@@ -760,7 +761,13 @@ export class Workspace {
     const fd = openSync(logPath, "w");
     let child: ChildProcess;
     try {
-      child = spawn(command, {
+      // POSIX 的 EXIT trap 会等待命令显式启动的后台子进程，避免 shell 先退出、
+      // 进程组却留下孤儿；这样 job 的组长仍在，shell-kill 才能安全地停止整组。
+      const launchCommand = process.platform === "win32"
+        ? command
+        : `trap 'status=$?; trap - EXIT; wait; exit "$status"' EXIT
+${command}`;
+      child = spawn(launchCommand, {
         cwd: this.root,
         shell: true,
         windowsHide: true,
@@ -777,7 +784,6 @@ export class Workspace {
       // child 已经复制了 fd；父进程再留着它只是多一个句柄，而且 Windows 上会锁住文件。
       closeSync(fd);
     }
-    child.unref();
 
     const job: BackgroundJob = {
       id,
@@ -789,13 +795,44 @@ export class Workspace {
       status: "running",
       exitCode: null,
     };
-    // 自己退出的任务要能报出 exit code；被 kill 的任务不能在这里被改回 exited ——
-    // 模型需要知道是自己停的，而不是它自己崩了。
+    let spawned = false;
+    const onChildError = (error: Error) => {
+      if (spawned && job.status === "running") {
+        job.status = "unverified";
+        job.error = error.message;
+      }
+    };
+    child.on("error", onChildError);
     child.on("exit", (code) => {
       if (job.status !== "running") return;
       job.status = "exited";
       job.exitCode = code;
     });
+
+    // spawn() 的失败是异步 error 事件，不是同步 throw。必须等到 spawn 事件后才能报告 started；
+    // 否则无效 cwd 会先返回成功，再因未处理的 error 事件把整个 Agent 进程打崩。
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onSpawn = () => {
+          spawned = true;
+          child.off("error", onSpawnError);
+          resolve();
+        };
+        const onSpawnError = (error: Error) => {
+          child.off("spawn", onSpawn);
+          reject(error);
+        };
+        child.once("spawn", onSpawn);
+        child.once("error", onSpawnError);
+      });
+    } catch (error) {
+      child.off("error", onChildError);
+      await unlink(logPath).catch(() => {});
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`could not start background command: ${detail}`);
+    }
+
+    child.unref();
     this.jobs.set(id, job);
 
     return `started ${id} (pid ${child.pid ?? "unknown"}) in the background; ` +
@@ -836,12 +873,15 @@ export class Workspace {
     const header = this.jobHeader(job);
     if (text === "") return `${header}\n(no new output)`;
 
+    const characters = Array.from(text);
     let shown = text;
     let tail = "";
-    if (shown.length > MAX_JOB_OUTPUT_CHARS) {
-      shown = shown.slice(0, MAX_JOB_OUTPUT_CHARS);
+    if (characters.length > MAX_JOB_OUTPUT_CHARS) {
+      // 按 Unicode code point 截断，不能用 String.slice 的 UTF-16 code unit 边界切开代理对。
+      shown = characters.slice(0, MAX_JOB_OUTPUT_CHARS).join("");
       // 只推进「真正给出去的字节」，剩下的留在日志里等下一次调用。
-      tail = `\n… [${text.length - shown.length} chars not shown; call shell-output again]`;
+      tail = `
+… [${characters.length - MAX_JOB_OUTPUT_CHARS} chars not shown; call shell-output again]`;
     }
     job.cursor += Buffer.byteLength(shown);
 
@@ -918,7 +958,8 @@ export class Workspace {
 
   /** 状态行：模型先看这一行，再决定是继续等、去修，还是收工。 */
   private jobHeader(job: BackgroundJob): string {
-    const status = job.status === "exited" ? `exited with code ${job.exitCode ?? "unknown"}` : job.status;
+    const status = job.status === "exited" ? `exited with code ${job.exitCode ?? "unknown"}` :
+      job.status === "unverified" && job.error !== undefined ? `unverified: ${job.error}` : job.status;
     const pid = job.pid === undefined ? "unknown pid" : `pid ${job.pid}`;
     return `${job.id} (${status}, ${pid}) ran: ${job.command}`;
   }

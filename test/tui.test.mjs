@@ -2192,3 +2192,31 @@ test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次�
   await tick();
   assert.match(inputLine(ui), /上一次的任务/, "上键翻出上一次的输入");
 });
+
+
+test("TUI 主视图：长流式正文的可变区域有界，确认后完整进入历史", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 12 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("stream many lines");
+  await tick();
+
+  const lines = Array.from({ length: 25 }, (_, index) => `STREAM_LINE_${index + 1}`);
+  const beforeDraft = ui.text().length;
+  ui.tui.assistantDelta(lines.join("\n"));
+  await tick();
+  const draft = ui.text().slice(beforeDraft);
+
+  assert.match(draft, /earlier streaming lines pending confirmation/);
+  assert.doesNotMatch(draft, /STREAM_LINE_1(?:\r|\n)/, "未确认的旧流式行不进入滚动历史");
+  const upward = [...draft.matchAll(/\x1b\[(\d+)A/g)].map((match) => Number(match[1]));
+  assert.ok(upward.every((count) => count <= 12), `光标上移必须受终端高度约束：${upward.join(", ")}`);
+
+  const beforeConfirm = ui.text().length;
+  ui.tui.finishAssistant();
+  await tick();
+  const confirmed = ui.text().slice(beforeConfirm);
+  assert.match(confirmed, /STREAM_LINE_1/, "确认后完整正文的开头进入历史");
+  assert.match(confirmed, /STREAM_LINE_25/, "确认后完整正文的结尾仍可见");
+});
+

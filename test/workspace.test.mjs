@@ -1121,6 +1121,24 @@ test("shell 后台执行：返回任务编号，立即返回不等待进程结�
   });
 });
 
+
+test("shell 后台启动失败：返回可恢复工具错误，不伪报 started", async () => {
+  await withWorkspace(async (dir) => {
+    const missingRoot = path.join(dir, "missing-root");
+    const workspace = new Workspace({ root: missingRoot });
+
+    await assert.rejects(
+      () => workspace.run('node -e "setTimeout(()=>{},1000)"', { background: true }),
+      /could not start background command:.*ENOENT/i,
+    );
+    await assert.rejects(
+      () => workspace.readJobOutput("job-1"),
+      /unknown background job "job-1" \(known: none\)/,
+      "启动失败的任务不能登记成 running",
+    );
+  });
+});
+
 test("shell-output：读到输出后，第二次只返回新增的部分", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
@@ -1189,6 +1207,26 @@ test("shell-kill：停掉后台任务，进程真的不在了", async () => {
   });
 });
 
+
+test("shell-kill：命令启动的后台后代仍属于同一任务，可通过任务接口停止", { skip: process.platform === "win32" }, async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "setInterval(()=>{},1000)" & echo $! > child.pid; echo ready', { background: true });
+
+    const output = await workspace.readJobOutput("job-1", 5000);
+    const shellPid = Number(/pid (\d+)/.exec(output)?.[1]);
+    const childPid = Number((await readFile(path.join(dir, "child.pid"), "utf8")).trim());
+    try {
+      assert.match(output, /ready/);
+      assert.ok(Number.isInteger(childPid), "命令启动的后台子进程必须有 pid");
+      assert.match(await workspace.killJob("job-1"), /stopped job-1/);
+      assert.equal(await waitGone(childPid), true, "shell-kill 必须停止 shell 已启动的后台后代");
+    } finally {
+      await stopJob(workspace, shellPid);
+    }
+  });
+});
+
 test("shell-output：未知任务编号报错，并列出已知编号", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
@@ -1219,6 +1257,30 @@ test("shell-output：单次最多 8000 字符，剩下的明确说还有并留�
       const second = await workspace.readJobOutput("job-1", 5000);
       assert.match(second, /x{1000}/);
       assert.doesNotMatch(second, /not shown/, "读完就不该再提示还有");
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+
+test("shell-output：截断边界不切开 emoji 代理对，后续读取不损坏 UTF-8", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    const expectedFirst = `${"x".repeat(7_999)}😀`;
+    const outputText = `${expectedFirst}Z`;
+    const script = `process.stdout.write(${JSON.stringify(outputText)})`;
+    await workspace.run(`node -e '${script}'`, { background: true });
+
+    const first = await workspace.readJobOutput("job-1", 5000);
+    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    try {
+      assert.equal(body(first).split("\n")[0], expectedFirst, "第一次只能在完整 emoji 之后截断");
+      assert.match(first, /1 chars not shown/);
+
+      const second = await workspace.readJobOutput("job-1", 5000);
+      assert.equal(body(second), "Z", "第二次从正确的 UTF-8 字节偏移继续");
+      assert.doesNotMatch(second, /\uFFFD/);
     } finally {
       await stopJob(workspace, pid);
     }
