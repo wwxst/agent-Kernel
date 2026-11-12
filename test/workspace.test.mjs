@@ -1269,9 +1269,9 @@ test("shell-output：截断边界不切开 emoji 代理对，后续读取不损�
     const workspace = new Workspace({ root: dir });
     const expectedFirst = `${"x".repeat(7_999)}😀`;
     const outputText = `${expectedFirst}Z`;
-    // Base64 避免 POSIX / cmd.exe 对单引号、双引号的不同解释。
-    const encoded = Buffer.from(outputText, "utf8").toString("base64");
-    await workspace.run(`node -e "process.stdout.write(Buffer.from('${encoded}','base64'))"`, { background: true });
+    await workspace.write("payload.txt", outputText);
+    // 从文件读取，避免把 8k 测试载荷塞进 Windows 命令行长度限制。
+    await workspace.run(`node -e "process.stdout.write(require('fs').readFileSync('payload.txt'))"`, { background: true });
 
     const first = await workspace.readJobOutput("job-1", 5000);
     const pid = Number(/pid (\d+)/.exec(first)?.[1]);
