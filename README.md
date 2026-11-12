@@ -302,7 +302,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-350 个用例，都不需要 API Key、不联网（其中 5 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限）：
+352 个用例，都不需要 API Key、不联网（其中 5 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -310,9 +310,15 @@ npm run check       # typecheck + 全部测试
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 工作区外读写（绝对路径、`../`、符号链接）、完整读取、截断、扫描预算、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、工作区外 shell、取消进程树和 Windows taskkill 错误/非零退出/卡住故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
+| `test/model-errors.test.mjs` | 错误分类：配置 / 鉴权 / 404 / 网络 / 流式中断各归哪一类，哪些能重试、哪些一律禁止重放 |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、TUI 多轮与 `/reset`、已移除的 `--permission` / `AGENT_PERMISSION` 明确报错、流式 mock、TUI 聊天布局 / 命令 / 统计 |
+| `test/cli-presenter.test.mjs` | 命令行展示：流式草稿与确认正文不一致时追加更正，同一工具批次不重复提示 |
 | `test/cli-pty.test.mjs` | Linux PTY：真实终端里的 TUI 启动、未配置模型提示、不抢鼠标 / 不进备用屏 |
 | `test/tui.test.mjs` | TUI：聊天布局、思考动画、终端降级、生命周期与工具活动、状态栏固定完全访问、`Shift+Tab` 不再是快捷键；组合 Unicode / IME 一次上屏、长会话滚动及关闭后资源清理 |
+| `test/tui-image.test.mjs` | 图片预览：PNG 解码、透明色与 tRNS、坏 CRC / 缺 IEND 等无效输入必须拒绝并降级 |
+| `test/file-index.test.mjs` | 文件清单：跳过 `node_modules` / `.git`、数量上限、`@` 补全的排序口径 |
+| `test/prompt-history.test.mjs` | 输入历史：坏行跳过、文件不存在不算错、单条与总条数上限 |
+| `test/project-instructions.test.mjs` | 项目指令：读不到返回 `undefined`、空白文件等同没有、超长截断、同名目录不报错 |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |

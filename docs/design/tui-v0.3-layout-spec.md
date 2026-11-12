@@ -6,7 +6,7 @@
 >
 > 适用范围：现有 TUI 的布局和显示层；不修改 Agent Loop、Session 语义或工具协议。
 >
-> **2026-11-12 注**：权限模式与 Shell 审批已删除（[ADR-0019](../../adr/0019-full-access-is-the-only-mode.md)）。
+> **2026-11-12 注**：权限模式与 Shell 审批已删除（[ADR-0019](../adr/0019-full-access-is-the-only-mode.md)）。
 > 本文中 `workspace-write` / `read-only` 状态行示例和第 5 节「Shell 审批」只描述当时的界面，
 > 不代表当前行为；当前状态行固定显示 `权限：完全访问`，没有审批菜单。
 
