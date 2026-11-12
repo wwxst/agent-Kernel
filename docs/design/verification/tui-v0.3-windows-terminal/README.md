@@ -1,5 +1,7 @@
 # Windows Terminal 实际截图与逐图对照验收
 
+> **历史记录**：本文件记录的是 v0.3 的界面验收；其中 `--permission read-only`、Shell 审批与拒绝提示已在 2026-11-12 随 [ADR-0019](../../adr/0019-full-access-is-the-only-mode.md) 删除，截图只作为历史对照。
+
 2026-11-06，Asia/Shanghai。继续更新 [PR #9](https://github.com/wwxst/agent-Kernel/pull/9)，不合并。
 
 本轮先逐张打开 [7 张 Claude Code 真实截图](../../claude-code-ui-references/README.md) 的原始 PNG，再按 [v0.3 布局规范](../../tui-v0.3-layout-spec.md) 改动。逐图观察与取舍见 [对照记录](../../tui-reference-polish-plan.md)。第三方图片只在临时目录中查看，未二次分发到仓库。

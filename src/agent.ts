@@ -33,10 +33,18 @@ import type { ToolRegistry } from "./tool-registry.ts";
  * 每一行英文上面是它的中文对照 —— 中文只留在源码里，发给模型的只有英文那一行。
  */
 export const DEFAULT_SYSTEM_PROMPT = [
-  // 你是一个在当前工作区里干活的编码 agent。
-  "You are a coding agent working inside the current workspace.",
+  // 你是一个在开发者机器上干活的编码 agent。
+  "You are a coding agent working on the developer's machine.",
   // 可用工具：read、write、edit、glob、grep、ls、shell。用它，不要靠猜。
   "Tools: read, write, edit, glob, grep, ls, shell. Use them instead of guessing.",
+  // 权限：完全访问。没有审批提示，也没有工作区边界。
+  "You run with full access: there are no approval prompts and no workspace sandbox.",
+  // 相对路径从工作区根目录解析；绝对路径、../、其他磁盘都可用。
+  "Relative paths resolve from the workspace root; absolute paths, ../, and other drives work too.",
+  // 可以在当前操作系统账户有权访问的任何位置读写删文件、跑命令、访问网络。
+  "You may read, create, modify, and delete files anywhere the current OS account can, run shell commands, and use the network.",
+  // 真正的限制来自操作系统账户与系统安全策略，不来自这个 agent。
+  "Your real limits are the OS account and system security policy, not this agent. Do not ask for approval before ordinary work.",
   // 动手改之前先看；每次改动小一点；做完跑一次检查或测试来验证。
   "Inspect before editing, keep changes small, and verify your work with a check or test.",
   // 非关键歧义自己合理判断；影响正确性、文件范围或重要操作的歧义可以问用户。
@@ -58,9 +66,6 @@ export const DEFAULT_SYSTEM_PROMPT = [
 function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
-
-/** 同一个操作连续被拒几次就停下：对齐 Claude Code 的 3 次阈值。 */
-const MAX_CONSECUTIVE_DENIALS = 3;
 
 /** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */function cancellationError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
@@ -96,7 +101,7 @@ export interface AgentUsage {
 export interface AgentStats {
   /** 本次 Run 发出去的模型请求数（失败的请求也算一次尝试）。 */
   requests: number;
-  /** 本次 Run 已处理的工具调用数：含校验失败和权限拒绝，不含因预算跳过的调用。 */
+  /** 本次 Run 已处理的工具调用数：含校验失败，不含因预算跳过的调用。 */
   toolCalls: number;
   usage: AgentUsage;
   /**
@@ -131,12 +136,12 @@ export interface AgentOptions {
   llm: ChatClient;
   /** 模型能调用的工具集合。 */
   tools: ToolRegistry;
-  /** 不传就用 DEFAULT_SYSTEM_PROMPT。传函数时在每次模型请求前求值，用于动态权限说明。 */
+  /** 不传就用 DEFAULT_SYSTEM_PROMPT。传函数时在每次模型请求前求值，可注入项目指令等动态内容。 */
   systemPrompt?: string | (() => string);
   /** 循环上限。设计稿里是 while (true)，实战必须有这个刹车。 */
   maxSteps?: number;
   /**
-   * 一次任务最多处理多少次工具调用。默认 60；权限拒绝和参数错误也消耗此额度。
+   * 一次任务最多处理多少次工具调用。默认 60；参数错误也消耗此额度。
    *
    * 为什么和 maxSteps 分开：`maxSteps` 数的是「问了模型几次」，一次模型回复可以要 3 个工具，
    * 所以 30 步最多能跑 90 次工具。两个预算各管一件事，不能用一个数字假装管住另一个。
@@ -164,7 +169,7 @@ export interface AgentOptions {
   onToolResult?: (call: ToolCall, result: string) => void;
   /**
    * 每次工具**开始执行前**的回调。给 TUI 用：先把「要跑什么」写进运行记录，
-   * 再等审批和真实结果，而不是等工具跑完才一次性出现。
+   * 再等真实结果，而不是等工具跑完才一次性出现。
    *
    * 不会为被预算/取消跳过的调用触发 —— 那些调用没有执行，不能假装它们开始过。
    */
@@ -206,9 +211,6 @@ export class Agent {
 
   /** 已经过 ToolRegistry 的调用次数，含拒绝与校验失败，预算跳过不计；供限额与失败报告使用。 */
   private runToolCalls = 0;
-
-  /** 连续被拒次数：达到上限就中止本轮，避免模型换个写法无限重试。 */
-  private consecutiveDenials = 0;
 
   /** 本次 Run 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
   private runRequests = 0;
@@ -262,7 +264,7 @@ export class Agent {
   /**
    * 刷新唯一的 system 消息。
    *
-   * 动态权限说明只改这一条消息的内容，不追加新的 system 消息：
+   * 动态系统提示只改这一条消息的内容，不追加新的 system 消息：
    * 追加会改变消息顺序，也会让模型同时看到新旧两套规则。原地更新保留
    * 「一条 system + 一条 user + assistant/tool 配对」的 Transcript 形状。
    */
@@ -436,7 +438,6 @@ export class Agent {
     this.runRequests = 0;
     this.runRetries = 0;
     this.runToolCalls = 0;
-    this.consecutiveDenials = 0;
     this.runUsage = emptyUsage();
   }
 
@@ -451,7 +452,7 @@ export class Agent {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
       this.stopIfCancelled();
       this.stopIfBudgetExhausted();
-      // 每次请求前重新求值：/permission 切换后，下一次请求必须看到新规则。
+      // 每次请求前重新求值：项目指令或进度提示变化后，下一次请求必须看到新内容。
       this.refreshSystemPrompt();
       // 请求真正发出前给 TUI 一个「开始思考」的信号；失败/取消也要由调用方清掉。
       this.notifyObserver(this.onRequestStart, step);
@@ -556,20 +557,6 @@ export class Agent {
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
         this.notifyObserver(this.onToolResult, structuredClone(call), result);
-        // 连续被拒是死循环的前兆：模型看到「被拒绝」会换个写法重试，再被拒，再重试。
-        // Claude Code 的做法是同一个操作连续被拒 3 次就停下问人；这里没有「问人」的通道，
-        // 所以第 3 次直接中止本轮，把原因说清楚——比烧掉几万 token 重试 20 次好。
-        if (result.startsWith("ERROR: permission denied")) {
-          this.consecutiveDenials++;
-          if (this.consecutiveDenials >= MAX_CONSECUTIVE_DENIALS) {
-            throw new Error(
-              `tool "${call.function.name}" was denied ${this.consecutiveDenials} times in a row; ` +
-                "stopping instead of retrying the same operation",
-            );
-          }
-        } else {
-          this.consecutiveDenials = 0;
-        }
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。

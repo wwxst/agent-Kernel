@@ -9,8 +9,9 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -90,7 +91,9 @@ function runCli(env, { args = ["do the task"], input } = {}) {
   const child = spawn(process.execPath, [cliPath, ...args], {
     cwd: projectRoot,
     // API_KEY 给个假值：测试里没有真实网络请求（缺 Key 的用例会显式覆盖它）。
-    env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", ...env },
+    // AGENT_PERMISSION 显式清空：本机 shell 或 .env 里若残留它，启动会直接报错；
+    // 要测「已移除」的用例自己传值。
+    env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", AGENT_PERMISSION: "", ...env },
   });
 
   if (input !== undefined) child.stdin.end(input);
@@ -208,13 +211,13 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(await readFile(path.join(workdir, "hello.txt"), "utf8"), "hello from agent\n");
       assert.match(run.stdout, /done: created hello\.txt/);
       assert.match(run.stdout, /wrote 17 chars to hello\.txt/);
-      // 不传 --permission 时默认是 workspace-write：文件工具放行。
-      assert.match(run.stdout, /permission: workspace-write/);
+      // 只有一种权限：完全访问。
+      assert.match(run.stdout, /access: +full-access/);
 
       // 第一次请求：system 在最前，四个工具按协议格式发过去
       const first = mock.requests[0];
       assert.equal(first.messages[0].role, "system");
-      assert.match(first.messages[0].content, /Permission mode: workspace-write/);
+      assert.match(first.messages[0].content, /full access/);
       assert.equal(first.messages[1].role, "user");
       assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
@@ -262,23 +265,27 @@ test("CLI：模型流式请求中断时声明草稿失效，不冒充已确认�
   });
 });
 
-test("越界路径：变成 ERROR 回灌，进程正常退出", async () => {
+test("工作区外路径：绝对路径可以直接读取，不再当作越界", async () => {
   await withWorkspace(async (workdir) => {
+    const outsideDir = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    const outsideFile = path.join(outsideDir, "outside.txt");
+    await writeFile(outsideFile, "outside content\n");
     const mock = await startMock([
-      callTool("call_1", "read", { path: "../../outside.txt" }),
-      finalReply("recovered after bad path"),
+      callTool("call_1", "read", { path: outsideFile }),
+      finalReply("read outside file"),
     ]);
 
     try {
       const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
-      assert.equal(run.code, 0, "agent should survive a tool error");
-      assert.match(run.stdout, /ERROR: path escapes workspace/);
-      assert.match(run.stdout, /recovered after bad path/);
+      assert.equal(run.code, 0, `agent exited with ${run.code}\n${run.stderr}`);
+      assert.match(run.stdout, /read outside file/);
 
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
-      assert.match(toolMessage.content, /ERROR: path escapes workspace/);
+      assert.match(toolMessage.content, /outside content/);
+      assert.doesNotMatch(toolMessage.content, /ERROR/);
     } finally {
       await mock.close();
+      await rm(outsideDir, { recursive: true, force: true });
     }
   });
 });
@@ -362,51 +369,35 @@ test("API Key：只有空白值时按缺失处理", async () => {
   assert.match(run.stderr, /missing API_KEY/);
 });
 
-test("--permission read-only：写工具被拒绝，ERROR 回灌后模型继续收尾", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      callTool("call_write", "write", { path: "blocked.txt", content: "nope" }),
-      finalReply("permission denied as expected"),
-    ]);
+test("--permission 已移除：明确报错，不调用模型", async () => {
+  const mock = await startMock([finalReply("should not be reached")]);
+  try {
+    const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model" }, { args: ["--permission", "read-only", "do the task"] });
 
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--permission", "read-only", "do the task"] },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /permission: read-only/);
-      assert.match(run.stdout, /ERROR: permission denied: tool "write" is not allowed in read-only mode/);
-
-      const first = mock.requests[0];
-      assert.match(first.messages[0].content, /Permission mode: read-only/);
-      assert.doesNotMatch(first.messages[0].content, /workspace-write|full-access/);
-
-      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
-      assert.match(toolMessage.content, /^ERROR: permission denied: /);
-    } finally {
-      await mock.close();
-    }
-  });
+    assert.equal(run.code, 1);
+    assert.match(run.stderr, /--permission was removed/);
+    assert.match(run.stdout, /usage:/);
+    assert.equal(mock.requests.length, 0, "被移除的开关不能产生模型调用");
+  } finally {
+    await mock.close();
+  }
 });
 
-test("workspace-write：无 TTY 时 shell 默认拒绝", async () => {
+test("shell：无 TTY 也能直接执行，不需要审批", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
-      callTool("call_shell", "shell", { command: "echo should-not-run" }),
-      finalReply("shell was denied"),
+      callTool("call_shell", "shell", { command: "echo shell-ran" }),
+      finalReply("shell done"),
     ]);
 
     try {
       const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /permission: workspace-write/);
-      assert.match(run.stdout, /ERROR: permission denied: .*no approval prompt is available/);
-
       const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
-      assert.match(toolMessage.content, /^ERROR: permission denied: .*no approval prompt is available/);
+      assert.match(toolMessage.content, /shell-ran/);
+      assert.doesNotMatch(toolMessage.content, /approval|permission denied/);
+      assert.doesNotMatch(run.stdout, /\[permission\]|allow once/);
     } finally {
       await mock.close();
     }
@@ -446,6 +437,15 @@ test("--cwd：目录不存在时立刻报错并给用法", async () => {
   assert.match(run.stdout, /usage:/);
 });
 
+test("--help：不再介绍已移除的权限开关，并说明固定完全访问", async () => {
+  const run = await runCli({}, { args: ["--help"] });
+
+  assert.equal(run.code, 0, run.stderr);
+  assert.match(run.stdout, /usage:/);
+  assert.match(run.stdout, /full-access/);
+  assert.doesNotMatch(run.stdout, /--permission|AGENT_PERMISSION|read-only|workspace-write|modes:/);
+});
+
 test("--repl 已移除：明确报错并给用法，不能变成一次模型请求", async () => {
   const mock = await startMock([finalReply("should not be reached")]);
   try {
@@ -478,8 +478,7 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
         {
           args: ["--tui"],
-          input:
-            "first task\n/permission wide-open\n/permission read-only\n/help\n/reset\nsecond task\n/exit\n",
+          input: "first task\n/help\n/reset\nsecond task\n/exit\n",
         },
       );
 
@@ -487,7 +486,7 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
       // 顶部状态栏（非 TTY 退化成三行）
       assert.match(run.stdout, /model: mock-model/);
       assert.ok(run.stdout.includes(`workspace: ${workdir}`));
-      assert.match(run.stdout, /permission: workspace-write/);
+      assert.match(run.stdout, /access: full-access/);
 
       // 中间运行记录：用户任务、工具调用、成功结果、模型回复
       assert.match(run.stdout, /you: first task/);
@@ -497,21 +496,20 @@ test("TUI：状态栏、运行记录、统计与会话命令", async () => {
       // 第一轮两次请求，各 110 tokens
       assert.match(run.stdout, /\[stats\] requests=2 tool_calls=1 tokens=220/);
 
-      // 会话命令：非法模式报错、切换权限、帮助、reset
-      assert.match(run.stdout, /unknown permission mode "wide-open"/);
-      assert.match(run.stdout, /permission: read-only/);
+      // 会话命令：帮助、reset；权限固定，没有可切换的模式
+      assert.doesNotMatch(run.stdout, /\/permission|unknown permission mode/);
       assert.match(run.stdout, /commands: \/exit/);
       assert.match(run.stdout, /\(session reset\)/);
       assert.match(run.stdout, /model: tui second done/);
       assert.match(run.stdout, /\[session\] runs=1 requests=1 tool_calls=0 tokens=110/);
 
-      // reset 换 Agent 但不换权限：第二次请求回到 system + user，且提示为 read-only。
+      // reset 换 Agent 但不换配置：第二次请求回到 system + user。
       const secondRequest = mock.requests[2];
       assert.deepEqual(
         secondRequest.messages.map((message) => message.role),
         ["system", "user"],
       );
-      assert.match(secondRequest.messages[0].content, /Permission mode: read-only/);
+      assert.match(secondRequest.messages[0].content, /full access/);
     } finally {
       await mock.close();
     }
@@ -561,22 +559,22 @@ test("TUI：--tui 带初始任务时先跑完再等输入", async () => {
   });
 });
 
-test("TUI：中文任务后 /permission 反馈显示中文，命令参数仍使用英文权限值", async () => {
+test("TUI：中文任务后 /help 反馈显示中文，权限固定为完全访问", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([finalReply("检查完成")]);
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "请检查项目文件"], input: "/permission\n/permission read-only\n/permission\n/exit\n" },
+        { args: ["--tui", "请检查项目文件"], input: "/help\n/exit\n" },
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /权限：工作区读写/);
-      assert.equal((run.stdout.match(/权限：只读模式/g) ?? []).length, 2);
-      assert.doesNotMatch(run.stdout, /权限：read-only/);
+      assert.match(run.stdout, /access: full-access/);
+      assert.match(run.stdout, /命令：\/exit/);
+      assert.doesNotMatch(run.stdout, /\/permission/);
       assert.equal(mock.requests.length, 1);
-      assert.match(mock.requests[0].messages[0].content, /Permission mode: workspace-write/,
-        "UI 翻译不能修改模型收到的真实权限策略");
+      assert.match(mock.requests[0].messages[0].content, /full access/,
+        "界面翻译不能修改模型收到的真实运行模式");
     } finally {
       await mock.close();
     }
@@ -652,27 +650,23 @@ test("TUI：前一次说明已确认但下一次流式失败，只撤销新请�
   });
 });
 
-test("TUI：无 TTY 时 shell 审批不可用，拒绝原因进入运行记录", async () => {
+test("TUI：无 TTY 时 shell 直接执行，不出现审批提示", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
-      callTool("call_shell", "shell", { command: "echo should-not-run" }),
-      finalReply("shell denied in tui"),
+      callTool("call_shell", "shell", { command: "echo shell-ran-in-tui" }),
+      finalReply("shell ran in tui"),
     ]);
     try {
       const run = await runCli(
         { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--tui", "--permission", "workspace-write", "do it"], input: "/exit\n" },
+        { args: ["--tui", "do it"], input: "/exit\n" },
       );
 
       assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /→ shell echo should-not-run/);
-      assert.match(
-        run.stdout,
-        /✗ shell \[denied\] permission denied: tool "shell" requires approval, but no approval prompt is available; denied/,
-      );
-      // 没有审批通道就不该展示审批界面。
-      assert.doesNotMatch(run.stdout, /\[permission\]/);
-      assert.match(run.stdout, /model: shell denied in tui/);
+      assert.match(run.stdout, /→ shell echo shell-ran-in-tui/);
+      assert.match(run.stdout, /shell-ran-in-tui/);
+      assert.doesNotMatch(run.stdout, /\[permission\]|allow once|permission denied/);
+      assert.match(run.stdout, /model: shell ran in tui/);
     } finally {
       await mock.close();
     }
@@ -688,46 +682,12 @@ test("TUI：旧 AGENT_TUI_SCREEN 不再影响模式，非 TTY 仍能正常退出
   assert.doesNotMatch(run.stdout + run.stderr, /Terminal compatibility mode|终端兼容模式/);
 });
 
-test("--permission=full-access：shell 不用审批就执行", async () => {
-  await withWorkspace(async (workdir) => {
-    const mock = await startMock([
-      callTool("call_shell", "shell", { command: "echo full-access-ran" }),
-      finalReply("shell ran"),
-    ]);
-
-    try {
-      const run = await runCli(
-        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir },
-        { args: ["--permission=full-access", "do the task"] },
-      );
-
-      assert.equal(run.code, 0, run.stderr);
-      assert.match(run.stdout, /permission: full-access/);
-      assert.match(run.stdout, /shell ran/);
-
-      const first = mock.requests[0];
-      assert.match(first.messages[0].content, /Permission mode: full-access/);
-
-      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
-      assert.match(toolMessage.content, /full-access-ran/);
-    } finally {
-      await mock.close();
-    }
-  });
-});
-
-test("--permission 非法值：退出码 1，不调用模型", async () => {
-  const run = await runCli({}, { args: ["--permission", "wide-open", "do the task"] });
+test("AGENT_PERMISSION 已移除：退出码 1，不静默忽略残留配置", async () => {
+  const run = await runCli({ AGENT_PERMISSION: "read-only" });
 
   assert.equal(run.code, 1);
-  assert.match(run.stderr, /invalid --permission value "wide-open"/);
-});
-
-test("--permission 缺少值：退出码 1，提示可用模式", async () => {
-  const run = await runCli({}, { args: ["--permission"] });
-
-  assert.equal(run.code, 1);
-  assert.match(run.stderr, /missing value for --permission/);
+  assert.match(run.stderr, /AGENT_PERMISSION was removed/);
+  assert.match(run.stdout, /usage:/);
 });
 
 test(
@@ -781,7 +741,7 @@ test("CLI Shell 非零退出显示失败，但模型处理错误后整个 Run �
     try {
       const run = await runCli(
         { BASE_URL: mock.url, WORKDIR: workdir },
-        { args: ["--permission", "full-access", "do the task"] },
+        { args: ["do the task"] },
       );
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /↳ shell ✗ exit 7/);

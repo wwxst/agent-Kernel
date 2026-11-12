@@ -8,3 +8,7 @@ eval/results/
 # 本地工作区数据与草稿，不进 git
 .workbuddy-ai/
 .scratch/
+
+# 权限规则的本地层：菜单里点「以后不再问」会写这里，属于个人偏好。
+# 项目层 .agent-kernel/permissions.json 要提交，别把它一起忽略掉。
+.agent-kernel/permissions.local.json

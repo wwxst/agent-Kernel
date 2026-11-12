@@ -5,7 +5,7 @@
  * 让语气有变化而不假装知道模型在想什么。详细模式展开的是工具真实返回值。
  */
 import type { ToolCall } from "./types.ts";
-import { escapeControlCharacters } from "./approval.ts";
+import { escapeControlCharacters } from "./text.ts";
 import { isToolResultFailure } from "./tool-result-status.ts";
 
 const MOODS = ["energetic", "playful", "tsundere", "curious", "gentle", "confident"] as const;
