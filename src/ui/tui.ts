@@ -22,14 +22,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
 import { escapeControlCharacters } from "./text.ts";
-import { describeError } from "./errors.ts";
-import type { AgentSessionStats, AgentStats } from "./agent.ts";
+import { describeError } from "../protocol/errors.ts";
+import type { AgentSessionStats, AgentStats } from "../core/agent.ts";
 import { selectMood } from "./tui-mood.ts";
 import { previewImage } from "./tui-image.ts";
 import type { ImagePreview } from "./tui-image.ts";
 import type { MoodState } from "./tui-mood.ts";
-import type { ToolCall } from "./types.ts";
-import { isToolResultFailure } from "./tool-result-status.ts";
+import type { ToolCall } from "../protocol/types.ts";
+import { isToolResultFailure } from "../core/tool-result-status.ts";
 
 /** 固定布局至少需要：标题/路径/分隔线 + 日志 + 输入框 + 状态行 + 缓冲。 */
 const MIN_ROWS = 12;

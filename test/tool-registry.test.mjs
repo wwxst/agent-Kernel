@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ProcessCleanupError } from "../src/errors.ts";
+import { ProcessCleanupError } from "../src/protocol/errors.ts";
 import { echoTool, makeRegistry } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */

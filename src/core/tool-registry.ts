@@ -9,8 +9,8 @@
  *
  * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
  */
-import { describeError, ProcessCleanupError } from "./errors.ts";
-import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
+import { describeError, ProcessCleanupError } from "../protocol/errors.ts";
+import type { Tool, ToolCall, ToolDefinition } from "../protocol/types.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
 const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);

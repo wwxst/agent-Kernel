@@ -7,8 +7,8 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { ChatResponseError } from "../src/errors.ts";
-import { Llm } from "../src/llm.ts";
+import { ChatResponseError } from "../src/protocol/errors.ts";
+import { Llm } from "../src/model/llm.ts";
 
 /** 起一个只会回固定 JSON 的假端点。 */
 async function respondWith(payload) {

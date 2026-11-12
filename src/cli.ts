@@ -27,17 +27,17 @@
  */
 import { statSync } from "node:fs";
 import * as path from "node:path";
-import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
-import type { AgentStats } from "./agent.ts";
-import { RunPresenter } from "./cli-presenter.ts";
-import type { AgentView, AgentVoice } from "./cli-presenter.ts";
-import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./errors.ts";
-import { Llm } from "./llm.ts";
-import { ToolRegistry } from "./tool-registry.ts";
-import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./tui.ts";
-import type { ToolCall } from "./types.ts";
-import { Workspace, createWorkspaceTools } from "./workspace.ts";
-import { projectInstructionsPrompt, readProjectInstructions } from "./project-instructions.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT } from "./core/agent.ts";
+import type { AgentStats } from "./core/agent.ts";
+import { RunPresenter } from "./ui/cli-presenter.ts";
+import type { AgentView, AgentVoice } from "./ui/cli-presenter.ts";
+import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./protocol/errors.ts";
+import { Llm } from "./model/llm.ts";
+import { ToolRegistry } from "./core/tool-registry.ts";
+import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./ui/tui.ts";
+import type { ToolCall } from "./protocol/types.ts";
+import { Workspace, createWorkspaceTools } from "./tools/workspace.ts";
+import { projectInstructionsPrompt, readProjectInstructions } from "./model/project-instructions.ts";
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
 function firstNonEmpty(...values: Array<string | undefined>): string {

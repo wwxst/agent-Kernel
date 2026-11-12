@@ -4,7 +4,7 @@ import { test } from "node:test";
 import {
   ChatResponseError, ModelConfigError, ModelConnectionError, ModelHttpError,
   isRetryableModelError, modelFailure,
-} from "../src/errors.ts";
+} from "../src/protocol/errors.ts";
 
 test("模型错误分类：缺配置、鉴权、404、网络和 SSE 未完成各有对应建议", () => {
   const cases = [

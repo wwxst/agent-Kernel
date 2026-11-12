@@ -6,9 +6,9 @@
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
-import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/errors.ts";
-import { ToolRegistry } from "../src/tool-registry.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/core/agent.ts";
+import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
+import { ToolRegistry } from "../src/core/tool-registry.ts";
 import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */

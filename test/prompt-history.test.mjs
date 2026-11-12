@@ -9,7 +9,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { appendHistory, loadHistory, MAX_HISTORY_ENTRIES } from "../src/prompt-history.ts";
+import { appendHistory, loadHistory, MAX_HISTORY_ENTRIES } from "../src/ui/prompt-history.ts";
 
 async function withFile(fn) {
   const dir = await mkdtemp(path.join(tmpdir(), "agent-history-"));

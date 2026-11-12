@@ -1,7 +1,7 @@
 /** CLI 流式输出只能追加字节：最终确认不一致时须明显纠正，而不是让错误草稿冒充答案。 */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { RunPresenter } from "../src/cli-presenter.ts";
+import { RunPresenter } from "../src/ui/cli-presenter.ts";
 
 test("CLI：流式草稿与权威消息不同会追加更正，同一工具批次不重复显示", () => {
   const output = [];

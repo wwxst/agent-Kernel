@@ -5,8 +5,8 @@
  * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
  * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
  */
-import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "./errors.ts";
-import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
+import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "../protocol/errors.ts";
+import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "../protocol/types.ts";
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */

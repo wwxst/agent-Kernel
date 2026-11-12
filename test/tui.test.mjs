@@ -12,8 +12,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "../src/tui.ts";
-import { selectMood } from "../src/tui-mood.ts";
+import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "../src/ui/tui.ts";
+import { selectMood } from "../src/ui/tui-mood.ts";
 
 // 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
 // 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。

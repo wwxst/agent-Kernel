@@ -9,7 +9,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fillBuffer, terminateTree, Workspace } from "../src/workspace.ts";
+import { fillBuffer, terminateTree, Workspace } from "../src/tools/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
 
 /**

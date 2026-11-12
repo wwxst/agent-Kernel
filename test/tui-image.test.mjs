@@ -8,8 +8,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { previewImage } from "../src/tui-image.ts";
-import { Workspace } from "../src/workspace.ts";
+import { previewImage } from "../src/ui/tui-image.ts";
+import { Workspace } from "../src/tools/workspace.ts";
 
 const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 

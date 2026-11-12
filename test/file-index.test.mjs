@@ -8,7 +8,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { listWorkspaceFiles, matchFiles, resetFileIndexCache } from "../src/file-index.ts";
+import { listWorkspaceFiles, matchFiles, resetFileIndexCache } from "../src/ui/file-index.ts";
 
 async function withDir(fn) {
   const root = await mkdtemp(path.join(tmpdir(), "agent-index-"));

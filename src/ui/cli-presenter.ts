@@ -4,9 +4,9 @@
  * 台词只给用户看，不写入 Transcript，不参与模型决策；同一阶段轮换短句，
  * 让语气有变化而不假装知道模型在想什么。详细模式展开的是工具真实返回值。
  */
-import type { ToolCall } from "./types.ts";
+import type { ToolCall } from "../protocol/types.ts";
 import { escapeControlCharacters } from "./text.ts";
-import { isToolResultFailure } from "./tool-result-status.ts";
+import { isToolResultFailure } from "../core/tool-result-status.ts";
 
 const MOODS = ["energetic", "playful", "tsundere", "curious", "gentle", "confident"] as const;
 export type AgentVoice = (typeof MOODS)[number] | "balanced";

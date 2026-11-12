@@ -7,7 +7,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ToolRegistry } from "../../src/tool-registry.ts";
+import { ToolRegistry } from "../../src/core/tool-registry.ts";
 
 /** 「模型要调工具」的一条 assistant 消息。 */
 export function callTool(id, name, args) {

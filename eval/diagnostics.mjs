@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 import { lstat, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { ChatResponseError, describeError } from "../src/errors.ts";
+import { ChatResponseError, describeError } from "../src/protocol/errors.ts";
 
 const MAX_TRACKED_FILES = 2_000;
 const MAX_TRACKED_ENTRIES = 5_000;

@@ -23,8 +23,8 @@
  * 不在当前范围内。显式拒绝比隐式继承便宜得多。
  */
 import { setTimeout as sleep } from "node:timers/promises";
-import { ChatResponseError, ProcessCleanupError, isRetryableModelError } from "./errors.ts";
-import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "./types.ts";
+import { ChatResponseError, ProcessCleanupError, isRetryableModelError } from "../protocol/errors.ts";
+import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "../protocol/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 
 /**

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/core/agent.ts";
 import { createEvalDiagnostics } from "../eval/diagnostics.mjs";
 import { makeRegistry } from "./support/harness.mjs";
 

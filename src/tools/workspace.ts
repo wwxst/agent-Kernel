@@ -24,8 +24,8 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
-import type { Tool } from "./types.ts";
-import { ProcessCleanupError } from "./errors.ts";
+import type { Tool } from "../protocol/types.ts";
+import { ProcessCleanupError } from "../protocol/errors.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;

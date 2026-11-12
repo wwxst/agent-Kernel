@@ -31,11 +31,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/core/agent.ts";
 import { createEvalDiagnostics } from "./diagnostics.mjs";
-import { Llm } from "../src/llm.ts";
-import { ToolRegistry } from "../src/tool-registry.ts";
-import { Workspace, createWorkspaceTools } from "../src/workspace.ts";
+import { Llm } from "../src/model/llm.ts";
+import { ToolRegistry } from "../src/core/tool-registry.ts";
+import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import { isExpectedFailure } from "./selfcheck.mjs";
 
 const run = promisify(execFile);

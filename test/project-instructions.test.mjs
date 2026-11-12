@@ -13,7 +13,7 @@ import {
   PROJECT_INSTRUCTIONS_FILE,
   projectInstructionsPrompt,
   readProjectInstructions,
-} from "../src/project-instructions.ts";
+} from "../src/model/project-instructions.ts";
 
 async function withDir(fn) {
   const root = await mkdtemp(path.join(tmpdir(), "agent-instructions-"));

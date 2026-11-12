@@ -4,7 +4,7 @@
  * Shell 的第一行是 Workspace.run() 产生的状态（exit N / timeout / cancelled）。
  * 只针对 Shell 解释状态，避免 read 到以 "exit 7" 开头的文件时误报失败。
  */
-import type { ToolCall } from "./types.ts";
+import type { ToolCall } from "../protocol/types.ts";
 
 /** 返回工具调用是否失败；普通工具的 ERROR: 与 Shell 的退出状态遵循同一事实口径。 */
 export function isToolResultFailure(call: ToolCall, result: string): boolean {
