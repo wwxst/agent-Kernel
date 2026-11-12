@@ -1269,8 +1269,9 @@ test("shell-output：截断边界不切开 emoji 代理对，后续读取不损�
     const workspace = new Workspace({ root: dir });
     const expectedFirst = `${"x".repeat(7_999)}😀`;
     const outputText = `${expectedFirst}Z`;
-    const script = `process.stdout.write(${JSON.stringify(outputText)})`;
-    await workspace.run(`node -e '${script}'`, { background: true });
+    // Base64 避免 POSIX / cmd.exe 对单引号、双引号的不同解释。
+    const encoded = Buffer.from(outputText, "utf8").toString("base64");
+    await workspace.run(`node -e "process.stdout.write(Buffer.from('${encoded}','base64'))"`, { background: true });
 
     const first = await workspace.readJobOutput("job-1", 5000);
     const pid = Number(/pid (\d+)/.exec(first)?.[1]);
