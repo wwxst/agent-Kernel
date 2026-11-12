@@ -19,28 +19,37 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- --tui ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色，`AGENT_TUI_THEME=dark/light/ansi` 选配色方案；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
+| `npm run eval:summary` | 汇总最近 3 轮完整评测的通过率、请求数、耗时中位数；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
 
 ## 代码地图
 
-| 文件 | 职责 | 对外接口 |
-| --- | --- | --- |
-| `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
-| `src/errors.ts` | 错误文案兜底、模型配置/HTTP/网络/SSE 错误类型与纯展示分类、进程树清理未确认致命错误 | `describeError(error)`、`modelFailure(error, language)`、`ChatResponseError` |
-| `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期；四种展示回调（单次开始事件）异常隔离并累计诊断 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats`、`observerFailureCount` |
-| `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、执行工具、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
-| `src/tool-result-status.ts` | 纯展示事实判断：非 Shell 的 `ERROR:` 与 Shell 的 exit / timeout / cancelled；CLI/TUI 复用，不改工具结果文本 | `isToolResultFailure` |
-| `src/text.ts` | 终端展示转义：控制字符与 bidi 字符变成可见转义；不依赖任何模块 | `escapeControlCharacters` |
-| `src/workspace.ts` | 工作区文件与 Shell：真实路径守卫、临时文件原子替换与取消检查、grep 物理扫描起点、有界读取/扫描、进程树清理期限及失败告警、后台任务登记与增量输出（日志落系统临时目录）；父目录 TOCTOU 仍有已知边界 | `Workspace.read/write/edit/glob/grep/list/run/readJobOutput/killJob`、`createWorkspaceTools()` |
-| `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
-| `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
-| `src/tui.ts` | Claude Code / Codex 风格 TUI：主视图只追加（不进备用屏）、`Ctrl+T` transcript 整屏视图、可见过程说明、工具活动分层折叠、原始参数/结果、成功读图与文件提交后的展示；仍不碰 Agent 循环 | `Tui`（`start`、`assistantDelta`、`recordEditDiff`、`recordImagePreview`、`readLine`、`approve`、`finishTurn`、`close`） |
-| `src/tui-image.ts` | 从获准读取的 PNG 真实字节生成有界文字缩略图；其他图像格式验证签名后按实际兼容能力降级；无第三方运行时依赖 | `previewImage` |
-| `src/cli.ts` | 组装：命令行参数 / 环境变量 → CLI/REPL/TUI；占位 API Key 拒绝、显式外部演示标记及错误展示；权限与取消入口 | — |
-| `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；流式正文与确认回复不一致时显式更正，不改 Transcript | `RunPresenter` |
-| `bin/agent.mjs` | 全局命令入口（`npm link` 后的 `agent-kernel`）：按包内绝对路径加载 `.env`，再进 `cli.ts`；不改工作目录 | — |
+`src/` 按职责分五层：`protocol/`（类型与错误，处在依赖图最底层）、`core/`（循环与调度）、`tools/`（给模型的工具：文件与 shell）、`model/`（跟模型打交道：请求与系统提示）、`ui/`（终端展示）。`cli.ts` 留在根目录，是唯一的组装入口 —— 看目录名就知道那堆文件管什么，不用点进去。
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` / `tui` → `types`。`types` 与 `text` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`）；`tui` 只依赖 `text` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `tui`，更不认识任何权限策略（只有完全访问，工具直接执行）。
+**这张表只说「这个文件大概负责什么」，用来找地方。** 某个文件里到底有哪些类、函数、接口、常量、逻辑区域，打开该文件看它开头的文件头 —— 那里是唯一权威。两边不写同一份内容：这里写细了，改一次函数就要改两个地方，忘一个就互相矛盾。
+
+| 文件 | 大概负责什么 |
+| --- | --- |
+| `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
+| `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
+| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期 |
+| `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本 |
+| `src/core/tool-result-status.ts` | 判断一次工具结果算不算失败，给 CLI / TUI 上色用 |
+| `src/tools/workspace.ts` | 给模型的文件与 shell 工具：读写改、搜索、跑命令（含后台任务） |
+| `src/tools/grep-worker.ts` | `grep` 的正则匹配放独立线程跑，好让主线程能超时打断 |
+| `src/model/llm.ts` | 跟模型服务说话：发请求、收流式响应、解析用量 |
+| `src/model/project-instructions.ts` | 读项目里的 `AGENTS.md`，塞进系统提示 |
+| `src/ui/tui.ts` | 全屏终端界面：主视图、transcript 视图、工具活动的分层展示 |
+| `src/ui/tui-image.ts` | 把读到的图片变成终端里看得懂的文字缩略图 |
+| `src/ui/tui-mood.ts` | 状态栏那几句中英文角色台词 |
+| `src/ui/cli-presenter.ts` | 非 TUI 的纯文本输出：阶段、台词、日志展开 |
+| `src/ui/prompt-history.ts` | 输入历史：一行一条落盘，跨进程还在 |
+| `src/ui/file-index.ts` | `@` 补全用的工作区文件清单 |
+| `src/ui/text.ts` | 把控制字符变成看得见的转义，防止终端被搞乱 |
+| `src/cli.ts` | 组装入口：命令行参数 / 环境变量 → CLI 或 TUI |
+| `bin/agent.mjs` | `npm link` 后的全局命令入口：加载 `.env`，交给 `cli.ts` |
+
+依赖方向：`cli` → `core` / `tools` / `model` / `ui` / `protocol`；`core`、`tools`、`model` → `protocol`；`ui` → `core`（统计类型与工具失败判断）、`protocol`。`protocol` 是叶子；`core` 不认识 `tools`，也不认识 `ui`，更不认识任何权限策略（只有完全访问，工具直接执行）。
 
 ## 测试放哪
 
@@ -53,6 +62,8 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、状态栏固定完全访问、`Shift+Tab` 不再是快捷键、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。
 - `test/cli.test.mjs`：端到端验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 布局/命令/统计，且占位 Key 不发请求、SSE 未完成友好提示/去重、HTTP 鉴权分类；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
+
+这里只记「哪处缝由谁守着」。某个测试文件具体覆盖哪些情况，看那个文件自己的文件头。
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。
 

@@ -9,6 +9,6 @@ eval/results/
 .workbuddy-ai/
 .scratch/
 
-# 权限规则的本地层：菜单里点「以后不再问」会写这里，属于个人偏好。
-# 项目层 .agent-kernel/permissions.json 要提交，别把它一起忽略掉。
+# 旧权限规则的本地层。审批机制已随 ADR-0019 删除，这些文件不再被读取；
+# 保留忽略规则只是为了历史残留文件不被误提交，不代表它们还有作用。
 .agent-kernel/permissions.local.json

@@ -1,30 +1,29 @@
 /**
- * Agent 内核：一个类 + 一个循环。
+ * 文件目的：整个程序的核心 —— 让 agent loop 跑起来。问模型 → 它要工具就去执行 →
+ * 把结果塞回去 → 再问，直到它不再要工具。换模型、换工具集都不改这里，所以它叫「核心」。
  *
- * 整个 agent 就是不断重复同一件事：
+ * 一个实例只负责一次任务，跑完再调会直接报错，不会偷偷接着上一轮继续。
+ * 为什么不支持重复用：一旦允许，就得回答「上一轮记的对话什么时候清空」「中途失败了算不算用掉了」
+ * 「同时调两次谁先谁后」—— 那是一整套会话管理，不在这个文件的范围内。明确拒绝比含糊继承省事得多。
  *
- *   messages ──▶ llm.chat() ──▶ 有 tool_calls？
- *                                   │否
- *                                   ├──▶ 返回最终回复，本轮结束
- *                                   │是
- *                                   ▼
- *              执行工具 ──▶ 结果作为 tool 消息入栈 ──┐
- *                                   ▲              │
- *                                   └──────────────┘（回到 llm.chat）
+ * 文件职责：负责循环、消息顺序与 id 配对、三类预算（步数 / 工具调用 / token）、
+ * 会话生命周期、用量记账，以及把事件通知给界面（观察者抛异常只计数，不打断任务）。
+ * 不负责执行工具、不负责发请求、不负责展示 —— 那三件事各有自己的文件。
  *
- * 换个大模型、换个工具集，这个循环都不用改 —— 这就是「内核」的含义。
- * 它只依赖两样东西：一个能聊天的客户端，一个能执行工具调用的工具注册表。
+ * 内容目录：
+ *   - `DEFAULT_SYSTEM_PROMPT`：默认系统提示，一行一条英文，上方逐行中文对照。
+ *   - `AgentUsage` / `AgentStats` / `AgentSessionStats`：用量与统计；成本未知单独计数，不补 0。
+ *   - `AgentOptions`：客户端、工具、系统提示、三个预算、取消信号与五种观察回调。
+ *   - `Agent`：`run(task)` 跑一次任务；`transcript`、`stats`、`sessionStats`、`observerFailureCount`。
+ *   - 内部：`runLoop()` 主循环、`beginRun()` 重置本 Run 状态、`refreshSystemPrompt()`、
+ *     `stopIfCancelled()` / `stopIfBudgetExhausted()`、`recordUsage()`、`skipCalls()`。
  *
- * 生命周期：一个实例 = 一次任务。第一次 `run()` 之后实例即作废 ——
- * 再调用会抛生命周期错误，而不是悄悄继承上一条 transcript 继续跑。
- *
- * 理由：这个内核的定位是「一个 Agent 实例执行一个任务」。允许复用就必须回答
- * 「谁重置 transcript、失败后算不算已消费、并发调用怎么排队」，那是一整套会话管理，
- * 不在当前范围内。显式拒绝比隐式继承便宜得多。
+ * 模块关系：依赖 `protocol/types.ts`、`protocol/errors.ts`，以及 `core/tool-registry.ts`
+ * （只通过注册表执行工具，不直接认识 `tools/`）。被 `cli.ts`、`ui/tui.ts`、`eval/run.mjs` 使用。
  */
 import { setTimeout as sleep } from "node:timers/promises";
-import { ChatResponseError, ProcessCleanupError, isRetryableModelError } from "./errors.ts";
-import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "./types.ts";
+import { ChatResponseError, ProcessCleanupError, isRetryableModelError } from "../protocol/errors.ts";
+import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "../protocol/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 
 /**
@@ -235,6 +234,12 @@ export class Agent {
   private running = false;
 
   /**
+   * 进程树清理未确认后，整个 Agent Session 禁止再次启动工具。
+   * 只有宿主确认遗留进程已处理并创建新的 Agent，才能恢复工具执行。
+   */
+  private processCleanupUnverified = false;
+
+  /**
    * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
    * 注意「重发」：模型是无状态的，它记得多少，完全取决于我们发过去多少。
    * 对外只读：调用方可以看，但不能绕过循环往里塞消息。
@@ -306,12 +311,12 @@ export class Agent {
     }
   }
 
-  /** 累计展示回调失败数；可供宿主诊断，但绝不污染模型消息或工具结果。 */
+  /** 核心成员 observerFailureCount（回调失败数）：累计展示回调失败数；可供宿主诊断，但绝不污染模型消息或工具结果。 */
   get observerFailureCount(): number {
     return this.observerFailures;
   }
 
-  /** UI 用于区分实际 HTTP 请求数与模型 Step 数，避免重试后错认已确认的正文。 */
+  /** 核心成员 retryAttempts（重试次数）：界面用它区分实际请求数和模型轮次，避免重试后错认已确认的正文。 */
   get retryAttempts(): number {
     return this.runRetries;
   }
@@ -323,7 +328,7 @@ export class Agent {
     }
   }
 
-  /** 本次 Run 的用量快照。返回新对象：调用方改不到内部计数。 */
+  /** 核心成员 stats（本次用量）：本次 Run 的用量快照。返回新对象：调用方改不到内部计数。 */
   get stats(): AgentStats {
     const limit = this.maxTotalTokens;
     return {
@@ -337,7 +342,7 @@ export class Agent {
     };
   }
 
-  /** 跨 Run 的累计快照：整个 Session 一共跑了多少次、花了多少。 */
+  /** 核心成员 sessionStats（累计用量）：跨 Run 的累计快照，整个会话一共跑了多少次、花了多少。 */
   get sessionStats(): AgentSessionStats {
     return {
       runs: this.runCount,
@@ -393,7 +398,7 @@ export class Agent {
   }
 
   /**
-   * 到目前为止的完整对话记录。
+   * 核心成员 transcript（对话记录）：到目前为止的完整对话记录。
    *
    * 返回深拷贝：数组复制挡不住 `snapshot[0].content = "..."`，只有把 Message 也复制了，
    * 「只读」才是真的只读，而不是只挡住了 push/splice。
@@ -403,7 +408,7 @@ export class Agent {
   }
 
   /**
-   * 跑完一次 Run，返回模型的最终回复（一条不带 tool_calls 的 assistant 消息）。
+   * 核心方法 run（跑一次任务）：跑完一次 Run，返回模型的最终回复（一条不带工具调用的消息）。
    *
    * 这就是 **agent loop**：教科书里那个 `while (true)` —— 问模型、执行它要的工具、
    * 把结果塞回去，直到它不再要工具。这里用带计数器的 for 代替 while (true)，
@@ -468,7 +473,7 @@ export class Agent {
         this.runRequests++;
         this.sessionRequests++;
         try {
-          response = await this.llm.chat(this.messages, this.tools.definitions, {
+          response = await this.llm.chat(this.messages, this.processCleanupUnverified ? [] : this.tools.definitions, {
             onDelta: this.onDelta === undefined ? undefined : (text) => this.notifyObserver(this.onDelta, text),
           });
           break;
@@ -500,6 +505,13 @@ export class Agent {
           throw new Error("model returned an empty final answer");
         }
         return message;
+      }
+
+      // 进程树清理未确认是 Session 级安全故障：后续请求不再暴露工具，
+      // 即使模型仍返回工具调用，也只补 not-run 结果，绝不再启动副作用。
+      if (this.processCleanupUnverified) {
+        this.skipCalls(calls, "process tree cleanup unverified; tool execution remains disabled for this Agent session");
+        continue;
       }
 
       // 5) 这一轮可能刚好把预算用光：后面的工具没有下一次请求去验证，不能执行。
@@ -542,15 +554,15 @@ export class Agent {
           result = await this.tools.execute(call);
         } catch (error) {
           if (!(error instanceof ProcessCleanupError)) throw error;
+          this.processCleanupUnverified = true;
           // 整棵进程树未确认停止：记录当前调用的错误并跳过整批剩余工具，不能继续写文件。
           this.runToolCalls++;
           this.sessionToolCalls++;
           this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
           this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
-          // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作（Claude Code 的
-          // 超时只是把错误交回模型，任务继续）。但本批剩余调用全部跳过——进程树没确认
-          // 停掉之前，不能再启动新的工具去写文件。模型看到这条错误后应当收尾报告。
+          // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作。
+          // 本批与后续所有 Run 的工具都被禁止，模型只负责根据错误收尾报告。
           break;
         }
         this.runToolCalls++;

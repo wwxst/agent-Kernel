@@ -1,12 +1,24 @@
 /**
- * 模型客户端：一次 chat() 就是一次 HTTP POST {baseUrl}/chat/completions。
+ * 文件目的：把对话发给模型服务，再把回答拿回来 —— `ChatClient` 唯一的真实实现。
  *
- * 只依赖 Node 内置的 fetch，所以这个项目运行时零依赖。
- * 只要端点兼容 OpenAI 的 chat/completions，就能直接换：
- * DeepSeek、Moonshot、OpenAI、Ollama、vLLM……
+ * 只认一种通用接口格式（chat/completions 那套），所以换别家的模型服务通常只改配置，
+ * 不用改代码。测试用假客户端替换它，所以这里所有网络细节都关在这个文件里。
+ *
+ * 文件职责：负责拼请求、发 HTTP、收完整响应或 SSE 流、把响应校验成 `Message`、读出 usage。
+ * 不负责重试与预算（那是 `core/agent.ts`）、不负责展示、不负责拼系统提示。
+ *
+ * 内容目录：
+ *   - `LlmOptions`：地址、Key、模型名、温度、超时、单次输出上限、取消信号、是否流式。
+ *   - `Llm`：实现 `ChatClient`；`chat()` 是唯一对外方法，内部按 `stream` 分两条路。
+ *   - `StreamAssembly`：流式拼装器，把一串 delta 还原成一条完整消息（按 index 排序，参数分片合并）。
+ *   - 内部校验：`readMessage()` / `readToolCalls()` / `readFinishReason()` / `readUsage()`，
+ *     形状不对就抛 `ChatResponseError`，绝不返回「空成功」。
+ *
+ * 模块关系：依赖 `protocol/types.ts`（协议词汇）与 `protocol/errors.ts`（错误类型与文案）。
+ * 由 `cli.ts` 创建、`core/agent.ts` 通过 `ChatClient` 接口调用；`eval/run.mjs` 也直接用它。
  */
-import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "./errors.ts";
-import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "./types.ts";
+import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "../protocol/errors.ts";
+import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "../protocol/types.ts";
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */
@@ -59,7 +71,7 @@ export class Llm implements ChatClient {
   }
 
   /**
-   * 发一轮对话，拿到模型的一条消息。
+   * 模型方法 chat（发一轮对话）：把对话发给模型服务，拿回它的一条消息。
    *
    * 这里只做三件事：拼请求、检查 HTTP 状态、把响应整理成统一的 Message。
    * 任何「模型说错话」的业务问题（比如参数不合法）都不在这里处理 ——

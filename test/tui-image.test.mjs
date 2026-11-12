@@ -1,6 +1,20 @@
 /**
- * 图片预览基于实际 PNG 字节生成，输出为有界终端字符，不生成假缩略图。
- * 不依赖系统图片查看器、外部 shell 或网络。
+ * 文件目的：测图片预览 —— 用真实构造的 PNG 字节生成字符画，输出有长度上限，
+ * 不生成假缩略图，也不依赖系统看图软件或网络。
+ *
+ * 文件职责：测 `previewImage()` 的解码、透明色处理、坏数据拒绝与降级；
+ * 外加一条「只有真的读了文件，才把字节交给界面」的联动检查。
+ * 不测缩略图在终端里的排版（那是 `tui.test.mjs`）。
+ *
+ * 内容目录：
+ *   - 造图工具：`crc32()` / `chunk()` / `png()`，按 PNG 规范手工拼字节。
+ *   - 正常解码：像素、尺寸、左暗右亮、字符数受限。
+ *   - 透明：RGBA 透明、tRNS 的灰度与 RGB 两种写法、长度错误不能当部分透明。
+ *   - 拒绝与降级：不支持的位深、坏 CRC、缺 IEND、尾随字节、重复头、超大或无效输入。
+ *   - 最后一条：`Workspace.read` 读到真实 PNG 时才把字节交给观察者。
+ *
+ * 模块关系：依赖 `src/ui/tui-image.ts`、`src/tools/workspace.ts` 与 `node:test`，
+ * 由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { deflateSync } from "node:zlib";
@@ -8,8 +22,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { previewImage } from "../src/tui-image.ts";
-import { Workspace } from "../src/workspace.ts";
+import { previewImage } from "../src/ui/tui-image.ts";
+import { Workspace } from "../src/tools/workspace.ts";
 
 const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 

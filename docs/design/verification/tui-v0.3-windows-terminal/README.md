@@ -1,6 +1,6 @@
 # Windows Terminal 实际截图与逐图对照验收
 
-> **历史记录**：本文件记录的是 v0.3 的界面验收；其中 `--permission read-only`、Shell 审批与拒绝提示已在 2026-11-12 随 [ADR-0019](../../adr/0019-full-access-is-the-only-mode.md) 删除，截图只作为历史对照。
+> **历史记录**：本文件记录的是 v0.3 的界面验收；其中 `--permission read-only`、Shell 审批与拒绝提示已在 2026-11-12 随 [ADR-0019](../../../adr/0019-full-access-is-the-only-mode.md) 删除，截图只作为历史对照。
 
 2026-11-06，Asia/Shanghai。继续更新 [PR #9](https://github.com/wwxst/agent-Kernel/pull/9)，不合并。
 

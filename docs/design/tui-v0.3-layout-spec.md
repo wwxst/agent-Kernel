@@ -6,7 +6,7 @@
 >
 > 适用范围：现有 TUI 的布局和显示层；不修改 Agent Loop、Session 语义或工具协议。
 >
-> **2026-11-12 注**：权限模式与 Shell 审批已删除（[ADR-0019](../../adr/0019-full-access-is-the-only-mode.md)）。
+> **2026-11-12 注**：权限模式与 Shell 审批已删除（[ADR-0019](../adr/0019-full-access-is-the-only-mode.md)）。
 > 本文中 `workspace-write` / `read-only` 状态行示例和第 5 节「Shell 审批」只描述当时的界面，
 > 不代表当前行为；当前状态行固定显示 `权限：完全访问`，没有审批菜单。
 
@@ -263,7 +263,7 @@ workspace-write                     0 requests · 0 tokens
 - 优先在 Windows Terminal / VS Code 终端验收现代 Unicode + ANSI 配色；传统 Windows PowerShell conhost 保留 ASCII 降级，禁止出现乱码方框。
 - 配色默认 `mono`：只有用户消息任务条上色（深灰底 + 灰前缀 + 白粗正文），其余文字保持终端默认色；输入行提示符用默认色，占位提示仍保留灰色。`AGENT_TUI_COLOR=full` 时恢复层次配色：标题与输入提示用少量强调色，普通输入边界用灰色；模型正文中性高对比；工具成功柔和绿色；失败红色；权限审批黄色。待审批面板完整展示命令与 cwd，回答后收起面板，保留允许一次/拒绝决定及工具结果。
 - 终端底色由终端主题控制。程序可以在 ANSI 兼容终端设置文字和局部样式，但**不能承诺自动把传统 PowerShell 蓝色背景变成 Claude Code 的深灰主题**；截图验收时应明确终端及配色设置。
-- 优先改现有 src/tui.ts 与相关显示测试，不另起一个 TUI 框架；运行时保持零依赖。
+- 优先改现有 src/ui/tui.ts 与相关显示测试，不另起一个 TUI 框架；运行时保持零依赖。
 - 不修改 Agent Loop、不更改 tool schema、不改变 Permission、Transcript、Session、审批和取消链的执行语义。
 - 本轮不做鼠标、多面板、复杂命令补全或 Hooks。先解决基本阅读和输入体验。
 

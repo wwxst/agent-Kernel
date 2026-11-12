@@ -1,17 +1,27 @@
 #!/usr/bin/env node
 /**
- * Run three same-day stability rounds against the immutable prompt-v2 baseline.
+ * 文件目的：跨天稳定性测试 —— 在固定版本上跑三轮，看结果稳不稳。
  *
- * This helper lives on the diagnostics branch, but dynamically imports eval/run.mjs
- * only after checking out the baseline SHA. The measured Agent/eval code is therefore
- * exactly the pinned commit, not the newer diagnostic harness.
+ * 为什么必须单独做一个：它要先把代码切到指定的老版本，再开始跑 ——
+ * 否则测的是「现在的代码」，不是「那个版本」。跑完会自动切回原来的分支。
+ * 每轮结果存在 `eval/baselines/cross-day/日期/` 下，留着以后对照。
  *
- * Usage (once on each of three different natural days):
- *   npm run eval:cross-day
- *   npm run eval:cross-day -- --date 2026-11-05
+ * 文件职责：负责切版本、跑三轮、收集指标、写当天的汇总、还原分支。
+ * 不负责评测本身的逻辑（复用 `run.mjs`）、不负责判分、不负责跨轮对比以外的统计（`summary.mjs`）。
  *
- * The helper restores the original branch after each day's run. It leaves archived
- * JSON under eval/baselines/cross-day/<date>/ for later review/commit.
+ * 内容目录：
+ *   - 常量：`BASELINE_SHA`（固定基线提交）、`EXPECTED_MODEL` / `EXPECTED_BASE_URL`（防止跑到错的服务上）、
+ *     `ROUNDS`、`JOBS`、`TASK_COUNT`。
+ *   - `main()`：主流程 —— 记下当前分支 → 切到基线 → 跑三轮 → 写汇总 → 还原。
+ *   - `parseArgs()` / `printHelp()`：`--date` 等参数。
+ *   - `roundMetrics()`：单轮指标；`buildDailySummary()`：当天汇总（含与往天的对比）。
+ *   - `loadPriorSummaries()`：读以前几天的汇总；`currentEnvironment()`：记下模型与地址。
+ *   - `git()`：执行 git 命令；`median()`：算中位数；`localDate()`：默认日期。
+ *
+ * 模块关系：依赖 Node 内置模块与 git 命令，通过动态 `import()` 复用 `run.mjs`。
+ * 由 `npm run eval:cross-day` 启动；不被任何模块引用。
+ *
+ * 已知边界：中途被打断只在「当前这一轮跑完之后」才还原分支，不会立刻切回。
  */
 import { execFile } from "node:child_process";
 import { access, mkdir, readdir, readFile, writeFile } from "node:fs/promises";

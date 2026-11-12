@@ -1,3 +1,18 @@
+/**
+ * 文件目的：测「诊断记录」—— 每次请求花了多少、调了哪些工具、每个工具改了哪些文件，
+ * 都要如实记下来，供评测时回看；同时不能把密钥写进记录。
+ *
+ * 文件职责：测 `createEvalDiagnostics()` 的记录内容与脱敏，外加一条跨天 runner 的启动前置检查。
+ * 不测评测判分（那是 `eval.test.mjs`）。
+ *
+ * 内容目录：
+ *   - 用例一：跑一轮真实 `Agent`，断言 usage、工具结果、逐工具的文件变化都被记下。
+ *   - 用例二：像密钥的参数要变成 `[REDACTED]`，超长字符串只留摘要。
+ *   - 用例三：`eval/cross-day.mjs --help` 不该切提交、也不该联系模型。
+ *
+ * 模块关系：依赖 `src/core/agent.ts`、`eval/diagnostics.mjs`、`test/support/harness.mjs`，
+ * 由 `npm test` 启动。
+ */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -5,7 +20,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { Agent } from "../src/agent.ts";
+import { Agent } from "../src/core/agent.ts";
 import { createEvalDiagnostics } from "../eval/diagnostics.mjs";
 import { makeRegistry } from "./support/harness.mjs";
 

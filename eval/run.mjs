@@ -1,29 +1,28 @@
 #!/usr/bin/env node
 /**
- * 最小评测集：拿真实模型跑一组小任务，记录成功率、成本（token / 请求 / 工具调用）和耗时。
+ * 文件目的：评测集 —— 拿真实模型跑一组小任务，记录成功率、花了多少、用了多久。
  *
- * 为什么需要它：单元测试只能证明「代码没坏」，证明不了「agent 变强」。
- * 改 prompt、改工具描述、改命名、改预算，最终都要在这里判分。
+ * 为什么需要它：单元测试只能证明「代码没坏」，证明不了「模型变强了」。
+ * 改提示词、改工具说明、改预算，最终都要在这里判分。用法见 README。
  *
- * 用法：
- *   npm run eval                     # 跑全部任务
- *   npm run eval -- rename           # 只跑名字里带 rename 的
- *   npm run eval -- --trace --keep 13-callback-to-promise  # 保留单个任务并记录请求/工具轨迹
+ * 失败分四类，别混着看：任务没做完（步数或工具次数用光）、交卷了但没通过（断言没过）、
+ * 检查器自己坏了（写错、依赖缺失、有异步任务没等就跑）、环境问题（网络或服务超时）。
+ * 最后一类不代表某个任务失败，而是「这一轮成绩整体不可信」—— 任务可能已经通过，
+ * 但后台还有东西在跑、最后才炸。这种轮次整轮作废。
  *
- * 注意：--keep 会保留所有被选中的任务工作区，不只保留失败任务；请和任务过滤器一起用。
+ * 文件职责：负责跑任务、判分、统计、写结果文件。
+ * 不负责判断「任务初始状态是否真的会失败」（那是 `selfcheck.mjs`）、
+ * 不负责诊断单次运行的细节（那是 `diagnostics.mjs`）、不负责汇总跨天结果（那是 `summary.mjs`）。
  *
- * 需要真实 API：BASE_URL / API_KEY / MODEL 来自 .env。
- * 结果同时写进 eval/results/<时间戳>.json（不进 git）。
+ * 内容目录：
+ *   - `runRound()`：跑一轮（可并发），返回每条任务的记录与整体汇总。
+ *   - `runTask()`：单条任务 —— 复制到临时目录、起 Agent、跑断言、收拾现场。
+ *   - `summarize()`：把一轮结果压成成功率、请求数、工具调用、token、耗时。
+ *   - `runPool()`：有并发上限的任务池；`classifyRunFailure()`：把失败分到上面四类。
+ *   - `cli()`：命令行入口；`report()`：逐条打印；`currentCommit()`：记下跑的是哪个提交。
  *
- * 失败分四类，别混在一起看：
- *   task        —— agent 没做完（步数/工具预算耗尽、模型空回复……）
- *   check       —— agent 交卷了，但检查断言没过
- *   infra       —— 检查器自己抛了非断言错误（写错、依赖缺失），或检查器里有没 await 的
- *                  promise 在本轮结算窗口内冒出来（未处理的 rejection）
- *   environment —— 网络、端点超时之类的环境问题
- *
- * 第四类（未处理的 rejection）不是「某个任务失败」，而是「这一轮评测不可信」：
- * 任务可能已经 PASS，但后台还有东西在跑并最终失败。这种轮次整体判失败，不能只看任务表。
+ * 模块关系：依赖 `src/` 的 `Agent`、`Llm`、`ToolRegistry`、`Workspace` 与 `createWorkspaceTools`，
+ * 以及同目录的 `diagnostics.mjs`、`selfcheck.mjs`。被 `test/support/eval-floating-check.mjs` 引用。
  */
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -31,11 +30,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/core/agent.ts";
 import { createEvalDiagnostics } from "./diagnostics.mjs";
-import { Llm } from "../src/llm.ts";
-import { ToolRegistry } from "../src/tool-registry.ts";
-import { Workspace, createWorkspaceTools } from "../src/workspace.ts";
+import { Llm } from "../src/model/llm.ts";
+import { ToolRegistry } from "../src/core/tool-registry.ts";
+import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import { isExpectedFailure } from "./selfcheck.mjs";
 
 const run = promisify(execFile);

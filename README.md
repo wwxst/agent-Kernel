@@ -74,33 +74,36 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 
 ## 代码结构
 
-十二个模块，依赖只有一个方向。`types.ts` 与 `text.ts` 是叶子；`errors.ts` 只依赖 `types.ts` 的类型：
+`src/` 按职责分五层，看目录名就知道那堆文件管什么：`protocol/` 是类型与错误（最底层）、`core/` 是循环与调度、`tools/` 是给模型的工具、`model/` 是跟模型打交道（请求与系统提示）、`ui/` 是终端展示。`cli.ts` 留在根目录，是唯一的组装入口。依赖只有一个方向。
 
 | 文件 | 一句话 |
 | --- | --- |
-| `src/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
-| `src/errors.ts` | 错误文案兜底：`describeError()` 把任何抛出物变成一行非空文本 |
-| `src/agent.ts` | 内核：循环、消息顺序、请求/工具预算、生命周期；system 提示支持函数式动态刷新 |
-| `src/tool-registry.ts` | 工具注册表：Schema 校验、按名字找工具、解析参数、执行工具、把失败折成 `ERROR` 文本 |
-| `src/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
-| `src/text.ts` | 终端展示转义：控制字符与 bidi 字符变成可见转义；不依赖任何模块 |
-| `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
-| `src/tui.ts` | TUI：聊天布局、任务前/中/结束状态、真实 AI 阶段说明与工具活动分组、工具失败同行展示、Ctrl+O 活动详情；主视图在主屏就地追加、`Ctrl+T` 进 transcript 整屏视图，不触碰 Agent Loop |
-| `src/tui-mood.ts` | 状态驱动的中英文角色短句库：元气、调皮、好奇、温柔为主，少量傲娇/天然；临时展示、不写 Transcript |
+| `src/protocol/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
+| `src/protocol/errors.ts` | 错误文案兜底：`describeError()` 把任何抛出物变成一行非空文本 |
+| `src/core/agent.ts` | 内核：循环、消息顺序、请求/工具预算、生命周期；system 提示支持函数式动态刷新 |
+| `src/core/tool-registry.ts` | 工具注册表：Schema 校验、按名字找工具、解析参数、执行工具、把失败折成 `ERROR` 文本 |
+| `src/core/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
+| `src/tools/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
+| `src/model/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
+| `src/model/project-instructions.ts` | 读 `AGENTS.md` 注入系统提示：只做读取与有界截断，不发明格式 |
+| `src/ui/tui.ts` | TUI：聊天布局、任务前/中/结束状态、真实 AI 阶段说明与工具活动分组、工具失败同行展示、Ctrl+O 活动详情；主视图在主屏就地追加、`Ctrl+T` 进 transcript 整屏视图，不触碰 Agent Loop |
+| `src/ui/tui-mood.ts` | 状态驱动的中英文角色短句库：元气、调皮、好奇、温柔为主，少量傲娇/天然；临时展示、不写 Transcript |
+| `src/ui/cli-presenter.ts` | CLI 展示：执行阶段、动态台词、工具日志精简/详细视图；不写入 Transcript |
+| `src/ui/prompt-history.ts` | 跨进程输入历史：一行一条 JSONL，坏行跳过，读不出来就当没有历史 |
+| `src/ui/file-index.ts` | 工作区文件清单，给 `@` 补全用：只列路径 + 前缀过滤，不替用户搜内容 |
+| `src/ui/text.ts` | 终端展示转义：控制字符与 bidi 字符变成可见转义；不依赖任何模块 |
 | `src/cli.ts` | 组装层：命令行参数 / 环境变量 → 对象图 → 跑一次任务或进 TUI |
-| `src/cli-presenter.ts` | CLI 展示：执行阶段、动态台词、工具日志精简/详细视图；不写入 Transcript |
-| `src/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
 
-`src/grep-worker.ts` 不算在模块表里，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
+`src/tools/grep-worker.ts` 不算在模块表里，它是 `Workspace.grep` 的匹配线程：正则跑在里面，主线程超时就 `terminate`（见 [ADR-0010](./docs/adr/0010-grep-regex-in-worker.md)）。
 
-`agent.ts` 不认识 `workspace.ts`：循环只管「问模型、执行调用、塞回结果」，工具怎么实现的它不关心。
-它也不认识 `tui.ts`：TUI 只是把 Agent 的回调接到显示层，循环本身不知道有没有界面。这就是为什么换模型、换工具集、换交互壳，循环一行都不用改。展示观察者精简为四个：`onRequestStart(step)`（每个 Run 从 1 计）、`onToolCall(call)`、`onToolResult(call, result)`、`onDelta(text)`；原先重复的 `onStepStart` / `onToolStart` 已移除，外部调用方需要迁移。
+`core/agent.ts` 不认识 `tools/workspace.ts`：循环只管「问模型、执行调用、塞回结果」，工具怎么实现的它不关心。
+它也不认识 `ui/tui.ts`：TUI 只是把 Agent 的回调接到显示层，循环本身不知道有没有界面。这就是为什么换模型、换工具集、换交互壳，循环一行都不用改。展示观察者精简为四个：`onRequestStart(step)`（每个 Run 从 1 计）、`onToolCall(call)`、`onToolResult(call, result)`、`onDelta(text)`；原先重复的 `onStepStart` / `onToolStart` 已移除，外部调用方需要迁移。
 
 命令、代码地图、测试放哪见 [AGENTS.md](./AGENTS.md)；怎么写代码（注释风格、模块形状、命名、错误处理）见 [CODING_STANDARDS.md](./CODING_STANDARDS.md)。
 
 ## 核心循环
 
-`src/agent.ts` 里的 `Agent.run()`，对应设计稿里的伪代码。它就是 **agent loop** —— 教科书里那个 `while (true)` 的原型，外加三道闸门：模型请求次数、工具执行次数、取消信号。
+`src/core/agent.ts` 里的 `Agent.run()`，对应设计稿里的伪代码。它就是 **agent loop** —— 教科书里那个 `while (true)` 的原型，外加三道闸门：模型请求次数、工具执行次数、取消信号。
 
 ```ts
 this.messages.push({ role: "user", content: task });
@@ -299,7 +302,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-350 个用例，都不需要 API Key、不联网（其中 5 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限）：
+352 个用例，都不需要 API Key、不联网（其中 5 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -307,9 +310,15 @@ npm run check       # typecheck + 全部测试
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/workspace.test.mjs` | 工作区外读写（绝对路径、`../`、符号链接）、完整读取、截断、扫描预算、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、工作区外 shell、取消进程树和 Windows taskkill 错误/非零退出/卡住故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
+| `test/model-errors.test.mjs` | 错误分类：配置 / 鉴权 / 404 / 网络 / 流式中断各归哪一类，哪些能重试、哪些一律禁止重放 |
 | `test/cli.test.mjs` | 端到端：环境变量、退出码、stdout、请求体形状、API Key 回退、SIGINT、失败路径的 usage、TUI 多轮与 `/reset`、已移除的 `--permission` / `AGENT_PERMISSION` 明确报错、流式 mock、TUI 聊天布局 / 命令 / 统计 |
+| `test/cli-presenter.test.mjs` | 命令行展示：流式草稿与确认正文不一致时追加更正，同一工具批次不重复提示 |
 | `test/cli-pty.test.mjs` | Linux PTY：真实终端里的 TUI 启动、未配置模型提示、不抢鼠标 / 不进备用屏 |
 | `test/tui.test.mjs` | TUI：聊天布局、思考动画、终端降级、生命周期与工具活动、状态栏固定完全访问、`Shift+Tab` 不再是快捷键；组合 Unicode / IME 一次上屏、长会话滚动及关闭后资源清理 |
+| `test/tui-image.test.mjs` | 图片预览：PNG 解码、透明色与 tRNS、坏 CRC / 缺 IEND 等无效输入必须拒绝并降级 |
+| `test/file-index.test.mjs` | 文件清单：跳过 `node_modules` / `.git`、数量上限、`@` 补全的排序口径 |
+| `test/prompt-history.test.mjs` | 输入历史：坏行跳过、文件不存在不算错、单条与总条数上限 |
+| `test/project-instructions.test.mjs` | 项目指令：读不到返回 `undefined`、空白文件等同没有、超长截断、同名目录不报错 |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
@@ -359,9 +368,9 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 ## 文档与技能
 
-- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、教学式注释、模块形状、命名、错误处理、防御性编程、测试）。
-- [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、代码地图、测试放哪。
-- [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Kernel、Step、Transcript、ERROR text……）。
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、注释、模块形状、命名、错误处理、防御性编程、测试）。
+- [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、项目导航（代码地图）、测试放哪。
+- [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Core、Step、Transcript、ERROR text……）。
 - [docs/permission-design.md](./docs/permission-design.md)：当前权限与访问设计的实现说明（只有完全访问）。
 - [docs/adr/](./docs/adr/)：已经定下、别再重新讨论的决定。
 - [docs/reports/](./docs/reports/)：阶段修复报告（问题、方案、测试、CI 与评测基线）。

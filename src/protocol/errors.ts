@@ -1,14 +1,28 @@
 /**
- * 把任意抛出物转成一行**非空**的错误文本。
+ * 文件目的：把「意外」变成一句说清了原因的错误话，并给错误分好类。
  *
- * 这是「Fail Explicitly, Never Fail Silently」的第一条：空消息、空字符串、
- * 没有 message 的 Error，都不能变成一句 `ERROR: ` 后面什么都没有 ——
- * 模型看到空错误，只能瞎猜，重试也没方向。
+ * 为什么单独拿出来：出错时不能只丢一个空消息。空的错误最坑人 ——
+ * 模型看到一片空白，只能瞎猜，重试也没有方向。
  *
- * 放在单独模块里，是为了让 ToolRegistry 和 CLI 用同一套兜底：
- * 错误文案出现两套互相矛盾的处理，比错误本身更难查。
+ * 放在一个地方，是为了让工具箱和命令行用同一套说法。两处各写一套还互相矛盾，
+ * 比出错本身更难查。
  *
- * 模块只依赖 `types` 里的类型（`TokenUsage`），不反向依赖任何运行时模块。
+ * 文件职责：负责错误类型、错误分类、可重试判断、兜底文案。
+ * 不负责决定「抛还是折成文本」（那是各层自己的规矩，见规范第 5 节），
+ * 也不负责排版展示（只给标题、建议、详情三段素材）。
+ *
+ * 内容目录：
+ *   - `describeError()`：把任何抛出来的东西变成一句非空、能看懂的话。
+ *   - `ChatResponseError`：模型响应形状非法，可带上端点已经算过的 usage。
+ *   - `ModelConfigError`：环境变量不完整或仍是占位值，必须在发请求前拒绝。
+ *   - `ModelHttpError` / `ModelConnectionError`：上游返回了状态码 / 连不上。
+ *   - `isRetryableModelError()`：能不能重试。
+ *   - `modelFailure()`：给展示层用的错误分类（标题 + 建议 + 详情），不改异常本体。
+ *   - `ProcessCleanupError`：进程树没停干净，必须结束整轮，不能当普通失败重试。
+ *
+ * 模块关系：依赖 `protocol/types.ts`（`ChatResponseError` 要带 `TokenUsage`）。
+ * 被 `core/agent.ts`、`core/tool-registry.ts`、`model/llm.ts`、`tools/workspace.ts`、
+ * `cli.ts`、`ui/tui.ts` 与 `eval/diagnostics.mjs` 使用。
  */
 import type { TokenUsage } from "./types.ts";
 
@@ -16,7 +30,7 @@ import type { TokenUsage } from "./types.ts";
  * 模型响应形状非法时抛出的错误，可以带上端点已经返回的 usage。
  *
  * 「响应读不懂」不等于「这次请求没花钱」：端点可能正常算了钱，只是 message 不合法。
- * 把 usage 一起带出来，Kernel 才能把这次请求记成已知成本；否则只能记成未知（或者更糟，记成 0）。
+ * 把 usage 一起带出来，Core 才能把这次请求记成已知成本；否则只能记成未知（或者更糟，记成 0）。
  * 放在 errors.ts 是因为 ChatClient 的任何实现都可能抛它，而 Agent 只依赖 types/errors。
  */
 export class ChatResponseError extends Error {
@@ -58,7 +72,7 @@ export class ModelConnectionError extends Error {
   }
 }
 
-/** 仅重试尚未进入流式输出的暂时网络或 HTTP 故障；鉴权、404、响应协议异常禁止重放。 */
+/** 错误工具 isRetryableModelError（能不能重试）：只重试还没开始流式输出的暂时网络或服务故障；鉴权失败、找不到、响应格式异常一律禁止重放。 */
 export function isRetryableModelError(error: unknown): boolean {
   return error instanceof ModelConnectionError ||
     (error instanceof ModelHttpError &&
@@ -66,8 +80,8 @@ export function isRetryableModelError(error: unknown): boolean {
 }
 
 /**
- * 显示层的错误分类，不改异常本体也不参与 Agent 决策。
- * 技术详情保留 describeError 的原文；UI 只在可以确认类别时给出对应的修复建议。
+ * 错误工具 modelFailure（错误分类）：显示层的错误分类，不改异常本体，也不参与核心决策。
+ * 技术详情保留 describeError 的原文；界面只在能确认类别时给出对应的修复建议。
  */
 export function modelFailure(error: unknown, language: "zh" | "en"): {
   title: string;
@@ -131,6 +145,10 @@ export class ProcessCleanupError extends Error {
   }
 }
 
+/**
+ * 从最常见的情况往下逐层兜底：`Error` 取 message、字符串原样、`null` 与原始值给明确说明、
+ * 对象尽量序列化。空对象和空数组序列化出来是 `"{}"` / `"[]"`，等于没说，继续往下落。
+ */
 export function describeError(error: unknown): string {
   if (error instanceof Error) {
     const message = error.message.trim();
