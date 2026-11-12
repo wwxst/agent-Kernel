@@ -6,10 +6,18 @@
  * 真实终端行为留给手动验收 —— 没有 TTY 的 CI 不该假装自己验过光标。
  */
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiColorMode, uiLanguageFromLocale } from "../src/tui.ts";
+import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "../src/tui.ts";
 import { selectMood } from "../src/tui-mood.ts";
+
+// 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
+// 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
+process.env.AGENT_HISTORY_FILE = path.join(tmpdir(), `agent-kernel-test-history-${process.pid}.jsonl`);
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
 function tick() {
@@ -164,7 +172,7 @@ function rowWith(ui, pattern) {
  * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
  * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", theme = "dark", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model", workspace = "C:\\work\\repo" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -183,7 +191,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     input,
     output,
     model,
-    workspace: "C:\\work\\repo",
+    workspace,
     permission: "workspace-write",
     controller,
     interactive,
@@ -191,6 +199,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     rows,
     color,
     colorMode,
+    theme,
     flowInput,
     language,
     onPermissionChange,
@@ -237,6 +246,83 @@ test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色",
   assert.doesNotMatch(mono.text(), /\x1b\[(?:90|38;5;244)m[-─]/, "分隔线不再使用灰色层次色");
   assert.match(full.text(), /\x1b\[(?:90|38;5;244)m(?:❯|>) /, "full 模式提示符仍用灰色强调");
   assert.match(full.text(), /\x1b\[(?:33|38;5;215)m/, "full 模式恢复强调色");
+});
+
+
+test("TUI 主题：light 换成浅底深字，ansi 强制 16 色", async (t) => {
+  assert.equal(parseTuiTheme(undefined), "dark");
+  assert.equal(parseTuiTheme(""), "dark");
+  assert.equal(parseTuiTheme("dark"), "dark");
+  assert.equal(parseTuiTheme("light"), "light");
+  assert.equal(parseTuiTheme("ansi"), "ansi");
+  assert.throws(() => parseTuiTheme("solarized"), /invalid AGENT_TUI_THEME/);
+
+  const light = makeTui({ interactive: true, tty: true, color: true, colorMode: "full", theme: "light" });
+  const ansi = makeTui({ interactive: true, tty: true, color: true, colorMode: "full", theme: "ansi" });
+  t.after(() => { light.cleanup(); ansi.cleanup(); });
+  light.tui.start();
+  ansi.tui.start();
+  light.tui.beginTurn("你好");
+  ansi.tui.beginTurn("你好");
+  await tick();
+
+  // 任务条：浅色终端用浅灰底黑字，深灰底在白色背景上像一块污渍。
+  assert.match(light.text(), /\x1b\[30;47m\x1b\[38;5;240;48;5;254m(?:❯|>) /, "浅色主题的任务条要反过来");
+  assert.doesNotMatch(light.text(), /48;5;237m/, "不能再用深色主题的底色");
+
+  // 强调色：浅色 34 / 166，深色 33 / 215。两组不重叠，能证明换的是色系不是开关。
+  assert.match(light.text(), /\x1b\[(?:34|38;5;166)m/);
+  assert.doesNotMatch(light.text(), /\x1b\[(?:33|38;5;215)m/, "浅色主题不能沿用深色终端的强调色");
+
+  // ansi：就是要终端自己那套 16 色，rich 探测说了不算。
+  assert.match(ansi.text(), /\x1b\[33m/);
+  assert.doesNotMatch(ansi.text(), /\x1b\[38;5;215m/, "ansi 主题不能落到 256 色强调色");
+});
+
+
+test("TUI 审批期间状态行说「等待审批」，不说「正在执行」", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑一条命令");
+  await tick();
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+  const screen = screenRows(ui, 30).join("\n");
+  assert.match(screen, /等待审批/);
+  assert.doesNotMatch(screen, /正在执行/, "审批时命令一条都还没跑，不能显示正在执行");
+
+  ui.input.write("\r");
+  await pending;
+});
+
+
+test("TUI 审批期间重绘不能吃掉已经打印的历史行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑一条命令");
+  for (let i = 0; i < 12; i++) ui.tui.logLine(`HIST_${String(i).padStart(2, "0")}`);
+  await tick();
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+  const count = () => screenRows(ui, 30).filter((line) => /HIST_\d\d/.test(line)).length;
+  const before = count();
+  assert.ok(before > 0, "审批前应当已经有历史行");
+
+  // 审批期间活动计时器每秒重绘一次（「已等待 N 秒」就是这么走的）。
+  // 每次重绘都必须从同一个位置回退；退多了就会把上方的历史一行一行擦掉。
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const afterOne = count();
+  await new Promise((resolve) => setTimeout(resolve, 1_200));
+  const afterTwo = count();
+
+  ui.input.write("\r");
+  await pending;
+  assert.equal(afterOne, before, "第一次重绘就吃掉了一行历史");
+  assert.equal(afterTwo, before, "重绘次数越多，被吃掉的行越多");
 });
 
 
@@ -929,7 +1015,7 @@ test("TUI：审批完整显示多行命令和 cwd，y 只放行这一次", async
     tool: "shell",
     args: { command: "echo hi\necho bye" },
   });
-  ui.input.write("y\n");
+  ui.input.write("y\r");
 
   assert.equal(await pending, true);
   await tick();
@@ -948,7 +1034,7 @@ test("TUI：审批回答 n 是拒绝，并写出 denied", async (t) => {
 
   ui.tui.start();
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo nope" } });
-  ui.input.write("n\n");
+  ui.input.write("n\r");
 
   assert.equal(await pending, false);
   await tick();
@@ -972,7 +1058,7 @@ test("TUI：已有排队输入时不把下一行当成审批答案", async (t) =
   t.after(() => ui.cleanup());
 
   ui.tui.start();
-  ui.input.write("queued task\n");
+  ui.input.write("queued task\r");
   await tick();
 
   await assert.rejects(
@@ -1572,15 +1658,17 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 
 
   assert.equal(ui.tui.uiText("permission: workspace-write", "权限：workspace-write"), "权限：workspace-write");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /命令：\/exit/);
-  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /Ctrl\+E 任务 · Ctrl\+O 活动组 · Ctrl\+G 工具详情/,
-    "固定布局的帮助应让用户知道如何展开尾部折叠箭头");
+  // 主视图已拍平：帮助改成「输入 / 视图」两组按键，不再讲折叠箭头。
+  const help = ui.tui.helpText("read-only;workspace-write;full-access");
+  assert.match(help, /输入：Enter 发送 · Shift\+Enter 或 Ctrl\+J 换行/);
+  assert.match(help, /视图：Ctrl\+E 历史 · PgUp 暂停刷新/);
   ui.tui.setPermission("read-only");
   assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
 
   ui.tui.beginTurn("Please explain the error in English");
   assert.equal(ui.tui.uiText("permission: read-only", "权限：read-only"), "permission: read-only");
   assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /commands: \/exit/);
-  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /Ctrl\+E turns · Ctrl\+O activity groups · Ctrl\+G tool details/);
+  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /input:  Enter send · Shift\+Enter or Ctrl\+J newline/);
 });
 
 
@@ -2408,16 +2496,17 @@ test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次�
   assert.equal(await pending, "第一行\n第二行\n第三行", "粘贴内容是一条消息，换行保留");
 });
 
-test("TUI：不支持括号粘贴的终端，同一批到达的多行也合并成一条消息", async (t) => {
+test("TUI：不支持括号粘贴的终端，裸换行当换行处理，回车才提交", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
 
   const pending = ui.tui.readLine();
-  // 老 conhost 不发 ESC[200~：三个换行就是三个 line 事件，但它们是同一批数据。
-  ui.input.write("第一行\n第二行\n第三行\n");
+  // 老 conhost 不发 ESC[200~：裸换行现在是 Ctrl+J 语义（换行），不是提交。
+  ui.input.write("第一行\n第二行\n第三行");
+  ui.input.write("\r");
 
-  assert.equal(await pending, "第一行\n第二行\n第三行", "同一批多行合并为一条消息");
+  assert.equal(await pending, "第一行\n第二行\n第三行", "整段是一条消息，换行保留");
 });
 
 test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", async (t) => {
@@ -2438,4 +2527,109 @@ test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", a
 
   ui.input.write("n\r");
   assert.equal(await pending, false);
+});
+
+test("TUI 主视图：Ctrl+J 换行，输入区变成多行，回车一次提交整段", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  ui.input.write("第一行");
+  ui.input.write("\n");          // Ctrl+J：换行，不提交
+  ui.input.write("第二行");
+  await tick();
+
+  const rows = screenRows(ui, 30);
+  assert.ok(rows.some((line) => /第一行/.test(line)), "第一行显示在输入区");
+  assert.ok(rows.some((line) => /第二行/.test(line)), "第二行显示在输入区");
+  assert.ok(rows.indexOf(rows.find((line) => /第二行/.test(line))) >
+    rows.indexOf(rows.find((line) => /第一行/.test(line))), "第二行在第一行下面");
+
+  ui.input.write("\r");          // 回车才提交
+  assert.equal(await pending, "第一行\n第二行", "整段作为一条消息提交，换行保留");
+});
+
+test("TUI 主视图：Shift+Enter 的两种终端编码都当换行，不是提交", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  ui.input.write("第一行");
+  ui.input.write("\x1b[13;2u");   // 支持 CSI-u 的终端
+  ui.input.write("第二行");
+  ui.input.write("\x1b\r");       // 老终端把 Shift+Enter 发成 ESC + CR
+  ui.input.write("第三行");
+  await tick();
+  ui.input.write("\r");
+
+  assert.equal(await pending, "第一行\n第二行\n第三行", "两种编码都产生换行");
+});
+
+test("TUI 主视图：输入 @ 列出工作区文件，回车补全路径但不提交", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, workspace: process.cwd() });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+
+  ui.input.write("@");
+  await tick();
+  assert.match(ui.text(), /@\S+/, "输入 @ 后列出工作区文件");
+
+  ui.input.write("package");
+  await tick();
+  assert.match(ui.text(), /@package\.json/, "按片段过滤到目标文件");
+  ui.input.write("\r");
+  await tick();
+
+  // 补全进输入框，而不是把半句话发出去。
+  assert.match(inputLine(ui), /@package\.json/, "回车把路径补进输入框");
+  ui.input.write(" 看一下版本");
+  ui.input.write("\r");
+  assert.match(await pending, /@package\.json 看一下版本/, "补全后继续输入，整句才提交");
+});
+
+test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-${process.pid}.mjs`);
+  // 假编辑器：把文件内容改成固定文本，模拟「用户在编辑器里写完保存」。
+  await writeFile(script, "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], '编辑后的内容');\n", "utf8");
+  const previous = process.env.EDITOR;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previous === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previous;
+    rmSync(script, { force: true });
+  });
+
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("原始内容");
+  await tick();
+
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  assert.match(inputLine(ui), /编辑后的内容/, "编辑器保存后内容回到输入框");
+  ui.input.write("\r");
+  assert.equal(await pending, "编辑后的内容");
+});
+
+test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次的任务", async (t) => {
+  const file = process.env.AGENT_HISTORY_FILE;
+  await writeFile(file, `${JSON.stringify({ ts: 1, cwd: "/w", text: "上一次的任务" })}\n`, "utf8");
+
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+
+  // 方向键要走真实转义序列：合成的 keypress 事件不带 sequence，readline 不认。
+  ui.input.write("\x1b[A");
+  await tick();
+  assert.match(inputLine(ui), /上一次的任务/, "上键翻出上一次的输入");
 });

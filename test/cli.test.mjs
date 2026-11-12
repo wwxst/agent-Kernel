@@ -219,7 +219,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
-        ["read", "write", "edit", "glob", "grep", "ls", "shell"],
+        ["read", "write", "edit", "glob", "grep", "ls", "shell", "shell-output", "shell-kill"],
       );
 
       // mock 不回 usage：成本摘要必须写 at least，不能把「已统计到 0」说成「只花了 0」。
@@ -951,6 +951,34 @@ test("TUI：HTTP 404 不触发自动重连，展示统一类别并保留实际 H
       assert.equal(mock.requests.length, 1);
       assert.match(run.stdout, /HTTP 404 · Model service unavailable/);
       assert.doesNotMatch(run.stdout, /Reconnecting\.\.\./);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("项目指令：工作区的 AGENTS.md 注入系统提示，没有该文件时不注入", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "AGENTS.md"), "# 项目规范\n\n- 提交前必须跑 npm run check\n");
+    const mock = await startMock([finalReply("ok")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      const system = mock.requests[0].messages[0];
+      assert.equal(system.role, "system");
+      assert.match(system.content, /Project instructions \(AGENTS\.md\)/, "注入时必须标明来源");
+      assert.match(system.content, /提交前必须跑 npm run check/, "项目规范正文要原样进入提示");
+    } finally {
+      await mock.close();
+    }
+  });
+
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("ok")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.doesNotMatch(mock.requests[0].messages[0].content, /Project instructions/);
     } finally {
       await mock.close();
     }

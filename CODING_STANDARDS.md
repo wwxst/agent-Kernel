@@ -118,7 +118,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 ## 7. 测试
 
-- **打在缝上**：`Agent.run`、`ToolRegistry.execute`、`Workspace` 的七个方法、`Llm.chat`、CLI 进程。五处都有现成用例可参照。
+- **打在缝上**：`Agent.run`、`ToolRegistry.execute`、`Workspace` 的九个方法、`Llm.chat`、CLI 进程。五处都有现成用例可参照。
 - **断言外部行为**，不测私有函数，也不 mock 自己的模块。只有跨缝的外部依赖才用替身：`ChatClient` 的假实现、mock HTTP 服务。
 - **期望值写死字面量**，不要用被测代码算出来（同义反复的测试永远绿，也永远没用）。
 - 一个用例钉一件事；测试名写「什么情况下、发生什么」。
@@ -250,6 +250,15 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 **一个判断标准**：这条改动如果被别人问「为什么是这样」，你能指出参照对象吗？指不出来，就还是猜。
 
+### 按键映射：主路径 + 兜底，两条都要有
+
+终端按键最容易只做一半。参照对象怎么处理，就跟着处理：
+
+- **主流产品有主路径和兜底时，两条都要实现。** 例：换行 = `Shift+Enter`（CSI-u `ESC[13;2u` 或 `ESC\r`）+ `Ctrl+J`（裸 `\n`）。只做 `Ctrl+J` 等于把主路径丢了；只做 `Shift+Enter` 则在老终端上完全不可用。
+- **每条按键都要能回答「不支持的终端会怎样」。** 答不上来说明这条键在部分环境里是死的。
+- **能力探测失败要能显式覆盖**，例如 `AGENT_TUI_GLYPHS=unicode|ascii`。探测再聪明也会有漏网终端。
+- **按键表写进 README**，并在 `/help` 里可见。用户不该靠读源码发现快捷键。
+
 ## 15. 改完必须真跑一次，并且看全局
 
 **单测绿 ≠ 能用。** 单测跑的是我们想象的路径，真实模型会走我们想不到的路径。
@@ -286,7 +295,7 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 
 **什么时候写**：修完就写，不要攒。攒到最后只会记得结论，忘了当时的现象和错误假设——而现象才是下次识别同类问题的线索。
 
-**当前已有的三份**：[展示分层](../design/display-layers.md)（概览层与详情层怎么分，含前端落地建议）、[TUI 踩坑记录](../notes/tui-pitfalls.md)（十四条真实事故 + 四条底层规则）、[CLI 与工程链路踩坑](../notes/cli-and-tooling.md)（参数、全局安装、测试迁移）。
+**当前已有的四份**：[展示分层](../design/display-layers.md)（概览层与详情层怎么分，含前端落地建议）、[TUI 踩坑记录](../notes/tui-pitfalls.md)（十五条真实事故 + 四条底层规则）、[CLI 与工程链路踩坑](../notes/cli-and-tooling.md)（参数、全局安装、测试迁移）、[后台任务踩坑](../notes/background-jobs.md)（管道卡住宿主、Windows `shell+detached` 丢输出、增量读的字节边界）。
 
 ## 复查清单
 

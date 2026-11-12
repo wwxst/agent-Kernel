@@ -40,7 +40,26 @@ agent --permission read-only "看看这个项目怎么跑"
 
 不捕获鼠标：滚轮、滚动条、选中复制、终端搜索全部保持原生行为；展开历史走 `Ctrl+T` + 键盘。若终端明确声明 `TERM=dumb`，交互式 TUI 会报错，请改用支持 ANSI 控制序列的终端。
 
-`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
+`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。配色方案另由 `AGENT_TUI_THEME=dark|light|ansi` 决定：`dark`（默认）按深色背景配色，`light` 换成浅底深字（浅色终端上 `info` 的近白灰等于没写字），`ansi` 强制只用终端自己的 16 色。两者正交——先选用哪套色，再选上不上色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。输入区支持多行：`Shift+Enter` 或 `Ctrl+J` 换行、`Enter` 提交（粘贴多行同样折叠成一条消息）。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。工作区根目录的 `AGENTS.md` 会在启动时读入系统提示（超过 32000 字符截断）；没有该文件就不注入。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
+
+### 快捷键
+
+| 键 | 作用 |
+| --- | --- |
+| `Enter` | 发送当前输入 |
+| `Shift+Enter` | 换行（现代终端 `ESC[13;2u`；老终端 `ESC\r`） |
+| `Ctrl+J` | 换行（所有终端可用，兜底） |
+| `@` | 补全工作区文件路径（回车插入，不提交） |
+| `Ctrl+X` `Ctrl+E` | 用 `$VISUAL` / `$EDITOR` 编辑当前输入（未设置时 Windows 用 notepad，其他用 vi） |
+| `↑` / `↓` | 翻历史（跨进程保存，存在 `~/.agent-kernel/history.jsonl`） |
+| `Ctrl+C` | 取消本轮 |
+| `Ctrl+E` | 打开历史视图（transcript） |
+| `PgUp` | 暂停活动区刷新，可自由往上翻历史 |
+| `PgDn` / `Esc` | 恢复刷新 |
+| `Shift+Tab` | 切换权限模式 |
+| `Esc`（审批中） | 拒绝并关闭审批 |
+
+`/help` 里同样能看到这张表。
 
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
 
@@ -130,7 +149,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
-## 七个工具
+## 九个工具
 
 工具名是模型看到的接口，所以用的是 agent 生态里的通用叫法（`read` / `write` / `edit` / `glob` / `grep` / `ls` / `shell`），不是本仓库方法名的直译：
 
@@ -143,8 +162,29 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `grep` | 按正则搜文件内容，回 `路径:行号: 内容`；匹配跑在 worker 里，超时中断 | `Workspace.grep` |
 | `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
 | `shell` | 在工作区根目录跑 shell；超时/取消杀整棵进程树，输出有上限 | `Workspace.run` |
+| `shell-output` | 读后台任务自上次调用之后的新输出；第一行是它的状态 | `Workspace.readJobOutput` |
+| `shell-kill` | 停掉后台任务连同它的后代进程 | `Workspace.killJob` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
+
+后两个不是新能力，是 `shell` 那半个功能的收尾。`shell` 带 `background:true` 时立刻返回一个任务编号（`job-1`），进程继续跑：
+
+```text
+shell { command: "npm run dev", background: true }
+→ started job-1 (pid 12345) in the background; read new output with shell-output, stop it with shell-kill
+
+shell-output { job_id: "job-1", wait: 3000 }
+→ job-1 (running, pid 12345) ran: npm run dev
+  VITE v5.4.0  ready in 312 ms
+  ➜  Local:   http://localhost:5173/
+
+shell-kill { job_id: "job-1" }
+→ stopped job-1
+```
+
+三条边界值得知道：**只返回新增的部分**（第二次调 `shell-output` 不会把同一段日志再读一遍，否则既烧 token 又让模型以为「这条错误又出现了」）；**单次最多 8k 字符**，超出的留在日志里并明说「还有，再调一次」；**日志落在系统临时目录**（`%TEMP%\agent-kernel-jobs` 或 `$TMPDIR`），不落工作区，所以模型不能拿 `read` 直接看，必须走 `shell-output`。
+
+`shell-kill` 停不干净时**报错而不是假装成功**：`taskkill /T` 只杀外层、POSIX 上回退只杀直接子进程，这两种情况后代可能还活着。冒充成功会让模型以为端口已经释放，然后在一个还占着端口的世界里继续排查。
 
 `write` 和 `edit` 的分工就是名字说的那件事：改几行用 `edit`（省 token，也不会因为「只改三行却重写整个文件」把长文件改坏），新建文件或整体重写才用 `write`。
 

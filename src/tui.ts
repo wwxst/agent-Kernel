@@ -13,9 +13,16 @@
  * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
+import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
+import { appendHistory, loadHistory } from "./prompt-history.ts";
 import type { Interface, Key } from "node:readline";
+import { spawnSync } from "node:child_process";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { Transform, Writable } from "node:stream";
 import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
+import { describeError } from "./errors.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
 import { approvalGate, isApproved } from "./permission.ts";
 import { selectMood } from "./tui-mood.ts";
@@ -42,6 +49,9 @@ const MAX_LOG_LINES = 2_000;
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
+/** Ctrl+J 换行在输入行里的占位符：readline 见到它不会当成回车。 */
+const NEWLINE_MARK = "\u240A";
+
 
 /** 右对齐的模型名和统计与窗口右边缘之间留的呼吸空间，避免文字贴边难读。 */
 const RIGHT_MARGIN = 2;
@@ -60,6 +70,13 @@ const SLASH_COMMANDS = [
   { command: "/exit", en: "Exit agent-Kernel", zh: "退出 agent-Kernel" },
   { command: "/quit", en: "Exit (alias of /exit)", zh: "退出（/exit 的别名）" },
 ] as const;
+
+/** 补全菜单的一项：斜杠命令和 @ 文件共用同一套渲染。 */
+export interface MenuItem {
+  readonly command: string;
+  readonly en: string;
+  readonly zh: string;
+}
 
 export type UiLanguage = "zh" | "en";
 
@@ -205,6 +222,24 @@ export function parseTuiColorMode(value: string | undefined): TuiColorMode {
   throw new Error(`invalid AGENT_TUI_COLOR "${value}" (expected: full, mono)`);
 }
 
+/**
+ * 配色方案。和 `TuiColorMode` 是**两件事**，不要合并：
+ *
+ *   - `colorMode` 管「上不上色」（mono 只给用户消息条上色）；
+ *   - `theme` 管「用哪套色」（同一处文字在深色和浅色终端里该是什么颜色）。
+ *
+ * 之前的实现把两者混成了一个开关，结果只有「深色背景 + 有层次」和「深色背景 + 没层次」两种，
+ * 浅色终端上 `info` 的 250 号浅灰几乎看不见。参照 Claude Code 的 `/theme`（dark / light / ANSI）。
+ */
+export type TuiTheme = "dark" | "light" | "ansi";
+
+/** 默认 dark；`ansi` 强制走 16 色，老终端和「就要终端自己那套配色」的场景用得上。 */
+export function parseTuiTheme(value: string | undefined): TuiTheme {
+  if (value === undefined || value === "" || value === "dark") return "dark";
+  if (value === "light" || value === "ansi") return value;
+  throw new Error(`invalid AGENT_TUI_THEME "${value}" (expected: dark, light, ansi)`);
+}
+
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
@@ -219,6 +254,8 @@ export interface TuiOptions {
   rows?: number;
   /** 层次配色开关；默认 mono，只保留用户消息任务条的颜色，其余文字纯白。 */
   colorMode?: TuiColorMode;
+  /** 配色方案；默认 dark。和 colorMode 正交：先定用哪套色，再定上不上色。 */
+  theme?: TuiTheme;
   /** 测试可以显式关掉颜色；生产代码不传，按终端能力自动判断。 */
   color?: boolean;
   /** 初始界面语言；缺省英文，交互式 CLI 按系统 locale 传入；之后仍按任务正文切换。 */
@@ -383,15 +420,16 @@ export class Tui {
   /** 用户往上翻历史时冻结活动区重绘，避免每帧把视口拉回底部。 */
   private outputPaused = false;
 
+  /** 外部编辑器占用终端期间，不渲染、不接收按键。 */
+  private editorRunning = false;
+
+  /** Ctrl+X 前缀的按下时间：超过两秒就不再认后面的 Ctrl+E。 */
+  private ctrlXPendingAt = 0;
+
   /** 多行粘贴的原文：输入框只显示占位提示，提交时用原文。 */
   private pasted: string | null = null;
 
   private pastedPlaceholder = "";
-
-  /** 同一批到达的行（粘贴兜底用）：人工按键不会在一个事件循环里连发多个回车。 */
-  private burstLines: string[] = [];
-
-  private burstFlush?: NodeJS.Immediate;
 
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
@@ -540,6 +578,18 @@ export class Tui {
           if (pasting) pasteBuffer += part;
           else out += part;
         }
+        // 换行的三条来源，统一换成占位符（readline 见到它不会当成回车）：
+        //   1. Shift+Enter 的 CSI-u 编码：ESC [ 13 ; 2 u
+        //   2. 老终端把 Shift+Enter 发成 ESC + CR
+        //   3. Ctrl+J 就是裸 \n（Claude Code 也把它当兜底）
+        // 只在交互式主视图这么做：管道 / 脚本里的换行是「一行一个命令」，不能合并。
+        if (this.layout && this.interactive) {
+          out = out
+            .replace(/\x1b\[13;2u/g, NEWLINE_MARK)
+            .replace(/\x1b\r/g, NEWLINE_MARK)
+            .replace(/\r\n/g, "\r")
+            .replace(/\n/g, NEWLINE_MARK);
+        }
         args[0] = out;
       }
       return originalEmit(event, ...args);
@@ -548,11 +598,12 @@ export class Tui {
     this.recomputeGeometry();
 
     const colorMode = options.colorMode ?? "mono";
+    const theme = options.theme ?? "dark";
     const colorEnabled =
       this.ownedScreen &&
       (options.color ??
         (process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"));
-    this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono");
+    this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono", theme);
     // 现代终端用 ❯/✻，有限字形环境退回 ASCII，但不降级布局。
     // 显式开关优先：老 conhost 配上 UTF-8 代码页其实能显示 Unicode，可环境变量探测不出来，
     // 所以留一个 AGENT_TUI_GLYPHS=unicode|ascii 的逃生口（Claude Code / Codex 都是直接用 Unicode，
@@ -586,6 +637,9 @@ export class Tui {
       options.input.pipe(this.mouseInput);
     }
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
+    // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
+    // 读不到或文件损坏都只是「没有历史」，不影响启动。
+    (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
     // 兜底：不支持括号粘贴的终端（老 conhost）会把粘贴里的每个换行都变成一个 line 事件。
@@ -593,21 +647,9 @@ export class Tui {
     // 合并成一条消息，换行保留。
     this.rl.on("line", (rawLine) => {
       // 审批期间的按键（y/1/回车、粘贴）不是任务输入：直接丢弃，
-      // 不能进批处理缓冲，否则会在审批结束后冒充下一轮任务。
+      // 不能进下一轮任务队列。
       if (this.approvalMenuActive) return;
-      // 只在交互式主视图里合并：脚本 / 管道输入的多行是多个命令，合并会吃掉它们。
-      if (!this.layout) {
-        this.submitLine(rawLine);
-        return;
-      }
-      this.burstLines.push(rawLine);
-      if (this.burstFlush !== undefined) return;
-      this.burstFlush = setImmediate(() => {
-        this.burstFlush = undefined;
-        const merged = this.burstLines.join("\n");
-        this.burstLines = [];
-        this.submitLine(merged);
-      });
+      this.submitLine(rawLine);
     });
     this.rl.on("close", () => {
       this.ended = true;
@@ -667,6 +709,19 @@ export class Tui {
       // 和 Codex 的 Ctrl+T / Claude Code 的 Ctrl+O 是同一个设计。
       if (key?.ctrl && name === "t" && this.layout) {
         this.toggleTranscript();
+        return;
+      }
+
+      // Ctrl+X 是前缀键（readline/bash 习惯）：Ctrl+X Ctrl+E 打开外部编辑器。
+      // 不用 Ctrl+G——它在这里已经有「定位工具详情」的含义，5 条测试依赖它。
+      if (key?.ctrl && name === "x" && this.layout) {
+        this.ctrlXPendingAt = Date.now();
+        return;
+      }
+      if (key?.ctrl && name === "e" && this.layout && this.ctrlXPendingAt !== 0 &&
+          Date.now() - this.ctrlXPendingAt < 2_000 && !this.transcriptMode) {
+        this.ctrlXPendingAt = 0;
+        this.openExternalEditor();
         return;
       }
 
@@ -927,17 +982,30 @@ export class Tui {
   }
 
   /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
-  private slashMenuCandidates(line: string): readonly (typeof SLASH_COMMANDS)[number][] {
+  private slashMenuCandidates(line: string): readonly MenuItem[] {
     if (!/^\/[^\s]*$/.test(line)) return [];
     return SLASH_COMMANDS.filter((item) => item.command.startsWith(line));
   }
 
+  /**
+   * 补全候选：`/` 给命令，`@` 给工作区文件。
+   *
+   * 两者的接受方式不同——命令替换整行，文件只替换末尾片段——所以候选里带着
+   * 最终要插入的文本（`@path`），由 submitLine 决定怎么拼。
+   */
+  private completionCandidates(line: string): readonly MenuItem[] {
+    if (line.startsWith("/")) return this.slashMenuCandidates(line);
+    const tail = /@([^\s@]*)$/.exec(line);
+    if (tail === null) return [];
+    return matchFiles(listWorkspaceFiles(this.workspace), tail[1]!, 6)
+      .map((file) => ({ command: `@${file}`, en: "", zh: "" }));
+  }
+
   /** 固定布局下至多显示五项；小窗口至少给日志与输入留出一行。 */
-  private slashMenuItems(): readonly (typeof SLASH_COMMANDS)[number][] {
+  private slashMenuItems(): readonly MenuItem[] {
     if (!this.layout || !this.promptActive || this.promptText !== COMMAND_PROMPT ||
         this.approvalMenuActive || this.slashDismissed) return [];
-    const candidates = this.slashMenuCandidates(this.rl.line);
-    return candidates;
+    return this.completionCandidates(this.rl.line);
   }
 
   /** 显式恢复 readline 编辑缓存（不创建历史记录）。 */
@@ -952,7 +1020,7 @@ export class Tui {
   }
 
   /** 候选菜单的显示宽度按终端字符列计算，选中项使用强调色。 */
-  private slashMenuLine(item: (typeof SLASH_COMMANDS)[number], selected: boolean, width: number): string {
+  private slashMenuLine(item: MenuItem, selected: boolean, width: number): string {
     const prefix = selected ? this.glyphs.user : " ";
     const nameWidth = Math.min(18, Math.max(12, width - 1));
     const name = padRight(` ${item.command}`, nameWidth);
@@ -1047,16 +1115,17 @@ export class Tui {
       `commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this\n          /permission [mode]  show or switch permission (${permissionModes})`,
       `命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助\n      /permission [模式]  查看或切换权限（${permissionModes}）`,
     );
-    // 折叠箭头是终端字符，不是可点击组件；只有固定布局支持这些快捷键。
-    const shortcut = this.uiText(
-      "timeline: Ctrl+E turns · Ctrl+O activity groups · Ctrl+G tool details · PageUp/PageDown scroll",
-      "时间线：Ctrl+E 任务 · Ctrl+O 活动组 · Ctrl+G 工具详情 · PageUp/PageDown 浏览",
+    if (!this.layout) return commands;
+    // 按键表：规范要求「写进 README，并在 /help 里可见」，用户不该靠读源码发现快捷键。
+    const keys = this.uiText(
+      "input:  Enter send · Shift+Enter or Ctrl+J newline · @ completes a file path · Ctrl+X Ctrl+E opens $EDITOR · Ctrl+C cancel the run",
+      "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · @ 补全文件路径 · Ctrl+X Ctrl+E 用 $EDITOR 编辑 · Ctrl+C 取消本轮",
     );
-    const mouse = this.ownedScreen ? `\n${this.uiText(
-      "mouse: click trailing arrows to fold/unfold · wheel scrolls three lines",
-      "鼠标：点击文字末尾箭头展开/收起 · 滚轮每次滚动三行",
-    )}` : "";
-    return this.layout ? `${commands}\n${shortcut}${mouse}` : commands;
+    const view = this.uiText(
+      "view:   Ctrl+E history · PgUp pause live output · PgDn or Esc resume · Shift+Tab permission",
+      "视图：Ctrl+E 历史 · PgUp 暂停刷新 · PgDn 或 Esc 恢复 · Shift+Tab 切换权限",
+    );
+    return `${commands}\n${keys}\n${view}`;
   }
 
   /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */
@@ -1181,6 +1250,14 @@ export class Tui {
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
     if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}${suffix}`, tone: "muted" };
+    // 审批期间这一轮并没有在跑，是在等你按 Enter。继续说「正在执行」会让人以为
+    // 命令已经跑起来了（它甚至可能已经跑了一分多钟），于是去排查一个不存在的卡顿。
+    if (this.approvalBlocksRunning) {
+      return {
+        text: `  ${this.glyphs.running} ${zh ? "等待审批 · 已等待" : "Waiting for approval · "} ${duration}${suffix}`,
+        tone: "warning",
+      };
+    }
     return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}${suffix}`, tone: "accent" };
   }
 
@@ -2023,15 +2100,28 @@ export class Tui {
   }
 
   /** 提交一行：审批不消费文本行；占位提示换成多行粘贴的原文。 */
-  private submitLine(line: string): void {
+  private submitLine(rawSubmitted: string): void {
+    const line = rawSubmitted.split(NEWLINE_MARK).join("\n");
     // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
     // 也不能在审批结束后进入下一轮任务队列。
     if (this.approvalMenuActive) return;
-    // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
-    const candidates = this.slashMenuCandidates(line);
-    const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
-      ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
-      : line;
+    // Enter 提交当前高亮项：`/` 是整行替换并执行，`@` 只把路径补进输入框、不提交——
+    // 用户通常还要接着写「这个文件里的 X 怎么改」。
+    const candidates = this.completionCandidates(line);
+    const chosen = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
+      ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!
+      : undefined;
+    if (chosen !== undefined && chosen.command.startsWith("@")) {
+      const completed = line.replace(/@[^\s@]*$/, chosen.command);
+      this.slashSelected = 0;
+      // 补完之后先把菜单关掉，否则下一次回车又会重新选中同一个文件。
+      this.slashDismissed = true;
+      this.slashDraft = completed;
+      this.slashDraftCursor = completed.length;
+      this.setEditorLine(completed);
+      return;
+    }
+    const submitted = chosen === undefined ? line : chosen.command;
     this.slashDismissed = false;
     this.slashSelected = 0;
     this.slashDraft = "";
@@ -2039,6 +2129,8 @@ export class Tui {
     // 占位提示对应一段多行粘贴：真正交给模型的是原文。
     const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
     if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
+    // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /permission 没有意义）。
+    if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
     if (resolve === undefined) {
       this.lines.push(payload);
@@ -2046,6 +2138,68 @@ export class Tui {
     } else {
       resolve(payload);
     }
+  }
+
+  /**
+   * 把当前输入交给外部编辑器（Ctrl+G）。
+   *
+   * 长 prompt 在终端里改很难受，两家同类产品都提供这条路径：Claude Code 用 Ctrl+G，
+   * Codex 读 VISUAL/EDITOR。这里把内容写进临时文件、让编辑器接管终端、保存后读回。
+   * 编辑器没配置就给出明确提示，而不是静默失败。
+   */
+  private openExternalEditor(): void {
+    if (this.editorRunning) return;
+    const command = (process.env.VISUAL ?? "").trim() || (process.env.EDITOR ?? "").trim() ||
+      (process.platform === "win32" ? "notepad" : "vi");
+    const file = path.join(tmpdir(), `agent-prompt-${process.pid}.md`);
+    try {
+      writeFileSync(file, this.rl.line.split(NEWLINE_MARK).join("\n"), "utf8");
+    } catch (error) {
+      this.pushLog(this.uiText(
+        `could not prepare the editor buffer: ${describeError(error)}`,
+        `无法准备编辑器缓冲区：${describeError(error)}`,
+      ), "error");
+      this.renderNow(true);
+      return;
+    }
+
+    this.editorRunning = true;
+    // 让出终端：显示光标、清掉底部活动区，编辑器自己会占满屏幕。
+    this.output.write("\x1b[?25h");
+    const result = spawnSync(command, [file], { stdio: "inherit", shell: true });
+    this.editorRunning = false;
+    this.output.write("\x1b[?25l");
+
+    if (result.error !== undefined) {
+      this.pushLog(this.uiText(
+        `could not start "${command}": ${result.error.message}`,
+        `无法启动 "${command}"：${result.error.message}`,
+      ), "error");
+    } else if (result.status !== 0) {
+      this.pushLog(this.uiText(
+        `editor exited with ${result.status}; the input was left unchanged`,
+        `编辑器退出码 ${result.status}；输入内容保持不变`,
+      ), "warning");
+    } else {
+      try {
+        const edited = readFileSync(file, "utf8").replace(/\r\n/g, "\n").replace(/\n+$/, "");
+        if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
+          this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
+        }
+      } catch (error) {
+        this.pushLog(this.uiText(
+          `could not read the edited text: ${describeError(error)}`,
+          `无法读取编辑结果：${describeError(error)}`,
+        ), "error");
+      }
+    }
+
+    try {
+      rmSync(file, { force: true });
+    } catch {
+      // 临时文件删不掉不影响输入内容，下一次会覆盖同名文件。
+    }
+    this.renderNow(true);
   }
 
   /** 冻结活动区重绘，把视口交给终端；PgDn / Esc 恢复。 */
@@ -2288,8 +2442,16 @@ export class Tui {
     // 输入框上方 = 活动区尾部实际占用的终端行数 + 输入框上边框。
     // 不能直接用 tail.length：终端在行尾会自动折行，一条逻辑行可能占两行；
     // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
-    const rowsAboveInput = tail.reduce(
-      (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0) + 1;
+    const tailRows = tail.reduce(
+      (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
+    // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
+    //
+    // 审批时输入框被菜单顶掉，光标锚点变成那条分隔线本身，它上面只剩活动区：
+    // 仍然按「活动区 + 输入框上边框」上移就会每帧多吃一行，表现为审批期间
+    // 上面的日志一行一行被擦掉（活动计时器每秒重绘一次，所以是一秒一行）。
+    const rowsAboveInput = this.approvalMenuActive
+      ? tailRows
+      : tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
 
     let frame = "\x1b[?2026h";
     if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
@@ -2303,9 +2465,13 @@ export class Tui {
     for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
     // 审批时隐藏输入框：菜单独占这块区域，和 Claude Code 一致。
     // 留着输入框会让人以为「还能打字」，而按键其实全给了菜单。
-    frame += this.approvalMenuActive
-      ? `${this.dividerLine(width)}\r\n`
-      : `${this.dividerLine(width)}\r\n${this.inputLine(width)}\r\n${this.dividerLine(width)}\r\n`;
+    // 输入区可以是多行（Ctrl+J 换行），行数变化要同时反映到光标回退的行数上。
+    const inputRows = this.approvalMenuActive ? [] : this.inputLines(width);
+    if (this.approvalMenuActive) {
+      frame += `${this.dividerLine(width)}\r\n`;
+    } else {
+      frame += `${this.dividerLine(width)}\r\n${inputRows.join("\r\n")}\r\n${this.dividerLine(width)}\r\n`;
+    }
     if (menuRows > 0) {
       const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
         Math.max(0, slashCandidates.length - menuRows));
@@ -2401,23 +2567,42 @@ export class Tui {
   }
 
   /**
-   * 只展示光标附近的输入片段，完整文字仍在 readline 里；横向滚动不移动固定栏位。
+   * 输入区的每一行。
+   *
+   * Ctrl+J 换行后内容里带 NEWLINE_MARK，这里按它切行：第一行带提示符，
+   * 后续行缩进对齐。Enter 才提交，所以多行任务可以先铺开再一次性发出。
    */
-  private inputLine(width: number): string {
+  private inputLines(width: number): string[] {
     const prompt = this.promptText === COMMAND_PROMPT ? `${this.glyphs.user} ` : singleLine(this.promptText);
-    const room = Math.max(1, width - displayWidth(prompt));
-    const cursor = this.rl.cursor;
-    if (cursor < this.inputOffset) this.inputOffset = cursor;
-    while (displayWidth(escapeControlCharacters(this.rl.line.slice(this.inputOffset, cursor))) >= room) {
-      this.inputOffset += (this.rl.line.codePointAt(this.inputOffset) ?? 0) > 0xffff ? 2 : 1;
-    }
-    if (this.rl.line === "") this.inputOffset = 0;
-    const placeholder = this.promptPlaceholder && this.rl.line === "" && this.promptText === COMMAND_PROMPT && this.log.length === 0;
-    const text = placeholder ? ` ${this.uiText(PLACEHOLDER, "输入任务，或输入 /help...")}` : escapeControlCharacters(this.rl.line.slice(this.inputOffset));
-    const shown = takeByWidth(text, room);
-    // 提示符用默认色（mono 下就是普通白），只有占位提示保留灰色，避免和已输入内容混淆。
-    return this.style.inputPrompt(prompt) +
-      (placeholder ? this.style.inputHint(padRight(shown, room)) : padRight(shown, room));
+    const segments = this.rl.line.split(NEWLINE_MARK);
+    // 光标所在的那一段要横向滚动，保证光标始终可见；其他段从头裁剪即可。
+    const beforeCursor = this.rl.line.slice(0, this.rl.cursor);
+    const cursorSegment = beforeCursor.split(NEWLINE_MARK).length - 1;
+    const cursorInSegment = beforeCursor.length - (beforeCursor.lastIndexOf(NEWLINE_MARK) + 1);
+    return segments.map((segment, index) => {
+      const prefix = index === 0 ? prompt : "  ";
+      const room = Math.max(1, width - displayWidth(prefix));
+      const placeholder = index === 0 && this.promptPlaceholder && this.rl.line === "" &&
+        this.promptText === COMMAND_PROMPT && this.log.length === 0;
+      if (placeholder) {
+        return this.style.inputPrompt(prefix) +
+          this.style.inputHint(padRight(` ${this.uiText(PLACEHOLDER, "输入任务，或输入 /help...")}`, room));
+      }
+      let shown = segment;
+      if (index === cursorSegment) {
+        // 光标前面的内容超出宽度就左移起点，直到光标能落在框内。
+        let start = 0;
+        while (displayWidth(escapeControlCharacters(shown.slice(start, cursorInSegment))) >= room) start++;
+        shown = shown.slice(start);
+      }
+      return this.style.inputPrompt(prefix) + padRight(takeByWidth(escapeControlCharacters(shown), room), room);
+    });
+  }
+
+  /** 单行版本：整屏网格只有一行输入位，取最后一行（光标所在行）。 */
+  private inputLine(width: number): string {
+    const rows = this.inputLines(width);
+    return rows[rows.length - 1]!;
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
@@ -2425,7 +2610,9 @@ export class Tui {
     const plainPrompt = this.promptText === COMMAND_PROMPT
       ? `${this.glyphs.user} `
       : singleLine(this.promptText);
-    const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
+    // 多行输入时光标在最后一行：列偏移只算最后一个换行之后的部分。
+    const beforeCursor = this.rl.line.slice(this.inputOffset, this.rl.cursor);
+    const before = escapeControlCharacters(beforeCursor.slice(beforeCursor.lastIndexOf(NEWLINE_MARK) + 1));
     const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
     return `\x1b[${this.inputRow};${column}H`;
   }
@@ -2865,28 +3052,36 @@ export class Tui {
 class Style {
   private readonly enabled: boolean;
 
-  private readonly rich: boolean;
-
   private readonly mono: boolean;
 
   private readonly palette: Record<Tone, string>;
 
-  constructor(enabled: boolean, rich: boolean, mono = false) {
+  /** 用户消息任务条：前缀色、正文色。底色已经编在这两串里。 */
+  private readonly band: { marker: string; body: string };
+
+  constructor(enabled: boolean, rich: boolean, mono = false, theme: TuiTheme = "dark") {
     this.enabled = enabled;
-    this.rich = rich;
     this.mono = mono;
-    this.palette = rich ? RICH_PALETTE : BASIC_PALETTE;
+    // 先按主题选色系，再按终端能力降级。`ansi` 主题就是「要终端自己那套 16 色」，
+    // 所以它优先于 rich 探测；浅色主题在没有 256 色的终端上退到 16 色版本。
+    this.palette = theme === "light"
+      ? (rich ? LIGHT_PALETTE : LIGHT_BASIC_PALETTE)
+      : theme === "ansi" || !rich ? BASIC_PALETTE : RICH_PALETTE;
+    this.band = theme === "light" ? LIGHT_BAND : DARK_BAND;
   }
 
   /**
-   * 用户消息整行：Claude Code 风格任务条——深灰底色、灰色前缀、白色粗体正文。
-   * 先叠一层 16 色退化（亮黑底 + 亮白粗体），能认 256 色的终端再用精确颜色覆盖；
+   * 用户消息整行：Claude Code 风格任务条——一块底色、灰色前缀、粗体正文。
+   * 先叠一层 16 色退化，能认 256 色的终端再用精确颜色覆盖；
    * 这样传统 conhost 和 Windows Terminal 都能一眼看出「这一行是用户发的」。
+   *
+   * 深浅两套底色：深色终端用深底白字，浅色终端用浅底黑字。
+   * 浅色终端上继续压一块深灰，看着像屏幕上的一块污渍。
    */
   userMessage(text: string, marker = ""): string {
     if (!this.enabled || text === "") return text;
-    const markerPaint = "\x1b[37;100m\x1b[38;5;246;48;5;237m";
-    const bodyPaint = "\x1b[1;97;100m\x1b[38;5;255;48;5;237m";
+    const markerPaint = this.band.marker;
+    const bodyPaint = this.band.body;
     if (marker !== "" && text.startsWith(marker)) {
       return `${markerPaint}${marker}${bodyPaint}${text.slice(marker.length)}\x1b[0m`;
     }
@@ -2944,6 +3139,49 @@ const RICH_PALETTE: Record<Tone, string> = {
   warning: "38;5;221",
   info: "38;5;250",
   plain: "0",
+};
+
+/**
+ * 浅色终端用的 256 色板。
+ *
+ * 不是把深色板反相——色相要保住，只把亮度压下来：深色板里 `info` 用 250 号近白灰，
+ * 在白底上等于没写字；浅色板换成 238 号深灰。`accent` 同理从 215（浅橙）换到 166（深橙）。
+ */
+const LIGHT_PALETTE: Record<Tone, string> = {
+  accent: "38;5;166",
+  assistant: "39",
+  user: "39",
+  muted: "38;5;240",
+  success: "38;5;28",
+  error: "38;5;160",
+  warning: "38;5;130",
+  info: "38;5;238",
+  plain: "0",
+};
+
+/** 浅色终端 + 只有 16 色：黄（33）在白底上几乎读不出来，换成蓝（34）保住对比度。 */
+const LIGHT_BASIC_PALETTE: Record<Tone, string> = {
+  accent: "34",
+  assistant: "39",
+  user: "39",
+  muted: "90",
+  success: "32",
+  error: "31",
+  warning: "35",
+  info: "90",
+  plain: "0",
+};
+
+/** 深色终端：深灰底 + 白字。 */
+const DARK_BAND = {
+  marker: "\x1b[37;100m\x1b[38;5;246;48;5;237m",
+  body: "\x1b[1;97;100m\x1b[38;5;255;48;5;237m",
+};
+
+/** 浅色终端：浅灰底 + 黑字。 */
+const LIGHT_BAND = {
+  marker: "\x1b[30;47m\x1b[38;5;240;48;5;254m",
+  body: "\x1b[1;30;47m\x1b[38;5;235;48;5;254m",
 };
 
 function prefersRichColor(): boolean {
