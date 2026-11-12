@@ -34,7 +34,6 @@ import { promisify } from "node:util";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
 import { createEvalDiagnostics } from "./diagnostics.mjs";
 import { Llm } from "../src/llm.ts";
-import { Permission, permissionPrompt } from "../src/permission.ts";
 import { ToolRegistry } from "../src/tool-registry.ts";
 import { Workspace, createWorkspaceTools } from "../src/workspace.ts";
 import { isExpectedFailure } from "./selfcheck.mjs";
@@ -185,17 +184,12 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }) 
   await cp(path.join(taskDir, "files"), workdir, { recursive: true });
 
   const llm = new Llm({ baseUrl, apiKey, model });
-  // 评测是受信任的宿主：显式 full-access，不再依赖任何“漏传即不检查”的默认。
-  const permission = new Permission("full-access");
-  const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })), {
-    permission,
-  });
+  const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })));
   const diagnostics = trace ? await createEvalDiagnostics({ llm, tools, workdir }) : undefined;
   const agent = new Agent({
     llm: diagnostics?.llm ?? llm,
     tools,
-    // 评测请求也带当前权限说明；模型提示只是指导，执行仍由 ToolRegistry 检查。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}`,
+    systemPrompt: () => DEFAULT_SYSTEM_PROMPT,
     ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
     maxSteps: 30,
     // 兜底：单个任务烧到 20 万 token 还没做完，多半是循环出了问题，不该继续付钱。

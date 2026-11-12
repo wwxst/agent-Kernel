@@ -59,3 +59,29 @@ jobs:
 
       - name: Self-check the evaluation set
         run: npm run eval:check
+
+  # macOS 与 Linux 同属 POSIX，但路径大小写、/tmp 别名和信号行为仍有差异；
+  # 本地开发机没有 macOS，只能交给 CI 覆盖（Linux PTY 用例在 macOS 上按平台跳过）。
+  check-macos:
+    name: Typecheck and Tests (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.18.0"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run checks
+        run: npm run check
+
+      - name: Self-check the evaluation set
+        run: npm run eval:check

@@ -1,5 +1,7 @@
 # TUI v0.3 真实终端验收
 
+> **历史记录**：本文件记录的是 v0.3 的界面验收；其中 `--permission read-only`、Shell 审批与拒绝提示已在 2026-11-12 随 [ADR-0019](../../adr/0019-full-access-is-the-only-mode.md) 删除，截图只作为历史对照。
+
 此页保留上一轮 conhost 的历史验收范围。后续已在真正 Windows Terminal portable 中补充验收，见 [现代终端截图与逐图对照记录](../tui-v0.3-windows-terminal/README.md)。
 
 日期：2026-11-06（Asia/Shanghai）。对应 [布局规范](../../tui-v0.3-layout-spec.md)，PR [#9](https://github.com/wwxst/agent-Kernel/pull/9)，分支 `feat/tui-v0.2`。

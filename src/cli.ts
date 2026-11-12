@@ -12,7 +12,7 @@
  *   BASE_URL        OpenAI 兼容端点，默认 https://api.openai.com/v1
  *   API_KEY         必填，也可以用 OPENAI_API_KEY
  *   MODEL           模型名，默认 gpt-4o-mini
- *   WORKDIR         工具能碰的根目录，默认当前目录；--cwd 优先于它
+ *   WORKDIR         相对路径的基准目录，默认当前目录；--cwd 优先于它
  *   MAX_STEPS       单次 Run 的循环上限，默认 30
  *   MAX_TOOL_CALLS  单次 Run 最多执行多少次工具调用，默认 60
  *   MAX_TOTAL_TOKENS 单次 Run 累计 token 预算，默认 500000；0 表示不限制
@@ -27,24 +27,17 @@
  */
 import { statSync } from "node:fs";
 import * as path from "node:path";
-import { createInterface } from "node:readline/promises";
-import { askWithSignal, formatApproval } from "./approval.ts";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "./agent.ts";
 import type { AgentStats } from "./agent.ts";
 import { RunPresenter } from "./cli-presenter.ts";
 import type { AgentView, AgentVoice } from "./cli-presenter.ts";
 import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./errors.ts";
 import { Llm } from "./llm.ts";
-import { DEFAULT_PERMISSION_MODE, PERMISSION_MODES, Permission, approvalGate, isApproved, parsePermissionMode, permissionPrompt } from "./permission.ts";
-import type { PermissionApprover, PermissionMode } from "./permission.ts";
 import { ToolRegistry } from "./tool-registry.ts";
 import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./tui.ts";
 import type { ToolCall } from "./types.ts";
 import { Workspace, createWorkspaceTools } from "./workspace.ts";
 import { projectInstructionsPrompt, readProjectInstructions } from "./project-instructions.ts";
-
-/** 帮助文案、错误文案和 usage 共用同一份模式列表，避免四处各写一遍。 */
-const PERMISSION_MODE_LIST = PERMISSION_MODES.join(", ");
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
 function firstNonEmpty(...values: Array<string | undefined>): string {
@@ -94,7 +87,6 @@ interface Config {
   maxTotalTokens: number;
   maxOutputTokens: number;
   toolTimeoutMs: number;
-  permission: PermissionMode;
   view: AgentView;
   voice: AgentVoice;
 }
@@ -124,7 +116,7 @@ function viewFromEnv(): AgentView {
   throw new Error('invalid AGENT_VIEW: "' + view + '" (expected compact or detailed)');
 }
 
-function loadConfig(permission: PermissionMode, details: boolean, allowMissingModel = false, cwd?: string): Config {
+function loadConfig(details: boolean, allowMissingModel = false, cwd?: string): Config {
   // 先 trim 再判空：API_KEY="   " 等于没填，应该继续回退到 OPENAI_API_KEY。
   const candidateKeys = [process.env.API_KEY, process.env.OPENAI_API_KEY];
   const apiKey = firstNonEmpty(...candidateKeys.filter((value) =>
@@ -148,7 +140,6 @@ function loadConfig(permission: PermissionMode, details: boolean, allowMissingMo
     maxTotalTokens: nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000),
     maxOutputTokens: positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192),
     toolTimeoutMs: positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000),
-    permission,
     view: details ? "detailed" : viewFromEnv(),
     voice: voiceFromEnv(),
   };
@@ -159,7 +150,6 @@ interface CliArgs {
   help: boolean;
   tui: boolean;
   details: boolean;
-  permission: PermissionMode;
   /** 已解析成绝对路径的工作区根目录；没给就是 undefined，回落到 WORKDIR / 当前目录。 */
   cwd?: string;
   task: string;
@@ -176,16 +166,15 @@ function isDirectory(candidate: string): boolean {
 }
 
 /**
- * 解析命令行：`--permission` / `--cwd` 支持空格和等号两种写法，剩下的位置参数拼成任务文本。
+ * 解析命令行：`--cwd` 支持空格和等号两种写法，剩下的位置参数拼成任务文本。
  *
  * 不用现成的参数解析库：运行时零依赖，而且这里只有几个选项。
- * 模式在解析时就校验，非法值不会拖到 loadConfig 之后才报。
+ * 已移除的选项（`--permission` / `--repl`）在解析时就报错，不会被当成任务文本。
  */
 function parseArgs(argv: readonly string[]): CliArgs {
   let help = false;
   let tui = false;
   let details = false;
-  let permission: PermissionMode = DEFAULT_PERMISSION_MODE;
   let cwd: string | undefined;
   const taskParts: string[] = [];
 
@@ -193,7 +182,6 @@ function parseArgs(argv: readonly string[]): CliArgs {
     help,
     tui,
     details,
-    permission,
     cwd,
     task: taskParts.join(" ").trim(),
     error,
@@ -214,23 +202,10 @@ function parseArgs(argv: readonly string[]): CliArgs {
       details = true;
       continue;
     }
+    // 权限模式已经移除：现在只有 Full Access。显式传入要报错，不能把它当成任务文本，
+    // 否则用户以为在限制权限，实际只是把 "--permission" 当成任务发给了模型。
     if (arg === "--permission" || arg.startsWith("--permission=")) {
-      let raw: string | undefined;
-      if (arg === "--permission") {
-        index++;
-        raw = argv[index];
-      } else {
-        raw = arg.slice("--permission=".length);
-      }
-      if (raw === undefined || raw === "" || raw.startsWith("--")) {
-        return result(`missing value for --permission (expected: ${PERMISSION_MODE_LIST})`);
-      }
-      const parsed = parsePermissionMode(raw);
-      if (parsed === undefined) {
-        return result(`invalid --permission value "${raw}" (expected: ${PERMISSION_MODE_LIST})`);
-      }
-      permission = parsed;
-      continue;
+      return result("--permission was removed; agent-Kernel always runs with full access");
     }
     // 这就是 Claude Code / Codex 的「打开某个目录」：从本仓库启动，但把工作区根目录指向别处。
     // 不这么做就只能把整个 agent 复制到目标目录里跑，源码和 .env 会被一起带过去。
@@ -262,63 +237,17 @@ function parseArgs(argv: readonly string[]): CliArgs {
     taskParts.push(arg);
   }
 
+  // AGENT_PERMISSION 也已移除：配置残留不能被静默忽略，否则用户会以为它还在生效。
+  if (process.env.AGENT_PERMISSION !== undefined && process.env.AGENT_PERMISSION !== "") {
+    return result("AGENT_PERMISSION was removed; agent-Kernel always runs with full access");
+  }
+
   return result();
 }
 
-/** 审批提示要求 stdin / stdout 都是 TTY：没有输出终端没法问，没有输入终端没法答。 */
+/** TUI 需要 stdin / stdout 都是 TTY：没有输出终端没法画，没有输入终端没法交互。 */
 function hasInteractiveTerminal(): boolean {
   return process.stdin.isTTY === true && process.stdout.isTTY === true;
-}
-
-interface ApprovalPrompt {
-  /** 无 TTY 时没有审批通道：故意不给函数，让 Permission 报「没有审批提示」而不是「用户拒绝」。 */
-  approve?: PermissionApprover;
-  close(): void;
-}
-
-/**
- * 一次性任务里的审批通道。
- *
- * readline 要到第一次真正需要审批时才创建：它在终端模式下会进入 raw mode，
- * 一创建就会抢走 Ctrl-C。没有 shell 调用的任务不该因为「可能审批」而改变取消行为。
- *
- * 非交互进程（管道、CI、评测）没有 TTY：直接拒绝，不读 stdin。
- * 读 stdin 会把管道里后续的任务行当成审批答案，既错位又危险。
- */
-function createApprovalPrompt(controller: AbortController, cwd: string): ApprovalPrompt {
-  const signal = controller.signal;
-  const gate = approvalGate(signal, hasInteractiveTerminal(), false);
-  if (!gate.ask) {
-    return { close: () => {} };
-  }
-
-  let rl: ReturnType<typeof createInterface> | undefined;
-
-  const open = (): ReturnType<typeof createInterface> => {
-    if (rl !== undefined) return rl;
-    const created = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-    // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT。审批期间仍然要停掉整个会话，
-    // 所以显式 abort 同一个 controller，走和普通任务一样的取消链。
-    created.on("SIGINT", () => {
-      controller.abort(new Error("received SIGINT"));
-      created.close();
-    });
-    rl = created;
-    return created;
-  };
-
-  return {
-    approve: async (request) => {
-      const gate = approvalGate(signal, hasInteractiveTerminal(), false);
-      if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
-      // 等待被 abort / close / 正常回答三者之一收口；不再直接等一个不接 signal 的 question。
-      const answer = await askWithSignal(open(), formatApproval(request, cwd), signal);
-      return isApproved(answer);
-    },
-    close: () => {
-      rl?.close();
-    },
-  };
 }
 
 /** 非 TUI 错误也提供简短解决方向，原始详情保留在同一行供日志检索。 */
@@ -364,13 +293,12 @@ interface AgentCallbacks {
  * signal 是这次会话唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
  * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
  *
- * `announce: false` 只给 TUI 用：TUI 头部/页脚已经显示模型/工作区/权限，不再往运行记录里
+ * `announce: false` 只给 TUI 用：TUI 头部/页脚已经显示模型/工作区，不再往运行记录里
  * 打一遍启动 banner。
  */
 function createAgent(
   config: Config,
   signal: AbortSignal,
-  permission: Permission,
   options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean;
     onEditCommitted?: (path: string, before: string, after: string) => void;
     onWriteCommitted?: (path: string, before: string | undefined, after: string | undefined, created: boolean) => void;
@@ -380,15 +308,14 @@ function createAgent(
     createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
       onEditCommitted: options.onEditCommitted, onWriteCommitted: options.onWriteCommitted,
       onImageRead: options.onImageRead })),
-    { permission },
   );
 
   if (options.announce !== false) {
-    // 中文对照：工作区：… ／ 模型：… ／ 权限：… ／ 工具：…
+    // 中文对照：默认目录：… ／ 模型：… ／ 访问级别：… ／ 工具：…
     console.log(`workspace: ${config.root}`);
     console.log(`model:     ${config.model}`);
     if (config.demo) console.log("mode:      demo (external mock; connection not verified)");
-    console.log(`permission: ${permission.mode}`);
+    console.log(`access:    full-access (no approvals, no workspace sandbox)`);
     console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
   }
 
@@ -409,9 +336,8 @@ function createAgent(
       stream: true,
     }),
     tools,
-    // 权限说明只指导模型；真正的放行/拒绝仍由 ToolRegistry 执行。
-    // 函数在每次请求前求值，/permission 切换后下一次请求自动使用新规则。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${permissionPrompt(permission.mode)}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
+    // 函数在每次请求前求值：项目指令变化后，下一次请求立即看到新内容。
+    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
@@ -482,34 +408,24 @@ function printUsage(stats: AgentStats, { failed }: { failed: boolean }): void {
 /**
  * TUI 两条路径共用同一套会话命令解析：固定栏位模式，以及非 TTY 的逐行输出模式。
  *
- * 两种显示方式不同（运行记录 vs console），但「/exit 是退出、/permission 后面
- * 跟什么、非法模式怎么报」这类规则只能有一份；否则两条路径会悄悄分叉。
+ * 两种显示方式不同（运行记录 vs console），但「/exit 是退出、/reset 重建 Agent」
+ * 这类规则只能有一份；否则两条路径会悄悄分叉。
  */
-type SessionCommand =
-  | { kind: "exit" | "help" | "reset" | "task" }
-  | { kind: "permission"; mode?: PermissionMode; value?: string };
+type SessionCommand = { kind: "exit" | "help" | "reset" | "task" };
 
 function parseSessionCommand(input: string): SessionCommand {
   if (input === "/exit" || input === "/quit") return { kind: "exit" };
   if (input === "/help") return { kind: "help" };
   if (input === "/reset") return { kind: "reset" };
-
-  const permissionCommand = input.match(/^\/permission(?:\s+(.*))?$/);
-  if (permissionCommand === null) return { kind: "task" };
-
-  const value = (permissionCommand[1] ?? "").trim();
-  if (value === "") return { kind: "permission" };
-  const mode = parsePermissionMode(value);
-  // 非法值保留原文，交给各壳用同一份可用模式列表报错。
-  return mode === undefined ? { kind: "permission", value } : { kind: "permission", mode };
+  return { kind: "task" };
 }
 
 /**
- * 轻量 TUI 会话：同一个 Agent / Permission / 取消链，只把显示和输入换成 Tui。
+ * 轻量 TUI 会话：同一个 Agent / 取消链，只把显示和输入换成 Tui。
  *
- * TUI 是外壳，不是内核：Transcript、预算、工具配对仍由 Agent 管；审批仍由 Permission 决定。
+ * TUI 是外壳，不是内核：Transcript、预算、工具配对仍由 Agent 管。
  * `--tui` 可以带一个初始任务（先跑完再等输入），之后每一行输入是一次 Run。
- * `/reset` 换 Agent 但不换 Permission；`/permission` 切换后页脚和下一次请求同时生效。
+ * `/reset` 换一个全新的 Agent，复用同一份配置与取消信号。
  */
 async function tuiSession(config: Config, controller: AbortController, initialTask?: string): Promise<void> {
   const signal = controller.signal;
@@ -524,16 +440,9 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     model: config.apiKey === "" ? "未配置模型"
       : config.demo ? `${config.model} [demo: external mock]` : config.model,
     workspace: config.root,
-    permission: config.permission,
     controller,
     interactive,
     language: initialLanguage,
-    // Shift+Tab 只发起模式切换；Permission 是唯一的执行授权源。
-    // Agent 每次请求动态读取此 Permission，因此下一轮模型提示自动同步。
-    onPermissionChange: (mode) => {
-      permission.setMode(mode);
-      tui.setPermission(mode);
-    },
     // 短对话贴近输入框，内容多时再停靠底部。
     flowInput: true,
     colorMode: parseTuiColorMode(process.env.AGENT_TUI_COLOR),
@@ -541,14 +450,6 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
     columns: process.stdout.columns,
     rows: process.stdout.rows,
   });
-
-  // 审批和任务输入共用 Tui 的同一个 readline/行队列；权限策略本身仍是会话级对象。
-  // 无 TTY 时不注入审批器：Permission 会明确说「没有审批通道」，而不是把
-  // 「读不到终端」误报成「审批失败」或「用户拒绝」。
-  const permission = new Permission(
-    config.permission,
-    interactive ? (request) => tui.approve(request) : undefined,
-  );
 
   // Agent 在回调创建时还没赋值，但回调只会在 run() 期间触发；用 current 拿最新实例的账。
   let current: Agent | undefined;
@@ -589,7 +490,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
   };
 
   const newAgent = (): Agent => {
-    current = createAgent(config, signal, permission, { announce: false, callbacks, narrateProgress: true,
+    current = createAgent(config, signal, { announce: false, callbacks, narrateProgress: true,
       onEditCommitted: (path, before, after) => {
         if (pendingEditId !== undefined) tui.recordEditDiff(pendingEditId, path, before, after);
       },
@@ -677,7 +578,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 
       if (command.kind === "exit") break;
       if (command.kind === "help") {
-        tui.logLine(tui.helpText(PERMISSION_MODE_LIST));
+        tui.logLine(tui.helpText());
         continue;
       }
       if (command.kind === "reset") {
@@ -686,23 +587,6 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
         tui.setStats(agent.sessionStats);
         continue;
       }
-      if (command.kind === "permission") {
-        if (command.value !== undefined) {
-          // 中文对照：未知权限模式 "{值}"（可用：…）
-          tui.logError(tui.uiText(
-            `unknown permission mode "${command.value}" (expected: ${PERMISSION_MODE_LIST})`,
-            `未知权限模式 "${command.value}"（可选：${PERMISSION_MODE_LIST}）`,
-          ));
-        } else if (command.mode !== undefined) {
-          permission.setMode(command.mode);
-          tui.setPermission(command.mode);
-          tui.logLine(`${tui.uiText("permission: ", "权限：")}${tui.permissionLabel(permission.mode)}`);
-        } else {
-          tui.logLine(`${tui.uiText("permission: ", "权限：")}${tui.permissionLabel(permission.mode)}`);
-        }
-        continue;
-      }
-
       if (input === "") continue;
       // 固定布局会清掉 readline 的回显，Tui 自己补 `❯ task`；行式聊天默认不重复。
       keepGoing = await runTask(input);
@@ -717,17 +601,17 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
 }
 
 const usage = [
-  // 中文对照：用法：node src/cli.ts "<任务>" [--permission <模式>] [--cwd <目录>]
-  'usage: node src/cli.ts "<task>" [--permission <mode>] [--cwd <dir>]',
+  // 中文对照：用法：node src/cli.ts "<任务>" [--cwd <目录>]
+  'usage: node src/cli.ts "<task>" [--cwd <dir>]',
   // 中文对照：不带任务时进入全屏 TUI（TUI 是唯一的交互界面）
-  "       node src/cli.ts [--permission <mode>] [--cwd <dir>]           # no task: full-screen TUI (only interactive mode)",
-  // 中文对照：node src/cli.ts --tui [--permission <模式>] [--cwd <目录>] 进入 TUI；可带一个初始任务
-  "       node src/cli.ts --tui [--permission <mode>] [--cwd <dir>] [task]  # TUI, optional first task",
+  "       node src/cli.ts [--cwd <dir>]           # no task: full-screen TUI (only interactive mode)",
+  // 中文对照：node src/cli.ts --tui [--cwd <目录>] 进入 TUI；可带一个初始任务
+  "       node src/cli.ts --tui [--cwd <dir>] [task]  # TUI, optional first task",
   "       node src/cli.ts --details \"<task>\"  # expanded tool logs",
   // 中文对照：--cwd <目录> 把工作区根目录指向另一个目录（等于先 cd 再启动）；优先于 WORKDIR
-  "       --cwd <dir>  open another directory as the workspace root (like cd before start); overrides WORKDIR",
-  // 中文对照：权限模式：…（默认：…）
-  `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
+  "       --cwd <dir>  use another directory as the default for relative paths (like cd before start); overrides WORKDIR",
+  // 中文对照：权限固定为完全访问：没有审批，也没有工作区沙箱。
+  "       access: full-access only (no approvals, no workspace sandbox)",
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
   "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_COLOR, AGENT_TUI_THEME",
 ].join("\n");
@@ -755,18 +639,11 @@ if (cli.error !== undefined) {
   }
 
   try {
-    const config = loadConfig(cli.permission, cli.details, tuiMode && hasInteractiveTerminal(), cli.cwd);
+    const config = loadConfig(cli.details, tuiMode && hasInteractiveTerminal(), cli.cwd);
     if (tuiMode) {
       await tuiSession(config, controller, cli.task === "" ? undefined : cli.task);
     } else {
-      const approvalPrompt = createApprovalPrompt(controller, config.root);
-      try {
-        // 一次性任务同样使用会话级 Permission：审批器负责「怎么问」，Permission 负责「放不放行」。
-        const permission = new Permission(config.permission, approvalPrompt.approve);
-        await runTurn(createAgent(config, controller.signal, permission), cli.task, config, controller.signal);
-      } finally {
-        approvalPrompt.close();
-      }
+      await runTurn(createAgent(config, controller.signal), cli.task, config, controller.signal);
     }
   } catch (error) {
     // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。

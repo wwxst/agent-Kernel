@@ -5,7 +5,7 @@
 export type MoodLanguage = "zh" | "en";
 export type MoodState =
   | "preparing" | "thinking" | "reading" | "searching" | "editing"
-  | "writing" | "running" | "working" | "approval" | "failed"
+  | "writing" | "running" | "working" | "failed"
   | "completed" | "cancelled";
 
 type Trait = "genki" | "playful" | "curious" | "gentle" | "serious" | "tsundere" | "shy" | "natural";
@@ -96,11 +96,6 @@ const ZH: Pools = {
     ["curious", "再看看下一步"], ["gentle", "我先整理一下结果"],
     ["gentle", "稍微核对一下"], ["serious", "继续检查当前状态"],
   ],
-  approval: [
-    ["gentle", "这一步需要你确认"], ["gentle", "我先在这里等确认"],
-    ["serious", "请确认这次操作"], ["serious", "需要你的授权才能继续"],
-    ["gentle", "确认后再继续这一步"], ["serious", "审批未通过前不会执行"],
-  ],
   failed: [
     ["serious", "先看清楚报错原因"], ["serious", "这一步没有通过"],
     ["gentle", "遇到阻碍，先检查原因"], ["serious", "先定位失败位置"],
@@ -165,10 +160,6 @@ const EN: Pools = {
     ["genki", "On to the next step!"], ["playful", "There's more to do~"],
     ["curious", "Let's see what's next."], ["gentle", "Checking the result."],
     ["serious", "Processing the latest event."],
-  ],
-  approval: [
-    ["gentle", "This needs your approval."], ["serious", "Waiting for your decision."],
-    ["serious", "No action before approval."],
   ],
   failed: [
     ["serious", "Let's inspect the error."], ["gentle", "Checking what went wrong."],

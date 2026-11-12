@@ -1,3 +1,7 @@
+> **状态：已被 [ADR-0019](./0019-full-access-is-the-only-mode.md) 取代（2026-11-12）。**
+> 三档权限、Shell 审批和 `ToolRegistry` 里的权限检查已全部删除；本文件保留为历史决策记录，
+> 其中「Permission 不是 Sandbox」这一结论仍然成立，但现在连策略层也不存在了。
+
 # Permission 是工具调用策略，不是沙箱
 
 Permission v0.1 给 agent 三档模式：`read-only` 只放行 `read` / `ls` / `glob` / `grep`；`workspace-write`（默认）再放行 `write` / `edit`，`shell` 每次执行前问人；`full-access` 放行全部工具、不审批。
