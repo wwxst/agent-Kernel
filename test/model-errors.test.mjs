@@ -1,4 +1,17 @@
-/** 模型配置、HTTP、网络和流式响应错误的展示类别必须由类型决定，不能靠字符串猜测。 */
+/**
+ * 文件目的：测错误分类 —— 配置错、网络错、服务端错、流式中断，必须靠类型分清，
+ * 不能靠猜错误文字里有没有某个词。
+ *
+ * 文件职责：只测 `modelFailure()` 的分类与建议、`isRetryableModelError()` 的重试口径。
+ * 不测真实 HTTP 行为（那是 `llm.test.mjs`）、不测界面怎么显示。
+ *
+ * 内容目录：
+ *   - 用例一：八种错误各自的标题与建议；技术详情保留原文；未识别的错误返回 `undefined`。
+ *   - 用例二：404 不能武断说成「模型名不存在」，建议里要同时提 `MODEL` 与 `BASE_URL`。
+ *   - 用例三：可重试与不可重试两张清单，鉴权、404、SSE 残缺一律不许重放。
+ *
+ * 模块关系：依赖 `src/protocol/errors.ts` 与 `node:test`，由 `npm test` 启动。
+ */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
