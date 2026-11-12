@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -385,12 +385,20 @@ test("edit：新片段是空串就是删除", async () => {
   });
 });
 
-test("edit：越界路径同样被拒绝", async () => {
+test("edit：可以编辑工作区外的文件", async () => {
   await withWorkspace(async (root) => {
-    const workspace = new Workspace({ root });
-    await workspace.write("f.txt", "a");
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    const file = path.join(outside, "f.txt");
+    await writeFile(file, "a");
+    try {
+      const workspace = new Workspace({ root });
 
-    await assert.rejects(() => workspace.edit("../f.txt", "a", "b"), /path escapes workspace/);
+      await workspace.edit(file, "a", "b");
+
+      assert.equal(await readFile(file, "utf8"), "b");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
@@ -413,23 +421,37 @@ test("read 不存在的文件抛错（折成 ERROR 是 ToolRegistry 的事）", 
   });
 });
 
-test("越界路径一律拒绝，错误里带上原始路径", async () => {
+test("工作区外路径可以读写列出：../ 与绝对路径都可用", async () => {
   await withWorkspace(async (root) => {
-    const workspace = new Workspace({ root });
-    const outside = path.join(root, "..", "outside.txt");
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    const file = path.join(outside, "notes.txt");
+    const name = path.basename(outside);
+    try {
+      const workspace = new Workspace({ root });
 
-    await assert.rejects(() => workspace.read("../outside.txt"), /path escapes workspace: \.\.\/outside\.txt/);
-    await assert.rejects(() => workspace.read(outside), /path escapes workspace/);
-    await assert.rejects(() => workspace.list(".."), /path escapes workspace/);
-    await assert.rejects(() => workspace.write("../escape.txt", "nope"), /path escapes workspace/);
+      await workspace.write(file, "outside\n");
+
+      assert.equal(await workspace.read(`../${name}/notes.txt`), "outside\n");
+      assert.equal(await workspace.read(file), "outside\n");
+      assert.match(await workspace.list(`../${name}`), /notes\.txt/);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
 test("Windows 上反斜杠按分隔符处理", { skip: path.sep !== "\\" && "反斜杠只在 Windows 上是分隔符" }, async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
+    const name = `escaped-${path.basename(root)}.txt`;
 
-    await assert.rejects(() => workspace.read("..\\..\\escaped.txt"), /path escapes workspace/);
+    await workspace.write(`..\\${name}`, "x");
+
+    try {
+      assert.equal(await workspace.read(`..\\${name}`), "x");
+    } finally {
+      await rm(path.join(root, "..", name), { force: true });
+    }
   });
 });
 
@@ -533,12 +555,21 @@ test("glob：没有命中时给出明确提示", async () => {
   });
 });
 
-test("glob：模式里带 .. 或绝对路径一律拒绝", async () => {
+test("glob：搜索根与绝对模式都能匹配工作区外的文件", async () => {
   await withWorkspace(async (root) => {
-    const workspace = new Workspace({ root });
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    await writeFile(path.join(outside, "x.ts"), "");
+    const expected = (await realpath(path.join(outside, "x.ts"))).split(path.sep).join("/");
+    try {
+      const workspace = new Workspace({ root });
 
-    await assert.rejects(() => workspace.glob("../**/*.ts"), /path escapes workspace/);
-    await assert.rejects(() => workspace.glob(path.join(root, "**/*.ts")), /must be relative/);
+      assert.equal(await workspace.glob(path.join(outside, "*.ts")), expected);
+      assert.equal(await workspace.glob("*.ts", outside), expected);
+      // 模式中间的 .. 仍然拒绝：glob 语义里没有唯一解释。
+      await assert.rejects(() => workspace.glob("src/../*.ts"), /only use "\.\." at the start/);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
@@ -655,12 +686,20 @@ test("grep：跳过 node_modules 和 .git，并且只看文本文件", async () 
   });
 });
 
-test("grep：越界路径同样被拒绝", async () => {
+test("grep：可以搜索工作区外的目录，结果用绝对路径", async () => {
   await withWorkspace(async (root) => {
-    const workspace = new Workspace({ root });
-    await workspace.write("a.txt", "world\n");
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    await writeFile(path.join(outside, "a.txt"), "world\n");
+    try {
+      const workspace = new Workspace({ root });
 
-    await assert.rejects(() => workspace.grep("world", ".."), /path escapes workspace/);
+      const result = await workspace.grep("world", outside);
+      const expected = (await realpath(path.join(outside, "a.txt"))).split(path.sep).join("/");
+
+      assert.equal(result, `${expected}:1: world`);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 });
 
@@ -675,21 +714,14 @@ test("glob：和 grep 一样跳过 node_modules 和 .git", async () => {
   });
 });
 
-test("glob：花括号 / 方括号按字面匹配，绕不出工作区", async () => {
+test("glob：花括号 / 方括号按字面匹配", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
     await workspace.write("src/a.ts", "");
 
-    // 工作区外放一个「诱饵」文件：以前 {../x,src} 这种花括号展开能把它列出来。
-    const outside = path.join(root, "..", `outside-${path.basename(root)}.ts`);
-    await writeFile(outside, "secret\n");
-    try {
-      assert.equal(await workspace.glob("{../outside,src}/**/*.ts"), "(no matches)");
-      assert.equal(await workspace.glob("[a-z]*.ts"), "(no matches)");
-      await assert.rejects(() => workspace.glob("../**/*.ts"), /path escapes workspace/);
-    } finally {
-      await rm(outside, { force: true });
-    }
+    // 只认 *、**、?；花括号和方括号没有特殊含义，不会被展开成别的路径。
+    assert.equal(await workspace.glob("{../outside,src}/**/*.ts"), "(no matches)");
+    assert.equal(await workspace.glob("[a-z]*.ts"), "(no matches)");
   });
 });
 
@@ -706,7 +738,7 @@ test("glob：命中超过上限时明确告诉模型被截断", async () => {
   });
 });
 
-test("符号链接指向工作区外：read / write / list / grep 一律拒绝", async () => {
+test("符号链接指向工作区外：read / write / list / grep 正常工作", async () => {
   await withWorkspace(async (root) => {
     const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
     await writeFile(path.join(outside, "secret.txt"), "secret\n");
@@ -715,10 +747,31 @@ test("符号链接指向工作区外：read / write / list / grep 一律拒绝",
     await symlink(outside, path.join(root, "link"), "junction");
 
     try {
-      await assert.rejects(() => workspace.read("link/secret.txt"), /path escapes workspace/);
-      await assert.rejects(() => workspace.write("link/new.txt", "x"), /path escapes workspace/);
-      await assert.rejects(() => workspace.list("link"), /path escapes workspace/);
-      await assert.rejects(() => workspace.grep("secret", "link"), /path escapes workspace/);
+      assert.equal(await workspace.read("link/secret.txt"), "secret\n");
+      await workspace.write("link/new.txt", "x\n");
+      assert.equal(await readFile(path.join(outside, "new.txt"), "utf8"), "x\n");
+      assert.match(await workspace.list("link"), /secret\.txt/);
+      assert.match(await workspace.grep("secret", "link"), /secret\.txt:1: secret/);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+test("shell：可以在工作区外执行命令并删除文件", async () => {
+  await withWorkspace(async (root) => {
+    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-outside-"));
+    const file = path.join(outside, "temp.txt");
+    await writeFile(file, "x");
+    const workspace = new Workspace({ root });
+
+    try {
+      const result = await workspace.run(
+        `node -e "require('node:fs').unlinkSync(process.argv[1])" "${file}"`,
+      );
+
+      assert.match(result, /^exit 0/);
+      await assert.rejects(() => stat(file), /ENOENT/);
     } finally {
       await rm(outside, { recursive: true, force: true });
     }

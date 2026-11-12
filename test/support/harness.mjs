@@ -56,12 +56,9 @@ export function echoTool() {
   };
 }
 
-/**
- * 测试里只关心循环/注册表本身，不关心权限；显式 null 表示宿主主动关闭检查。
- * ToolRegistry 要求显式传 permission，这个夹具把选择集中在一处。
- */
+/** 测试里只关心循环/注册表本身；注册表不再有权限层，直接装配即可。 */
 export function makeRegistry(tools) {
-  return new ToolRegistry(tools, { permission: null });
+  return new ToolRegistry(tools);
 }
 
 /** 每个用例一个临时工作区，跑完就删。 */

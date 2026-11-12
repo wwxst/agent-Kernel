@@ -1,5 +1,7 @@
 # TUI 实机对照与迭代记录
 
+> **历史记录**：本文件记录的是 2026-11-06 的界面验收；其中 Shell 审批、权限模式与 `y/N` 提示已在 2026-11-12 随 [ADR-0019](../../adr/0019-full-access-is-the-only-mode.md) 删除，截图只作为历史对照。
+
 2026-11-06，Asia/Shanghai。分支 `feat/tui-v0.2`，继续 [PR #9](https://github.com/wwxst/agent-Kernel/pull/9)，不合并。
 
 后续已根据用户截图反馈、同步远端自适应输入改动继续迭代；当前输入分隔线、过程状态及最新验证见[后续实机记录](./tui-feedback-20261106/README.md)。下文保留上一轮实现与验收结果。

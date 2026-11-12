@@ -8,7 +8,7 @@
  * 非 TTY（管道、CI）保留逐行输出，不提供可切换的兼容 UI。
  * 不引 TUI 库、不改 Agent。
  *
- * 非 TTY（管道、CI、e2e）也退化成逐行输出：没有固定位置，但走同一套日志/审批逻辑。
+ * 非 TTY（管道、CI、e2e）也退化成逐行输出：没有固定位置，但走同一套日志与工具事件逻辑。
  * 已知边界：固定布局要求终端至少 12 行、30 列；历史保留最近 2000 条逻辑行；
  * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
  */
@@ -21,16 +21,13 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
-import { APPROVAL_QUESTION, escapeControlCharacters, formatApproval } from "./approval.ts";
-import { isRememberable } from "./permission-rules.ts";
+import { escapeControlCharacters } from "./text.ts";
 import { describeError } from "./errors.ts";
 import type { AgentSessionStats, AgentStats } from "./agent.ts";
-import { approvalGate, isApproved } from "./permission.ts";
 import { selectMood } from "./tui-mood.ts";
 import { previewImage } from "./tui-image.ts";
 import type { ImagePreview } from "./tui-image.ts";
 import type { MoodState } from "./tui-mood.ts";
-import type { PermissionMode, PermissionRequest } from "./permission.ts";
 import type { ToolCall } from "./types.ts";
 import { isToolResultFailure } from "./tool-result-status.ts";
 
@@ -66,7 +63,6 @@ const COMMAND_PROMPT = "> ";
 /** 仅列出 CLI 已实现的 Slash 命令，保持现有 parseSessionCommand 语义。 */
 const SLASH_COMMANDS = [
   { command: "/help", en: "Show available commands", zh: "查看可用命令" },
-  { command: "/permission", en: "View or switch permission mode", zh: "查看或切换权限模式" },
   { command: "/reset", en: "Clear the current conversation", zh: "重置当前会话" },
   { command: "/exit", en: "Exit agent-Kernel", zh: "退出 agent-Kernel" },
   { command: "/quit", en: "Exit (alias of /exit)", zh: "退出（/exit 的别名）" },
@@ -164,7 +160,6 @@ interface Glyphs {
   running: string;
   success: string;
   error: string;
-  denied: string;
   notRun: string;
   divider: string;
   scroll: string;
@@ -182,7 +177,6 @@ const UNICODE_GLYPHS: Glyphs = {
   running: "●",
   success: "✓",
   error: "✗",
-  denied: "⊘",
   notRun: "–",
   divider: "─",
   scroll: "↑",
@@ -201,7 +195,6 @@ const ASCII_GLYPHS: Glyphs = {
   running: "o",
   success: "+",
   error: "x",
-  denied: "!",
   notRun: "-",
   divider: "-",
   scroll: "^",
@@ -241,23 +234,14 @@ export function parseTuiTheme(value: string | undefined): TuiTheme {
   throw new Error(`invalid AGENT_TUI_THEME "${value}" (expected: dark, light, ansi)`);
 }
 
-/**
- * 审批菜单的三档结果。
- *
- * `"always"` 不是「记住我点过头」，而是「把**这一条命令**写成项目级规则」——
- * 下次靠规则匹配命中，命令变了就不会命中。这两件事的区别是整套权限设计的地基。
- */
-export type ApprovalChoice = "allow" | "always" | "deny";
-
 export interface TuiOptions {
   input: NodeJS.ReadableStream;
   output: NodeJS.WritableStream;
   model: string;
   workspace: string;
-  permission: PermissionMode;
   /** 取消链的起点；TUI 的 Ctrl-C 和 CLI 的 SIGINT 都 abort 同一个 controller。 */
   controller: AbortController;
-  /** stdin / stdout 都是 TTY 时才有审批通道和固定布局。 */
+  /** stdin / stdout 都是 TTY 时才有固定布局。 */
   interactive: boolean;
   columns?: number;
   rows?: number;
@@ -271,15 +255,13 @@ export interface TuiOptions {
   language?: UiLanguage;
   /** Claude Code 风格：短对话时输入框跟随消息，长对话时自动停靠底部。 */
   flowInput?: boolean;
-  /** TUI 只发出权限切换意图；CLI 负责更新真实 Permission 和模型提示。 */
-  onPermissionChange?: (mode: PermissionMode) => void;
 }
 
 /**
  * TUI 的显示与输入层。
  *
- * 它不认识 Agent：CLI 把 Agent 的回调接到 `assistantDelta` / `toolCall` / `toolResult`，
- * 把 `approve` 交给 Permission。TUI 只负责「怎么看、怎么问」，循环和策略仍在原处。
+ * 它不认识 Agent：CLI 把 Agent 的回调接到 `assistantDelta` / `toolCall` / `toolResult`。
+ * TUI 只负责「怎么看」，循环与工具执行仍在原处。
  */
 export class Tui {
   private readonly output: NodeJS.WritableStream;
@@ -322,11 +304,6 @@ export class Tui {
 
   private readonly flowInput: boolean;
 
-  private readonly onPermissionChange?: (mode: PermissionMode) => void;
-
-  /** Shift+Tab 进入 full-access 前需要再按一次确认，误按不会提升权限。 */
-  private fullAccessConfirmationPending = false;
-
   private readonly terminalControls: boolean;
 
   private readonly style: Style;
@@ -362,8 +339,6 @@ export class Tui {
 
   /** 每次渲染确定屏幕箭头所在的实际单元格，鼠标点击不猜测文本位置。 */
   private readonly mouseTargets = new Map<number, { column: number; turn?: TurnActivity; group?: ActivityGroup; tool?: ActivityTool }>();
-
-  private permissionMode: PermissionMode;
 
   private stats?: AgentSessionStats;
 
@@ -452,7 +427,7 @@ export class Tui {
   /** 本次 readLine 的原始 prompt；滚动后重绘输入行要用。 */
   private promptText = COMMAND_PROMPT;
 
-  /** 当前输入是否显示 placeholder；审批时关闭，避免把 y/N 输入当成普通聊天。 */
+  /** 当前输入是否显示 placeholder；有固定 prompt 时关闭。 */
   private promptPlaceholder = true;
 
   /** 正在等待输入；readline 保留编辑缓存，TUI 独立绘制，不触碰输入法状态。 */
@@ -472,27 +447,6 @@ export class Tui {
 
   private cursorStyleChanged = false;
 
-  /** 待审批的原始请求不受日志上限裁剪，resize 时按当前宽度重新排版。 */
-  private approvalRequest?: PermissionRequest;
-
-  /** 菜单默认拒绝：空回车不会授权；只影响 TUI，不改 Permission 策略。 */
-  private approvalChoice: ApprovalChoice = "deny";
-
-  /** 这条命令能不能被记成项目规则；不能时菜单里就不出现「以后不再问」那一项。 */
-  private approvalRememberable = false;
-
-  /** 仅固定布局启用键盘菜单；普通 REPL/行式审批继续使用 y/N。 */
-  private approvalMenuActive = false;
-
-  /** 专用菜单按键结果；与 readline 的任务输入队列完全隔离。 */
-  private approvalMenuResolve?: (decision: ApprovalChoice | null) => void;
-
-  /** 仅审批时隐藏终端原生光标，退出与取消必须恢复。 */
-  private approvalCursorHidden = false;
-
-  /** 审批开始后，只有允许执行或收到工具结果，才解除 Running 子行的显示抑制。 */
-  private approvalBlocksRunning = false;
-
   /** 上一帧每行的原始内容；只写变化的行，减少流式输出时的整屏闪烁。 */
   private lastFrame: string[] = [];
 
@@ -503,7 +457,7 @@ export class Tui {
 
   private renderTimer?: NodeJS.Timeout;
 
-  /** 已读到但还没被消费的输入行。审批和任务输入共用同一个队列。 */
+  /** 已读到但还没被消费的输入行。 */
   private readonly lines: string[] = [];
 
   private readonly waiting: Array<(line: string | null) => void> = [];
@@ -528,10 +482,8 @@ export class Tui {
     this.project = projectName(options.workspace);
     this.controller = options.controller;
     this.interactive = options.interactive;
-    this.permissionMode = options.permission;
     this.uiLanguage = options.language ?? "en";
     this.flowInput = options.flowInput ?? false;
-    this.onPermissionChange = options.onPermissionChange;
     this.terminalControls = process.env.TERM !== "dumb";
 
     const initialColumns = options.columns !== undefined && options.columns > 0 ? options.columns : 80;
@@ -653,21 +605,17 @@ export class Tui {
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
     (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
 
-    // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
+    // 一个 line 监听器服务任务输入：谁先 await 谁拿下一行。
     // 兜底：不支持括号粘贴的终端（老 conhost）会把粘贴里的每个换行都变成一个 line 事件。
     // 这些事件在同一个事件循环里连续到达，而人工按键做不到——所以同一批里的多行
     // 合并成一条消息，换行保留。
     this.rl.on("line", (rawLine) => {
-      // 审批期间的按键（y/1/回车、粘贴）不是任务输入：直接丢弃，
-      // 不能进下一轮任务队列。
-      if (this.approvalMenuActive) return;
       this.submitLine(rawLine);
     });
     this.rl.on("close", () => {
       this.ended = true;
       this.promptActive = false;
       this.inputDirty = true;
-      this.approvalMenuResolve?.(null);
       for (const resolve of this.waiting.splice(0)) resolve(null);
     });
     // readline 在终端模式下会自己处理 Ctrl-C，进程收不到 SIGINT；这里仍然 abort 同一个 controller。
@@ -676,8 +624,6 @@ export class Tui {
       this.rl.close();
     });
 
-    // 固定审批直接处理方向键/Enter/Esc，不再创建一条看不见的 readline 输入行。
-    // readline 仍负责原有的任务编辑，但审批期间产生的 line 事件被隔离。
     this.onKeypress = (_text, key) => {
       if (this.closed) return;
       const name = key?.name?.toLowerCase();
@@ -685,40 +631,6 @@ export class Tui {
       // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
       if (this.transcriptMode && name === "escape") {
         this.exitTranscript();
-        return;
-      }
-
-      if (this.approvalMenuActive) {
-        if (name === "up" || name === "down") {
-          const options = this.approvalOptions();
-          const current = Math.max(0, options.indexOf(this.approvalChoice));
-          const next = name === "up"
-            ? (current - 1 + options.length) % options.length
-            : (current + 1) % options.length;
-          this.approvalChoice = options[next]!;
-          if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
-          if (this.layout) this.renderNow();
-          else this.writeRaw(`\n> ${this.approvalLabel(options[next]!)}\n`);
-          return;
-        }
-        if (name === "return" || name === "enter") {
-          this.approvalMenuResolve?.(this.approvalChoice);
-          return;
-        }
-        if (name === "escape") {
-          this.approvalMenuResolve?.("deny");
-          return;
-        }
-        if (name === "pageup" || name === "pagedown") {
-          // transcript 里是整屏网格，可以自己滚；主视图是追加进 scrollback，
-          // 滚动由终端负责——我们能做的是「别再往底部写」，否则每帧重画都会把视口拉回底部。
-          if (this.transcriptMode) this.scrollPage(name === "pageup" ? "up" : "down");
-          else if (name === "pageup") this.pauseOutput();
-          else this.resumeOutput();
-          return;
-        }
-        // 审批只接受菜单按键；误输入的任意文本不改变决定、不写入下一个任务。
-        if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
         return;
       }
 
@@ -801,31 +713,6 @@ export class Tui {
           this.renderNow();
         }
         return;
-      }
-
-      // 只在等待下一条任务时启用，执行中/审批中不可提权。
-      // Windows Terminal / xterm 的 Shift+Tab 通常发送 CSI Z。
-      const shiftTab = name === "tab" && key?.shift === true || key?.sequence === "\x1b[Z";
-      if (shiftTab && this.promptActive && this.onPermissionChange !== undefined) {
-        if (this.fullAccessConfirmationPending) {
-          this.fullAccessConfirmationPending = false;
-          this.onPermissionChange("full-access");
-        } else {
-          const next: PermissionMode = this.permissionMode === "read-only" ? "workspace-write"
-            : this.permissionMode === "workspace-write" ? "full-access" : "read-only";
-          if (next === "full-access") {
-            this.fullAccessConfirmationPending = true;
-          } else {
-            this.onPermissionChange(next);
-          }
-        }
-        if (this.layout) this.renderNow();
-        return;
-      }
-      if (this.fullAccessConfirmationPending) {
-        // 任意其他按键撤销提权待确认，Esc 也不会提交一条任务。
-        this.fullAccessConfirmationPending = false;
-        if (this.layout) this.renderNow();
       }
 
       if (this.layout && this.promptActive && this.promptText === COMMAND_PROMPT) {
@@ -962,7 +849,7 @@ export class Tui {
           this.mouseInput?.push(Buffer.from(pending, "latin1"));
         }
       }, 80);
-      // 孤立 Esc 仍是用户操作：计时器必须保持事件循环，不能使审批悬置。
+      // 孤立 Esc 仍是用户操作：计时器必须保持事件循环。
       // 对不完整鼠标序列，80ms 后放弃等待新字节。
     }
     return Buffer.from(output, "latin1");
@@ -976,8 +863,7 @@ export class Tui {
       }
       return;
     }
-    // 鼠标绝不替代权限审批：审批时只有菜单键盘能够作出授权决定。
-    if (this.approvalMenuActive || !pressed || button !== 0) return;
+    if (!pressed || button !== 0) return;
     const target = this.mouseTargets.get(row);
     if (target === undefined || target.column !== column) return;
     this.captureHistoryAnchor();
@@ -998,7 +884,7 @@ export class Tui {
     this.redrawKeepingInput();
   }
 
-  /** Slash 查询不包含空白；/permission read-only 是完整命令，不再弹出补全。 */
+  /** Slash 查询不包含空白；带空白的输入是完整命令，不再弹出补全。 */
   private slashMenuCandidates(line: string): readonly MenuItem[] {
     if (!/^\/[^\s]*$/.test(line)) return [];
     return SLASH_COMMANDS.filter((item) => item.command.startsWith(line));
@@ -1021,7 +907,7 @@ export class Tui {
   /** 固定布局下至多显示五项；小窗口至少给日志与输入留出一行。 */
   private slashMenuItems(): readonly MenuItem[] {
     if (!this.layout || !this.promptActive || this.promptText !== COMMAND_PROMPT ||
-        this.approvalMenuActive || this.slashDismissed) return [];
+        this.slashDismissed) return [];
     return this.completionCandidates(this.rl.line);
   }
 
@@ -1073,7 +959,7 @@ export class Tui {
 
     this.logLine(`model: ${singleLine(this.model)}`);
     this.logLine(`workspace: ${singleLine(this.workspace)}`);
-    this.logLine(`permission: ${this.permissionMode}`);
+    this.logLine("access: full-access");
   }
 
   /** 将当前视口顶端绑定到稳定的展示日志 ID；展开活动和 resize 共用同一规则。 */
@@ -1117,20 +1003,16 @@ export class Tui {
     return this.uiLanguage === "zh" ? chinese : english;
   }
 
-  /** 权限值是策略标识，只有 UI 标签按最近一次用户任务的语言翻译，不影响命令和实际授权。 */
-  permissionLabel(mode: PermissionMode): string {
-    switch (mode) {
-      case "read-only": return this.uiText(mode, "只读模式");
-      case "workspace-write": return this.uiText(mode, "工作区读写");
-      case "full-access": return this.uiText(mode, "完全访问");
-    }
+  /** 权限固定为完全访问：只有这一个标签，没有可切换的模式。 */
+  accessLabel(): string {
+    return this.uiText("access: full-access", "权限：完全访问");
   }
 
   /** 用于 CLI 的会话命令提示，语言跟随最近一轮任务。 */
-  helpText(permissionModes: string): string {
+  helpText(): string {
     const commands = this.uiText(
-      `commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this\n          /permission [mode]  show or switch permission (${permissionModes})`,
-      `命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助\n      /permission [模式]  查看或切换权限（${permissionModes}）`,
+      "commands: /exit  quit · /reset  clear the transcript and start a new Agent · /help  show this",
+      "命令：/exit  退出 · /reset  清空会话并重建 Agent · /help  显示帮助",
     );
     if (!this.layout) return commands;
     // 按键表：规范要求「写进 README，并在 /help 里可见」，用户不该靠读源码发现快捷键。
@@ -1139,17 +1021,10 @@ export class Tui {
       "输入：Enter 发送 · Shift+Enter 或 Ctrl+J 换行 · @ 补全文件路径 · Ctrl+X Ctrl+E 用 $EDITOR 编辑 · Ctrl+C 取消本轮",
     );
     const view = this.uiText(
-      "view:   Ctrl+E history · PgUp pause live output · PgDn or Esc resume · Shift+Tab permission",
-      "视图：Ctrl+E 历史 · PgUp 暂停刷新 · PgDn 或 Esc 恢复 · Shift+Tab 切换权限",
+      "view:   Ctrl+E history · PgUp pause live output · PgDn or Esc resume",
+      "视图：Ctrl+E 历史 · PgUp 暂停刷新 · PgDn 或 Esc 恢复",
     );
     return `${commands}\n${keys}\n${view}`;
-  }
-
-  /** 切换权限后刷新页脚；真正的放行/拒绝仍由 Permission 决定。 */
-  setPermission(mode: PermissionMode): void {
-    this.permissionMode = mode;
-    this.fullAccessConfirmationPending = false;
-    if (this.layout) this.renderNow();
   }
 
   /** 更新统计；非 TTY 在每轮结束时由 finishTurn 打一行。 */
@@ -1240,8 +1115,8 @@ export class Tui {
 
   private maybeRotateMood(): void {
     if (this.activityState === undefined) return;
-    // 审批和错误不轮播；短工具调用只显示一条，不产生闪烁。
-    if (this.activityState === "approval" || this.activityState === "failed" ||
+    // 错误和收尾状态不轮播；短工具调用只显示一条，不产生闪烁。
+    if (this.activityState === "failed" ||
         this.activityState === "completed" || this.activityState === "cancelled") return;
     if (Date.now() - this.moodChangedAt >= 15_000) this.chooseMood(this.activityState);
   }
@@ -1267,14 +1142,6 @@ export class Tui {
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
     if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}${suffix}`, tone: "muted" };
-    // 审批期间这一轮并没有在跑，是在等你按 Enter。继续说「正在执行」会让人以为
-    // 命令已经跑起来了（它甚至可能已经跑了一分多钟），于是去排查一个不存在的卡顿。
-    if (this.approvalBlocksRunning) {
-      return {
-        text: `  ${this.glyphs.running} ${zh ? "等待审批 · 已等待" : "Waiting for approval · "} ${duration}${suffix}`,
-        tone: "warning",
-      };
-    }
     return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}${suffix}`, tone: "accent" };
   }
 
@@ -1313,11 +1180,11 @@ export class Tui {
     const summary = summarizeToolResult(item.call, item.result);
     if (!summary.failed) return undefined;
     const event = activityEventName(item.call, language);
-    const mark = summary.denied ? this.glyphs.denied : summary.notRun ? this.glyphs.notRun : this.glyphs.error;
-    const tone: Tone = summary.notRun ? "muted" : summary.denied ? "warning" : "error";
+    const mark = summary.notRun ? this.glyphs.notRun : this.glyphs.error;
+    const tone: Tone = summary.notRun ? "muted" : "error";
     const label = language === "zh"
-      ? summary.denied ? "已拒绝" : summary.notRun ? "未执行" : "失败"
-      : summary.denied ? "denied" : summary.notRun ? "not run" : "failed";
+      ? summary.notRun ? "未执行" : "失败"
+      : summary.notRun ? "not run" : "failed";
     const reason = activityFailureReason(item.call, item.result, summary);
     return { text: escapeControlCharacters(`    ${mark} ${event} ${label} · ${reason}`), tone, kind: "activity-error" };
   }
@@ -1357,7 +1224,7 @@ export class Tui {
           "Diff 预览已降级：写入成功，但文件超过 2,000,000 字节 或旧内容无法安全读取。")}`, "warning"));
       }
     }
-    if (!ended && !group.finished && !this.approvalBlocksRunning) {
+    if (!ended && !group.finished) {
       const awaitingResult = item.call.function.name === "shell" ||
         item.call.function.name === "write" || item.call.function.name === "edit";
       lines.push(this.makeLogLine(`      ${this.glyphs.boxBottomLeft} ${awaitingResult
@@ -1683,12 +1550,9 @@ export class Tui {
 
   /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
   toolCall(call: ToolCall): void {
-    this.approvalBlocksRunning = false;
     this.setThinking(false);
     this.finishAssistant();
-    // Shell/write/edit 的 ToolCall 发生在 Permission 检查之前，不能提前声称执行中。
-    const needsPermission = ["shell", "write", "edit"].includes(call.function.name);
-    this.setActivityState(needsPermission ? "working" : moodStateForTool(call));
+    this.setActivityState(moodStateForTool(call));
     const turn = this.currentTurn;
     if (this.ownedScreen && turn !== undefined && turn.endedAt === undefined) {
       let group = this.activeActivity;
@@ -1731,7 +1595,6 @@ export class Tui {
 
   /** 工具结果：成功、失败、权限拒绝都在这里落一行；拒绝原因直接来自 Tool result。 */
   toolResult(call: ToolCall, result: string): void {
-    this.approvalBlocksRunning = false;
     this.runToolResults++;
     this.setThinking(false);
     this.finishAssistant();
@@ -1891,160 +1754,6 @@ export class Tui {
     return answer;
   }
 
-  /** 完整、安全的命令展示 + 两项菜单。菜单只修改显示与输入映射，不修改权限判定。 */
-  /** 菜单里当前可选的项。「以后不再问」只在命令能记成规则时出现。 */
-  private approvalOptions(): ApprovalChoice[] {
-    return this.approvalRememberable ? ["allow", "always", "deny"] : ["allow", "deny"];
-  }
-
-  /** 菜单项文案。编号由位置决定，所以这里不带序号。 */
-  private approvalLabel(choice: ApprovalChoice): string {
-    if (choice === "allow") return this.uiText("Yes, allow once", "是，仅允许本次");
-    if (choice === "deny") return this.uiText("No (default)", "否（默认）");
-    const command = typeof this.approvalRequest?.args.command === "string" ? this.approvalRequest.args.command : "";
-    // 命令原文要转义再嵌进菜单：里面可能有 ANSI、RTL 覆写或换行，
-    // 直接拼会把菜单本身冲掉（和审批面板正文同一条规矩）。
-    const shown = clip(escapeControlCharacters(oneLine(command)).trim(), 40);
-    // 只显示这一条命令，并说清作用域：写进的是**这个工作区**的规则，不是全局。
-    return this.uiText(
-      `Yes, and don't ask again for "${shown}" in this workspace`,
-      `是，以后不再问「${shown}」（本工作区）`,
-    );
-  }
-
-  private approvalPanelLines(request: PermissionRequest): LogLine[] {
-    const width = this.contentWidth();
-    const rawCommand = typeof request.args.command === "string" ? request.args.command : "";
-    const command = rawCommand === "" ? this.uiText("(empty command)", "（空命令）") : rawCommand;
-    const commandLines = command.split("\n").map((line) => escapeControlCharacters(line));
-    const cwd = escapeControlCharacters(this.workspace).replace(/\n/g, "\\u000a");
-    const select = this.glyphs.user;
-
-    const entries: Array<{ text: string; tone: Tone }> = [
-      { text: this.uiText("Shell permission", "Shell 权限审批"), tone: "warning" },
-      { text: `${this.uiText("Workspace:", "工作目录：")} ${cwd}`, tone: "muted" },
-      { text: "", tone: "plain" },
-      { text: this.uiText("Command:", "命令："), tone: "assistant" },
-      ...commandLines.map((line) => ({ text: `  | ${line}`, tone: "assistant" as Tone })),
-      { text: "", tone: "plain" },
-      { text: this.uiText("Do you want to proceed?", "是否允许执行？"), tone: "assistant" },
-      ...this.approvalOptions().map((choice, index) => ({
-        text: `${this.approvalChoice === choice ? select : " "} ${index + 1}. ${this.approvalLabel(choice)}`,
-        tone: (this.approvalChoice === choice ? "accent" : "muted") as Tone,
-      })),
-      { text: "", tone: "plain" },
-      { text: this.uiText("Esc to cancel", "Esc 取消"), tone: "muted" },
-    ];
-
-    const separator: LogLine = {
-      text: this.glyphs.divider.repeat(Math.max(1, width)),
-      tone: "muted",
-    };
-    const panel: LogLine[] = [{ ...separator }];
-    for (const entry of entries) {
-      for (const part of wrapLine(entry.text, width)) {
-        panel.push({ text: part, tone: entry.tone });
-      }
-    }
-    // Claude Code 风格：Esc 提示下方不再追加收尾分隔线。
-    return panel;
-  }
-
-  async approve(request: PermissionRequest): Promise<boolean | "always"> {
-    // Claude Code 的做法：审批提示借用输入区，用户已经打了一半的草稿先暂存，
-    // 决定之后原样放回去。这样「用户正在输入」就不是冲突，不需要把审批跳掉。
-    const draft = this.rl.line;
-    const draftCursor = this.rl.cursor;
-    // 主视图（layout）能暂存草稿、借用输入区，所以排队输入不再是冲突；
-    // 逐行模式共用同一个 stdin，排队的那一行会被审批当成答案吃掉，仍然要拦。
-    const gate = approvalGate(this.controller.signal, this.interactive, !this.layout && this.lines.length > 0);
-    if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
-    this.setEditorLine("", 0);
-
-    this.setThinking(false);
-    this.finishAssistant();
-    this.setActivityState("approval");
-    if (this.ownedScreen) {
-      this.pushBlank();
-      this.approvalBlocksRunning = true;
-      this.approvalRequest = request;
-      this.approvalChoice = "deny";
-      // 复合命令、带通配符或重定向的命令记不成规则，菜单里就不给这一项——
-      // 给了却记不下来，等于骗用户点了一下。
-      this.approvalRememberable = request.tool === "shell" &&
-        isRememberable(typeof request.args.command === "string" ? request.args.command : "");
-      this.approvalMenuActive = this.layout;
-      this.scrollOffset = 0;
-    }
-    let approved: boolean | "always";
-    try {
-      if (this.layout) {
-        this.setApprovalCursor(true);
-        this.renderNow();
-        // 菜单仅处理导航按键，默认 No。没有隐形文本输入，也不复用上一次的点头。
-        const decision = await new Promise<ApprovalChoice | null>((resolve) => {
-          this.approvalMenuResolve = resolve;
-          if (this.ended || this.controller.signal.aborted) resolve(null);
-        });
-        if (decision === null) {
-          throw new Error(
-            this.controller.signal.aborted
-              ? "shell approval skipped: task cancelled"
-              : "shell approval skipped: approval prompt closed",
-          );
-        }
-        approved = decision === "deny" ? false : decision === "always" ? "always" : true;
-      } else {
-        const formatted = formatApproval(request, this.workspace);
-        const header = formatted.endsWith(APPROVAL_QUESTION)
-          ? formatted.slice(0, -APPROVAL_QUESTION.length)
-          : formatted;
-        this.writeRaw(`${header.replace(/\n$/, "")}${this.newline()}`);
-        const answer = await this.readLine(APPROVAL_QUESTION);
-        if (answer === null) {
-          throw new Error(
-            this.controller.signal.aborted
-              ? "shell approval skipped: task cancelled"
-              : "shell approval skipped: approval prompt closed",
-          );
-        }
-        approved = isApproved(answer);
-      }
-    } finally {
-      this.approvalMenuResolve = undefined;
-      if (this.ownedScreen) {
-        this.approvalMenuActive = false;
-        this.approvalRequest = undefined;
-        this.approvalRememberable = false;
-        this.setApprovalCursor(false);
-        this.promptText = COMMAND_PROMPT;
-        this.promptPlaceholder = true;
-        this.trimLog();
-        // 把审批前暂存的草稿放回去：审批借用输入区，但不能吃掉用户已经打的字。
-        if (!this.ended) this.setEditorLine(draft, Math.min(draftCursor, draft.length));
-        this.renderNow();
-      }
-    }
-
-    if (approved) this.approvalBlocksRunning = false;
-    this.setActivityState(approved ? "running" : "working");
-    // 「以后不再问」和「仅本次」必须说得不一样：一个是长期改变了策略，
-    // 另一个只对刚才那条命令有效。混着写，用户下次不知道为什么会自动跑起来。
-    const remembered = this.uiText("remembered for this workspace", "已记住这条命令（本工作区）");
-    if (this.layout) {
-      const outcome = approved === "always"
-        ? this.uiText(`Allowed, ${remembered}`, `已允许，${remembered}`)
-        : approved ? this.uiText("Allowed once", "已允许本次执行") : this.uiText("Denied", "已拒绝");
-      this.logLine(`  ${approved ? this.glyphs.success : this.glyphs.denied} ${outcome}`, approved ? "success" : "warning");
-    } else {
-      const outcome = approved === "always"
-        ? `allowed, ${remembered}`
-        : approved ? "allowed once" : "denied";
-      this.logLine(`${this.uiText("approval:", "审批：")} ${outcome}`, approved ? "success" : "error");
-    }
-    return approved;
-  }
-
   /** 结束 TUI：清掉监听器和定时器、提交当前回复、恢复终端。 */
   close(): void {
     if (this.closed) return;
@@ -2089,7 +1798,6 @@ export class Tui {
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
     if (!this.started) return;
-    this.setApprovalCursor(false);
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.altScreenActive) {
@@ -2147,12 +1855,9 @@ export class Tui {
     return this.uiText(`[Pasted text +${lines} lines]`, `[已粘贴 ${lines} 行]`);
   }
 
-  /** 提交一行：审批不消费文本行；占位提示换成多行粘贴的原文。 */
+  /** 提交一行；占位提示换成多行粘贴的原文。 */
   private submitLine(rawSubmitted: string): void {
     const line = rawSubmitted.split(NEWLINE_MARK).join("\n");
-    // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
-    // 也不能在审批结束后进入下一轮任务队列。
-    if (this.approvalMenuActive) return;
     // Enter 提交当前高亮项：`/` 是整行替换并执行，`@` 只把路径补进输入框、不提交——
     // 用户通常还要接着写「这个文件里的 X 怎么改」。
     const candidates = this.completionCandidates(line);
@@ -2177,7 +1882,7 @@ export class Tui {
     // 占位提示对应一段多行粘贴：真正交给模型的是原文。
     const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
     if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
-    // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /permission 没有意义）。
+    // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
     if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
     if (resolve === undefined) {
@@ -2352,17 +2057,9 @@ export class Tui {
     const width = this.contentWidth();
     // transcript 是详情视图：默认展开所有过程层。
     const lines = this.wrappedDisplayLines(false, true);
-    if (this.approvalMenuActive) {
-      // 审批独占可视区域：不再为隐藏的聊天输入框与状态栏保留四行。
-      this.logHeight = Math.max(1, this.rows - LOG_TOP);
-    } else if (this.flowInput && this.scrollOffset === 0) {
-      // 审批是需要就地操作的焦点面板：只为命令面板与最近两行上下文预留高度。
-      // 长会话此前的日志仍留在滚动历史，不把 y/N 输入推离审批面板。
-      const focusedLength = this.approvalRequest === undefined
-        ? lines.length
-        : Math.min(lines.length, this.approvalPanelLines(this.approvalRequest).length + 2);
-      const gap = this.approvalRequest === undefined ? 1 : 0;
-      this.logHeight = Math.min(this.logHeight, Math.max(2, focusedLength + gap));
+    if (this.flowInput && this.scrollOffset === 0) {
+      // 短对话把输入框紧跟内容：只为最近几行上下文留高度，长会话仍停靠底部。
+      this.logHeight = Math.min(this.logHeight, Math.max(2, lines.length + 1));
       this.boxTopRow = LOG_TOP + this.logHeight;
       this.inputRow = this.boxTopRow + 1;
       this.boxBottomRow = this.inputRow + 1;
@@ -2417,23 +2114,19 @@ export class Tui {
         : this.paintLogLine(line, width);
     }
 
-    // 审批菜单的 Esc 提示下方也不画聊天输入区的上边线；
-    // 否则虽然删除面板收尾线，依然会看到另一条横线。
-    if (!this.approvalMenuActive) {
-      rows[this.boxTopRow - 1] = divider;
-      rows[this.inputRow - 1] = this.inputLine(width);
-      rows[this.boxBottomRow - 1] = divider;
-      if (menuRows > 0) {
-        const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
-          Math.max(0, slashCandidates.length - menuRows));
-        for (let i = 0; i < menuRows; i++) {
-          const index = first + i;
-          rows[this.boxBottomRow + i] = this.slashMenuLine(
-            slashCandidates[index]!, index === this.slashSelected, width);
-        }
+    rows[this.boxTopRow - 1] = divider;
+    rows[this.inputRow - 1] = this.inputLine(width);
+    rows[this.boxBottomRow - 1] = divider;
+    if (menuRows > 0) {
+      const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
+        Math.max(0, slashCandidates.length - menuRows));
+      for (let i = 0; i < menuRows; i++) {
+        const index = first + i;
+        rows[this.boxBottomRow + i] = this.slashMenuLine(
+          slashCandidates[index]!, index === this.slashSelected, width);
       }
-      rows[this.statusRow - 1] = this.footerLine(width);
     }
+    rows[this.statusRow - 1] = this.footerLine(width);
 
     if (this.lastFrame.length !== this.rows) this.lastFrame = [];
     let frame = this.clearBeforeNextFrame ? "\x1b[2J\x1b[H" : "";
@@ -2446,17 +2139,9 @@ export class Tui {
       }
     }
     this.inputDirty = false;
-    if (!this.approvalMenuActive) frame += this.inputCursorSequence();
+    frame += this.inputCursorSequence();
     // 同一帧通过一次输出写入，避免终端在多次 write 之间露出半张画面。
-    if (frame !== "") this.output.write(
-      `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`);
-  }
-
-  /** 确保审批结束、取消或 resize 后不会把终端光标留在隐藏状态。 */
-  private setApprovalCursor(hidden: boolean): void {
-    if (!this.terminalControls || this.approvalCursorHidden === hidden) return;
-    this.output.write(hidden ? "\x1b[?25l" : "\x1b[?25h");
-    this.approvalCursorHidden = hidden;
+    if (frame !== "") this.output.write(`\x1b[?2026h\x1b[?25l${frame}\x1b[?25h\x1b[?2026l`);
   }
 
   /**
@@ -2493,13 +2178,7 @@ export class Tui {
     const tailRows = tail.reduce(
       (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
     // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
-    //
-    // 审批时输入框被菜单顶掉，光标锚点变成那条分隔线本身，它上面只剩活动区：
-    // 仍然按「活动区 + 输入框上边框」上移就会每帧多吃一行，表现为审批期间
-    // 上面的日志一行一行被擦掉（活动计时器每秒重绘一次，所以是一秒一行）。
-    const rowsAboveInput = this.approvalMenuActive
-      ? tailRows
-      : tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
+    const rowsAboveInput = tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
 
     let frame = "\x1b[?2026h";
     if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
@@ -2511,15 +2190,9 @@ export class Tui {
     this.printedLines = commitTo;
 
     for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
-    // 审批时隐藏输入框：菜单独占这块区域，和 Claude Code 一致。
-    // 留着输入框会让人以为「还能打字」，而按键其实全给了菜单。
     // 输入区可以是多行（Ctrl+J 换行），行数变化要同时反映到光标回退的行数上。
-    const inputRows = this.approvalMenuActive ? [] : this.inputLines(width);
-    if (this.approvalMenuActive) {
-      frame += `${this.dividerLine(width)}\r\n`;
-    } else {
-      frame += `${this.dividerLine(width)}\r\n${inputRows.join("\r\n")}\r\n${this.dividerLine(width)}\r\n`;
-    }
+    const inputRows = this.inputLines(width);
+    frame += `${this.dividerLine(width)}\r\n${inputRows.join("\r\n")}\r\n${this.dividerLine(width)}\r\n`;
     if (menuRows > 0) {
       const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
         Math.max(0, slashCandidates.length - menuRows));
@@ -2530,12 +2203,7 @@ export class Tui {
     frame += this.footerLine(width);
 
     // 光标从状态行回到输入行：下边框 + 菜单 + 状态行都在它下面。
-    // 审批时没有输入行，少退一行，并且不显示光标（按键全归菜单）。
-    if (this.approvalMenuActive) {
-      frame += `\x1b[${1 + menuRows}A\r\x1b[?25l`;
-    } else {
-      frame += `\x1b[${1 + menuRows + 1}A\r${this.inputColumnSequence()}\x1b[?25h`;
-    }
+    frame += `\x1b[${1 + menuRows + 1}A\r${this.inputColumnSequence()}\x1b[?25h`;
     frame += "\x1b[?2026l";
 
     this.lastRowsAboveInput = rowsAboveInput;
@@ -2828,8 +2496,7 @@ export class Tui {
         if (group.fallbackOverview && group.tools.length > 0 && !group.finished) {
           const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
           children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
-            current.call, current.result, group.language, false,
-            this.approvalMenuActive && current.call.function.name === "shell",
+            current.call, current.result, group.language,
           )}`),
             tone: "info" });
         }
@@ -2852,7 +2519,7 @@ export class Tui {
       }
       const children = [line];
       // 兼容没有 beginTurn 的旧调用；正常任务的 Running 从 ActivityGroup 派生。
-      if (pendingLines.has(line) && !this.approvalBlocksRunning) {
+      if (pendingLines.has(line)) {
         children.push({ text: `    ${this.glyphs.boxBottomLeft} ${this.uiText("Running...", "运行中...")}`, tone: "muted" });
       }
       append(line, children);
@@ -2885,7 +2552,7 @@ export class Tui {
       }
     } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
                this.activityState !== undefined && this.activityState !== "preparing" &&
-               !this.assistantOpen && !this.approvalMenuActive && !flat) {
+               !this.assistantOpen && !flat) {
       // 主视图扁平后，下面那行「正在执行 · 已用时」已经说明了同一件事，这里不再叠一行「处理中」。
       // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。
       this.maybeRotateMood();
@@ -2934,14 +2601,6 @@ export class Tui {
         offset += Math.max(0, part.length - prefix.length);
       }
     }
-    if (this.approvalRequest !== undefined) {
-      const panel = this.approvalPanelLines(this.approvalRequest);
-      wrapped.push(...panel);
-      if (panel.length > this.logHeight) {
-        // 完整命令可翻阅；不用 Unicode 箭头，传统 conhost 也能读懂。
-        wrapped.push({ text: this.uiText("PageUp/PageDown: review full command", "PageUp/PageDown：查看完整命令"), tone: "muted" });
-      }
-    }
     return wrapped;
   }
 
@@ -2965,32 +2624,23 @@ export class Tui {
   }
 
   private footerLine(width: number): string {
-    const permissionTone: Tone =
-      this.permissionMode === "full-access"
-        ? "error"
-        : this.permissionMode === "read-only"
-          ? "assistant"
-          : "warning";
+    // 只有一种权限：这里陈述事实，不再暗示可以切换。
+    const accessTone: Tone = "warning";
     const scrollPrefix = `${this.glyphs.scroll} ${this.scrollOffset} ${this.uiText("lines", "行")}`;
     const historyWarning = this.historyTrimmedNotice
       ? this.uiText(" [history truncated]", "【历史已截断】") : "";
-    const permissionLabel = this.permissionLabel(this.permissionMode);
     const baseLabel = (this.scrollOffset > 0
-      ? `${scrollPrefix} · ${permissionLabel}`
-      : permissionLabel) + historyWarning;
-    const shortcut = this.onPermissionChange !== undefined && this.interactive
-      ? this.uiText(" (shift-tab to cycle)", "（Shift+Tab 切换）") : "";
-    let left = this.fullAccessConfirmationPending
-      ? this.uiText("Confirm full-access: Shift+Tab again · Esc cancel", "确认完全访问：再次按 Shift+Tab · Esc 取消")
-      : baseLabel + shortcut;
+      ? `${scrollPrefix} · ${this.accessLabel()}`
+      : this.accessLabel()) + historyWarning;
+    let left = baseLabel;
     const innerWidth = Math.max(1, width - RIGHT_MARGIN);
     let right = this.formatSessionStats(innerWidth >= 60);
 
-    // 优先保留快捷键提示和完整统计，空间不足时再逐级缩短。
+    // 优先保留完整统计，空间不足时再逐级缩短左侧说明。
     if (displayWidth(left) + displayWidth(right) + 1 > innerWidth) {
       right = this.formatSessionStats(false);
     }
-    if (displayWidth(left) + displayWidth(right) + 1 > innerWidth && !this.fullAccessConfirmationPending) {
+    if (displayWidth(left) + displayWidth(right) + 1 > innerWidth) {
       left = baseLabel;
       if (this.scrollOffset > 0 && displayWidth(left) + displayWidth(right) + 1 > innerWidth) left = scrollPrefix;
     }
@@ -3006,10 +2656,11 @@ export class Tui {
       right = `${right} · ${this.uiText("Ctrl-C cancel", "Ctrl-C 取消")}`;
     }
 
-    const rightText = clip(right, Math.max(1, innerWidth));    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
+    const rightText = clip(right, Math.max(1, innerWidth));
+    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
     const gap = Math.max(1, innerWidth - displayWidth(leftText) - displayWidth(rightText));
     return (
-      this.style.paint(this.fullAccessConfirmationPending || this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
+      this.style.paint(this.scrollOffset > 0 ? "warning" : accessTone, leftText) +
       `${" ".repeat(gap)}${this.style.paint("muted", rightText)}`
     );
   }
@@ -3067,7 +2718,7 @@ export class Tui {
   }
 
   private formatStatus(): string {
-    const prefix = `${this.uiText("model", "模型")} ${clip(singleLine(this.model), 24)} | ${this.uiText("permission", "权限")} ${this.permissionLabel(this.permissionMode)} | ${this.uiText("workspace", "工作目录")} `;
+    const prefix = `${this.uiText("model", "模型")} ${clip(singleLine(this.model), 24)} | ${this.accessLabel()} | ${this.uiText("workspace", "工作目录")} `;
     const room = this.columns - displayWidth(prefix);
     const workspace = singleLine(this.workspace);
     let shown = "";
@@ -3240,7 +2891,7 @@ function prefersRichColor(): boolean {
   return program === "vscode" || program === "WezTerm" || program === "iTerm.app";
 }
 
-/** 固定布局只在 stdout 真的是终端时启用；测试里的假输出流可以只开审批、不开布局。 */
+/** 固定布局只在 stdout 真的是终端时启用；测试里的假输出流可以只开输入、不开布局。 */
 function isTerminalOutput(output: NodeJS.WritableStream): boolean {
   return (output as { isTTY?: boolean }).isTTY === true;
 }
@@ -3397,7 +3048,7 @@ function formatStats(stats: AgentSessionStats, language: UiLanguage = "en"): str
 
 /**
  * 工具调用的一行摘要。`write` / `edit` 只显示路径，不把整个文件内容搬进对话；
- * `shell` 显示完整命令的转义文本（多行折成 `\n`），审批界面才是逐行完整展示的地方。
+ * `shell` 显示完整命令的转义文本（多行折成 `\n`），展开详情后才是逐行完整展示。
  */
 function formatToolCall(call: ToolCall): string {
   const name = call.function.name;
@@ -3446,8 +3097,7 @@ function oneLine(text: string): string {
 
 /** 工具事实兜底：只说明“正在/已做什么”，不猜测原因、发现或下一步计划。 */
 function toolProgressOverview(
-  call: ToolCall, result: string | undefined, language: UiLanguage,
-  finished = false, awaitingApproval = false,
+  call: ToolCall, result: string | undefined, language: UiLanguage, finished = false,
 ): string {
   const zh = language === "zh";
   let args: unknown;
@@ -3462,10 +3112,7 @@ function toolProgressOverview(
     return zh ? `未收到${target || ` ${name}`}的操作结果，执行状态未知。`
       : `No result received for${target || ` ${name}`}; execution status unknown.`;
   }
-  if (result === undefined && awaitingApproval) {
-    return zh ? `正在等待命令${target}的执行授权。` : `Awaiting approval to run command${target}.`;
-  }
-  // ToolCall 先于 Permission 的判定到达 TUI；缺少 ToolResult 时不能宣称 Shell 已运行。
+  // ToolCall 先于真实执行结果到达 TUI；缺少 ToolResult 时不能宣称 Shell 已运行。
   if (result === undefined && name === "shell") {
     return zh ? `正在处理命令请求${target}。` : `Handling command request${target}.`;
   }
@@ -3475,10 +3122,8 @@ function toolProgressOverview(
   }
   const status = result === undefined ? "running" : (() => {
     const summary = summarizeToolResult(call, result);
-    return summary.denied ? "denied" : summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
+    return summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
   })();
-  if (status === "denied") return zh ? `未获授权，无法执行${target || ` ${name}`}。`
-    : `Permission denied for${target || ` ${name}`}.`;
   if (status === "not-run") return zh ? `未执行${target || ` ${name}`}。`
     : `Did not run${target || ` ${name}`}.`;
   const verbs: Record<string, [string, string, string, string, string, string]> = {
@@ -3648,7 +3293,6 @@ function activityVerb(call: ToolCall, lang: UiLanguage, summary?: ToolResultSumm
   if (pending && call.function.name === "shell") return zh ? "正在处理命令请求" : "Handling command request";
   if (pending && call.function.name === "write") return zh ? "正在处理文件写入请求" : "Handling file write request";
   if (pending && call.function.name === "edit") return zh ? "正在处理文件编辑请求" : "Handling file edit request";
-  if (call.function.name === "shell" && summary?.denied) return zh ? "请求了命令授权" : "Requested command approval";
   if (call.function.name === "shell" && summary?.notRun) return zh ? "命令未执行" : "Command not run";
   const words = labels[call.function.name] ?? [zh ? "已使用工具" : "Used tools",
     zh ? "正在调用工具" : "Calling tools", zh ? "尝试调用工具" : "Tried using tools"];
@@ -3691,7 +3335,6 @@ function formatActivityStateLabel(state: MoodState, lang: UiLanguage): string {
     writing: ["Writing...", "写入中..."],
     running: ["Running...", "运行中..."],
     working: ["Working...", "处理中..."],
-    approval: ["Awaiting approval", "等待授权"],
     failed: ["Failed", "失败"],
     completed: ["Completed", "已完成"],
     cancelled: ["Cancelled", "已取消"],
@@ -3707,7 +3350,6 @@ function formatActivityDuration(milliseconds: number, lang: UiLanguage): string 
 
 interface ToolResultSummary {
   failed: boolean;
-  denied: boolean;
   notRun: boolean;
   body: string;
   more: string;
@@ -3721,13 +3363,12 @@ function summarizeToolResult(call: ToolCall, result: string): ToolResultSummary 
     .filter((line) => line !== "");
   const first = lines[0] ?? "(no output)";
   const notRun = first.startsWith("ERROR: not run:");
-  const denied = first.startsWith("ERROR: permission denied:");
   const error = first.startsWith("ERROR:");
-  // CLI 与 TUI 共用一次事实判断；拒绝 / 未执行仍保留各自的展示标记。
+  // CLI 与 TUI 共用一次事实判断；未执行保留自己的展示标记。
   const failed = isToolResultFailure(call, result);
   const body = error ? first.slice("ERROR:".length).trim() : first;
   const more = lines.length > 1 ? " …" : "";
-  return { failed, denied, notRun, body, more };
+  return { failed, notRun, body, more };
 }
 
 const TOOL_LABELS: Record<UiLanguage, Record<string, string>> = {
@@ -3805,8 +3446,8 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, languag
     return lines;
   }
 
-  const mark = summary.denied ? glyphs.denied : summary.notRun ? glyphs.notRun : glyphs.error;
-  const tone: Tone = summary.notRun ? "muted" : summary.denied ? "warning" : "error";
+  const mark = summary.notRun ? glyphs.notRun : glyphs.error;
+  const tone: Tone = summary.notRun ? "muted" : "error";
   const lines: LogLine[] = [{ text: `  ${mark} ${event}`, tone, kind: "tool" }];
   // 失败原因不截断：每行都放在工具事件下面，长命令/长错误交给视口换行和 PageUp。
   for (const reason of result.split("\n").map((line) => line.trim()).filter((line) => line !== "")) {
@@ -3821,8 +3462,8 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, languag
 function formatToolResult(call: ToolCall, result: string, language: UiLanguage = "en"): string {
   const summary = summarizeToolResult(call, result);
   const label = language === "zh"
-    ? summary.denied ? "已拒绝" : summary.notRun ? "未运行" : summary.failed ? "失败" : "成功"
-    : summary.denied ? "denied" : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";
+    ? summary.notRun ? "未运行" : summary.failed ? "失败" : "成功"
+    : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";
   const mark = summary.failed ? (summary.notRun ? "–" : "✗") : "✓";
   return `${mark} ${call.function.name} [${label}] ${clip(summary.body, 160)}${summary.more}`;
 }

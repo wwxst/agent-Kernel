@@ -12,11 +12,11 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
-| `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access`；也可在 `.env` 里写 `AGENT_PERMISSION` 让档位跨启动持久（命令行优先） |
+| `npm run agent -- "<task>"` | 默认就是完全访问：没有审批，也没有工作区目录边界；`--permission` / `AGENT_PERMISSION` 已移除，传入会报错 |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
 | `npm run agent --` | 不带任务：直接进全屏 TUI（唯一交互界面）；`--repl` 已移除，传入会报错 |
-| `npm run agent -- --tui [--permission <mode>] ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色，`AGENT_TUI_THEME=dark/light/ansi` 选配色方案；需 `.env` |
+| `npm run agent -- --tui ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色，`AGENT_TUI_THEME=dark/light/ansi` 选配色方案；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
@@ -28,11 +28,9 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/types.ts` | 协议词汇，不依赖任何人 | `Message`、`Tool`、`ToolDefinition`、`TokenUsage`、`ChatClient` |
 | `src/errors.ts` | 错误文案兜底、模型配置/HTTP/网络/SSE 错误类型与纯展示分类、进程树清理未确认致命错误 | `describeError(error)`、`modelFailure(error, language)`、`ChatResponseError` |
 | `src/agent.ts` | **Kernel**：循环、消息顺序、请求/工具预算、会话生命周期；四种展示回调（单次开始事件）异常隔离并累计诊断 | `Agent.run(task)`、`sessionStats`、`transcript`、`stats`、`observerFailureCount` |
-| `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、显式权限注入（`Permission` 或 `null`）、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
+| `src/tool-registry.ts` | 工具查找、Schema 注册校验、参数解析、执行工具、失败折成 `ERROR` | `ToolRegistry.execute(call)`、`definitions` |
 | `src/tool-result-status.ts` | 纯展示事实判断：非 Shell 的 `ERROR:` 与 Shell 的 exit / timeout / cancelled；CLI/TUI 复用，不改工具结果文本 | `isToolResultFailure` |
-| `src/permission.ts` | 三档权限策略、项目级规则的裁决入口、`permissionPrompt` 模型指导、shell 的一次性审批、审批期间撤权后的版本复验；不是沙箱 | `Permission`、`PermissionMode`、`parsePermissionMode`、`isApproved`、`approvalGate`、`permissionPrompt` |
-| `src/permission-rules.ts` | 权限规则三层（本地 / 项目 / 用户）：解析规则文件、保守切分复合命令、argv 前缀匹配、`deny` 跨层最强 + 其余按层序、把「以后不再问」写进本地层并自动 gitignore；不依赖任何模块 | `PermissionRules`、`decideRules`、`splitCommand`、`isRememberable`、`parseRules` |
-| `src/approval.ts` | 审批提示格式化与读取：完整命令、实际 cwd、控制字符转义；`AbortSignal` / readline close / 正常回答的竞态收口 | `formatApproval`、`askWithSignal` |
+| `src/text.ts` | 终端展示转义：控制字符与 bidi 字符变成可见转义；不依赖任何模块 | `escapeControlCharacters` |
 | `src/workspace.ts` | 工作区文件与 Shell：真实路径守卫、临时文件原子替换与取消检查、grep 物理扫描起点、有界读取/扫描、进程树清理期限及失败告警、后台任务登记与增量输出（日志落系统临时目录）；父目录 TOCTOU 仍有已知边界 | `Workspace.read/write/edit/glob/grep/list/run/readJobOutput/killJob`、`createWorkspaceTools()` |
 | `src/grep-worker.ts` | `grep` 的正则匹配线程：逐行匹配，主线程超时/取消时 terminate；不依赖任何模块 | — |
 | `src/llm.ts` | `ChatClient` 的 HTTP 适配器，含 usage、`max_tokens` 与 SSE 流式 | `Llm.chat(messages, tools, options)` |
@@ -42,20 +40,17 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/cli-presenter.ts` | 仅 CLI 展示：阶段、动态台词与日志展开；流式正文与确认回复不一致时显式更正，不改 Transcript | `RunPresenter` |
 | `bin/agent.mjs` | 全局命令入口（`npm link` 后的 `agent-kernel`）：按包内绝对路径加载 `.env`，再进 `cli.ts`；不改工作目录 | — |
 
-依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `permission` / `approval` / `llm` / `errors` / `tui` → `types`。`types` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`），`permission` 复用 `errors` 的 `describeError` 并只 import `permission-rules` 的类型，`permission-rules` 不依赖任何模块，`approval` 只依赖 `permission` 的类型；`tui` 只依赖 `approval` / `permission` / `permission-rules`（只用 `isRememberable`）/ `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `permission`（权限在 `ToolRegistry` 这一层检查），更不认识 `tui`。
+依赖方向：`cli` → `agent` / `tool-registry` / `workspace` / `llm` / `errors` / `tui` → `types`。`types` 与 `text` 是叶子；`errors` 只依赖 `types` 的类型（`TokenUsage`）；`tui` 只依赖 `text` / `types`，并只 import `agent` 的统计类型；`agent` 不认识 `workspace`，也不认识 `tui`，更不认识任何权限策略（只有完全访问，工具直接执行）。
 
 ## 测试放哪
 
 九处缝，重构不该让任何用例变红：
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序。
-- `ToolRegistry`：Schema 注册校验、权限拒绝折成 `ERROR`，漏传 / `undefined` / 非法 permission 在构造阶段报错，以及每个失败分支都折成文本。
-- `Permission`：三档策略、`permissionPrompt` 三档说明、shell 每次询问、无 TTY / 取消信号 / 审批异常默认拒绝；项目级规则的 allow / deny / ask 命中、「复合命令有一段没放行就整体要问」、`"always"` 写回规则后第二次直接放行、规则只在 `workspace-write` 生效。
-- `PermissionRules`：规则文件形状校验（坏文件必须报错）、argv 前缀不按字符匹配、单段前缀 / 多段精确两种规则、四种连接符切分、`$`/通配/重定向/未闭合引号一律判为不可解析、三层优先级（本地压过项目压过用户、`deny` 跨层最强且逐段生效）、`remember` 单段记前缀、其余（复合 / 切不开）记整条原文精确规则并写本地层、自动补 `.gitignore`（已有条目不重复、末尾缺换行不粘行、非 git 仓库不动）、带空格的参数加引号后能往返。
-- `Approval`：`formatApproval` 的多行 / 超长 / 控制字符展示，`askWithSignal` 的正常 / 取消 / EOF 竞态，以及 Linux PTY 下的真实终端行为。
-- `Workspace` 的九个方法：路径越界、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
+- `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、参数类型错误，以及每个失败分支都折成文本；进程树清理未确认仍抛 `ProcessCleanupError`。
+- `Workspace` 的九个方法：工作区外读写（绝对路径、`../`、符号链接）、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、工作区外 shell、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
-- `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、审批、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。
+- `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、状态栏固定完全访问、`Shift+Tab` 不再是快捷键、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。
 - `test/cli.test.mjs`：端到端验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 布局/命令/统计，且占位 Key 不发请求、SSE 未完成友好提示/去重、HTTP 鉴权分类；循环细节留在单元层。
 - `eval/selfcheck.mjs`：初始断言失败、任务无效、基础设施错误必须分开。
 
@@ -64,6 +59,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 ## 领域文档
 
 - [GLOSSARY.md](./GLOSSARY.md)：概念、关系、要避开的同义词。
+- [docs/permission-design.md](./docs/permission-design.md)：当前权限与访问设计（只有完全访问；路径解析、Shell、网络、稳定性保护）。
 - [docs/adr/](./docs/adr/)：已经定下、别在评审里重新讨论的决定。
 - [docs/design/display-layers.md](./docs/design/display-layers.md)：概览层与详情层怎么分，终端与未来前端共用。
 - [docs/notes/tui-pitfalls.md](./docs/notes/tui-pitfalls.md)：TUI 踩过的十五个坑 + 四条底层规则，动渲染层前必读。

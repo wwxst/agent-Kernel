@@ -1,5 +1,7 @@
 # Agent CLI 能力对照：Claude Code / Codex / agent-Kernel
 
+> **2026-11-12 更新**：权限模式、审批 UI 与权限规则已删除，agent-Kernel 只有完全访问（[ADR-0019](../adr/0019-full-access-is-the-only-mode.md)）。本文涉及审批/权限的对照行只保留历史价值，当前行为以 README 为准。
+
 **口径**：✅ 有 · ⚠️ 部分有/做法不同 · ❌ 无 · ❓ 未核实
 **日期**：2026-11-11（Claude Code、Codex 资料取自各自官方文档；标 ❓ 的是文档没写清、我没验证的）
 **用途**：找系统性缺口，不是逐条修 bug。今天修的十几个问题，多数能对应到下面几个缺失的机制。
@@ -18,8 +20,8 @@
 | `@` 文件引用 | ✅ | ✅ | ✅ 工作区路径补全 | 持平 |
 | 外部编辑器（$EDITOR） | ❓ | ✅ | ✅ `Ctrl+X Ctrl+E` 把当前输入交给编辑器 | 持平 |
 | 粘贴图片 | ✅ | ✅ `--image` | ❌ | **推迟**（协议级改动，见「决定」） |
-| 审批时隐藏输入框 | ✅ | ✅ | ✅ 今天补的 | 持平 |
-| 审批时保留草稿 | ✅ | ❓ | ✅ 今天补的 | 持平 |
+| 审批时隐藏输入框 | ✅ | ✅ | — 已删除（无审批） | 不适用 |
+| 审批时保留草稿 | ✅ | ❓ | — 已删除（无审批） | 不适用 |
 
 ## 二、渲染与视图
 
@@ -51,17 +53,15 @@
 | 待办清单 | ✅ TodoWrite | ✅ | ❌ | 差 |
 | MCP 工具 | ✅ | ✅ | ❌ | **差（硬缺口）** |
 
-## 四、权限与审批
+## 四、权限与执行边界
 
 | 能力 | Claude Code | Codex | 我们 | 评估 |
 | --- | --- | --- | --- | --- |
-| 权限模式 | ✅ plan / auto / acceptEdits / bypass | ✅ read-only / auto / edit | ⚠️ read-only / workspace-write / full-access | 模式数量少，缺「计划模式」 |
-| 细粒度规则（allow/deny 某命令） | ✅ `/permissions` 规则 | ✅ `.rules` | ✅ `.agent-kernel/permissions.json`（argv 匹配 + 复合命令拆分） | 持平 |
-| 审批 UI | ✅ 菜单 | ✅ 菜单 | ✅ 菜单 | 持平 |
-| 拒绝后的模型指令 | ✅ 带原因，模型换方案 | ✅ | ✅ 今天补的「不要重试」 | 持平 |
-| 连续拒绝阈值 | ✅ 3 次连续 / 20 次累计 | ❓ | ✅ 3 次连续 | 持平（缺累计 20） |
-| 沙箱 | ✅ sandbox | ✅ seatbelt / landlock | ❌ 只有路径守卫 | **差（安全）** |
-| 审批期间撤权复验 | ❓ | ❓ | ✅ | 我们更严 |
+| 权限模式 | ✅ plan / auto / acceptEdits / bypass | ✅ read-only / auto / edit | 只有完全访问（无模式、无审批） | 有意简化；缺计划模式与审批 |
+| 细粒度规则（allow/deny 某命令） | ✅ `/permissions` 规则 | ✅ `.rules` | ❌ 已删除（ADR-0019） | 差 |
+| 审批 UI | ✅ 菜单 | ✅ 菜单 | ❌ 已删除（ADR-0019） | 差 |
+| 工作区外文件与命令 | 受权限模式约束 | 受沙箱约束 | ✅ 直接可用，与 `shell` 一致 | 我们更宽 |
+| 沙箱 | ✅ sandbox | ✅ seatbelt / landlock | ❌ 没有，靠操作系统账户 | **差（安全）** |
 
 ## 五、会话与上下文
 
@@ -89,7 +89,7 @@
 
 | 能力 | Claude Code | Codex | 我们 | 评估 |
 | --- | --- | --- | --- | --- |
-| 斜杠命令 | ✅ 很多（/review-pr、/loop、/schedule…） | ✅（/init、/status、/permissions、/model、/review） | ⚠️ 少数（/help、/permission、/clear…） | 差 |
+| 斜杠命令 | ✅ 很多（/review-pr、/loop、/schedule…） | ✅（/init、/status、/permissions、/model、/review） | ⚠️ 少数（/help、/reset、/exit） | 差 |
 | 自定义命令 / skills | ✅ | ✅ skills + plugins | ❌ | **差（硬缺口）** |
 | 配置文件 | ✅ settings | ✅ config.toml | ⚠️ 只有 `.env` | 差 |
 | 模型/推理强度切换 | ✅ `/model` | ✅ `/model` | ❌ 只能改 `.env` | 差 |
@@ -140,7 +140,7 @@
 | 插件 / skills / hooks | 扩展机制 |
 | 粘贴图片 | 协议级改动。`Message.content` 现在是 `string \| null`，收图要改成多模态 part，连带 5 个源文件、68 处测试断言、三套平台剪贴板代码。端点已验证收图（HTTP 200），但真做之前还要定两件没定的事：图片只带当前轮还是每轮都带（决定长会话会不会被图撑爆），以及超限/处理失败怎么当场拒绝。见下 |
 
-**仍在做**：渲染、权限规则、命令。
+**仍在做**：渲染、命令。
 
 **本轮已补**（2026-11-11）：
 
@@ -148,7 +148,7 @@
 | --- | --- |
 | 输入与编辑 | 多行输入（`Shift+Enter` + `Ctrl+J`）、跨进程输入历史、`@` 文件补全、`Ctrl+X Ctrl+E` 外部编辑器。只剩「粘贴图片」，已按上面的理由推迟 |
 | 渲染与视图 | 配色方案从「mono/full 一个开关」拆成 `AGENT_TUI_THEME=dark\|light\|ansi`，浅色终端不再把近白灰当正文色；顺手修掉文档里把 transcript 键写成 `Ctrl+E` 的错误（实际是 `Ctrl+T`） |
-| 权限规则 | `.agent-kernel/permissions.json` 的 allow / ask / deny，按 argv 前缀匹配、复合命令拆开逐条判、拆不动的一律要问；审批菜单加「以后不再问（本工作区）」直接写回规则。见 [ADR-0018](../../docs/adr/0018-project-permission-rules.md) |
+| 权限规则（已废弃） | 曾实现 `.agent-kernel/permissions.json` 的 allow / ask / deny 与「以后不再问」。2026-11-12 随 [ADR-0019](../adr/0019-full-access-is-the-only-mode.md) 删除 |
 | 工具细节 | 后台任务的输出读取与收尾（`shell-output` / `shell-kill`）——不算能力扩张，是 `shell` 那半个功能的收尾 |
 | 错误与恢复 | 进程树清理失败不再终止整轮，改成返回错误让模型继续 |
 
@@ -195,7 +195,6 @@
 | 老终端粘贴兜底 | 同批多行合并，Claude Code 至今仍会逐行发送 |
 | 字形自动降级 + 强制开关 | 两家只用 Unicode，老 conhost 会出方块 |
 | `PgUp` 暂停刷新 | 应对「运行中翻不了历史」，Claude Code 只有未解 issue |
-| 审批期间撤权复验 | 批准后如果权限被改过，旧批准不生效 |
 | 每次 Run 的 token/工具预算 | 两家有预算概念，我们的实现更显式 |
 | 失败分类为纯展示事实（`isToolResultFailure`） | 不改工具结果文本，只影响展示 |
 
@@ -203,8 +202,6 @@
 
 | 项 | Claude Code | 我们 | 风险 |
 | --- | --- | --- | --- |
-| 审批占用输入区 | 菜单顶掉输入框，草稿保留 | 同（今天才补） | 之前两处路径不一致，主视图漏了 |
-| 拒绝的语义 | 带原因 + 让模型换方案 | 同（今天才补） | 之前只有 `ERROR:`，模型重试到烧 token |
 | 折叠层级 | 2 层 | 主视图 2 层 / transcript 3 层 | 层级多了符号区分不开 |
 | 后台任务 | 有 `BashOutput` / `KillShell` | 只有 pid | 模型得自己查真实 pid |
 

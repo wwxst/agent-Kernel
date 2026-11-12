@@ -3,8 +3,9 @@
  *
  * 这个模块把三件「容易写错、但调用方不该关心」的事情关在门后：
  *
- *   1. 路径必须留在工作区内。模型会写出 "../../etc/passwd" 这种参数（不是它坏，
- *      是它在按训练数据里的「常见写法」猜），所以每次读写前都要 resolve + 校验。
+ *   1. 路径要解析成真实位置。相对路径相对工作区根目录，绝对路径直接使用，
+ *      `..` 可以走出工作区；链接解析到实际目标。这里**没有**工作区边界 ——
+ *      能碰什么由启动 Agent 的操作系统账户决定，不由本模块决定。
  *   2. 输出必须有上限。一条命令刷屏几万行就能把上下文撑爆，读和跑都要截断。
  *   3. 命令必须有超时。命令可能永远不结束（比如起了个 dev server）。
  *
@@ -86,6 +87,36 @@ function toPosix(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
 }
 
+/**
+ * `candidate` 是否在 `base` 之外。
+ *
+ * 用 path.relative 判断，而不是字符串 startsWith：后者会把 `..notes` 这种合法名字误判。
+ * 返回绝对路径（Windows 换了盘符）同样算在外面。
+ */
+function escapes(base: string, candidate: string): boolean {
+  const relative = path.relative(base, candidate);
+  return relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+}
+
+/**
+ * 把绝对 glob 模式拆成「不含通配符的静态目录」+「相对模式」。
+ *
+ * 没有通配符时，整条路径就是文件名：搜索它的父目录并精确匹配名字。
+ * Windows 的 `D:/**` 只拆出盘符时补一个斜杠，避免 `path.resolve("D:")`
+ * 被解释成「D 盘当前目录」。
+ */
+function splitAbsoluteGlob(pattern: string): { base: string; relative: string } {
+  const segments = toPosix(pattern).split("/");
+  let index = 0;
+  while (index < segments.length && !/[*?]/.test(segments[index]!)) index++;
+  const relative = segments.slice(index).join("/");
+  if (relative === "") return { base: path.dirname(pattern), relative: path.basename(pattern) };
+
+  const head = segments.slice(0, index).join("/");
+  const base = head === "" ? path.parse(pattern).root : /^[A-Za-z]:$/.test(head) ? `${head}/` : head;
+  return { base, relative };
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 
 /** Windows taskkill 卡住时不能让单条 Shell 进入无限等待；超时之后只能报告清理未确认。 */
@@ -125,7 +156,10 @@ const MAX_JOB_WAIT_MS = 60_000;
 const NO_FOLLOW_FILE = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
 
 export interface WorkspaceOptions {
-  /** 工作区根目录，必须是绝对路径。文件工具的相对路径都相对它解析 —— 它不是安全边界（见 ADR-0008）。 */
+  /**
+   * 工作区根目录，必须是绝对路径。相对路径以它为基准解析 ——
+   * 它是「默认位置」，不是访问边界（见 ADR-0008 / ADR-0019）。
+   */
   root: string;
   /** 单条 shell 命令的超时，默认 120 秒。 */
   timeoutMs?: number;
@@ -269,7 +303,7 @@ export class Workspace {
    * 就能把进程撑爆。上限必须落在「读进来多少」，而不是「返回多少」。
    */
   async read(requested: string): Promise<string> {
-    const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
+    const file = await this.resolveReal(this.resolve(requested), requested);
 
     const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
     const cut = truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
@@ -323,7 +357,7 @@ export class Workspace {
       }
 
       // 临时写入可能经过多轮异步 I/O；在提交点前再次复查路径、并发修改和取消。
-      const current = await this.assertInsideWorkspace(target, requested);
+      const current = await this.resolveReal(target, requested);
       if (current !== target) throw new Error(`file target changed before commit: ${requested}`);
       if (original !== undefined) {
         const latest = await lstat(target);
@@ -346,10 +380,10 @@ export class Workspace {
 
   /** 创建或覆盖文件，父目录自动补齐；写入失败时保留既有文件内容。 */
   async write(requested: string, content: string): Promise<string> {
-    const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
+    const file = await this.resolveReal(this.resolve(requested), requested);
     this.stopIfCancelledBeforeWrite();
     await mkdir(path.dirname(file), { recursive: true });
-    const target = await this.assertInsideWorkspace(file, requested);
+    const target = await this.resolveReal(file, requested);
     this.stopIfCancelledBeforeWrite();
 
     // 既有文件先检查可写权限，但不截断；Windows/Unix 的普通权限拒绝仍保持原语义。
@@ -394,7 +428,7 @@ export class Workspace {
    * 已知边界：提交前身份复查减少并发覆盖，但不能消除复查与 rename 之间的竞态。
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
-    const file = await this.assertInsideWorkspace(this.resolve(requested), requested);
+    const file = await this.resolveReal(this.resolve(requested), requested);
     if (oldString === "") {
       // 中文对照：old_string 不能是空串。
       throw new Error("old_string must not be empty");
@@ -453,7 +487,7 @@ export class Workspace {
    * 模型会把「没列出来」当成「不存在」。
    */
   async list(requested: string): Promise<string> {
-    const dir = await this.assertInsideWorkspace(this.resolve(requested), requested);
+    const dir = await this.resolveReal(this.resolve(requested), requested);
 
     const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
     let scanned = 0;
@@ -496,32 +530,36 @@ export class Workspace {
   }
 
   /**
-   * 按模式找文件，返回相对工作区根目录的路径，一行一个，排好序。
+   * 按模式找文件，一行一个，排好序。
    *
-   * 做法是「在工作区里走，拿模式去套」，而不是把模式交给 `fs.glob` 去展开。
-   * 展开派（`fs.glob`）支持花括号展开（`{../outside,src}` 会变成两条模式）之类的语法，
-   * 光靠字符串切分拦不住，能直接跑到工作区外；自己走目录则从结构上走不出去。
+   * 搜索根默认是工作区根目录，也可以用 `path` 指向别的目录（含工作区外）；
+   * 模式里的绝对路径同样可用。返回路径在工作区内时相对工作区根目录，
+   * 在工作区外时用绝对路径 —— 同一个显示规则也适用于 grep，模型不需要猜。
+   *
+   * 做法是「在搜索根里走，拿模式去套」，而不是把模式交给 `fs.glob` 去展开：
+   * 自己走目录才能让扫描预算、跳过规则和结果上限都真实生效。
    *
    * 代价：支持的语法只有 `*`、`**`、`?`，其余字符（含 `{ } [ ]`）按字面匹配。
    */
-  async glob(pattern: string): Promise<string> {
+  async glob(pattern: string, requested = "."): Promise<string> {
     if (pattern === "") throw new Error("pattern must not be empty");
-    if (pattern.split(/[\\/]/).includes("..")) throw new Error(`path escapes workspace: ${pattern}`);
-    if (path.isAbsolute(pattern)) throw new Error(`pattern must be relative to the workspace root: ${pattern}`);
+    const search = await this.resolveGlobRoot(pattern, requested);
 
-    const matcher = globToRegExp(toPosix(pattern));
+    const matcher = globToRegExp(search.pattern);
+    const rootReal = await this.realRoot();
+    const outsideRoot = escapes(rootReal, search.base);
     const budget = { remaining: this.scanLimit };
     const matches: string[] = [];
     let hitLimit = false;
-    for await (const file of walkFiles(this.root, budget)) {
-      const relative = toPosix(path.relative(this.root, file));
+    for await (const file of walkFiles(search.base, budget)) {
+      const relative = toPosix(path.relative(search.base, file));
       if (!matcher.test(relative)) continue;
       // 第 MAX_RESULTS+1 条命中只用来判断「还有更多」，不塞进结果。
       if (matches.length === MAX_RESULTS) {
         hitLimit = true;
         break;
       }
-      matches.push(relative);
+      matches.push(outsideRoot ? toPosix(file) : toPosix(path.relative(rootReal, file)));
     }
 
     // 排序的是「已收集到的」命中；提前停手时它只是局部顺序，不代表整棵树的全局顺序 ——
@@ -531,6 +569,36 @@ export class Workspace {
       (hitLimit ? `\n… (stopped at ${MAX_RESULTS} matches)` : "") + scanTail(budget, this.scanLimit);
     if (matches.length === 0) return `(no matches)${tails}`;
     return this.clip(matches.join("\n"), tails);
+  }
+
+  /**
+   * 把 glob 模式拆成「遍历起点 + 相对模式」。
+   *
+   * 允许三种写法：相对模式（相对 `path`）、绝对模式、以及开头带 `../` 的相对模式。
+   * 模式中间的 `..` 一律拒绝：它在 glob 语义里没有唯一解释，猜错就是静默搜错地方。
+   */
+  private async resolveGlobRoot(pattern: string, requested: string): Promise<{ base: string; pattern: string }> {
+    if (path.isAbsolute(pattern)) {
+      const split = splitAbsoluteGlob(pattern);
+      if (split.relative.split("/").includes("..")) {
+        throw new Error(`invalid absolute glob pattern: ${pattern}`);
+      }
+      return { base: await this.resolveReal(split.base, requested), pattern: split.relative };
+    }
+
+    const segments = toPosix(pattern).split("/");
+    let index = 0;
+    let base = this.resolve(requested);
+    while (segments[index] === "..") {
+      base = path.dirname(base);
+      index++;
+    }
+    const rest = segments.slice(index).join("/");
+    if (rest === "") throw new Error(`glob pattern must name something to match: ${pattern}`);
+    if (rest.split("/").includes("..")) {
+      throw new Error(`glob pattern may only use ".." at the start: ${pattern}`);
+    }
+    return { base: await this.resolveReal(base, requested), pattern: rest };
   }
 
   /**
@@ -558,11 +626,10 @@ export class Workspace {
     assertValidPattern(source, flags);
 
     // grep 是读取已有目录，不是 write 的创建路径：起点必须真实存在。
-    // 先 realpath 再校验，不能在别名短暂消失时退回到“最近存在的父目录”，
-    // 否则别名重建为指向外部时，后续 opendir 会在工作区外遍历。
-    const existing = await realpath(this.resolve(requested));
-    const start = await this.assertInsideWorkspace(existing, requested);
+    // realpath 同时把链接解析成实际目标，后续遍历不会在解析后被别名换掉。
+    const start = await realpath(this.resolve(requested));
     const rootReal = await this.realRoot();
+    const outsideRoot = escapes(rootReal, start);
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
@@ -620,8 +687,8 @@ export class Workspace {
           for (const lineNumber of lineNumbers) {
             const line = lines[lineNumber - 1].trim();
             hits.push({
-              // 物理扫描路径必须相对物理 root，Windows 的临时目录别名不能变成 ../../...。
-              file: toPosix(path.relative(rootReal, file)),
+              // 工作区内相对工作区根目录；工作区外用绝对路径，避免一串 ../../ 无法定位。
+              file: outsideRoot ? toPosix(file) : toPosix(path.relative(rootReal, file)),
               line: lineNumber,
               // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
               text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
@@ -957,34 +1024,27 @@ export class Workspace {
   }
 
   /**
-   * 把模型给的相对路径解析成绝对路径，并确保它没有跑出工作区。
+   * 把模型给的路径解析成绝对路径。
    *
-   * 判断用的是 path.relative 的结果，而不是简单的字符串 startsWith("..")：
-   * 后者会把 "..notes.md" 这种合法文件名也误杀，属于典型的路径校验 bug。
+   * 相对路径相对工作区根目录；绝对路径直接使用；`..` 可以走出工作区。
+   * 这里刻意不做「是否在工作区内」的判断：Full Access 下能碰什么由启动 Agent 的
+   * 操作系统账户决定，把工作区根目录当成权限边界只会让 Shell 与文件工具能力不一致。
    */
   private resolve(requested: string): string {
-    const absolute = path.resolve(this.root, requested);
-    const relative = path.relative(this.root, absolute);
-
-    // relative 为空 = 就是根目录本身；以 ".." 开头 = 跑到了根目录外面；
-    // 返回绝对路径 = 换了盘符（Windows 上 "D:\x" 相对 C:\root 就是这种情况）。
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      // 中文对照：路径跑出了工作区：{原始路径}
-      throw new Error(`path escapes workspace: ${requested}`);
-    }
-    return absolute;
+    return path.resolve(this.root, requested);
   }
 
   /**
-   * 守住「真实路径」：链接（symlink / junction）会让词法上看着在工作区里的路径跑到外面去，
-   * 所以每次真正碰文件系统之前，都要把解析后的真实路径再比一次。
+   * 把路径解析到真实位置（链接解析后）。
    *
-   * 目标还不存在时（比如 write 新文件），沿父目录一路往上找第一个存在的路径再比 ——
-   * 谁想在链接目录里新建文件，也一样得先过这道关。
+   * 链接（symlink / junction）会让词法路径与实际目标分叉，所以真正碰文件系统之前
+   * 一律换成真实路径：后续 I/O 使用的是同一个位置，不会在解析后被别名换成别处。
+   *
+   * 目标还不存在时（比如 write 新文件），沿父目录一路往上找第一个存在的路径，
+   * 再把尚不存在的部分拼回去 —— 在链接目录里新建文件，也照样落到真实目标上。
+   * 路径存在却解析不了（坏链接）时不猜它指向哪，直接报错。
    */
-  private async assertInsideWorkspace(absolute: string, requested: string): Promise<string> {
-    const rootReal = await this.realRoot();
-
+  private async resolveReal(absolute: string, requested: string): Promise<string> {
     let probe = absolute;
     let real = "";
     for (;;) {
@@ -997,24 +1057,14 @@ export class Workspace {
           () => true,
           () => false,
         );
-        if (exists) {
-          // 中文对照：路径跑出了工作区：{原始路径}
-          throw new Error(`path escapes workspace: ${requested}`);
-        }
+        if (exists) throw new Error(`cannot resolve path: ${requested}`);
         const parent = path.dirname(probe);
         if (parent === probe) throw error;
         probe = parent;
       }
     }
 
-    const relative = path.relative(rootReal, real);
-    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-      // 中文对照：路径跑出了工作区：{原始路径}
-      throw new Error(`path escapes workspace: ${requested}`);
-    }
-
     // 已存在的路径返回 realpath；尚未创建的文件拼回最接近的真实父目录。
-    // 后续 I/O 使用此路径，而不是再解析模型原始传入的链接别名。
     return path.resolve(real, path.relative(probe, absolute));
   }
 
@@ -1318,8 +1368,8 @@ function assertValidPattern(source: string, flags: string): void {
  * 把 glob 模式翻译成正则（给「自己走目录再匹配」用）。
  *
  * 只认三种通配：`**` 跨目录、`*` 单层内任意、`?` 单个字符；
- * 其余字符一律按字面匹配 —— 特别是 `{ }` 和 `[ ]` 不再有特殊含义，
- * 这正是防止「花括号展开跑到工作区外」的那道结构性保险。
+ * 其余字符一律按字面匹配 —— 特别是 `{ }` 和 `[ ]` 不再有特殊含义。
+ * 这既是「模式语义可预测」的要求，也让扫描范围只由搜索根和模式本身决定。
  */
 function globToRegExp(pattern: string): RegExp {
   let source = "";
@@ -1357,7 +1407,8 @@ function globToRegExp(pattern: string): RegExp {
  * 预算要限制的是「真的读了多少目录项」，而 readdir 在预算生效之前就已经把目录读完了。
  *
  * 跳过 SKIP_DIRS，也跳过符号链接（`isFile` 对链接返回 false）：
- * 链接可能指向工作区之外，顺着它走就等于把路径守卫绕开了。
+ * 链接可能指向任意位置，顺着它走既可能绕圈，也会让扫描预算落在无法预期的目录树上。
+ * 链接本身仍然可以被直接访问 —— 把它作为搜索起点时，realpath 会解析到实际目标。
  *
  * budget 是调用方给的扫描预算：每访问一个目录项就减一，减到 0 立刻收手。
  * 预算耗尽时调用方用 scanTail() 告诉模型「结果不完整」。
@@ -1420,6 +1471,14 @@ function scanTail(budget: { remaining: number }, limit: number): string {
  * 下面每段英文文案（description / 参数说明）上面都有一行中文对照：
  * 英文是真正发给模型的原文，中文只存在于源码里，不会被发出去。
  */
+/** 文件路径说明：相对路径以工作区根目录为基准，绝对路径和 ../ 都能用。 */
+const PATH_DESCRIPTION =
+  "File path. Relative paths resolve from the workspace root; absolute paths and ../ are allowed.";
+
+/** 目录说明：默认工作区根目录，也可以指向任意其他目录。 */
+const DIR_DESCRIPTION =
+  "Directory path. Relative paths resolve from the workspace root; absolute paths and ../ are allowed. Defaults to the workspace root.";
+
 export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
@@ -1429,8 +1488,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       parameters: {
         type: "object",
         properties: {
-          // 相对工作区根目录的路径。
-          path: { type: "string", description: "Path relative to the workspace root." },
+          // 文件路径：相对路径以工作区根目录为基准，绝对路径与 ../ 同样可用。
+          path: { type: "string", description: PATH_DESCRIPTION },
         },
         required: ["path"],
       },
@@ -1444,8 +1503,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       parameters: {
         type: "object",
         properties: {
-          // 相对工作区根目录的路径。
-          path: { type: "string", description: "Path relative to the workspace root." },
+          // 文件路径：相对路径以工作区根目录为基准，绝对路径与 ../ 同样可用。
+          path: { type: "string", description: PATH_DESCRIPTION },
           // 要写入的完整文件内容。
           content: { type: "string", description: "Full file content to write." },
         },
@@ -1461,8 +1520,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       parameters: {
         type: "object",
         properties: {
-          // 相对工作区根目录的路径。
-          path: { type: "string", description: "Path relative to the workspace root." },
+          // 文件路径：相对路径以工作区根目录为基准，绝对路径与 ../ 同样可用。
+          path: { type: "string", description: PATH_DESCRIPTION },
           // 要替换的原文，必须恰好出现一次。
           old_string: { type: "string", description: "Exact text to replace; must appear exactly once." },
           // 替换成什么；空串表示删掉这一段。
@@ -1475,18 +1534,22 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "glob",
-      // 按模式找文件（支持 *、**、?），返回相对工作区根目录的路径；例如 "src/**/*.ts"。
+      // 按模式找文件（支持 *、**、?）；例如 "src/**/*.ts"。搜索根默认工作区根目录。
       description:
-        'Find files by glob pattern (supports *, ** and ?) and return their paths relative to the workspace root. Example: "src/**/*.ts".',
+        'Find files by glob pattern (supports *, ** and ?). The pattern may be relative to the search root or absolute. ' +
+        'Results are relative to the workspace root, or absolute when the search root is outside it. ' +
+        'Example: "src/**/*.ts".',
       parameters: {
         type: "object",
         properties: {
           // 要匹配的模式；** 可以跨目录。
           pattern: { type: "string", description: 'Glob pattern such as "src/**/*.ts"; ** crosses directories.' },
+          // 从哪个目录开始找；默认工作区根目录，也可以指向任意其他目录。
+          path: { type: "string", description: DIR_DESCRIPTION },
         },
         required: ["pattern"],
       },
-      run: async (args) => workspace.glob(String(args.pattern)),
+      run: async (args) => workspace.glob(String(args.pattern), String(args.path ?? ".")),
     },
     {
       name: "grep",
@@ -1498,8 +1561,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         properties: {
           // 要搜索的正则（JavaScript 语法，逐行匹配）；fixed=true 时按字面字符串解释。
           pattern: { type: "string", description: "JavaScript regular expression, matched line by line." },
-          // 从哪个目录开始搜；默认工作区根目录。
-          path: { type: "string", description: "Directory to search, relative to the workspace root. Defaults to the root." },
+          // 从哪个目录开始搜；默认工作区根目录，也可以指向任意其他目录。
+          path: { type: "string", description: DIR_DESCRIPTION },
           // 正则标志：i 忽略大小写，m / s / u 按 JS 语义；g 会被忽略。
           flags: { type: "string", description: "Regex flags: i, m, s, u (g is ignored)." },
           // true 时把 pattern 当字面字符串，不解释正则元字符。
@@ -1520,8 +1583,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       parameters: {
         type: "object",
         properties: {
-          // 相对工作区根目录的目录。
-          path: { type: "string", description: "Directory relative to the workspace root." },
+          // 目录路径：相对路径以工作区根目录为基准，绝对路径与 ../ 同样可用。
+          path: { type: "string", description: DIR_DESCRIPTION },
         },
         required: ["path"],
       },
@@ -1531,13 +1594,14 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       name: "shell",
       // 在工作区根目录跑一条 shell 命令；返回 exit code 和 stdout/stderr。
       // 起服务这类不退出命令必须用 background，否则会阻塞到超时。
-      description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr. " +
+      description: "Run a shell command; returns exit code plus stdout/stderr. " +
+        "The working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
         "Use background:true for servers or anything that never exits - a foreground call blocks until it times out.",
       parameters: {
         type: "object",
         properties: {
-          // 要执行的命令；工作区根目录就是它的 cwd。
-          command: { type: "string", description: "Shell command, executed with the workspace root as cwd." },
+          // 要执行的命令；工作区根目录是默认 cwd，命令内部可以自行 cd。
+          command: { type: "string", description: "Shell command, executed with the workspace root as cwd unless it cds elsewhere." },
           // 后台执行：立即返回任务编号，进程不会随这次调用结束；用 shell-output 看输出，shell-kill 停掉。
           background: {
             type: "boolean",

@@ -44,28 +44,16 @@ _Avoid_: function, handler, plugin
 一次 Run 里提供给模型的全部 Tool，以及把每个 Tool call 执行成一条 Tool result 的那一步。
 _Avoid_: toolbelt, toolbox, tool set
 
-**Permission**:
-宿主对一次 **Tool call** 放不放行的策略，三档：`read-only`、`workspace-write`、`full-access`。它在 **Tool registry** 的参数校验之后、执行之前检查；拒绝折成 **ERROR text**。它只约束工具调用，不改变操作系统的权限。宿主必须显式注入 `Permission` 或 `null`（主动关闭检查），漏传不会被当成默认放行。
-_Avoid_: sandbox, isolation, ACL
-
-**Permission mode**:
-**Permission** 的当前档位。CLI 默认 `workspace-write`；`--permission` 决定起始值，TUI 的 `/permission` 切换，`/reset` 不改变它。
-_Avoid_: permission level, security level
-
-**Permission prompt**:
-宿主写进唯一 system **Message** 的当前权限说明，由 `permissionPrompt(mode)` 生成。每次模型请求前刷新；`/permission` 切换后下一次请求生效，`/reset` 保留当前 mode。它只指导模型，不执行检查。
-_Avoid_: policy prompt（Policy 是 **Permission** 本身）, system rules（太泛）
-
-**Approval**:
-`workspace-write` 下 **shell** 的逐次人工确认：允许一次或拒绝。无 TTY、取消、EOF、审批异常都按拒绝处理；批准不缓存，下一条命令重新问。一次性任务和 **TUI** 共用同一套前置门与 `y` / `yes` 判定，只是展示位置不同。
-_Avoid_: confirmation prompt, policy, permission（Permission 是模式判断，Approval 是其中一次询问）
+**Full access**:
+agent-Kernel 唯一的运行模式：工具与 **shell** 直接执行，没有审批、没有模式切换，也没有 **Workspace** 目录边界。它取消的是 agent-Kernel 自己施加的限制，不是提权——进程仍以启动它的操作系统账户运行。
+_Avoid_: sandbox, permission mode, admin mode（它不是提权）
 
 **TUI**:
-CLI 的 Claude Code 风格聊天式界面。**主视图**在主屏就地追加：已定稿的行打印一次进 Shell 滚动历史，只有底部活动区（当前轮内容 + 输入框 + 状态行）重绘，不切 alternate screen、不捕获鼠标、不引 TUI 库；**transcript 视图**（`Ctrl+T`）临时进备用屏，用绝对光标定位 + 差分重绘回看和展开历史。有颜色/字形降级和 resize，只保留最后一屏。非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或 **Permission**。
+CLI 的 Claude Code 风格聊天式界面。**主视图**在主屏就地追加：已定稿的行打印一次进 Shell 滚动历史，只有底部活动区（当前轮内容 + 输入框 + 状态行）重绘，不切 alternate screen、不捕获鼠标、不引 TUI 库；**transcript 视图**（`Ctrl+T`）临时进备用屏，用绝对光标定位 + 差分重绘回看和展开历史。有颜色/字形降级和 resize，只保留最后一屏。非 TTY 退化为逐行输出。它只是 **Session** 的外壳，不改变 **Transcript**、预算或工具执行。
 _Avoid_: dashboard, full-screen app, UI framework
 
 **Status bar**:
-TUI 的状态显示；v0.3 拆成顶部 header（项目 / model / workspace）和输入框下方的状态行（当前 **Permission mode** + **Session** 的 requests / tool calls / tokens）。
+TUI 的状态显示；v0.3 拆成顶部 header（项目 / model / workspace）和输入框下方的状态行（固定的 `权限：完全访问` + **Session** 的 requests / tool calls / tokens）。
 _Avoid_: header, banner
 
 **Thinking**:
@@ -77,8 +65,8 @@ TUI 里给人看的滚动记录：模型回复、**Tool call**、**Tool result**
 _Avoid_: transcript, history, context
 
 **Sandbox**:
-操作系统级隔离：容器、虚拟机、独立用户、只读挂载之类。本仓库没有实现 Sandbox；**Permission** 与 **Workspace** 的路径守卫都不是 Sandbox。
-_Avoid_: permission, workspace（这两个都不是隔离）
+操作系统级隔离：容器、虚拟机、独立用户、只读挂载之类。本仓库没有实现 Sandbox；**Full access** 与 **Workspace** 都不是 Sandbox。
+_Avoid_: full access, workspace（这两个都不是隔离）
 
 **Tool result**:
 一次 Tool call 的文本答复，以 tool Message 回灌进 Transcript。
@@ -89,16 +77,12 @@ _Avoid_: output, observation, response
 _Avoid_: exception, failure, error object
 
 **Workspace**:
-Tool 被允许触碰的目录树，根目录由 `WORKDIR` 决定。正在跑的 shell 响应同一个取消信号，停止时要等整棵进程树被收掉。
+相对路径的默认基准目录，根目录由 `WORKDIR` 决定。它**不是访问边界**：绝对路径、`../`、其他磁盘都可用。正在跑的 shell 响应同一个取消信号，停止时要等整棵进程树被收掉。
 _Avoid_: cwd, working directory, project root, sandbox
 
 **Background job**:
 `shell` 带 `background:true` 起的一次脱离进程，由宿主登记成一个编号（`job-1`）。它的输出写进系统临时目录的日志文件，**不写工作区**；`shell-output` 按字节游标只返回新长出来的部分，`shell-kill` 停整棵进程树。日志接文件而不是管道，是因为管道的 handle 会让宿主进程退不出去（见 [踩坑记录](./docs/notes/background-jobs.md)）。
 _Avoid_: daemon, service, task queue, session（它不是会话，也不排队）
-
-**Permission rule**:
-「这条命令要不要问」，分三层：本地 `.agent-kernel/permissions.local.json`（只有你，自动 gitignore）、项目 `.agent-kernel/permissions.json`（团队共享，进版本库）、用户 `~/.agent-kernel/permissions.json`（跨项目习惯）。一条规则是工具名加命令（`shell:git status`），**按参数数组比较**，不是按字符串前缀——后者会让 `git status && rm -rf /` 也命中。单段命令是前缀规则（`git status` 也放行 `git status --short`）；多段命令是**整条精确规则**（`cd demo && node server.js` 只认一模一样的那条）。`&&` `||` `;` `|` 连起来的命令在裁决时会拆开逐条判；拆不动（含 `$`、通配、重定向）的命令只能用**整条精确规则**，前缀规则永远匹配不上它们。`deny` 跨层最强，其余按层序（本地压过项目压过用户），只在 `workspace-write` 生效。见 [ADR-0018](./docs/adr/0018-project-permission-rules.md)。
-_Avoid_: allowlist（它听起来只放行不拒绝）, ACL, policy file
 
 **Step limit**:
 一次 Run 允许的最大 Step 数（模型请求数）；到达即失败，而不是返回半成品。它不限制工具执行次数，后者是 **Tool call budget**。
@@ -126,20 +110,17 @@ _Avoid_: LLM, model, provider
 - **Transcript** 是 **Message** 的序列；每个 **Step** 追加一条 assistant **Message**，它可能携带多个 **Tool call**。
 - 每个 **Tool call** 恰好由一条 **Tool result** **Message** 答复，两者靠 id 配对；没有执行的调用也留一条 `not run` 结果，配对不为预算或取消让路。
 - **Tool registry** 持有 N 个 **Tool**，这些 **Tool** 只作用于一个 **Workspace**。
-- 每个 **Tool call** 在参数校验通过后先过 **Permission**；拒绝时工具不执行，结果是一条 **ERROR text**。
-- **Permission** 只约束 Tool call，不改变进程权限；**shell** 放行后与启动者同权，可以离开 **Workspace**。
-- 一个 **Session** 有一个 **Permission mode**；`/reset` 换 Agent，但不换 mode。
-- 每次 **Step** 的模型请求前，**Permission prompt** 刷新唯一的 system Message；它只负责指导，放行/拒绝仍由 **Tool registry** 执行。
+- 每个 **Tool call** 在参数校验通过后直接执行；普通失败折成 **ERROR text**，模型下一轮自己纠正。
+- **Full access** 不改变进程权限：**shell** 与文件工具都以启动者同权执行，可以离开 **Workspace**。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
-- **TUI** 是 **Session** 的一个外壳：**Status bar** 显示项目 / model / workspace，输入框下方显示 **Permission mode** 和 **Session** 统计，**Run log** 显示模型回复、Tool call、Tool result 与拒绝原因；输入复用同一套 `/permission`、`/reset`、`/help`、`/exit`，固定在底部。
+- **TUI** 是 **Session** 的一个外壳：**Status bar** 显示项目 / model / workspace，输入框下方显示固定的完全访问标签和 **Session** 统计，**Run log** 显示模型回复、Tool call 与 Tool result；输入复用同一套 `/reset`、`/help`、`/exit`，固定在底部。
 - 每次 **Step** 的模型请求发出后、第一段输出前显示 **Thinking**；第一段正文、Tool call 或错误会清掉它。它不是模型的 `reasoning_content`。
 - **Run log** 不是 **Transcript**：前者只负责显示，后者才是发给模型的记忆；删掉 Run log 不会改变任何一轮请求。
-- **Approval** 在一次性任务与 TUI 里是同一个策略判断，只是问题出现的位置不同：一次性任务用多行 prompt，TUI 先写运行记录再读单行 `y/N`。
 
 ## Flagged ambiguities
 
 - "agent" 既指整个程序（CLI 加 Kernel），也指循环本身。本仓库里 **Kernel** 专指循环，**Run** 专指一次执行；"agent" 只作为项目名出现。
 - "error" 有两种：**ERROR text** 是回灌给模型的文本；异常（throw）只出现在 Tool 之外的宿主代码里。
-- "permission" 不是 "sandbox"：**Permission** 只决定一次 Tool call 放不放行；**Sandbox** 是操作系统级隔离，本仓库没有实现。
+- "full access" 不是 "sandbox"：**Full access** 是「不再自己施加限制」；**Sandbox** 是操作系统级隔离，本仓库没有实现。
 - "log" 有两种：**Run log** 是 TUI 给人看的滚动记录；**Transcript** 是模型记忆。两者不互为副本，也不要求同步。

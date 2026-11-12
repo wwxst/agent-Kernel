@@ -1,8 +1,8 @@
 /**
- * TUI 显示与审批的单元测试：用假输入/输出流驱动，不需要真终端。
+ * TUI 显示的单元测试：用假输入/输出流驱动，不需要真终端。
  *
- * 断言的是外部行为：状态栏有什么、运行记录怎么分类、审批提示是否完整、
- * y/N 是否真的变成放行/拒绝。固定布局的转义序列只在这里做最低限度的保护性断言，
+ * 断言的是外部行为：状态栏有什么、运行记录怎么分类、工具结果怎么展示。
+ * 固定布局的转义序列只在这里做最低限度的保护性断言，
  * 真实终端行为留给手动验收 —— 没有 TTY 的 CI 不该假装自己验过光标。
  */
 import assert from "node:assert/strict";
@@ -169,10 +169,10 @@ function rowWith(ui, pattern) {
 }
 
 /**
- * 一套假终端。interactive=true 只打开审批通道；tty=true 才模拟 stdout 是终端，
- * 从而启用固定布局。两者分开，才能在无 TTY 的测试里单独验证审批逻辑。
+ * 一套假终端。interactive 模拟真实键盘输入；tty=true 才模拟 stdout 是终端，
+ * 从而启用固定布局。两者分开，才能单独验证行式输出与固定布局。
  */
-function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", theme = "dark", flowInput = false, language, term = "xterm-256color", onPermissionChange, model = "mock-model", workspace = "C:\\work\\repo" } = {}) {
+function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, color = false, colorMode = "full", theme = "dark", flowInput = false, language, term = "xterm-256color", model = "mock-model", workspace = "C:\\work\\repo" } = {}) {
   const input = new PassThrough();
   const output = new PassThrough();
   if (tty) {
@@ -192,7 +192,6 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     output,
     model,
     workspace,
-    permission: "workspace-write",
     controller,
     interactive,
     columns,
@@ -202,7 +201,6 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
     theme,
     flowInput,
     language,
-    onPermissionChange,
   });
   if (previousTerm === undefined) delete process.env.TERM;
   else process.env.TERM = previousTerm;
@@ -277,52 +275,6 @@ test("TUI 主题：light 换成浅底深字，ansi 强制 16 色", async (t) => 
   // ansi：就是要终端自己那套 16 色，rich 探测说了不算。
   assert.match(ansi.text(), /\x1b\[33m/);
   assert.doesNotMatch(ansi.text(), /\x1b\[38;5;215m/, "ansi 主题不能落到 256 色强调色");
-});
-
-
-test("TUI 审批期间状态行说「等待审批」，不说「正在执行」", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("跑一条命令");
-  await tick();
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
-  await tick();
-  const screen = screenRows(ui, 30).join("\n");
-  assert.match(screen, /等待审批/);
-  assert.doesNotMatch(screen, /正在执行/, "审批时命令一条都还没跑，不能显示正在执行");
-
-  ui.input.write("\r");
-  await pending;
-});
-
-
-test("TUI 审批期间重绘不能吃掉已经打印的历史行", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("跑一条命令");
-  for (let i = 0; i < 12; i++) ui.tui.logLine(`HIST_${String(i).padStart(2, "0")}`);
-  await tick();
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
-  await tick();
-  const count = () => screenRows(ui, 30).filter((line) => /HIST_\d\d/.test(line)).length;
-  const before = count();
-  assert.ok(before > 0, "审批前应当已经有历史行");
-
-  // 审批期间活动计时器每秒重绘一次（「已等待 N 秒」就是这么走的）。
-  // 每次重绘都必须从同一个位置回退；退多了就会把上方的历史一行一行擦掉。
-  await new Promise((resolve) => setTimeout(resolve, 1_200));
-  const afterOne = count();
-  await new Promise((resolve) => setTimeout(resolve, 1_200));
-  const afterTwo = count();
-
-  ui.input.write("\r");
-  await pending;
-  assert.equal(afterOne, before, "第一次重绘就吃掉了一行历史");
-  assert.equal(afterTwo, before, "重绘次数越多，被吃掉的行越多");
 });
 
 
@@ -694,48 +646,6 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   assert.doesNotMatch(rowWith(ui, /Thinking\.\.\./), /Thinking/, "正文后不再残留等待态");
 });
 
-test("TUI：Shell 审批三项菜单，简单命令可以「以后不再问」，空回车默认拒绝", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, color: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  pending.catch(() => {});
-  await tick();
-  assert.match(ui.text(), /Do you want to proceed\?/);
-  assert.match(ui.text(), /1\. Yes, allow once/);
-  assert.match(ui.text(), /2\. Yes, and don't ask again for "echo safe" in this workspace/);
-  assert.match(ui.text(), /3\. No \(default\)/);
-  assert.match(ui.text(), /Esc to cancel/);
-  assert.doesNotMatch(ui.text(), /↑↓ select · Enter · Esc >/, "审批期间没有额外文字输入行");
-  assert.match(ui.text(), /\x1b\[\?25l/, "审批期间隐藏终端光标");
-  assert.match(ui.text(), /\x1b\[39m[^\x1b]*echo safe/);
-  ui.input.write("\r");
-  assert.equal(await pending, false);
-  const finalInput = ui.text().slice(ui.text().lastIndexOf("\x1b[19;1H\x1b[2K"));
-  assert.match(ui.text(), /\x1b\[\?25h/, "审批结束必须恢复终端光标");
-  assert.doesNotMatch(finalInput, /Esc to cancel/, "审批结束后恢复普通聊天输入提示");
-});
-
-test("TUI 审批菜单：带重定向和 $? 的命令也能「以后不再问」", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, color: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  // 这类命令切不开，但可以按整条原文记住。真实命令几乎都长这样——
-  // 不给这一项，等于让「以后不再问」在实战里从不出现。
-  const pending = ui.tui.approve({
-    tool: "shell",
-    args: { command: 'curl -i http://localhost:8099/ 2>&1; echo "---EXIT $?---"' },
-  });
-  pending.catch(() => {});
-  await tick();
-  assert.match(ui.text(), /1\. Yes, allow once/);
-  assert.match(ui.text(), /2\. Yes, and don't ask again for "curl -i http/);
-  assert.match(ui.text(), /3\. No \(default\)/);
-  ui.input.write("\x1b");
-  assert.equal(await pending, false);
-});
-
-
 test("TUI：错误和非流式正文到达同样清除等待计时", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
   const ui = makeTui({ interactive: true, tty: true });
@@ -804,27 +714,6 @@ test("TUI：长正文续行保持正文缩进，工具和回复间留白", async
   assert.equal(rowWith(ui, /456789/), "  456789", "续行保持正文缩进");
 });
 
-test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo " + "a".repeat(100) + "\necho TAIL" } });
-  ui.output.columns = 34;
-  ui.output.emit("resize");
-  await settledResize();
-  assert.match(ui.text(), /echo TAIL/);
-  // 按内容定位：审批时输入框隐藏，整体行号会变，但内容不能变。
-  assert.match(rowWith(ui, /^Shell permission$/), /^Shell permission$/);
-  assert.match(rowWith(ui, /^Workspace: C:\\work\\repo$/), /^Workspace: C:\\work\\repo$/);
-  // 前 3 行是 resize 之前就打印好的标题栏，不参与重排。
-  for (const line of screenRows(ui, 40).slice(3)) {
-    assert.ok(line.length <= 34, `行不应超宽：${line}`);
-  }
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
-});
-
-
 test("TUI：缩至窄窗口只显示提示，恢复宽度后重新显示历史和草稿", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
@@ -857,7 +746,7 @@ test("TUI：窄屏状态行保留完整权限和请求/token 统计", async (t) 
   ui.tui.setStats(session);
   await tick();
   const screen = screenRows(ui).join("\n");
-  assert.match(screen, /workspace-write/);
+  assert.match(screen, /full-access/);
   assert.match(screen, /2r 12tok/);
   assert.ok(statusLine(ui).length <= 34, "状态行不超出窗口宽度");
 });
@@ -915,18 +804,6 @@ test("TUI：输入里的 Tab 安全显示，提交的原文保持不变", async 
 });
 
 
-test("TUI：审批中的回车等控制字符逐字转义", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo first\r\necho next\recho tail\t\u202e" } });
-  pending.catch(() => {});
-  assert.match(ui.text(), /echo first\\u000d/);
-  assert.match(ui.text(), /echo next\\u000decho tail\\u0009\\u202e/);
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
-});
-
 test("TUI：窄屏隐藏中间 Thinking，放大后显示真实回复和工具结果", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, columns: 20, rows: 8 });
   t.after(() => ui.cleanup());
@@ -955,7 +832,7 @@ test("TUI：交互终端 TERM=dumb 明确报错，不悄悄切换行式聊天", 
     const output = new PassThrough();
     output.isTTY = true;
     assert.throws(() => new Tui({
-      input, output, model: "mock", workspace: "repo", permission: "read-only",
+      input, output, model: "mock", workspace: "repo",
       controller: new AbortController(), interactive: true, columns: 80, rows: 24,
     }), /full TUI requires an ANSI-capable terminal/);
     input.end();
@@ -1002,7 +879,7 @@ test("TUI：状态栏、运行记录、成功/拒绝分类和统计", async (t) 
     function: { name: "shell", arguments: JSON.stringify({ command: "echo hi" }) },
   };
   ui.tui.toolCall(shellCall);
-  ui.tui.toolResult(shellCall, 'ERROR: permission denied: user denied tool "shell"');
+  ui.tui.toolResult(shellCall, "exit 1\nboom");
   ui.tui.setStats(session);
   ui.tui.finishTurn(
     { requests: 2, toolCalls: 2, usage, tokenBudget: { exceeded: false } },
@@ -1015,101 +892,16 @@ test("TUI：状态栏、运行记录、成功/拒绝分类和统计", async (t) 
   const text = ui.text();
   assert.match(text, /model: mock-model/);
   assert.match(text, /workspace: C:\\work\\repo/);
-  assert.match(text, /permission: workspace-write/);
+  assert.match(text, /access: full-access/);
   assert.match(text, /you: do it/);
   assert.match(text, /model: working on it/);
   assert.match(text, /second line/);
   assert.match(text, /→ read path=a\.txt/);
   assert.match(text, /✓ read \[ok\] read result/);
   assert.match(text, /→ shell echo hi/);
-  assert.match(text, /✗ shell \[denied\] permission denied: user denied tool "shell"/);
+  assert.match(text, /✗ shell \[failed\] exit 1 …/);
   assert.match(text, /\[stats\] requests=2 tool_calls=2 tokens=12 · task failed/);
   assert.match(text, /\[session\] runs=1 requests=2 tool_calls=2 tokens=12/);
-});
-
-test("TUI：审批完整显示多行命令和 cwd，y 只放行这一次", async (t) => {
-  const ui = makeTui({ interactive: true });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  const pending = ui.tui.approve({
-    tool: "shell",
-    args: { command: "echo hi\necho bye" },
-  });
-  ui.input.write("y\r");
-
-  assert.equal(await pending, true);
-  await tick();
-  const text = ui.text();
-  assert.match(text, /\[permission\] shell in C:\\work\\repo/);
-  assert.match(text, /command:/);
-  assert.match(text, /\| echo hi/);
-  assert.match(text, /\| echo bye/);
-  assert.match(text, /allow once\? \[y\/N\]/);
-  assert.match(text, /approval: allowed once/);
-});
-
-test("TUI：审批回答 n 是拒绝，并写出 denied", async (t) => {
-  const ui = makeTui({ interactive: true });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo nope" } });
-  ui.input.write("n\r");
-
-  assert.equal(await pending, false);
-  await tick();
-  assert.match(ui.text(), /approval: denied/);
-});
-
-test("TUI：没有 TTY 时不展示审批提示，直接按审批通道拒绝", async (t) => {
-  const ui = makeTui();
-  t.after(() => ui.cleanup());
-
-  await assert.rejects(
-    () => ui.tui.approve({ tool: "shell", args: { command: "echo nope" } }),
-    /no interactive terminal/,
-  );
-  await tick();
-  assert.doesNotMatch(ui.text(), /\[permission\]/);
-});
-
-test("TUI：已有排队输入时不把下一行当成审批答案", async (t) => {
-  const ui = makeTui({ interactive: true });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  ui.input.write("queued task\r");
-  await tick();
-
-  await assert.rejects(
-    () => ui.tui.approve({ tool: "shell", args: { command: "echo nope" } }),
-    /next input is already queued/,
-  );
-  // 那一行仍然属于下一轮任务，没有被审批吃掉。
-  assert.equal(await ui.tui.readLine(), "queued task");
-});
-
-test("TUI：审批中 EOF 报审批通道关闭，不冒充用户拒绝", async (t) => {
-  const ui = makeTui({ interactive: true });
-  t.after(() => ui.cleanup());
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo eof" } });
-  ui.input.end();
-
-  await assert.rejects(pending, /approval prompt closed/);
-  await tick();
-  assert.doesNotMatch(ui.text(), /user denied/);
-});
-
-test("TUI：审批中取消立即结束等待，不会卡在输入上", async (t) => {
-  const ui = makeTui({ interactive: true });
-  t.after(() => ui.cleanup());
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo interrupt" } });
-  ui.controller.abort(new Error("received SIGINT"));
-
-  await assert.rejects(pending, /task cancelled/);
 });
 
 test("TUI：模型请求期间显示 thinking，第一段正文前整帧重绘掉", async (t) => {
@@ -1157,7 +949,7 @@ test("TUI：主视图不进备用屏，transcript 视图才进，退出还原", 
   assert.match(started, /repo/);
   assert.match(started, /mock-model/);
   assert.match(started, /C:\\work\\repo/);
-  assert.match(started, /workspace-write/);
+  assert.match(started, /full-access/);
   assert.match(started, /0 requests · 0 tokens/);
   assert.doesNotMatch(started, /\x1b\[\?1049h/, "主视图不切备用屏，打开前的历史才看得见");
   assert.match(started, /\x1b\[\?2026h/, "活动区整帧包在同步更新里");
@@ -1185,36 +977,6 @@ test("TUI：短对话内容紧接抬头，输入框跟着内容走", async (t) =
   assert.match(rows[3] ?? "", /(?:❯|>) hello/, "对话从抬头下方第一行开始");
   assert.equal(rows[4] ?? "", "", "内容与输入框之间保留空行");
   assert.match(inputLine(ui), /^(?:>|❯)/, "输入框紧跟在内容下方");
-});
-
-test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行这一次", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  ui.tui.toolCall({ id: "allowed-running", type: "function", function: { name: "shell", arguments: JSON.stringify({ command: "echo hi\necho bye" }) } });
-  const pending = ui.tui.approve({
-    tool: "shell",
-    args: { command: "echo hi\necho bye" },
-  });
-  const beforeDecision = ui.text().length;
-  // 三项菜单：上移两次才是「仅允许本次」（中间那一项是「以后不再问」）。
-  ui.input.write("\x1b[A\x1b[A\r");
-
-  assert.equal(await pending, true);
-  await tick();
-  // 主视图拍平后，待返回的工具由「工具行 + 运行中」表示；这里没有开始轮次，
-  // 只能看到审批结果的回执——断言它证明流程确实继续了。
-  assert.match(ui.text().slice(beforeDecision), /Allowed once/, "允许后恢复执行");
-  const text = ui.text();
-  assert.match(text, /Shell permission/);
-  assert.match(text, /Workspace: C:\\work\\repo/);
-  assert.match(text, /Command:/);
-  assert.match(text, /[|│]\s+echo hi/);
-  assert.match(text, /[|│]\s+echo bye/);
-  assert.match(text, /1\. Yes, allow once/);
-  assert.match(text, /3\. No \(default\)/);
-  assert.match(text, /(?:✓|\+) Allowed once/);
 });
 
 test("TUI：固定布局的工具调用从运行中原地变成成功/失败", async (t) => {
@@ -1257,11 +1019,6 @@ test("TUI：失败和未执行工具显示不同符号，原因在下一行", as
     type: "function",
     function: { name: "read", arguments: JSON.stringify({ path: "src/missing.ts" }) },
   };
-  const denied = {
-    id: "tool-denied",
-    type: "function",
-    function: { name: "shell", arguments: JSON.stringify({ command: "rm -rf build" }) },
-  };
   const notRun = {
     id: "tool-not-run",
     type: "function",
@@ -1271,8 +1028,6 @@ test("TUI：失败和未执行工具显示不同符号，原因在下一行", as
   ui.tui.start();
   ui.tui.toolCall(failed);
   ui.tui.toolResult(failed, "ERROR: File not found: src/missing.ts");
-  ui.tui.toolCall(denied);
-  ui.tui.toolResult(denied, 'ERROR: permission denied: user denied tool "shell"');
   ui.tui.toolCall(notRun);
   ui.tui.toolResult(notRun, "ERROR: not run: task cancelled");
   await tick();
@@ -1280,13 +1035,26 @@ test("TUI：失败和未执行工具显示不同符号，原因在下一行", as
   const text = ui.text();
   assert.match(text, /(?:✗|x) Read src\/missing\.ts/);
   assert.match(text, /File not found: src\/missing\.ts/);
-  assert.match(text, /(?:⊘|!) Shell: rm -rf build/);
-  assert.match(text, /permission denied: user denied tool "shell"/);
   assert.match(text, /(?:–|-) Shell: npm run check/);
   assert.match(text, /not run: task cancelled/);
 });
 
-test("TUI：固定布局的页脚显示权限和完整统计", async (t) => {
+test("TUI：Shift+Tab 不再切换权限，页脚保持完全访问", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  await tick();
+  const before = statusLine(ui);
+  assert.match(before, /access: full-access/);
+
+  ui.input.emit("keypress", "", { name: "tab", shift: true });
+  await tick();
+
+  assert.equal(statusLine(ui), before, "Shift+Tab 不再是权限切换快捷键");
+  assert.doesNotMatch(ui.text(), /Confirm full-access|shift-tab to cycle/);
+});
+
+test("TUI：固定布局的页脚显示完全访问和完整统计", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
 
@@ -1294,8 +1062,10 @@ test("TUI：固定布局的页脚显示权限和完整统计", async (t) => {
   ui.tui.setStats(session);
   await tick();
   const text = ui.text();
-  assert.match(text, /workspace-write/);
+  assert.match(text, /access: full-access/);
   assert.match(text, /2 requests · 2 tool calls · 12 tokens/);
+  // 只有一种权限：页脚不能再出现切换提示。
+  assert.doesNotMatch(text, /shift-tab/i);
 });
 
 test("TUI：固定布局转义工具结果里的控制字符", async (t) => {
@@ -1348,188 +1118,6 @@ test("TUI：颜色开关生效，无颜色终端输出纯文本", async (t) => {
 
 
 
-test("TUI 审批菜单：上下键在三项间移动，Enter 只确认当前选择", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-
-  const allow = ui.tui.approve({ tool: "shell", args: { command: "echo once" } });
-  allow.catch(() => {});
-  assert.match(ui.text(), /(?:❯|>) 3\. No \(default\)/);
-  ui.input.write("\x1b[A");
-  await tick();
-  assert.match(ui.text(), /(?:❯|>) 2\. Yes, and don't ask again for "echo once"/, "上移一项是「以后不再问」");
-  ui.input.write("\x1b[A");
-  await tick();
-  assert.match(ui.text(), /(?:❯|>) 1\. Yes, allow once/);
-  ui.input.write("\r");
-  assert.equal(await allow, true, "明确上移两次并按 Enter 才允许一次");
-
-  const deny = ui.tui.approve({ tool: "shell", args: { command: "echo second" } });
-  deny.catch(() => {});
-  assert.match(ui.text(), /(?:❯|>) 3\. No \(default\)/, "下次审批不得继承上次允许");
-  ui.input.write("\x1b[A\x1b[B\r");
-  assert.equal(await deny, false, "下移回 No 后按 Enter 拒绝");
-});
-
-test("TUI 审批菜单：Esc 和空回车拒绝，粘贴 y/1 不能变成隐形授权", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-
-  const escaped = ui.tui.approve({ tool: "shell", args: { command: "echo esc" } });
-  escaped.catch(() => {});
-  ui.input.write("\x1b");
-  assert.equal(await escaped, false, "Esc 直接拒绝");
-
-  const empty = ui.tui.approve({ tool: "shell", args: { command: "echo empty" } });
-  empty.catch(() => {});
-  ui.input.write("\r");
-  assert.equal(await empty, false, "空回车默认拒绝");
-
-  for (const pasted of ["1", "y", "yes", "unknown"]) {
-    const pending = ui.tui.approve({ tool: "shell", args: { command: "echo " + pasted } });
-    pending.catch(() => {});
-    ui.input.write(pasted + "\r");
-    assert.equal(await pending, false, "隐藏的文字输入不能放行命令: " + pasted);
-  }
-  const nextTask = ui.tui.readLine();
-  ui.input.write("next task\r");
-  assert.equal(await nextTask, "next task", "审批期间的文字没有进入下一轮任务");
-});
-
-
-test("TUI 审批菜单：中文、长命令和控制字符展示保持安全，EOF 不授权", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const pending = ui.tui.approve({
-    tool: "shell",
-    args: { command: "echo 第一行\necho 第二行\x1b[31m\n" + "x".repeat(220) + "\necho TAIL" },
-  });
-  pending.catch(() => {});
-  const text = ui.text();
-  assert.match(text, /Workspace: C:\\work\\repo/);
-  assert.match(text, /echo 第一行/);
-  assert.match(text, /echo TAIL/);
-  assert.match(text, /\\u001b\[31m/);
-  assert.doesNotMatch(text, /\x1b\[31m/);
-  ui.input.end();
-  await assert.rejects(pending, /approval prompt closed/);
-});
-
-
-
-test("TUI Shift+Tab：只在等待任务时切换模式，状态行展示快捷键，保留输入草稿", async (t) => {
-  const modes = [];
-  let ui;
-  ui = makeTui({
-    interactive: true, tty: true, rows: 35, flowInput: true,
-    onPermissionChange: (mode) => {
-      modes.push(mode);
-      ui.tui.setPermission(mode);
-    },
-  });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  const task = ui.tui.readLine();
-  assert.match(ui.text(), /workspace-write \(shift-tab to cycle\)/);
-  ui.input.write("draft");
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.equal(modes.length, 0, "从 workspace-write 进入 full-access 必须要求确认");
-  assert.match(ui.text(), /Confirm full-access: Shift\+Tab again/);
-
-  // 显式触发 Esc 按键事件，避免把流式 ESC 前缀与紧随的空格合并成 Meta+Space。
-  // 这里测试的是按键处理器是否保留 readline 草稿，而不是解析器的序列超时。
-  ui.input.emit("keypress", "", { name: "escape", sequence: "\x1b" });
-  await tick();
-  assert.equal(modes.length, 0);
-  assert.match(ui.text(), /workspace-write \(shift-tab to cycle\)/);
-
-  ui.input.write(" task\r");
-  assert.equal(await task, "draft task", "Shift+Tab 不能修改已输入的任务正文");
-});
-
-test("TUI Shift+Tab：full-access 二次确认；切换后下一次 /permission 切换可同步状态", async (t) => {
-  const modes = [];
-  let ui;
-  ui = makeTui({
-    interactive: true, tty: true, rows: 35,
-    onPermissionChange: (mode) => {
-      modes.push(mode);
-      ui.tui.setPermission(mode);
-    },
-  });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  const task = ui.tui.readLine();
-
-  // 当前默认 workspace-write：第一次进入提权待确认，第二次才生效。
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.equal(modes.length, 0);
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.deepEqual(modes, ["full-access"]);
-  assert.match(ui.text(), /full-access \(shift-tab to cycle\)/);
-
-  // full-access -> read-only -> workspace-write ->（等待提升），每次都保留三档真实状态。
-  ui.input.write("\x1b[Z");
-  await tick();
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.deepEqual(modes, ["full-access", "read-only", "workspace-write"]);
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.match(ui.text(), /Confirm full-access/);
-  // /permission 命令路径用 setPermission 同步，必须清理未确认的提升。
-  ui.tui.setPermission("read-only");
-  assert.doesNotMatch(statusLine(ui), /Confirm full-access/);
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.equal(modes.at(-1), "workspace-write", "手动设置后下一轮快捷键必须从新的模式开始");
-
-  ui.input.write("\r");
-  assert.equal(await task, "");
-});
-
-test("TUI Shift+Tab：审批中、模型运行中和普通 Tab 都不能改变权限", async (t) => {
-  const modes = [];
-  let ui;
-  ui = makeTui({
-    interactive: true, tty: true, rows: 35,
-    onPermissionChange: (mode) => {
-      modes.push(mode);
-      ui.tui.setPermission(mode);
-    },
-  });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  ui.input.write("\x1b[Z");
-  assert.deepEqual(modes, [], "没有等待任务输入时不能切换模式");
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  pending.catch(() => {});
-  ui.input.write("\x1b[Z");
-  await tick();
-  assert.deepEqual(modes, [], "Shell 审批期间绝不能用 Shift+Tab 改权限");
-  assert.match(ui.text(), /3\. No \(default\)/);
-  ui.input.write("\x1b");
-  assert.equal(await pending, false);
-
-  const task = ui.tui.readLine();
-  ui.input.write("\t");
-  await tick();
-  assert.deepEqual(modes, [], "普通 Tab 不是 Shift+Tab");
-  ui.input.write("\r");
-  await task;
-});
-
-
 test("TUI 语言识别：忽略路径、文件名和代码，按最近一次用户任务自动判断", () => {
   assert.equal(detectUiLanguage("请读取 README.md 并总结这个仓库"), "zh");
   assert.equal(detectUiLanguage("请检查 src/agent.ts 并修复问题"), "zh");
@@ -1546,14 +1134,14 @@ test("TUI 启动语言：按系统 locale 初始化，中文系统启动即显�
   assert.equal(uiLanguageFromLocale("ja-JP"), "en");
   assert.equal(uiLanguageFromLocale(""), "en");
 
-  const zh = makeTui({ interactive: true, tty: true, rows: 35, language: "zh", onPermissionChange: () => {} });
-  const en = makeTui({ interactive: true, tty: true, rows: 35, language: "en", onPermissionChange: () => {} });
+  const zh = makeTui({ interactive: true, tty: true, rows: 35, language: "zh" });
+  const en = makeTui({ interactive: true, tty: true, rows: 35, language: "en" });
   t.after(() => { zh.cleanup(); en.cleanup(); });
   zh.tui.start();
   en.tui.start();
 
-  assert.match(statusLine(zh), /工作区读写（Shift\+Tab 切换）/);
-  assert.match(statusLine(en), /workspace-write \(shift-tab to cycle\)/);
+  assert.match(statusLine(zh), /权限：完全访问/);
+  assert.match(statusLine(en), /access: full-access/);
 });
 
 test("TUI 展示：固定布局隐藏 Markdown 代码块围栏，块内正文用竖线缩进显示", (t) => {
@@ -1596,29 +1184,23 @@ test("TUI 布局：顶部模型名和底部统计与窗口右边缘留 2 列余�
   assert.equal(statusLine(ui).length, 76, "底部统计不能贴右边框");
 });
 
-test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {
+test("TUI 权限显示：只有完全访问一个标签，语言跟随任务但不提供切换", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());
   ui.tui.start();
   const footer = () => statusLine(ui);
 
   ui.tui.beginTurn("请检查项目文件");
-  assert.match(footer(), /工作区读写/);
-  assert.doesNotMatch(footer(), /workspace-write/);
-  ui.tui.setPermission("read-only");
-  assert.match(footer(), /只读模式/);
-  assert.doesNotMatch(footer(), /read-only/);
-  ui.tui.setPermission("full-access");
-  assert.match(footer(), /完全访问/);
+  assert.match(footer(), /权限：完全访问/);
   assert.doesNotMatch(footer(), /full-access/);
+  assert.doesNotMatch(footer(), /切换/);
 
   ui.tui.beginTurn("Please check the project files in English");
-  assert.match(footer(), /full-access/);
-  ui.tui.setPermission("workspace-write");
-  assert.match(footer(), /workspace-write/);
+  assert.match(footer(), /access: full-access/);
+  assert.doesNotMatch(footer(), /Shift\+Tab|shift-tab/i);
 });
 
-test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Thinking 始终是英文", async (t) => {
+test("TUI 中英文切换：中文工具事件/统计自动适配，Thinking 始终是英文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -1636,21 +1218,6 @@ test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Think
   // 结果行属于详情层：去 transcript 里断言。
   assert.match(await detailText(ui), /收到 2 行/);
 
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  pending.catch(() => {});
-  assert.match(ui.text(), /Shell 权限审批/);
-  assert.match(ui.text(), /工作目录： C:\\work\\repo/);
-  assert.match(ui.text(), /命令：/);
-  assert.match(ui.text(), /是否允许执行？/);
-  assert.match(ui.text(), /1\. 是，仅允许本次/);
-  assert.match(ui.text(), /2\. 是，以后不再问「echo safe」（本工作区）/);
-  assert.match(ui.text(), /3\. 否（默认）/);
-  assert.match(ui.text(), /Esc 取消/);
-  assert.match(ui.text(), /echo safe/, "Shell 命令保持原文");
-  ui.input.write("\r");
-  assert.equal(await pending, false);
-  assert.match(ui.text(), /已拒绝/);
-
   ui.tui.beginTurn("Please read README.md and summarize this project in English");
   assert.match(ui.text(), /0 requests · 0 tokens/);
   assert.equal(ui.tui.uiText("Allowed once", "已允许本次执行"), "Allowed once");
@@ -1666,7 +1233,7 @@ test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Think
   assert.match(await detailText(ui), /Received 2 lines/);
 });
 
-test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 /permission 反馈改变语言", async (t) => {
+test("TUI 中英文切换：不翻译模型正文和实际工具错误，只翻译界面提示", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -1682,23 +1249,22 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 
   ui.tui.toolResult(call, "ERROR: file not found: missing.txt");
   assert.match(ui.text(), /file not found: missing\.txt/, "工具错误必须原样保留");
 
-  assert.equal(ui.tui.uiText("permission: workspace-write", "权限：workspace-write"), "权限：workspace-write");
-  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /命令：\/exit/);
-  // 主视图已拍平：帮助改成「输入 / 视图」两组按键，不再讲折叠箭头。
-  const help = ui.tui.helpText("read-only;workspace-write;full-access");
+  assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
+  // 主视图已拍平：帮助只讲会话命令和按键，不再提权限切换。
+  const help = ui.tui.helpText();
+  assert.match(help, /命令：\/exit/);
   assert.match(help, /输入：Enter 发送 · Shift\+Enter 或 Ctrl\+J 换行/);
   assert.match(help, /视图：Ctrl\+E 历史 · PgUp 暂停刷新/);
-  ui.tui.setPermission("read-only");
-  assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
+  assert.doesNotMatch(help, /permission|权限/);
 
   ui.tui.beginTurn("Please explain the error in English");
-  assert.equal(ui.tui.uiText("permission: read-only", "权限：read-only"), "permission: read-only");
-  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /commands: \/exit/);
-  assert.match(ui.tui.helpText("read-only;workspace-write;full-access"), /input:  Enter send · Shift\+Enter or Ctrl\+J newline/);
+  assert.equal(ui.tui.uiText("permission: denied", "权限：已拒绝"), "permission: denied");
+  assert.match(ui.tui.helpText(), /commands: \/exit/);
+  assert.match(ui.tui.helpText(), /input:  Enter send · Shift\+Enter or Ctrl\+J newline/);
 });
 
 
-test("TUI Slash：输入 / 显示真实命令菜单，输入 /per 筛选，Enter 执行选中项", async (t) => {
+test("TUI Slash：输入 / 显示真实命令菜单，输入 /he 筛选，Enter 执行选中项", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -1708,20 +1274,19 @@ test("TUI Slash：输入 / 显示真实命令菜单，输入 /per 筛选，Enter
   await tick();
   let rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
   assert.ok(rows.some((row) => row.includes("/help") && row.includes("Show available commands")));
-  assert.ok(rows.some((row) => row.includes("/permission") && row.includes("View or switch permission mode")));
   assert.ok(rows.some((row) => row.includes("/reset")));
   assert.ok(rows.some((row) => row.includes("/exit")));
   assert.ok(rows.some((row) => row.includes("/quit")));
   assert.equal(rows.some((row) => row.includes("/branch") || row.includes("/compact")), false, "不显示未实现命令");
 
-  ui.input.write("per");
+  ui.input.write("he");
   await tick();
   rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
-  assert.ok(rows.some((row) => row.includes("/permission")));
-  assert.equal(rows.some((row) => row.includes("/help")), false, "实时筛选移除其他命令");
+  assert.ok(rows.some((row) => row.includes("/help")));
+  assert.equal(rows.some((row) => row.includes("/reset")), false, "实时筛选移除其他命令");
 
   ui.input.write("\r");
-  assert.equal(await task, "/permission", "Enter 直接提交高亮补全后的命令");
+  assert.equal(await task, "/help", "Enter 直接提交高亮补全后的命令");
 });
 
 test("TUI Slash：上下键只移动高亮，不会载入历史命令；Tab 补全但不执行", async (t) => {
@@ -1738,15 +1303,15 @@ test("TUI Slash：上下键只移动高亮，不会载入历史命令；Tab 补�
   await tick();
   ui.input.write("\x1b[B");
   await tick();
-  assert.ok(ui.text().includes("/permission"));
+  assert.ok(ui.text().includes("/reset"));
   ui.input.write("\t");
   await tick();
   const rows = Array.from({ length: 35 }, (_, i) => lastRow(ui.text(), i + 1));
-  assert.ok(rows.some((row) => /(?:❯|>) \/permission/.test(row)), "Tab 将选中命令填入编辑行");
-  assert.equal(rows.some((row) => row.includes("View or switch permission mode")), false, "补全后关闭候选菜单");
+  assert.ok(rows.some((row) => /(?:❯|>) \/reset/.test(row)), "Tab 将选中命令填入编辑行");
+  assert.equal(rows.some((row) => row.includes("Clear the current conversation")), false, "补全后关闭候选菜单");
 
   ui.input.write("\r");
-  assert.equal(await task, "/permission", "方向键不能替换成上一条历史任务");
+  assert.equal(await task, "/reset", "方向键不能替换成上一条历史任务");
 });
 
 test("TUI Slash：Esc 关闭菜单但保留输入，修改前缀后重新打开；未知命令保持原样", async (t) => {
@@ -1775,7 +1340,7 @@ test("TUI Slash：Esc 关闭菜单但保留输入，修改前缀后重新打开�
   assert.equal(await task2, "/unknown", "不识别的命令不被菜单改写");
 });
 
-test("TUI Slash：中文菜单跟随最近任务语言；输入参数/审批时不显示候选；窗口缩放不越界", async (t) => {
+test("TUI Slash：中文菜单跟随最近任务语言；输入参数时不显示候选；窗口缩放不越界", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 35, flowInput: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -1793,21 +1358,13 @@ test("TUI Slash：中文菜单跟随最近任务语言；输入参数/审批时�
   await settledResize();
   rows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
   assert.ok(rows.some((row) => row.includes("/help")), "小终端仍保留至少一项菜单");
-  ui.input.write("permission read-only");
+  ui.input.write("reset now");
   await tick();
   rows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
-  assert.equal(rows.some((row) => row.includes("查看或切换权限模式")), false, "命令参数不会弹菜单");
+  assert.equal(rows.some((row) => row.includes("查看可用命令")), false, "命令参数不会弹菜单");
 
   ui.input.write("\r");
-  assert.equal(await task, "/permission read-only");
-
-  const approval = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  approval.catch(() => {});
-  const approvalRows = Array.from({ length: 13 }, (_, i) => lastRow(ui.text(), i + 1));
-  assert.equal(approvalRows.some((row) => row.includes("查看可用命令")), false,
-    "Shell 审批应在当前终端画面中隐藏 Slash 菜单，历史 ANSI 输出不计入");
-  ui.input.write("\r");
-  assert.equal(await approval, false);
+  assert.equal(await task, "/reset now");
 });
 
 test("角色语气：状态分类、中文英文独立文案与最近不重复", () => {
@@ -1818,7 +1375,6 @@ test("角色语气：状态分类、中文英文独立文案与最近不重复",
   const english = selectMood("searching", "en", [], () => 0);
   assert.match(english, /[A-Za-z]/);
   assert.doesNotMatch(english, /[\u4E00-\u9FFF]/);
-  assert.notEqual(selectMood("approval", "zh", [], () => 0), "", "审批只使用明确的中性文案");
 });
 
 test("TUI：生命周期标题从准备到执行再到完成，不统计操作次数", (t) => {
@@ -2151,14 +1707,14 @@ test("TUI 过程概述：同组多工具只更新一个当前操作说明，缩�
   assert.match(screen, /已读取文件、已搜索代码/);
 });
 
-test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中、修改中", async (t) => {
+test("TUI 预执行状态：write/edit 从请求到结果才宣称已写入、已修改", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 116 });
   t.after(() => ui.cleanup());
   ui.tui.start();
-  ui.tui.beginTurn("检查是否允许写文件");
-  for (const [name, id, status] of [
-    ["write", "not-approved-write", "文件写入"],
-    ["edit", "not-approved-edit", "文件编辑"],
+  ui.tui.beginTurn("检查写文件请求");
+  for (const [name, id, status, done] of [
+    ["write", "pending-write", "文件写入", "已写入文件 blocked.txt。"],
+    ["edit", "pending-edit", "文件编辑", "已修改文件 blocked.txt。"],
   ]) {
     ui.tui.beginModelRequest();
     const call = { id, type: "function", function: {
@@ -2168,12 +1724,10 @@ test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中�
     const before = await detailText(ui);
     assert.match(before, new RegExp("正在处理" + status + "请求 blocked.txt。"));
     assert.match(before, /等待工具结果/);
-    assert.doesNotMatch(before, /正在写入文件 blocked\.txt。|正在修改文件 blocked\.txt。|写入中\.\.\.|修改中\.\.\.|Running\.\.\./,
-      "ToolCall 先于 Permission，不能说文件已开始写入或编辑");
-    ui.tui.toolResult(call, 'ERROR: permission denied: tool not allowed');
-    const denied = await detailText(ui);
-    assert.doesNotMatch(denied, /已写入文件 blocked\.txt。|已修改文件 blocked\.txt。/);
-    assert.match(denied, /已拒绝|permission denied|未获授权/);
+    assert.doesNotMatch(before, new RegExp(done), "结果返回前不能说文件已经写完");
+    ui.tui.toolResult(call, `wrote 5 chars to blocked.txt`);
+    const after = await detailText(ui);
+    assert.match(after, new RegExp(done.replace(".", "\\.")));
   }
 });
 
@@ -2195,26 +1749,25 @@ test("TUI 预授权状态：取消的 edit 不能留下正在编辑或已编辑�
 });
 
 
-test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功", async (t) => {
+test("TUI 过程概述：工具失败不显示为操作已成功", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
   ui.tui.beginTurn("请运行检查");
-  const shell = { id: "overview-denied", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  const shell = { id: "overview-fail", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
   ui.tui.toolCall(shell);
-  ui.tui.toolResult(shell, 'ERROR: permission denied: user denied tool "shell"');
+  ui.tui.toolResult(shell, "exit 1\nboom");
   let screen = await detailText(ui);
-  assert.match(screen, /未获授权，无法执行 npm run check。/);
   assert.doesNotMatch(screen, /命令执行结束 npm run check。/);
-  ui.tui.assistantDelta("权限不足，改为只检查文件。");
-  const read = { id: "overview-fail", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
+  assert.match(screen, /失败|boom/);
+  ui.tui.assistantDelta("检查失败，改为只检查文件。");
+  const read = { id: "overview-fail-read", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
   ui.tui.toolCall(read);
   ui.tui.toolResult(read, "ERROR: file not found");
   screen = await detailText(ui);
-  assert.match(screen, /权限不足，改为只检查文件。/);
+  assert.match(screen, /检查失败，改为只检查文件。/);
   assert.doesNotMatch(screen, /已读取文件 missing\.txt。/, "模型已说明的新阶段也不应由工具伪造成功进度");
 });
-
 
 test("TUI：失败原因与命令同行，阶段折叠仍保留真实失败", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 106 });
@@ -2485,27 +2038,6 @@ test("TUI 主视图：PgUp 暂停刷新，翻历史时不再抢视口，PgDn 恢
   assert.match(ui.text().slice(pausedAt), /PAUSED_DELTA/, "恢复后继续输出");
 });
 
-test("TUI 主视图：审批借用输入区，已有草稿在决定后原样恢复", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("跑命令");
-
-  // 用户打了一半还没回车：这是草稿，不是排队任务。
-  ui.input.write("草稿内容");
-  await tick();
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
-  await tick();
-  // 审批提示占用输入区（Claude Code 的做法），而不是因为「有草稿」就跳过审批。
-  assert.match(ui.text(), /Shell permission|Shell 权限审批/, "审批面板必须出现");
-
-  ui.input.write("\r");
-  assert.equal(await pending, false, "默认选择是拒绝");
-  await tick();
-  assert.match(inputLine(ui), /草稿内容/, "决定之后草稿回到输入框，没有被吃掉");
-});
-
 test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次回车", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
@@ -2533,26 +2065,6 @@ test("TUI：不支持括号粘贴的终端，裸换行当换行处理，回车�
   ui.input.write("\r");
 
   assert.equal(await pending, "第一行\n第二行\n第三行", "整段是一条消息，换行保留");
-});
-
-test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("跑命令");
-
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
-  await tick();
-
-  const rows = screenRows(ui, 30);
-  const menuRow = rows.findIndex((line) => /Shell permission|Shell 权限审批/.test(line));
-  assert.ok(menuRow >= 0, "审批面板出现");
-  // 面板之后不该再有一条空的输入行：按键此时全归菜单。
-  const afterMenu = rows.slice(menuRow);
-  assert.equal(afterMenu.filter((line) => /^>\s*$/.test(line)).length, 0, "审批时不画输入行");
-
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
 });
 
 test("TUI 主视图：Ctrl+J 换行，输入区变成多行，回车一次提交整段", async (t) => {
