@@ -279,16 +279,19 @@ Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功�
 
 ### 想彻底不问
 
-`workspace-write` 下 shell 永远要问。如果你信任某个目录、不想再被打断，只有两种做法：
+`workspace-write` 下 shell 永远要问。不想被打断，先想清楚一件事：**你信的是这个目录，还是这台机器？**
 
-| 做法 | 范围 | 怎么写 |
+| 范围 | 做法 | 换目录还生效吗 |
 | --- | --- | --- |
-| 放行整个工具 | 这个工作区 | 规则里只写工具名：`"allow": ["shell"]` |
-| 提权限 | 这一轮会话 | `Shift+Tab` 连按到「完全访问」，或启动时 `--permission full-access` |
+| **这个目录** | 本地层规则 `"allow": ["shell"]` | ❌ |
+| **这台机器** | 用户层 `~/.agent-kernel/permissions.json` 写同样的规则，或 `.env` 里 `AGENT_PERMISSION=full-access` | ✅ |
+| **这一轮** | `--permission full-access`，或 `Shift+Tab` 连按到「完全访问」 | ❌（退出即失效） |
 
-第一条跟 Claude Code 的裸 `Bash` 规则等价：**只写工具名 = 这个工具的任意命令**，连 `curl x 2>&1` 这种切不开的也算。它管的是**这个目录**，换个仓库不生效。
+只写工具名 = **这个工具的任意命令**，跟 Claude Code 的裸 `Bash` 规则等价，连 `curl x 2>&1` 这种切不开的也算。
 
-代价必须说清楚：`"allow": ["shell"]` 之后，`rm -rf`、`curl`、写工作区外面都不会再问。唯一还拦得住的是 `deny`，建议同时写一条底线：
+多数人真正的需求是第二行——「我信任我这台电脑」。这个文件叫 `.local.json`，写它只影响你当前这个目录；写进 `~/.agent-kernel/permissions.json` 才对所有项目生效。
+
+代价必须说清楚：放行之后，`rm -rf`、`curl`、写工作区外面都不会再问。唯一还拦得住的是 `deny`，建议同时写一条底线：
 
 ```json
 {
@@ -297,11 +300,11 @@ Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功�
 }
 ```
 
-**注意 `full-access` 不读规则**（它的语义就是全部直接执行），所以这条底线只在 `workspace-write` 下有效。
+**注意 `full-access` 不读规则**（它的语义就是全部直接执行），所以这条底线只在 `workspace-write` 下有效。要「整台机器不问、但保留几条底线」，就用用户层规则 + `AGENT_PERMISSION=workspace-write`，而不是 `full-access`。
 
 检查发生在 `ToolRegistry.execute()` 里：参数校验通过之后、`tool.run()` 之前。被拒绝的调用不会执行，结果是一条 `ERROR: permission denied: ...` 回灌给模型，模型可以在下一轮自己换个做法。
 
-`ToolRegistry` 构造时必须显式传 `permission: Permission | null`：传 `Permission` 启用策略，传 `null` 表示宿主主动关闭检查；漏传、`undefined`、字符串等非法值在装配阶段直接报错。CLI 默认 `workspace-write`（`--permission` 可覆盖），评测显式传 `full-access`，测试按需显式传 `null` 或 `Permission`。
+`ToolRegistry` 构造时必须显式传 `permission: Permission | null`：传 `Permission` 启用策略，传 `null` 表示宿主主动关闭检查；漏传、`undefined`、字符串等非法值在装配阶段直接报错。CLI 起始档位按 `--permission` > `AGENT_PERMISSION` > `workspace-write` 决定，评测显式传 `full-access`，测试按需显式传 `null` 或 `Permission`。
 
 CLI 用 `--permission <mode>`（也支持 `--permission=<mode>`）选起始模式；REPL 用 `/permission` 查看、`/permission read-only` 切换。`/reset` 只换 Agent 和 Transcript，不改变当前权限。
 
@@ -366,7 +369,8 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 | `MAX_TOTAL_TOKENS` | `500000` | 单次 Run 的累计 token 预算（软上限：到线后不再发请求，已发生的费用照记）；`0` 表示不限制 |
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应最多生成多少 token |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
-| `--permission` | `workspace-write` | CLI 参数（不是环境变量）：`read-only` / `workspace-write` / `full-access` |
+| `AGENT_PERMISSION` | `workspace-write` | 信任级别写进 `.env` 后每次启动都生效：`read-only` / `workspace-write` / `full-access`。写错值直接报错，不静默退回默认值 |
+| `--permission` | 取 `AGENT_PERMISSION`，否则 `workspace-write` | CLI 参数：`read-only` / `workspace-write` / `full-access`，**优先于** `AGENT_PERMISSION`（临时提权不该被配置文件顶回去） |
 | `--cwd` | 当前目录，其次 `WORKDIR` | CLI 参数（不是环境变量）：把工作区根目录指向另一个目录，等于先 `cd` 过去再启动；优先于 `WORKDIR`，目录不存在时启动前就报错 |
 
 ### 模型连接与错误提示

@@ -13,6 +13,7 @@
  *   API_KEY         必填，也可以用 OPENAI_API_KEY
  *   MODEL           模型名，默认 gpt-4o-mini
  *   WORKDIR         工具能碰的根目录，默认当前目录；--cwd 优先于它
+ *   AGENT_PERMISSION read-only / workspace-write（默认）/ full-access；--permission 优先于它
  *   MAX_STEPS       单次 Run 的循环上限，默认 30
  *   MAX_TOOL_CALLS  单次 Run 最多执行多少次工具调用，默认 60
  *   MAX_TOTAL_TOKENS 单次 Run 累计 token 预算，默认 500000；0 表示不限制
@@ -187,6 +188,8 @@ function parseArgs(argv: readonly string[]): CliArgs {
   let tui = false;
   let details = false;
   let permission: PermissionMode = DEFAULT_PERMISSION_MODE;
+  // 记住「命令行显式给过」：它必须压过 .env，否则一次性的临时提权会被配置文件顶回去。
+  let permissionExplicit = false;
   let cwd: string | undefined;
   const taskParts: string[] = [];
 
@@ -231,6 +234,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
         return result(`invalid --permission value "${raw}" (expected: ${PERMISSION_MODE_LIST})`);
       }
       permission = parsed;
+      permissionExplicit = true;
       continue;
     }
     // 这就是 Claude Code / Codex 的「打开某个目录」：从本仓库启动，但把工作区根目录指向别处。
@@ -261,6 +265,22 @@ function parseArgs(argv: readonly string[]): CliArgs {
     }
     // 其余位置参数保留原样：任务文本里可以有空格，最后统一 join。
     taskParts.push(arg);
+  }
+
+  // 没给 --permission 时读 .env 里的 AGENT_PERMISSION。
+  //
+  // 信任级别该是「配一次、长期生效」的东西，不是每次启动都敲一遍：规则能跨项目
+  // （用户层），但「整个模式」之前只能靠命令行，换个目录就等于回到默认。
+  // Codex 把 approval_policy 放进 ~/.codex/config.toml，解决的是同一个问题。
+  //
+  // 写坏了必须报错，不能退回默认值：一份没生效的安全配置比没有更危险，
+  // 用户会以为它管着事，实际什么都没管。
+  if (!permissionExplicit && process.env.AGENT_PERMISSION !== undefined && process.env.AGENT_PERMISSION !== "") {
+    const parsed = parsePermissionMode(process.env.AGENT_PERMISSION);
+    if (parsed === undefined) {
+      return result(`invalid AGENT_PERMISSION "${process.env.AGENT_PERMISSION}" (expected: ${PERMISSION_MODE_LIST})`);
+    }
+    permission = parsed;
   }
 
   return result();
@@ -733,7 +753,7 @@ const usage = [
   // 中文对照：权限模式：…（默认：…）
   `       modes: ${PERMISSION_MODE_LIST} (default: ${DEFAULT_PERMISSION_MODE})`,
   // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_COLOR, AGENT_TUI_THEME",
+  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, AGENT_PERMISSION, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_COLOR, AGENT_TUI_THEME",
 ].join("\n");
 
 const cli = parseArgs(process.argv.slice(2));

@@ -90,7 +90,9 @@ function runCli(env, { args = ["do the task"], input } = {}) {
   const child = spawn(process.execPath, [cliPath, ...args], {
     cwd: projectRoot,
     // API_KEY 给个假值：测试里没有真实网络请求（缺 Key 的用例会显式覆盖它）。
-    env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", ...env },
+    // AGENT_PERMISSION 显式清空：本机 shell 或 .env 里若设过它，「默认是 workspace-write」
+    // 这类断言就会随环境漂移；要测它的用例自己传值。
+    env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", AGENT_PERMISSION: "", ...env },
   });
 
   if (input !== undefined) child.stdin.end(input);
@@ -728,6 +730,50 @@ test("--permission 缺少值：退出码 1，提示可用模式", async () => {
 
   assert.equal(run.code, 1);
   assert.match(run.stderr, /missing value for --permission/);
+});
+
+test("AGENT_PERMISSION：信任级别写进 .env 后每次启动都生效，不用再敲 --permission", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("done")]);
+    try {
+      const run = await runCli({
+        BASE_URL: mock.url,
+        MODEL: "mock-model",
+        WORKDIR: workdir,
+        AGENT_PERMISSION: "read-only",
+      });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /permission: read-only/);
+      // 模型也得知道当前档位：否则它会去做一件注定被拒的事，白烧一轮。
+      assert.match(mock.requests[0].messages[0].content, /Permission mode: read-only/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("--permission 压过 AGENT_PERMISSION：临时提权不能被配置文件顶回去", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("done")]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir, AGENT_PERMISSION: "read-only" },
+        { args: ["--permission", "full-access", "do the task"] },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /permission: full-access/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("AGENT_PERMISSION 写错：退出码 1，不静默退回默认值", async () => {
+  const run = await runCli({ AGENT_PERMISSION: "wide-open" });
+
+  assert.equal(run.code, 1);
+  assert.match(run.stderr, /invalid AGENT_PERMISSION "wide-open"/);
+  assert.match(run.stderr, /read-only, workspace-write, full-access/);
 });
 
 test(

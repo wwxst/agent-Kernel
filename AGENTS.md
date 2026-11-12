@@ -12,7 +12,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
-| `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access` |
+| `npm run agent -- --permission <mode> "<task>"` | 指定权限：`read-only` / `workspace-write`（默认）/ `full-access`；也可在 `.env` 里写 `AGENT_PERMISSION` 让档位跨启动持久（命令行优先） |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
 | `npm run agent --` | 不带任务：直接进全屏 TUI（唯一交互界面）；`--repl` 已移除，传入会报错 |
