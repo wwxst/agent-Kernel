@@ -95,7 +95,7 @@ test("PTY：未配置模型能进入真实 TUI，右上角显示状态且不产�
       stdout += String(data);
       if (!sentExit && stdout.includes("未配置模型")) {
         sentExit = true;
-        child.stdin.write("/exit\n");
+        child.stdin.write("/exit\r");
       }
     });
     child.stderr.on("data", (data) => { stderr += String(data); });

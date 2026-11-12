@@ -767,8 +767,8 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   const screen = screenRows(ui).join("\n");
   assert.match(screen, /TASK_NARROW/);
   // 主视图不重复描述：只有工具行，不再有「已读取文件…」这种同义概述。
-  assert.match(screen, /(?:✓|\+) Read a\.txt/);
-  assert.match(screen, /(?:✓|\+) Read a\.txt/);
+  assert.match(screen, /(?:✓|\+|↳) Read a\.txt/);
+  assert.match(screen, /(?:✓|\+|↳) Read a\.txt/);
   // 工具结果属于详情层：主视图只留一行工具，结果去 transcript 看。
   assert.match(await detailText(ui), /Received 1 line/);
 });
@@ -1948,7 +1948,7 @@ test("TUI 主视图：折叠态下用户消息、回复、状态行之间各留�
   await tick();
   const rows = screenRows(ui, 20);
   const userRow = rows.findIndex((line) => /[>❯] 问题/.test(line));
-  const replyRow = rows.findIndex((line) => /\* 回复/.test(line));
+  const replyRow = rows.findIndex((line) => /[✻*] 回复/.test(line));
   const statusRow = rows.findIndex((line) => /已完成|Completed/.test(line));
   assert.ok(userRow >= 0 && replyRow > userRow && statusRow > replyRow, "三行顺序正确");
   // 折叠态下空白行不能被当成「过程」隐藏，否则三行又挤在一起。

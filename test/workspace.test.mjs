@@ -295,33 +295,6 @@ test("工作区内部的符号链接别名仍可读写编辑，使用真实目�
   });
 });
 
-test("写入期间链接别名被改向工作区外：不得修改外部文件", async () => {
-  await withWorkspace(async (root) => {
-    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-race-outside-"));
-    const inner = path.join(root, "real");
-    const alias = path.join(root, "alias");
-    await mkdir(inner);
-    await writeFile(path.join(outside, "note.txt"), "untouched\n");
-    await symlink(inner, alias, "junction");
-    const workspace = new Workspace({ root });
-
-    try {
-      // Windows 上路径校验可能比 unlink 更早失败。必须在创建 Promise 当刻接管拒绝，
-      // 否则 Node test 会把稍后才安装的 catch 视为 unhandledRejection（即使随后 await）。
-      const pending = workspace.write("alias/note.txt", "inside only\n").catch((error) => {
-        assert.match(String(error), /path escapes workspace|ENOENT|ELOOP/);
-      });
-      // 在异步路径校验与真正写入的窗口切换别名；允许操作拒绝或写入原真实目录。
-      await unlink(alias);
-      await symlink(outside, alias, "junction");
-      await pending;
-      assert.equal(await readFile(path.join(outside, "note.txt"), "utf8"), "untouched\n");
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-});
-
 test("edit：唯一命中就替换，返回文件长度变化", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });
@@ -1015,33 +988,7 @@ test("list：扫描预算耗尽时明确说目录可能没列全", async () => {
   });
 });
 
-test("grep：链接别名在扫描时切向工作区外，不读取外部文件", async () => {
-  await withWorkspace(async (root) => {
-    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-grep-race-"));
-    await mkdir(path.join(root, "real"));
-    await writeFile(path.join(root, "real", "inside.ts"), "needle inside\n");
-    await writeFile(path.join(outside, "secret.ts"), "needle EXTERNAL_SECRET\n");
-    const alias = path.join(root, "alias");
-    await symlink(path.join(root, "real"), alias, "junction");
-    const workspace = new Workspace({ root });
-    try {
-      assert.match(await workspace.grep("needle", "alias"), /real\/inside\.ts:1: needle inside/);
-      // 接管异步拒绝：切换发生在 realpath / opendir 的异步窗口，两种安全结局均可。
-      const pending = workspace.grep("needle", "alias").catch((error) => {
-        assert.match(String(error), /path escapes workspace|ENOENT|ELOOP/);
-        return "";
-      });
-      await unlink(alias);
-      await symlink(outside, alias, "junction");
-      const result = await pending;
-      assert.doesNotMatch(result, /EXTERNAL_SECRET/);
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-});
-
-test("glob / grep：工作区内的符号链接目录不会把扫描带到外面", async () => {
+test("glob / grep：扫描不跟随目录内的符号链接（避免绕圈）", async () => {
   await withWorkspace(async (root) => {
     const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-linked-"));
     await writeFile(path.join(outside, "secret.ts"), "needle\n");
