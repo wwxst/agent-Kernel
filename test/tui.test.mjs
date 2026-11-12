@@ -1,9 +1,31 @@
 /**
- * TUI 显示的单元测试：用假输入/输出流驱动，不需要真终端。
+ * 文件目的：测全屏界面的显示 —— 用假的输入输出流驱动，不需要真终端。
  *
- * 断言的是外部行为：状态栏有什么、运行记录怎么分类、工具结果怎么展示。
- * 固定布局的转义序列只在这里做最低限度的保护性断言，
- * 真实终端行为留给手动验收 —— 没有 TTY 的 CI 不该假装自己验过光标。
+ * 看的是外面能看到的东西：状态栏写了什么、运行记录怎么分类、工具结果怎么显示。
+ * 屏幕上的控制字符只做最低限度的保护 —— 那些东西每改一次排版就变一遍，
+ * 全钉死的话，以后每次调整界面都要改几十条测试，最后变成为了测试而不敢改界面。
+ *
+ * 文件职责：`Tui` 这一处缝的全部展示行为，外加语言识别与配色解析。
+ * 不测 Agent 循环（`agent.test.mjs`）、不测真实终端（`cli-pty.test.mjs`）。
+ *
+ * 内容目录：
+ *   - 辅助：`tick()` 等两个回合让渲染落地；把历史文件指向临时路径，绝不写用户真实文件。
+ *   - 配色与主题：mono / full、dark / light / ansi、无颜色终端输出纯文本。
+ *   - 主视图：只追加、不进备用屏（只有 `Ctrl+T` 的 transcript 视图进）、历史行不被抹掉、
+ *     轮次之间留空行、窄屏只显示提示、放大后恢复。
+ *   - 等待与状态：Thinking 的符号与计时、状态行排在回复之后、重试只替换当前行。
+ *   - 工具活动：折叠层次、原地从运行中变成成功/失败、失败原因、真实参数摘录、
+ *     真实提交的 Unified Diff、读图缩略图、失败不显示成成功。
+ *   - 流式正文：草稿与确认正文不一致时显式更正、行式模式不能撤回只能标记未确认。
+ *   - 输入：长输入滚动与光标、中文宽度换行、Tab、组合字符与 emoji、括号粘贴、
+ *     `Ctrl+J` 与 `Shift+Enter` 换行、`@` 补全、`/` 命令菜单、`Ctrl+X Ctrl+E`、上下键翻历史。
+ *   - 语言与权限：按任务与 locale 判断语言、只翻译界面不翻译模型正文、状态栏固定完全访问、
+ *     `Shift+Tab` 不再是快捷键。
+ *
+ * 模块关系：依赖 `src/ui/tui.ts`、`src/ui/tui-mood.ts` 与 `node:test`，
+ * 用 `PassThrough` 假终端覆盖跨平台行为，由 `npm test` 启动。
+ *
+ * 已知边界：真实终端里的行为留给手动验收 —— 没在真终端里跑过，就不假装验过。
  */
 import assert from "node:assert/strict";
 import { rmSync } from "node:fs";
@@ -12,10 +34,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
-import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "../src/tui.ts";
-import { selectMood } from "../src/tui-mood.ts";
+import { Tui, detectUiLanguage, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "../src/ui/tui.ts";
+import { selectMood } from "../src/ui/tui-mood.ts";
 
-// 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
 // 测试不许写用户真实的 ~/.agent-kernel/history.jsonl。
 process.env.AGENT_HISTORY_FILE = path.join(tmpdir(), `agent-kernel-test-history-${process.pid}.jsonl`);
 
@@ -2171,3 +2192,31 @@ test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次�
   await tick();
   assert.match(inputLine(ui), /上一次的任务/, "上键翻出上一次的输入");
 });
+
+
+test("TUI 主视图：长流式正文的可变区域有界，确认后完整进入历史", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 12 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("stream many lines");
+  await tick();
+
+  const lines = Array.from({ length: 25 }, (_, index) => `STREAM_LINE_${index + 1}`);
+  const beforeDraft = ui.text().length;
+  ui.tui.assistantDelta(lines.join("\n"));
+  await tick();
+  const draft = ui.text().slice(beforeDraft);
+
+  assert.match(draft, /earlier streaming lines pending confirmation/);
+  assert.doesNotMatch(draft, /STREAM_LINE_1(?:\r|\n)/, "未确认的旧流式行不进入滚动历史");
+  const upward = [...draft.matchAll(/\x1b\[(\d+)A/g)].map((match) => Number(match[1]));
+  assert.ok(upward.every((count) => count <= 12), `光标上移必须受终端高度约束：${upward.join(", ")}`);
+
+  const beforeConfirm = ui.text().length;
+  ui.tui.finishAssistant();
+  await tick();
+  const confirmed = ui.text().slice(beforeConfirm);
+  assert.match(confirmed, /STREAM_LINE_1/, "确认后完整正文的开头进入历史");
+  assert.match(confirmed, /STREAM_LINE_25/, "确认后完整正文的结尾仍可见");
+});
+

@@ -1,14 +1,30 @@
 /**
- * Llm 的单元测试：网络响应是外部输入，这里钉死「读不懂的响应必须报错」。
+ * 文件目的：测模型客户端 —— 模型服务的回复是外部输入，这里钉死「看不懂的回复必须报错」。
  *
- * 最要紧的两类：空 message（以前会被当成正常回复，CLI 空着退出 0），
- * 以及 finish_reason = length / content_filter（半截输出被当成了完整答案）。
+ * 最要紧的两类：回了个空的（以前会被当成正常回答，程序空着退出）、
+ * 和只说了半截就被掐断的（以前会被当成完整答案）。
+ *
+ * 文件职责：`Llm.chat` 这一处缝 —— 请求体形状、响应校验、usage、SSE 拼装、取消。
+ * 不测重试与预算（`agent.test.mjs`）、不测错误文案（`model-errors.test.mjs`）。
+ *
+ * 内容目录：
+ *   - 假端点：`respondWith()` 回固定 JSON，流式用例另起一个回 SSE 的端点。
+ *   - 正常响应：字段归一化、usage 保留、没有 usage 记为未知、`max_tokens` 进请求体。
+ *   - 非法响应（全部必须报错，不许变成「空成功」）：空 `message`、`finish_reason` 与
+ *     `tool_calls` 互相矛盾、重复 id、`content` 类型错或缺失、`tool_calls` 结构不全、
+ *     `reasoning_content` 不是字符串、`length` / `content_filter` / 缺 `finish_reason`。
+ *   - 取消：信号一到立刻中断，不等 120 秒超时。
+ *   - 流式：正文分片拼装、`onDelta` 逐段回调、`tool_calls` 按 index 合并、交错到达各归各的、
+ *     `reasoning_content` 累积、截断与断流必须报错、坏 chunk 不静默跳过。
+ *
+ * 模块关系：依赖 `src/model/llm.ts`、`src/protocol/errors.ts` 与 Node 内置的 `node:http`，
+ * 由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { ChatResponseError } from "../src/errors.ts";
-import { Llm } from "../src/llm.ts";
+import { ChatResponseError } from "../src/protocol/errors.ts";
+import { Llm } from "../src/model/llm.ts";
 
 /** 起一个只会回固定 JSON 的假端点。 */
 async function respondWith(payload) {

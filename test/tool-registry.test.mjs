@@ -1,10 +1,24 @@
 /**
- * ToolRegistry 的单元测试：它是「工具失败必须折成文本」这条规矩唯一的执行点，
- * 所以每个失败分支都要在这里钉死 —— 漏一个，agent 就会被一个异常打断。
+ * 文件目的：测工具箱 —— 它是「工具出错必须变成一句错误话」这条规矩唯一的执行点，
+ * 所以每个出错分支都要在这里钉死：漏一个，程序就会被一个异常打断。
+ *
+ * 文件职责：测注册时的体检、参数校验、执行成功与四种失败折文本、以及那条不可折的例外。
+ * 不测具体工具的实现（那是 `workspace.test.mjs`）。
+ *
+ * 内容目录：
+ *   - `call()`：造一次工具调用；`recordingTool()`：记录收到的参数的假工具。
+ *   - `definitions`：只投影说明书字段，`run` 不外泄。
+ *   - `execute` 正常路径：命中就执行、参数齐全才真的执行、空 `arguments` 当空对象。
+ *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填、类型不对、工具抛任何东西，
+ *     一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
+ *   - 注册体检：重名、`array` / `object` 参数、非法 schema、`required` 未声明、缺类型。
+ *
+ * 模块关系：依赖 `src/protocol/errors.ts`、`test/support/harness.mjs` 与 `node:test`，
+ * 由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ProcessCleanupError } from "../src/errors.ts";
+import { ProcessCleanupError } from "../src/protocol/errors.ts";
 import { echoTool, makeRegistry } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */

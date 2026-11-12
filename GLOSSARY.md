@@ -4,12 +4,13 @@
 
 ## Language
 
-**Kernel**:
+**Core**:
 这个仓库的全部内容：一个把模型回复变成工具调用、再把工具结果送回去的循环（生态里叫 **Agent loop**）。除了步数上限，它不自带任何策略。
+旧称 **Kernel**：2026-11 统一改名为 Core，历史 ADR 与提交信息里仍可能用旧名。
 _Avoid_: engine, runtime, framework
 
 **Agent loop**:
-这个循环在生态里的通用叫法，本仓库给它起的名字是 **Kernel**：问模型 → 执行它要的工具 → 把结果塞回去，直到模型不再要工具。
+这个循环在生态里的通用叫法，本仓库给它起的名字是 **Core**：问模型 → 执行它要的工具 → 把结果塞回去，直到模型不再要工具。
 _Avoid_: ReAct（那是另一种带显式推理步的循环）
 
 **Run**:
@@ -101,7 +102,7 @@ _Avoid_: cost（成本是 usage 乘以单价，本仓库不猜单价）
 _Avoid_: hard cap, quota（它不保证总量不超过上限）
 
 **Chat client**:
-Kernel 向谁要下一条 Message 和这一轮的 Token usage：生产实现 POST 一个 OpenAI 兼容端点（可选 SSE 流式），测试实现按脚本回放。流式只影响「怎么显示」，不影响返回的 Message。
+Core 向谁要下一条 Message 和这一轮的 Token usage：生产实现 POST 一个 OpenAI 兼容端点（可选 SSE 流式），测试实现按脚本回放。流式只影响「怎么显示」，不影响返回的 Message。
 _Avoid_: LLM, model, provider
 
 ## Relationships
@@ -120,7 +121,7 @@ _Avoid_: LLM, model, provider
 
 ## Flagged ambiguities
 
-- "agent" 既指整个程序（CLI 加 Kernel），也指循环本身。本仓库里 **Kernel** 专指循环，**Run** 专指一次执行；"agent" 只作为项目名出现。
+- "agent" 既指整个程序（CLI 加 Core），也指循环本身。本仓库里 **Core** 专指循环，**Run** 专指一次执行；"agent" 只作为项目名出现。
 - "error" 有两种：**ERROR text** 是回灌给模型的文本；异常（throw）只出现在 Tool 之外的宿主代码里。
 - "full access" 不是 "sandbox"：**Full access** 是「不再自己施加限制」；**Sandbox** 是操作系统级隔离，本仓库没有实现。
 - "log" 有两种：**Run log** 是 TUI 给人看的滚动记录；**Transcript** 是模型记忆。两者不互为副本，也不要求同步。

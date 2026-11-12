@@ -1,7 +1,16 @@
 /**
- * 项目指令（AGENTS.md）读取：存在就读、为空或不存在就当没有、超长就截断。
+ * 文件目的：测项目说明书的读取 —— 有就读、没有就当没有、太长就截断、是目录也不报错。
  *
- * 这几条边界比功能本身重要：读不到不能让任务失败，太长不能把对话预算挤掉。
+ * 这几条边界比功能本身重要：读不到不能让任务失败，太长不能把对话的额度挤掉。
+ *
+ * 文件职责：只测 `readProjectInstructions()` 与 `projectInstructionsPrompt()` 的边界。
+ * 不测它怎么进系统提示（那是 `cli.test.mjs` 的请求体断言）。
+ *
+ * 内容目录：
+ *   - `withDir()`：临时目录，跑完删掉。
+ *   - 五个用例：文件不存在；空白文件；读到正文并保留原样；超长截断并标注；同名目录不抛错。
+ *
+ * 模块关系：依赖 `src/model/project-instructions.ts` 与 `node:test`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
@@ -13,7 +22,7 @@ import {
   PROJECT_INSTRUCTIONS_FILE,
   projectInstructionsPrompt,
   readProjectInstructions,
-} from "../src/project-instructions.ts";
+} from "../src/model/project-instructions.ts";
 
 async function withDir(fn) {
   const root = await mkdtemp(path.join(tmpdir(), "agent-instructions-"));

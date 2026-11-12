@@ -1,14 +1,33 @@
 /**
- * Agent 循环的单元测试：在 ChatClient 这条缝上驱动完整循环。
+ * 文件目的：测核心循环 —— 用假的模型客户端驱动一整轮，看它有没有按顺序做事。
  *
- * 断言的都是外部行为：消息顺序、tool_call_id 配对、步数上限、错误是否被回灌。
- * 循环内部怎么组织，测试一概不关心 —— 重构不该让这些用例变红。
+ * 只看外面能看到的结果：消息顺序、一问一答能不能对上、预算到上限会停、
+ * 出错的话有没有把原因说回去。循环内部怎么写的，这里不管。
+ *
+ * 文件职责：`Agent.run` 这一处缝的全部行为。
+ * 不测工具实现（`workspace.test.mjs`）、不测工具箱折文本（`tool-registry.test.mjs`）。
+ *
+ * 内容目录：
+ *   - 基本流程：工具结果在下一轮前入栈并配对 `tool_call_id`；多个调用串行；没有调用就收尾；
+ *     工具失败折成 `ERROR` 后模型继续；空回复必须报错。
+ *   - 观察回调：四种回调的顺序与次数、回调抛错或返回 rejected Promise 时异常隔离、
+ *     `onToolCall` 能拿到已确认的正文、回调不能篡改执行参数。
+ *   - 三个预算：步数上限（最后一批工具不执行）、工具调用预算（整批不执行、跨批累计）、
+ *     token 预算（软预算，顶穿时最终答复仍成功但状态可见）。
+ *   - 取消：开始前已 abort、中途 abort 后剩余调用留 `not run`、取消后仍返回的答案不提交。
+ *   - 会话：第二个 Run 继承 transcript、预算按 Run 重算、并发 run 被拒、失败后还能继续。
+ *   - 记账：usage 累加、缺失记 unknown 不补 0、请求失败也记账。
+ *   - 系统提示词：默认一条、可替换、函数每次请求前求值、关键约定文案不变。
+ *   - 重试：429 计入真实请求与未知成本且 Step 不重复；401 不重试、取消时退避立即停。
+ *
+ * 模块关系：依赖 `src/core/agent.ts`、`src/core/tool-registry.ts`、`src/protocol/errors.ts`，
+ * 以及 `test/support/harness.mjs` 的脚本化假客户端。由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/agent.ts";
-import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/errors.ts";
-import { ToolRegistry } from "../src/tool-registry.ts";
+import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/core/agent.ts";
+import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
+import { ToolRegistry } from "../src/core/tool-registry.ts";
 import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from "./support/harness.mjs";
 
 /** 只要角色序列，消息内容在别的断言里单独看。 */
@@ -270,6 +289,44 @@ test("进程树清理未确认：跳过同批后续工具，把错误交回模�
   assert.match(results[0].content, /cleanup unverified/);
   assert.match(results[1].content, /ERROR: not run: process tree cleanup unverified/);
   assert.equal(agent.stats.toolCalls, 1);
+});
+
+
+test("进程树清理未确认后：后续模型轮次和后续 Run 都不能再执行工具", async () => {
+  let touched = 0;
+  const cleanup = {
+    name: "broken_shell", description: "simulated cleanup failure",
+    parameters: { type: "object", properties: {} },
+    run: async () => { throw new ProcessCleanupError("process tree cleanup unverified"); },
+  };
+  const write = {
+    name: "write", description: "side effect",
+    parameters: { type: "object", properties: {} },
+    run: async () => { touched++; return "wrote"; },
+  };
+  const chat = createScriptedChat([
+    callTool("shell", "broken_shell", {}),
+    callTool("write-after-cleanup", "write", {}),
+    finalReply("cleanup failed; no more tools were run"),
+    callTool("write-next-run", "write", {}),
+    finalReply("the session remains tool-disabled"),
+  ]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([cleanup, write]) });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "the session remains tool-disabled");
+  assert.equal(touched, 0, "进程树清理未确认后，后续 Run 也不能启动副作用");
+  assert.deepEqual(chat.requests.map((request) => request.tools.length), [2, 0, 0, 0, 0]);
+  const results = agent.transcript.filter((message) => message.role === "tool");
+  assert.deepEqual(results.map((message) => message.tool_call_id), [
+    "shell", "write-after-cleanup", "write-next-run",
+  ]);
+  assert.match(results[1].content, /tool execution remains disabled for this Agent session/);
+  assert.match(results[2].content, /tool execution remains disabled for this Agent session/);
+  assert.equal(agent.stats.toolCalls, 0, "第二个 Run 没有实际执行工具");
+  assert.equal(agent.sessionStats.toolCalls, 1, "只统计首次进入 ToolRegistry 的失败调用");
 });
 
 test("展示回调可改自己的工具对象，不能篡改执行参数或 transcript 配对", async () => {

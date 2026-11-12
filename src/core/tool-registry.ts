@@ -1,16 +1,26 @@
 /**
- * 工具注册表：模型能调用的工具有哪些，以及怎么把一次 Tool call 变成一段文本结果。
+ * 文件目的：管住「模型能用哪些工具，以及怎么执行一次调用」。
  *
- * 它只做一件事，但这件事必须只有一个地方做 —— 所有失败都要折成 "ERROR: ..." 文本。
- * 理由再说一遍，因为这是整个设计里最容易被写错的地方：
- *   - 抛异常 = 循环终止 = 用户得从头再来；
- *   - 返回错误文本 = 模型下一轮读到 "ERROR: ENOENT ..." = 它自己换个路径重试。
- * 后者才是 agent 该有的行为。
+ * 这里最关键的一条规矩：工具出错不许让程序崩，只能变成一句「错误：原因」交回去。
+ * 区别在哪：崩了，整轮就结束，用户得从头再来；交回一句话，模型下一轮读到它，
+ * 就能自己换个路径、换个参数再试 —— 这才是它该有的样子。
  *
- * 规则写在 execute() 里，而不是靠调用方自觉：只要工具调用走这条路，就漏不出去。
+ * 文件职责：负责工具查找、注册时体检、参数校验、执行、把失败折成文本。
+ * 不负责定义具体工具（那是 `tools/workspace.ts`）、不负责跟模型对话（那是 `core/agent.ts`）。
+ *
+ * 内容目录：
+ *   - `ToolRegistry`：注册表本体，构造时挡掉重名与不支持的 Schema。
+ *   - `ToolRegistry.definitions`：发给模型的那一半，只有说明书，没有执行函数。
+ *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本。
+ *   - 内部：`assertSupportedSchema()` 注册时体检、`validateArguments()` 按 Schema 校验参数、
+ *     `SUPPORTED_PARAMETER_TYPES` 校验器真正认识的那几种类型。
+ *
+ * 模块关系：依赖 `protocol/types.ts`（`Tool` / `ToolCall` / `ToolDefinition`）与
+ * `protocol/errors.ts`（`describeError`、`ProcessCleanupError`）。
+ * 由 `cli.ts` 装配、`core/agent.ts` 每轮调用；`test/support/harness.mjs` 也用它搭测试夹具。
  */
-import { describeError, ProcessCleanupError } from "./errors.ts";
-import type { Tool, ToolCall, ToolDefinition } from "./types.ts";
+import { describeError, ProcessCleanupError } from "../protocol/errors.ts";
+import type { Tool, ToolCall, ToolDefinition } from "../protocol/types.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
 const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);
@@ -124,13 +134,13 @@ export class ToolRegistry {
     this.tools = tools;
   }
 
-  /** 发给模型的那一半：只有说明书，没有 run。 */
+  /** 工具箱成员 definitions（工具说明书）：发给模型的那一半，只有说明书，没有执行函数。 */
   get definitions(): ToolDefinition[] {
     return this.tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
   }
 
   /**
-   * 按名字执行一次工具调用。
+   * 工具箱方法 execute（执行工具）：按名字执行一次工具调用。
    *
    * 普通工具失败折成 ERROR 文本，让模型继续纠正；但进程树清理未确认时，
    * 后代进程可能还在产生副作用，必须抛 ProcessCleanupError 阻断后续工具。

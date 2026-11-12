@@ -1,6 +1,26 @@
 /**
- * Workspace 的单元测试：路径边界和输出上限是这个模块唯一的两个卖点，
- * 所以它们必须在接口上被验证 —— 不碰私有的 resolve/truncate。
+ * 文件目的：测工作区 —— 路径算得准不准、输出有没有上限，是它存在的两个理由，
+ * 所以这两件事必须在外面能测到的地方验证。
+ *
+ * 文件职责：`Workspace` 九个方法的全部外部行为，外加进程树清理与后台任务的边界。
+ * 不测工具箱怎么把异常折成文本（那是 `tool-registry.test.mjs`）。
+ *
+ * 内容目录：
+ *   - 辅助：`waitGone()` 等进程真的消失（`taskkill` 返回成功不等于进程已退场）。
+ *   - 写与改：原子提交后的前后快照、超大文件不给快照、取消不截断原文件、保留权限与 BOM、
+ *     符号链接换向不碰外部文件、`edit` 唯一命中 / 多处拒绝 / 空片段拒绝 / CRLF 兼容。
+ *   - 读与列：超长截断并说明、正好等于上限不算截断、半个 UTF-8 字符不出现、
+ *     空目录显式提示、条目超限先排序再截断。
+ *   - 搜索：`glob` 的模式与搜索根、`grep` 的正则 / `fixed` / flags / 超长行 / 超大文件跳过 /
+ *     扫描预算用尽 / 灾难性回溯被超时打断 / 取消打断匹配线程 / 跳过 `node_modules` 与 `.git`。
+ *   - 跑命令：exit code 与两路输出、8000 字符上限、多字节分片解码、超时与取消后整棵进程树被杀、
+ *     Windows `taskkill` 的各种失败路径。
+ *   - 后台任务：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、
+ *     被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错。
+ *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理。
+ *
+ * 模块关系：依赖 `src/tools/workspace.ts`、`test/support/harness.mjs` 与 `node:test`，
+ * 由 `npm test` 启动；少数 Windows 专用用例在其他平台自动跳过。
  */
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
@@ -9,7 +29,7 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { fillBuffer, terminateTree, Workspace } from "../src/workspace.ts";
+import { fillBuffer, terminateTree, Workspace } from "../src/tools/workspace.ts";
 import { withWorkspace } from "./support/harness.mjs";
 
 /**
@@ -988,33 +1008,7 @@ test("list：扫描预算耗尽时明确说目录可能没列全", async () => {
   });
 });
 
-test("grep：链接别名在扫描时切向工作区外，不读取外部文件", async () => {
-  await withWorkspace(async (root) => {
-    const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-grep-race-"));
-    await mkdir(path.join(root, "real"));
-    await writeFile(path.join(root, "real", "inside.ts"), "needle inside\n");
-    await writeFile(path.join(outside, "secret.ts"), "needle EXTERNAL_SECRET\n");
-    const alias = path.join(root, "alias");
-    await symlink(path.join(root, "real"), alias, "junction");
-    const workspace = new Workspace({ root });
-    try {
-      assert.match(await workspace.grep("needle", "alias"), /real\/inside\.ts:1: needle inside/);
-      // 接管异步拒绝：切换发生在 realpath / opendir 的异步窗口，两种安全结局均可。
-      const pending = workspace.grep("needle", "alias").catch((error) => {
-        assert.match(String(error), /path escapes workspace|ENOENT|ELOOP/);
-        return "";
-      });
-      await unlink(alias);
-      await symlink(outside, alias, "junction");
-      const result = await pending;
-      assert.doesNotMatch(result, /EXTERNAL_SECRET/);
-    } finally {
-      await rm(outside, { recursive: true, force: true });
-    }
-  });
-});
-
-test("glob / grep：工作区内的符号链接目录不会把扫描带到外面", async () => {
+test("glob / grep：扫描不跟随目录内的符号链接（避免绕圈）", async () => {
   await withWorkspace(async (root) => {
     const outside = await mkdtemp(path.join(tmpdir(), "agent-kernel-linked-"));
     await writeFile(path.join(outside, "secret.ts"), "needle\n");
@@ -1127,6 +1121,24 @@ test("shell 后台执行：返回任务编号，立即返回不等待进程结�
   });
 });
 
+
+test("shell 后台启动失败：返回可恢复工具错误，不伪报 started", async () => {
+  await withWorkspace(async (dir) => {
+    const missingRoot = path.join(dir, "missing-root");
+    const workspace = new Workspace({ root: missingRoot });
+
+    await assert.rejects(
+      () => workspace.run('node -e "setTimeout(()=>{},1000)"', { background: true }),
+      /could not start background command:.*ENOENT/i,
+    );
+    await assert.rejects(
+      () => workspace.readJobOutput("job-1"),
+      /unknown background job "job-1" \(known: none\)/,
+      "启动失败的任务不能登记成 running",
+    );
+  });
+});
+
 test("shell-output：读到输出后，第二次只返回新增的部分", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
@@ -1195,6 +1207,26 @@ test("shell-kill：停掉后台任务，进程真的不在了", async () => {
   });
 });
 
+
+test("shell-kill：命令启动的后台后代仍属于同一任务，可通过任务接口停止", { skip: process.platform === "win32" }, async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "setInterval(()=>{},1000)" & echo $! > child.pid; echo ready', { background: true });
+
+    const output = await workspace.readJobOutput("job-1", 5000);
+    const shellPid = Number(/pid (\d+)/.exec(output)?.[1]);
+    const childPid = Number((await readFile(path.join(dir, "child.pid"), "utf8")).trim());
+    try {
+      assert.match(output, /ready/);
+      assert.ok(Number.isInteger(childPid), "命令启动的后台子进程必须有 pid");
+      assert.match(await workspace.killJob("job-1"), /stopped job-1/);
+      assert.equal(await waitGone(childPid), true, "shell-kill 必须停止 shell 已启动的后台后代");
+    } finally {
+      await stopJob(workspace, shellPid);
+    }
+  });
+});
+
 test("shell-output：未知任务编号报错，并列出已知编号", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
@@ -1225,6 +1257,31 @@ test("shell-output：单次最多 8000 字符，剩下的明确说还有并留�
       const second = await workspace.readJobOutput("job-1", 5000);
       assert.match(second, /x{1000}/);
       assert.doesNotMatch(second, /not shown/, "读完就不该再提示还有");
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+
+test("shell-output：截断边界不切开 emoji 代理对，后续读取不损坏 UTF-8", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    const expectedFirst = `${"x".repeat(7_999)}😀`;
+    const outputText = `${expectedFirst}Z`;
+    await workspace.write("payload.txt", outputText);
+    // 从文件读取，避免把 8k 测试载荷塞进 Windows 命令行长度限制。
+    await workspace.run(`node -e "process.stdout.write(require('fs').readFileSync('payload.txt'))"`, { background: true });
+
+    const first = await workspace.readJobOutput("job-1", 5000);
+    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    try {
+      assert.equal(body(first).split("\n")[0], expectedFirst, "第一次只能在完整 emoji 之后截断");
+      assert.match(first, /1 chars not shown/);
+
+      const second = await workspace.readJobOutput("job-1", 5000);
+      assert.equal(body(second), "Z", "第二次从正确的 UTF-8 字节偏移继续");
+      assert.doesNotMatch(second, /\uFFFD/);
     } finally {
       await stopJob(workspace, pid);
     }

@@ -1,16 +1,33 @@
 /**
- * 轻量 TUI：Claude Code 风格的聊天式终端界面。
+ * 文件目的：全屏交互界面 —— 上面看对话，下面打字。
  *
- * v0.3 的目标是「像聊天，而不是调试控制台」：顶部是项目/模型/路径，中间是用户、
- * 模型和工具调用的对话视口，底部是带分隔线的固定输入区，最下面是权限和 Session 统计。
+ * 只负责显示，不参与思考和执行；换掉它，程序照样能跑。
  *
- * 渲染用绝对光标定位 + 差分重绘：交互终端始终进入备用屏幕，缩放合并后重排；
- * 非 TTY（管道、CI）保留逐行输出，不提供可切换的兼容 UI。
- * 不引 TUI 库、不改 Agent。
+ * 一条有意为之的规矩：内容只在原地往下追加，不另开一块屏幕接管终端。
+ * 这样程序退出后，之前滚过的内容还留在终端里，可以往回翻。
+ * 想看完整历史，按 Ctrl+T 切到单独的历史视图。
  *
- * 非 TTY（管道、CI、e2e）也退化成逐行输出：没有固定位置，但走同一套日志与工具事件逻辑。
- * 已知边界：固定布局要求终端至少 12 行、30 列；历史保留最近 2000 条逻辑行；
- * 宽度按近似显示宽度（CJK/emoji 按 2 列），不做完整 Unicode 宽度表。
+ * 文件职责：负责绘制、键盘输入、`@` 补全、`/` 命令提示、工具活动的分层展示、状态栏统计。
+ * 不负责 Agent 循环、不负责执行工具、不写 Transcript —— 它只消费事件。
+ *
+ * 内容目录：
+ *   - `Tui`：界面本体。生命周期 `start` / `beginTurn` / `finishTurn` / `close`；
+ *     模型事件 `beginModelRequest` / `assistantDelta` / `finishAssistant` / `confirmAssistant`；
+ *     工具事件 `toolCall` / `toolResult` / `recordEditDiff` / `recordImagePreview`；
+ *     输入 `readLine`；状态 `setStats` / `setThinking` / `setRetrying`；日志 `logLine` / `logError`。
+ *   - `TuiOptions`：输出流、工作区路径、语言、配色、初始任务等构造参数。
+ *   - `Style` 与四套调色板（深色/浅色 × 全彩/基础），`Glyphs`（unicode / ascii 两套字符）。
+ *   - 显示宽度工具：`displayWidth` / `wrapLine` / `clip` / `padRight` / `takeByWidth`，
+ *     CJK 与 emoji 按 2 列算，否则中文回复会折行破帧。
+ *   - 内容格式化：`formatToolEvent` / `toolResultLines` / `committedEditDiff`（真实提交的 diff）/
+ *     `summarizeToolResult` / `activityVerb`。
+ *   - 配置解析：`parseTuiColorMode` / `parseTuiTheme` / `uiLanguageFromLocale` / `detectUiLanguage`。
+ *
+ * 模块关系：依赖 `protocol/`（错误与工具调用类型）、`core/`（统计类型、工具失败判断），
+ * 以及同目录的 `text.ts`（转义）、`file-index.ts`（`@` 补全）、`prompt-history.ts`（历史）、
+ * `tui-mood.ts`（台词）、`tui-image.ts`（读图预览）。由 `cli.ts` 创建并作为观察者挂到 `Agent` 上。
+ *
+ * 已知限制：终端窗口少于 12 行或 30 列会显示不下。
  */
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
@@ -22,14 +39,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
 import { escapeControlCharacters } from "./text.ts";
-import { describeError } from "./errors.ts";
-import type { AgentSessionStats, AgentStats } from "./agent.ts";
+import { describeError } from "../protocol/errors.ts";
+import type { AgentSessionStats, AgentStats } from "../core/agent.ts";
 import { selectMood } from "./tui-mood.ts";
 import { previewImage } from "./tui-image.ts";
 import type { ImagePreview } from "./tui-image.ts";
 import type { MoodState } from "./tui-mood.ts";
-import type { ToolCall } from "./types.ts";
-import { isToolResultFailure } from "./tool-result-status.ts";
+import type { ToolCall } from "../protocol/types.ts";
+import { isToolResultFailure } from "../core/tool-result-status.ts";
 
 /** 固定布局至少需要：标题/路径/分隔线 + 日志 + 输入框 + 状态行 + 缓冲。 */
 const MIN_ROWS = 12;
@@ -393,7 +410,7 @@ export class Tui {
 
   private thinkingTimer?: NodeJS.Timeout;
 
-  /** 只量测 UI 中本次 Run 的经过时间，不参与 Kernel 的预算或统计。 */
+  /** 只量测 UI 中本次 Run 的经过时间，不参与 Core 的预算或统计。 */
   private runStartedAt?: number;
 
   private runToolResults = 0;
@@ -935,7 +952,7 @@ export class Tui {
       : this.style.paint("muted", clip(plain, width));
   }
 
-  /** 画第一帧。主视图不切备用屏，定稿的行直接打印进 Shell 滚动历史。 */
+  /** 界面方法 start（画第一帧）：主视图不切备用屏，定稿的行直接打印进终端滚动历史。 */
   start(): void {
     if (this.closed || this.started) return;
     this.started = true;
@@ -1306,7 +1323,7 @@ export class Tui {
   }
 
   /**
-   * 任务开始：把用户这一轮写进对话，并关掉上一段可能未收尾的模型回复。
+   * 界面方法 beginTurn（任务开始）：把用户这一轮写进对话，并关掉上一段可能未收尾的模型回复。
    *
    * 固定布局清掉 readline 的输入回显，所以写一条 `❯ task`；行式聊天默认不重复。
    */
@@ -1380,7 +1397,7 @@ export class Tui {
     }
   }
 
-  /** 模型正文增量。固定布局只累积、限频重绘；行式聊天直接写。 */
+  /** 界面方法 assistantDelta（收到正文片段）：固定布局只累积、限频重绘；行式聊天直接写。 */
   assistantDelta(text: string): void {
     if (text === "") return;
 
@@ -1425,7 +1442,7 @@ export class Tui {
   }
 
   /**
-   * 收尾一段模型回复。content 是 Agent 的最终消息：流式已经显示过时只提交缓冲，
+   * 界面方法 finishAssistant（收尾回复）：content 是 Agent 的最终消息——流式已经显示过时只提交缓冲，
    * 没显示过（非流式或增量被漏掉）时整段补上。
    */
   finishAssistant(content: string | null = null): void {
@@ -1454,8 +1471,8 @@ export class Tui {
   }
 
   /**
-   * 用已经确认的模型消息校对流式增量。固定布局可原地改正，行式模式无法
-   * 撤回已写字节，必须追加明确的更正提示与权威正文，而不是悄悄忽略差异。
+   * 界面方法 confirmAssistant（校对回复）：用已经确认的模型消息校对流式增量。固定布局可原地改正，
+   * 行式模式无法撤回已写字节，必须追加明确的更正提示与权威正文，而不是悄悄忽略差异。
    * 与 finishAssistant() 不同：null 表示模型确认没有正文，不是“未知正文”。
    */
   confirmAssistant(content: string | null, final = false): void {
@@ -1548,7 +1565,7 @@ export class Tui {
     if (this.layout) this.renderNow();
   }
 
-  /** 工具调用开始：固定布局先写「正在运行」；结果到达时原地替换成 ✓/✗。 */
+  /** 界面方法 toolCall（工具开始）：固定布局先写「正在运行」；结果到达时原地替换成 ✓ 或 ✗。 */
   toolCall(call: ToolCall): void {
     this.setThinking(false);
     this.finishAssistant();
@@ -1593,7 +1610,7 @@ export class Tui {
     this.writeRaw(`  → ${escapeControlCharacters(formatToolCall(call))}${this.newline()}`);
   }
 
-  /** 工具结果：成功、失败、权限拒绝都在这里落一行；拒绝原因直接来自 Tool result。 */
+  /** 界面方法 toolResult（工具结果）：成功、失败都落一行；失败原因直接来自工具返回值。 */
   toolResult(call: ToolCall, result: string): void {
     this.runToolResults++;
     this.setThinking(false);
@@ -1631,7 +1648,7 @@ export class Tui {
     this.writeRaw(`  ${escapeControlCharacters(formatToolResult(call, result, this.uiLanguage))}${this.newline()}`);
   }
 
-  /** 一轮结束：更新统计；固定布局重画页脚，其余布局打一行 [stats]。 */
+  /** 界面方法 finishTurn（一轮结束）：更新统计；固定布局重画页脚，其余布局打一行统计。 */
   finishTurn(run: AgentStats, session: AgentSessionStats, { failed, cancelled = false }: { failed: boolean; cancelled?: boolean }): void {
     // 先收尾可见正文，再决定折叠；没有通过 CLI 显式标记时也识别末尾的正式回复。
     if (this.layout) this.commitAssistant();
@@ -1709,7 +1726,7 @@ export class Tui {
   }
 
   /**
-   * 读下一行。返回 null 表示 readline 已关闭（EOF / 取消）。
+   * 界面方法 readLine（读一行输入）：返回 null 表示输入已经关闭（结束或取消）。
    *
    * 固定布局先把当前帧画好，再把光标放到输入行；line 到达后由调用方写日志并重绘。
    */
@@ -1754,7 +1771,7 @@ export class Tui {
     return answer;
   }
 
-  /** 结束 TUI：清掉监听器和定时器、提交当前回复、恢复终端。 */
+  /** 界面方法 close（关闭）：清掉监听器和定时器、提交当前回复、恢复终端。 */
   close(): void {
     if (this.closed) return;
     if (this.started) this.setThinking(false);
@@ -2172,10 +2189,24 @@ export class Tui {
     const commitTarget = Math.max(0, Math.min(lines.length - tailBudget, boundary));
     const commitTo = Math.min(Math.max(this.printedLines, commitTarget), lines.length);
     const tail = lines.slice(commitTo);
+    // 未确认的流式正文不能提前提交到 Shell scrollback：模型可能中断或校正它。
+    // 但也不能让整条长回复一直留在可变区，否则活动区会超过终端高度，光标上移越界并重复刷历史。
+    // 因此流式期间只显示尾部窗口；确认后 commitAssistant 会把完整正文一次性写入日志。
+    let visibleTail = tail;
+    if (this.assistantOpen && tail.length > tailBudget) {
+      const visibleCount = Math.max(1, tailBudget - 1);
+      const hiddenCount = tail.length - visibleCount;
+      visibleTail = tailBudget > 1
+        ? [{ text: this.uiText(
+          `… ${hiddenCount} earlier streaming lines pending confirmation`,
+          `… 还有 ${hiddenCount} 行较早的流式正文待确认`,
+        ), tone: "muted" }, ...tail.slice(-visibleCount)]
+        : tail.slice(-1);
+    }
     // 输入框上方 = 活动区尾部实际占用的终端行数 + 输入框上边框。
     // 不能直接用 tail.length：终端在行尾会自动折行，一条逻辑行可能占两行；
     // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
-    const tailRows = tail.reduce(
+    const tailRows = visibleTail.reduce(
       (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
     // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
     const rowsAboveInput = tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
@@ -2189,7 +2220,7 @@ export class Tui {
     }
     this.printedLines = commitTo;
 
-    for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
+    for (const line of visibleTail) frame += `${this.paintLogLine(line, width)}\r\n`;
     // 输入区可以是多行（Ctrl+J 换行），行数变化要同时反映到光标回退的行数上。
     const inputRows = this.inputLines(width);
     frame += `${this.dividerLine(width)}\r\n${inputRows.join("\r\n")}\r\n${this.dividerLine(width)}\r\n`;

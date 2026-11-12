@@ -1,17 +1,29 @@
 /**
- * 工作区：agent 唯一能碰真实世界的入口。
+ * 文件目的：程序碰真实文件、跑真实命令的唯一入口。
  *
- * 这个模块把三件「容易写错、但调用方不该关心」的事情关在门后：
+ * 它替调用方挡掉三件容易出事的事：
+ *   1. 路径要算准。相对路径从工作区根目录算起，`..` 可以走出去，链接要解析到真实位置。
+ *      这里不设边界 —— 能碰什么，由启动程序的那个操作系统账户决定（见 ADR-0019）。
+ *   2. 输出要有上限。一条命令刷屏几万行，就能把给模型看的内容撑爆。
+ *   3. 命令要有超时。命令可能永远不结束，比如起了个一直跑的服务。
  *
- *   1. 路径要解析成真实位置。相对路径相对工作区根目录，绝对路径直接使用，
- *      `..` 可以走出工作区；链接解析到实际目标。这里**没有**工作区边界 ——
- *      能碰什么由启动 Agent 的操作系统账户决定，不由本模块决定。
- *   2. 输出必须有上限。一条命令刷屏几万行就能把上下文撑爆，读和跑都要截断。
- *   3. 命令必须有超时。命令可能永远不结束（比如起了个 dev server）。
+ * 文件职责：负责文件读写改、列目录、glob、grep、跑命令（前后台）、进程树清理。
+ * 不负责把异常变成文本 —— 它出错就抛；折成 `ERROR:` 交给模型是 `core/tool-registry.ts` 的事。
+ * 两边各管一段，改的时候不会互相牵动。
  *
- * 失败时它抛异常 —— 这是它在接口上的错误模式；
- * 折成 "ERROR: ..." 文本回灌给模型是 ToolRegistry 的事，不是这里的事。
- * 两个模块各管一个决定，改的时候不会互相牵动。
+ * 内容目录：
+ *   - `Workspace`：九个方法 `read` / `write` / `edit` / `list` / `glob` / `grep` /
+ *     `run` / `readJobOutput` / `killJob`；内部有原子替换、路径解析、输出截断、进程树清理。
+ *   - `createWorkspaceTools()`：把上面这些方法翻译成模型能调用的九个工具（含英文说明书）。
+ *   - `WorkspaceOptions` / `GrepOptions` / `BackgroundJob`：构造参数、grep 选项、后台任务登记。
+ *   - `RegexGrep`：grep 的正则匹配线程客户端，超时或取消就 terminate。
+ *   - 导出的小工具：`fillBuffer()` 读满缓冲区、`terminateTree()` 收进程树。
+ *   - 常量区：各类上限（读、输出、扫描、行宽、结果数）、超时、后台任务日志目录与轮询间隔。
+ *
+ * 模块关系：只依赖 `protocol/types.ts`（`Tool`）与 `protocol/errors.ts`（`ProcessCleanupError`），
+ * 外加 Node 内置的 fs / child_process / worker_threads / string_decoder。
+ * 由 `cli.ts` 创建、`core/tool-registry.ts` 通过工具间接调用；
+ * `grep-worker.ts` 是它的副线程，两边用消息协议配合。
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -24,8 +36,8 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
-import type { Tool } from "./types.ts";
-import { ProcessCleanupError } from "./errors.ts";
+import type { Tool } from "../protocol/types.ts";
+import { ProcessCleanupError } from "../protocol/errors.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;
@@ -206,6 +218,7 @@ interface BackgroundJob {
   cursor: number;
   status: "running" | "exited" | "killed" | "unverified";
   exitCode: number | null;
+  error?: string;
 }
 
 /**
@@ -297,7 +310,7 @@ export class Workspace {
   }
 
   /**
-   * 读一个 UTF-8 文本文件，超过上限就截断。
+   * 工作区方法 read（读文件）：把一个文本文件的内容读出来，超过上限就截断。
    *
    * 用有界读取：`readFile` 会把整个文件读进内存，模型一句 `read("big.log")`
    * 就能把进程撑爆。上限必须落在「读进来多少」，而不是「返回多少」。
@@ -378,7 +391,7 @@ export class Workspace {
     }
   }
 
-  /** 创建或覆盖文件，父目录自动补齐；写入失败时保留既有文件内容。 */
+  /** 工作区方法 write（写文件）：新建一个文件，或者整个覆盖；父目录自动补齐，写入失败时保留原有内容。 */
   async write(requested: string, content: string): Promise<string> {
     const file = await this.resolveReal(this.resolve(requested), requested);
     this.stopIfCancelledBeforeWrite();
@@ -423,7 +436,9 @@ export class Workspace {
   }
 
   /**
-   * 唯一命中后通过同目录临时文件原子替换；保留 BOM / CRLF 和旧文件权限。
+   * 工作区方法 edit（改文件）：把文件里唯一出现的那段原文换成新内容。
+   *
+   * 用同目录临时文件替换：写到一半崩了也不会留下半截文件；保留 BOM / CRLF 和旧文件权限。
    * 编辑仍先用单一文件句柄读取、校验并记录身份；然后关闭句柄，便于 Windows rename。
    * 已知边界：提交前身份复查减少并发覆盖，但不能消除复查与 rename 之间的竞态。
    */
@@ -477,7 +492,7 @@ export class Workspace {
     return `edited ${requested} (${before.length} → ${after.length} chars)`;
   }
   /**
-   * 列目录：类型、字节数、名称，按行排好。
+   * 工作区方法 list（列目录）：看看一个目录里有什么，类型、大小、名字按行排好。
    *
    * 用 `opendir` 边读边收，而不是 `readdir` 一次把整个目录读进内存再切：
    * 一个十万条目的目录，`readdir` 会先分配十万个 Dirent，再让我们丢掉九万九千个 ——
@@ -530,7 +545,7 @@ export class Workspace {
   }
 
   /**
-   * 按模式找文件，一行一个，排好序。
+   * 工作区方法 glob（找文件）：按名字模式找文件，一行一个，排好序。
    *
    * 搜索根默认是工作区根目录，也可以用 `path` 指向别的目录（含工作区外）；
    * 模式里的绝对路径同样可用。返回路径在工作区内时相对工作区根目录，
@@ -602,7 +617,7 @@ export class Workspace {
   }
 
   /**
-   * 在文本文件里按**正则**搜索，返回「路径:行号: 内容」，最多 MAX_RESULTS 条。
+   * 工作区方法 grep（搜内容）：按文字内容找，每条给出「文件:行号: 内容」，最多 MAX_RESULTS 条。
    *
    * 正则由模型提供，`(a+)+$` 这类模式会指数级回溯。匹配因此跑在 `grep-worker.ts` 的线程里，
    * 主线程只守 `regexBudgetMs` 的时间预算：超时就 terminate 线程，回溯跟着线程一起消失。
@@ -737,7 +752,7 @@ export class Workspace {
    * 管道的 handle 仍然挂在宿主的 event loop 上，任务跑完了 agent 也退不出去（要等 4 秒硬杀）。
    * 写文件则一个句柄都不留，`unref()` 的语义才真的成立。
    */
-  private runInBackground(command: string): string {
+  private async runInBackground(command: string): Promise<string> {
     const id = `job-${++this.jobSeq}`;
     // 带上宿主 pid：同一台机器上同时开着两个 agent 时，日志文件不会互相覆盖。
     const logPath = path.join(JOB_LOG_DIR, `${process.pid}-${id}.log`);
@@ -746,7 +761,13 @@ export class Workspace {
     const fd = openSync(logPath, "w");
     let child: ChildProcess;
     try {
-      child = spawn(command, {
+      // POSIX 的 EXIT trap 会等待命令显式启动的后台子进程，避免 shell 先退出、
+      // 进程组却留下孤儿；这样 job 的组长仍在，shell-kill 才能安全地停止整组。
+      const launchCommand = process.platform === "win32"
+        ? command
+        : `trap 'status=$?; trap - EXIT; wait; exit "$status"' EXIT
+${command}`;
+      child = spawn(launchCommand, {
         cwd: this.root,
         shell: true,
         windowsHide: true,
@@ -763,7 +784,6 @@ export class Workspace {
       // child 已经复制了 fd；父进程再留着它只是多一个句柄，而且 Windows 上会锁住文件。
       closeSync(fd);
     }
-    child.unref();
 
     const job: BackgroundJob = {
       id,
@@ -775,13 +795,44 @@ export class Workspace {
       status: "running",
       exitCode: null,
     };
-    // 自己退出的任务要能报出 exit code；被 kill 的任务不能在这里被改回 exited ——
-    // 模型需要知道是自己停的，而不是它自己崩了。
+    let spawned = false;
+    const onChildError = (error: Error) => {
+      if (spawned && job.status === "running") {
+        job.status = "unverified";
+        job.error = error.message;
+      }
+    };
+    child.on("error", onChildError);
     child.on("exit", (code) => {
       if (job.status !== "running") return;
       job.status = "exited";
       job.exitCode = code;
     });
+
+    // spawn() 的失败是异步 error 事件，不是同步 throw。必须等到 spawn 事件后才能报告 started；
+    // 否则无效 cwd 会先返回成功，再因未处理的 error 事件把整个 Agent 进程打崩。
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onSpawn = () => {
+          spawned = true;
+          child.off("error", onSpawnError);
+          resolve();
+        };
+        const onSpawnError = (error: Error) => {
+          child.off("spawn", onSpawn);
+          reject(error);
+        };
+        child.once("spawn", onSpawn);
+        child.once("error", onSpawnError);
+      });
+    } catch (error) {
+      child.off("error", onChildError);
+      await unlink(logPath).catch(() => {});
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`could not start background command: ${detail}`);
+    }
+
+    child.unref();
     this.jobs.set(id, job);
 
     return `started ${id} (pid ${child.pid ?? "unknown"}) in the background; ` +
@@ -789,7 +840,7 @@ export class Workspace {
   }
 
   /**
-   * 读一个后台任务自上次调用之后新产生的输出。
+   * 工作区方法 readJobOutput（看后台输出）：读一个后台任务从上次查看之后新产生的输出。
    *
    * 三个决定：
    *   - **增量**：只返回新字节，模型不会把同一段日志反复读进上下文；
@@ -822,12 +873,15 @@ export class Workspace {
     const header = this.jobHeader(job);
     if (text === "") return `${header}\n(no new output)`;
 
+    const characters = Array.from(text);
     let shown = text;
     let tail = "";
-    if (shown.length > MAX_JOB_OUTPUT_CHARS) {
-      shown = shown.slice(0, MAX_JOB_OUTPUT_CHARS);
+    if (characters.length > MAX_JOB_OUTPUT_CHARS) {
+      // 按 Unicode code point 截断，不能用 String.slice 的 UTF-16 code unit 边界切开代理对。
+      shown = characters.slice(0, MAX_JOB_OUTPUT_CHARS).join("");
       // 只推进「真正给出去的字节」，剩下的留在日志里等下一次调用。
-      tail = `\n… [${text.length - shown.length} chars not shown; call shell-output again]`;
+      tail = `
+… [${characters.length - MAX_JOB_OUTPUT_CHARS} chars not shown; call shell-output again]`;
     }
     job.cursor += Buffer.byteLength(shown);
 
@@ -848,7 +902,7 @@ export class Workspace {
   }
 
   /**
-   * 停掉一个后台任务，连同它的后代进程。
+   * 工作区方法 killJob（停后台任务）：停掉一个后台任务，连同它的后代进程。
    *
    * 未确认时抛异常而不是返回「已停止」：`taskkill` 只杀外层、POSIX 上回退只杀直接子进程，
    * 这两种情况后代可能还活着。冒充成功会让模型以为端口已经释放，然后在一个还占着端口的
@@ -904,11 +958,18 @@ export class Workspace {
 
   /** 状态行：模型先看这一行，再决定是继续等、去修，还是收工。 */
   private jobHeader(job: BackgroundJob): string {
-    const status = job.status === "exited" ? `exited with code ${job.exitCode ?? "unknown"}` : job.status;
+    const status = job.status === "exited" ? `exited with code ${job.exitCode ?? "unknown"}` :
+      job.status === "unverified" && job.error !== undefined ? `unverified: ${job.error}` : job.status;
     const pid = job.pid === undefined ? "unknown pid" : `pid ${job.pid}`;
     return `${job.id} (${status}, ${pid}) ran: ${job.command}`;
   }
 
+  /**
+   * 工作区方法 run（跑命令）：执行一条系统命令，返回退出码、正常输出、错误输出。
+   *
+   * 前台命令有超时上限；永不退出的命令（服务、监听）必须走 background，
+   * 否则会一直等到超时，再被判成「进程树没杀干净」而终止整个任务。
+   */
   async run(command: string, options: { background?: boolean; timeoutMs?: number } = {}): Promise<string> {
     const signal = this.signal;
     if (signal?.aborted) {
@@ -1483,7 +1544,9 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
       name: "read",
-      // 读一个 UTF-8 文本文件；输出超过 8000 字符会被截断。
+      // 读工具 read：把一个文本文件的内容读出来。
+      // 一次最多读 8000 个字符；文件比这更大时，只读到前面这一截，
+      // 并且明确告诉你被截断了，不会假装已经读完。
       description: "Read a UTF-8 text file. Output is truncated to 8000 chars.",
       parameters: {
         type: "object",
@@ -1497,7 +1560,9 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "write",
-      // 创建或覆盖整个 UTF-8 文件；父目录会自动建好。只是改已有文件的一部分时，优先用 edit。
+      // 写工具 write：新建一个文件，或者把已有文件整个覆盖掉。
+      // 文件所在的目录不存在时，会先自动建好。
+      // 如果只是想改文件里的一小段，别用这个——用下面的改工具，它不会动其他地方。
       description:
         "Create or overwrite a whole UTF-8 file; parent directories are created. Prefer edit for changing part of an existing file.",
       parameters: {
@@ -1514,7 +1579,10 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "edit",
-      // 把文件里恰好一处的 old_string 换成 new_string；拿不准就先读文件。
+      // 改工具 edit：把文件里的一段文字换成另一段。
+      // 要求「要找的那段原文」在文件里只出现一次——出现两次以上会被拒绝，
+      // 因为分不清你想改哪一个。拿不准的时候，先用读工具看一眼。
+      // 新内容留空，就等于把那段删掉。
       description:
         "Replace exactly one occurrence of old_string with new_string in an existing file. old_string must appear exactly once; read the file first when unsure.",
       parameters: {
@@ -1534,7 +1602,10 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "glob",
-      // 按模式找文件（支持 *、**、?）；例如 "src/**/*.ts"。搜索根默认工作区根目录。
+      // 找文件工具 glob：按文件名找，支持通配符——* 代表任意几个字符，
+      // ** 代表可以跨目录，? 代表一个字符。
+      // 例如 "src/**/*.ts" 的意思是「src 下面所有层级里的 .ts 文件」。
+      // 从哪个目录开始找可以指定，默认从工作区根目录开始。
       description:
         'Find files by glob pattern (supports *, ** and ?). The pattern may be relative to the search root or absolute. ' +
         'Results are relative to the workspace root, or absolute when the search root is outside it. ' +
@@ -1553,7 +1624,9 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "grep",
-      // 按正则搜索文件内容，返回「路径:行号: 内容」；fixed=true 时按字面字符串搜。
+      // 搜内容工具 grep：按文字内容找，每条结果给出「文件路径:行号: 那一行的内容」。
+      // 默认按「正则表达式」匹配——一种写查找规则的方式，比如 ^import 表示「以 import 开头」。
+      // 如果只想搜一段普通文字，把 fixed 设成 true，就不用管正则里那些符号了。
       description:
         "Search file contents by JavaScript regular expression; returns one file:line: match line per hit. Set fixed=true to search a literal string.",
       parameters: {
@@ -1578,7 +1651,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "ls",
-      // 列目录：每一项的类型、字节数和名字。
+      // 列目录工具 ls：看看一个目录里有什么。
+      // 每一项会给出三样东西：它是文件还是目录、有多大（字节数）、叫什么名字。
       description: "List a directory: entry type, size in bytes, and name.",
       parameters: {
         type: "object",
@@ -1592,8 +1666,10 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "shell",
-      // 在工作区根目录跑一条 shell 命令；返回 exit code 和 stdout/stderr。
-      // 起服务这类不退出命令必须用 background，否则会阻塞到超时。
+      // 跑命令工具 shell：执行一条系统命令，返回三样东西——退出码、正常输出、错误输出。
+      // 命令默认在工作区根目录下执行，命令里面也可以自己切换目录、用绝对路径。
+      // 如果这条命令不会自己结束（比如启动一个服务），必须把 background 设成 true，
+      // 否则会一直卡着，直到超时。
       description: "Run a shell command; returns exit code plus stdout/stderr. " +
         "The working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
         "Use background:true for servers or anything that never exits - a foreground call blocks until it times out.",
@@ -1626,7 +1702,9 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "shell-output",
-      // 读一个后台任务自上次调用之后的新输出；第一行是它的状态（还在跑 / 退出了 / 被停了）。
+      // 看后台输出工具 shell-output：读一个后台任务「从上次查看之后」新产生的输出。
+      // 第一行是它的状态：还在跑、已经退出（附退出码）、还是被停掉了。
+      // 可以设置等多久——设了就等有新内容再返回，不设就立刻返回现有的。
       description:
         "Read the output a background shell job produced since your last read. " +
         "The first line reports its status (running / exited with a code / killed). " +
@@ -1651,7 +1729,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "shell-kill",
-      // 停掉一个后台任务连同它的后代进程；停不干净会明确报错，不会假装已经停了。
+      // 停后台工具 shell-kill：把一个后台任务，连同它启动的所有子进程一起停掉。
+      // 如果没法确认真的停干净了，会明确报错，不会假装已经停了。
       description:
         "Stop a background shell job and its descendant processes. " +
         "Fails loudly when the process tree cleanup cannot be confirmed.",
