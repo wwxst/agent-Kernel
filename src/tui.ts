@@ -42,6 +42,7 @@ const MAX_LOG_LINES = 2_000;
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
+
 /** 右对齐的模型名和统计与窗口右边缘之间留的呼吸空间，避免文字贴边难读。 */
 const RIGHT_MARGIN = 2;
 
@@ -256,6 +257,15 @@ export class Tui {
 
   private altScreenActive = false;
 
+  /** 全屏 transcript 视图：临时进备用屏回看/展开历史，退出后主屏原样还回来。 */
+  private transcriptMode = false;
+
+  /** 主视图里已经打印进 scrollback 的行数；打印过的行不再重绘。 */
+  private printedLines = 0;
+
+  /** 上一帧光标上方属于活动区的行数；下一帧靠它回到活动区顶端。 */
+  private lastRowsAboveInput = 0;
+
   /** 未进入 start 的对象只能释放资源，不能发出任何终端控制序列。 */
   private started = false;
 
@@ -370,6 +380,19 @@ export class Tui {
   /** 历史滚动偏移：0 = 跟随最新；正数 = 向上查看旧记录。 */
   private scrollOffset = 0;
 
+  /** 用户往上翻历史时冻结活动区重绘，避免每帧把视口拉回底部。 */
+  private outputPaused = false;
+
+  /** 多行粘贴的原文：输入框只显示占位提示，提交时用原文。 */
+  private pasted: string | null = null;
+
+  private pastedPlaceholder = "";
+
+  /** 同一批到达的行（粘贴兜底用）：人工按键不会在一个事件循环里连发多个回车。 */
+  private burstLines: string[] = [];
+
+  private burstFlush?: NodeJS.Immediate;
+
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
 
@@ -478,6 +501,50 @@ export class Tui {
     this.boxBottomRow = 0;
     this.statusRow = 0;
     this.logHeight = 1;
+    // 粘贴归一化：开启括号粘贴后，终端把整段粘贴包在 ESC[200~ ... ESC[201~ 之间。
+    // 里面的换行不是「发送」。多行粘贴整段收下、输入框只显示一行占位提示
+    // （Claude Code 的 [Pasted text +N lines]），提交时再把原文交给模型——
+    // 否则一段多行文本会被当成多次回车，一行一行发出去。
+    const pasteSource = options.input as NodeJS.ReadableStream & {
+      emit: (event: string, ...args: unknown[]) => boolean;
+    };
+    const originalEmit = pasteSource.emit.bind(pasteSource);
+    let pasting = false;
+    let pasteBuffer = "";
+    pasteSource.emit = (event: string, ...args: unknown[]): boolean => {
+      if (event === "data" && args[0] !== undefined) {
+        // 必须按顺序处理：同一块数据里可能同时有开始和结束标记，
+        // 先统一替换标记会把状态弄反（结束标记先把 pasting 置回 false）。
+        const parts = String(args[0]).split(/(\x1b\[20[01]~)/);
+        let out = "";
+        for (const part of parts) {
+          if (part === "\x1b[200~") {
+            pasting = true;
+            pasteBuffer = "";
+            continue;
+          }
+          if (part === "\x1b[201~") {
+            pasting = false;
+            const text = pasteBuffer;
+            pasteBuffer = "";
+            if (text.includes("\n")) {
+              this.pasted = text;
+              this.pastedPlaceholder = this.pastePlaceholder(text);
+              const placeholder = this.pastedPlaceholder;
+              setImmediate(() => this.setEditorLine(placeholder, placeholder.length));
+            } else {
+              out += text;
+            }
+            continue;
+          }
+          if (pasting) pasteBuffer += part;
+          else out += part;
+        }
+        args[0] = out;
+      }
+      return originalEmit(event, ...args);
+    };
+
     this.recomputeGeometry();
 
     const colorMode = options.colorMode ?? "mono";
@@ -486,8 +553,14 @@ export class Tui {
       (options.color ??
         (process.env.NO_COLOR === undefined && process.env.TERM !== "dumb"));
     this.style = new Style(colorEnabled, prefersRichColor(), colorMode === "mono");
-    // 现代终端用 ❯/✻，有限字形环境仍可选择 ASCII 字形，但不降级布局。
-    this.glyphs = process.platform !== "win32" || prefersRichColor() ? UNICODE_GLYPHS : ASCII_GLYPHS;
+    // 现代终端用 ❯/✻，有限字形环境退回 ASCII，但不降级布局。
+    // 显式开关优先：老 conhost 配上 UTF-8 代码页其实能显示 Unicode，可环境变量探测不出来，
+    // 所以留一个 AGENT_TUI_GLYPHS=unicode|ascii 的逃生口（Claude Code / Codex 都是直接用 Unicode，
+    // 不提供降级；我们保守一点，默认仍然探测）。
+    const glyphMode = process.env.AGENT_TUI_GLYPHS;
+    this.glyphs = glyphMode === "unicode" ? UNICODE_GLYPHS
+      : glyphMode === "ascii" ? ASCII_GLYPHS
+      : process.platform !== "win32" || prefersRichColor() ? UNICODE_GLYPHS : ASCII_GLYPHS;
 
     // readline 仍负责编辑/历史/信号，但它的清屏和自动换行不能写入固定区域。
     // 这是一层输出适配器，不改 readline 的缓存，也不接管键盘或输入法。
@@ -515,26 +588,26 @@ export class Tui {
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
 
     // 一个 line 监听器同时服务任务输入和审批：谁先 await 谁拿下一行。
-    this.rl.on("line", (line) => {
-      // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
-      // 也不能在审批结束后进入下一轮任务队列。
+    // 兜底：不支持括号粘贴的终端（老 conhost）会把粘贴里的每个换行都变成一个 line 事件。
+    // 这些事件在同一个事件循环里连续到达，而人工按键做不到——所以同一批里的多行
+    // 合并成一条消息，换行保留。
+    this.rl.on("line", (rawLine) => {
+      // 审批期间的按键（y/1/回车、粘贴）不是任务输入：直接丢弃，
+      // 不能进批处理缓冲，否则会在审批结束后冒充下一轮任务。
       if (this.approvalMenuActive) return;
-      // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
-      const candidates = this.slashMenuCandidates(line);
-      const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
-        ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
-        : line;
-      this.slashDismissed = false;
-      this.slashSelected = 0;
-      this.slashDraft = "";
-      this.slashDraftCursor = 0;
-      const resolve = this.waiting.shift();
-      if (resolve === undefined) {
-        this.lines.push(submitted);
-        this.inputDirty = true;
-      } else {
-        resolve(submitted);
+      // 只在交互式主视图里合并：脚本 / 管道输入的多行是多个命令，合并会吃掉它们。
+      if (!this.layout) {
+        this.submitLine(rawLine);
+        return;
       }
+      this.burstLines.push(rawLine);
+      if (this.burstFlush !== undefined) return;
+      this.burstFlush = setImmediate(() => {
+        this.burstFlush = undefined;
+        const merged = this.burstLines.join("\n");
+        this.burstLines = [];
+        this.submitLine(merged);
+      });
     });
     this.rl.on("close", () => {
       this.ended = true;
@@ -555,6 +628,12 @@ export class Tui {
       if (this.closed) return;
       const name = key?.name?.toLowerCase();
 
+      // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
+      if (this.transcriptMode && name === "escape") {
+        this.exitTranscript();
+        return;
+      }
+
       if (this.approvalMenuActive) {
         if (name === "up" || name === "down") {
           this.approvalChoice = name === "up" ? "allow" : "deny";
@@ -572,11 +651,22 @@ export class Tui {
           return;
         }
         if (name === "pageup" || name === "pagedown") {
-          if (this.layout) this.scrollPage(name === "pageup" ? "up" : "down");
+          // transcript 里是整屏网格，可以自己滚；主视图是追加进 scrollback，
+          // 滚动由终端负责——我们能做的是「别再往底部写」，否则每帧重画都会把视口拉回底部。
+          if (this.transcriptMode) this.scrollPage(name === "pageup" ? "up" : "down");
+          else if (name === "pageup") this.pauseOutput();
+          else this.resumeOutput();
           return;
         }
         // 审批只接受菜单按键；误输入的任意文本不改变决定、不写入下一个任务。
         if (this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
+        return;
+      }
+
+      // Ctrl+T 切 transcript 视图：主视图的历史不可改，回看和展开历史都在这里做。
+      // 和 Codex 的 Ctrl+T / Claude Code 的 Ctrl+O 是同一个设计。
+      if (key?.ctrl && name === "t" && this.layout) {
+        this.toggleTranscript();
         return;
       }
 
@@ -586,8 +676,13 @@ export class Tui {
           line.kind === "turn-status" && line.turn !== undefined ? [line.turn] : []);
         if (turns.length > 0) {
           this.turnFocus = this.turnFocus <= 0 ? turns.length - 1 : this.turnFocus - 1;
+          const target = turns[this.turnFocus]!;
+          if (this.isPrintedTurn(target)) {
+            this.historyHint();
+            return;
+          }
           this.captureHistoryAnchor();
-          turns[this.turnFocus]!.expanded = !turns[this.turnFocus]!.expanded;
+          target.expanded = !target.expanded;
           this.renderNow();
         }
         return;
@@ -601,8 +696,12 @@ export class Tui {
             : []);
         if (tools.length > 0) {
           this.toolFocus = this.toolFocus <= 0 ? tools.length - 1 : this.toolFocus - 1;
-          this.captureHistoryAnchor();
           const chosen = tools[this.toolFocus]!;
+          if (chosen.turn !== undefined && this.isPrintedTurn(chosen.turn)) {
+            this.historyHint();
+            return;
+          }
+          this.captureHistoryAnchor();
           chosen.tool.detailsExpanded = !chosen.tool.detailsExpanded;
           chosen.group.expanded = true;
           if (chosen.turn !== undefined) chosen.turn.expanded = true;
@@ -619,10 +718,13 @@ export class Tui {
         if (groups.length > 0) {
           this.activityFocus = this.activityFocus <= 0 ? groups.length - 1 : this.activityFocus - 1;
           const group = groups[this.activityFocus]!;
-          // 浏览旧记录时展开详情也不能把视口跳到最新消息。
+          const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
+          if (owner !== undefined && this.isPrintedTurn(owner)) {
+            this.historyHint();
+            return;
+          }
           this.captureHistoryAnchor();
           group.expanded = !group.expanded;
-          const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
           if (owner !== undefined) owner.expanded = true;
           this.renderNow();
         }
@@ -690,8 +792,11 @@ export class Tui {
       }
 
       if (!this.layout) return;
-      if (name === "pageup") this.scrollPage("up");
-      else if (name === "pagedown") this.scrollPage("down");
+      if (this.transcriptMode) {
+        if (name === "pageup") this.scrollPage("up");
+        else if (name === "pagedown") this.scrollPage("down");
+      } else if (name === "pageup") this.pauseOutput();
+      else if (name === "pagedown" || name === "escape") this.resumeOutput();
       // 等 readline 处理完按键后，读取新的 line/cursor 重画输入。
       this.scheduleInputChrome();
     };
@@ -859,17 +964,17 @@ export class Tui {
       : this.style.paint("muted", clip(plain, width));
   }
 
-  /** 画第一帧；交互终端进入备用屏幕，在关闭时恢复原有 Shell。 */
+  /** 画第一帧。主视图不切备用屏，定稿的行直接打印进 Shell 滚动历史。 */
   start(): void {
     if (this.closed || this.started) return;
     this.started = true;
-    if (this.ownedScreen) {
-      // 独立的备用屏幕隔离应用帧与 Shell 历史；退出时一定执行对应的 Leave。
-      // X10 按钮/滚轮事件 + SGR 1006 坐标；不启用运动跟踪，避免高频重绘。
-      this.output.write("\x1b[?1049h\x1b[?25l\x1b[?1000h\x1b[?1006h");
-      this.altScreenActive = true;
-    }
     if (this.layout) {
+      // 光标在活动区里由 TUI 自己摆；不捕获鼠标，滚轮和选中复制保持终端原生行为。
+      this.output.write("\x1b[?25l");
+      // 开启括号粘贴：终端会把整段粘贴包在 ESC[200~ ... ESC[201~ 里，
+      // 我们才分得清「粘贴里的换行」和「用户按了回车」。
+      this.output.write("\x1b[?2004h");
+      this.printHeader();
       this.clearBeforeNextFrame = true;
       this.renderNow();
       return;
@@ -1061,27 +1166,38 @@ export class Tui {
     return displayWidth(base) + displayWidth(extra) <= width ? base + extra : base;
   }
 
-  private turnStatusLine(turn: TurnActivity): LogLine {
+  private turnStatusLine(turn: TurnActivity, flat = false): LogLine {
     const elapsed = Math.max(0, (turn.endedAt ?? Date.now()) - turn.startedAt);
     const duration = formatActivityDuration(elapsed, turn.language);
     const zh = turn.language === "zh";
-    const arrow = this.foldArrow(turn.expanded);
+    const suffix = flat ? "" : `  ${this.foldArrow(turn.expanded)} ${this.foldHint(turn.expanded, "Ctrl+E", zh)}`;
     if (turn.outcome === "completed") return {
-      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}  ${arrow}`,
+      text: `  ${this.glyphs.success} ${zh ? "已完成" : "Completed"} · ${zh ? "用时" : "in"} ${duration}${suffix}`,
       tone: "success",
     };
     if (turn.outcome === "failed" || turn.outcome === "cancelled") {
       const outcome = turn.outcome === "failed" ? (zh ? "执行失败" : "Failed") : (zh ? "已取消" : "Cancelled");
-      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}  ${arrow}`,
+      return { text: `  ${turn.outcome === "failed" ? this.glyphs.error : this.glyphs.notRun} ${outcome} · ${zh ? "用时" : "after"} ${duration}${suffix}`,
         tone: turn.outcome === "failed" ? "error" : "muted" };
     }
-    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}  ${arrow}`, tone: "muted" };
-    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}  ${arrow}`, tone: "accent" };
+    if (turn.outcome === "preparing") return { text: `  ${this.glyphs.running} ${zh ? "准备执行" : "Preparing"}${suffix}`, tone: "muted" };
+    return { text: `  ${this.glyphs.running} ${zh ? "正在执行 · 已用时" : "Working · elapsed"} ${duration}${suffix}`, tone: "accent" };
   }
 
   /** 只在显示层拼接折叠指示符，始终位于对应文字后面。 */
   private foldArrow(expanded: boolean): string {
     return this.glyphs === UNICODE_GLYPHS ? (expanded ? "▾" : "▸") : (expanded ? "v" : ">");
+  }
+
+  /**
+   * 箭头后面的快捷键提示。
+   *
+   * 主视图不再捕获鼠标（滚轮和选中复制要留给终端），所以「可以点开」这个隐含约定没了；
+   * 箭头后面必须写明按哪个键，否则用户只看到一个孤零零的三角，不知道能展开。
+   */
+  private foldHint(expanded: boolean, key: string, zh: boolean): string {
+    const action = zh ? (expanded ? "收起" : "展开") : (expanded ? "collapse" : "expand");
+    return zh ? `（${key} ${action}）` : `(${key} ${action})`;
   }
 
   private activitySummary(group: ActivityGroup): string {
@@ -1128,6 +1244,8 @@ export class Tui {
         ` · ${formatActivityDuration(Math.max(0, (item.endedAt ?? Date.now()) - item.startedAt), group.language)}`,
         result[0]!.tone));
     title.kind = failure?.kind ?? unfinished?.kind ?? "tool";
+    // 工具行只留箭头：每个工具都挂一句「（Ctrl+G 展开）」会把详情区淹掉，
+    // 快捷键在 /help 和活动组那一行里已经有说明。
     title.text += `  ${this.foldArrow(item.detailsExpanded === true)}`;
     title.tool = item;
     const lines: LogLine[] = [title];
@@ -1253,7 +1371,6 @@ export class Tui {
         this.commitAssistant();
       }
       if (show) this.pushTask(task);
-      this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
       this.trimLog();
       this.setActivityState("preparing");
       if (this.activityTimer !== undefined) clearInterval(this.activityTimer);
@@ -1590,6 +1707,18 @@ export class Tui {
     if (this.layout) {
       this.stopThinking();
       this.commitAssistant();
+      // 状态行最后落账：正文已经提交进日志，所以它天然排在回复之后
+      // （Claude Code 的 "Cooked for 12s"、Codex 的耗时都在回复下面）。
+      if (this.currentTurn !== undefined) {
+      // 状态行的唯一作用是展开这一轮折叠起来的过程层；没有工具调用就没有可展开的东西，
+      // 一个「已完成 · 用时」加个箭头只会让人以为下面藏着内容。失败/取消仍然保留，
+      // 那是结果本身，不是在提示「还能展开」。
+      if (this.currentTurn !== undefined &&
+          (this.currentTurn.groups.length > 0 || this.currentTurn.outcome !== "completed")) {
+        this.appendLog({ text: "", tone: "muted", kind: "turn-status", turn: this.currentTurn });
+        this.trimLog();
+      }
+      }
       if (run.tokenBudget.exceeded) {
         this.pushLog(this.uiText(`[budget] exceeded (limit=${run.tokenBudget.limit})`, `[预算] 已超出限制（上限=${run.tokenBudget.limit}）`), "warning");
       }
@@ -1708,8 +1837,15 @@ export class Tui {
   }
 
   async approve(request: PermissionRequest): Promise<boolean> {
-    const gate = approvalGate(this.controller.signal, this.interactive, this.lines.length > 0);
+    // Claude Code 的做法：审批提示借用输入区，用户已经打了一半的草稿先暂存，
+    // 决定之后原样放回去。这样「用户正在输入」就不是冲突，不需要把审批跳掉。
+    const draft = this.rl.line;
+    const draftCursor = this.rl.cursor;
+    // 主视图（layout）能暂存草稿、借用输入区，所以排队输入不再是冲突；
+    // 逐行模式共用同一个 stdin，排队的那一行会被审批当成答案吃掉，仍然要拦。
+    const gate = approvalGate(this.controller.signal, this.interactive, !this.layout && this.lines.length > 0);
     if (!gate.ask) throw new Error(`shell approval skipped: ${gate.reason}`);
+    this.setEditorLine("", 0);
 
     this.setThinking(false);
     this.finishAssistant();
@@ -1761,12 +1897,12 @@ export class Tui {
       if (this.ownedScreen) {
         this.approvalMenuActive = false;
         this.approvalRequest = undefined;
-        // 清理 readline 对方向键、误输入和回车的内部缓冲，禁止污染下一轮任务。
-        if (!this.ended && this.rl.line !== "") this.rl.write(null, { ctrl: true, name: "u" });
         this.setApprovalCursor(false);
         this.promptText = COMMAND_PROMPT;
         this.promptPlaceholder = true;
         this.trimLog();
+        // 把审批前暂存的草稿放回去：审批借用输入区，但不能吃掉用户已经打的字。
+        if (!this.ended) this.setEditorLine(draft, Math.min(draftCursor, draft.length));
         this.renderNow();
       }
     }
@@ -1832,9 +1968,17 @@ export class Tui {
 
     if (this.cursorStyleChanged) this.output.write("\x1b[0 q");
     if (this.altScreenActive) {
-      // Leave 恢复终端原来的 Shell 画面；这里不额外向主屏幕输出聊天帧。
-      this.output.write("\x1b[?1006l\x1b[?1000l\x1b[?25h\x1b[?1049l");
+      // transcript 视图退出：备用屏还原主屏，主视图随后自己重画活动区。
+      this.output.write("\x1b[?25h\x1b[?1049l");
       this.altScreenActive = false;
+      this.transcriptMode = false;
+    }
+    if (this.layout) {
+      // 只清底部活动区：已打印的历史留在 Shell 里，光标落到新行。
+      const up = this.lastRowsAboveInput;
+      // 关掉括号粘贴，别把终端留在我们自定义的模式里。
+      this.output.write(`${up > 0 ? `\x1b[${up}A` : ""}\r\x1b[J\x1b[?2004l\x1b[?25h`);
+      this.lastRowsAboveInput = 0;
     }
   }
 
@@ -1863,11 +2007,118 @@ export class Tui {
 
   // ---- 固定布局 ----
 
-  /** 重画整帧：标题、路径、分隔线、对话视口、输入区、页脚。 */
-  private renderNow(): void {
-    if (!this.started || !this.layout || this.closed || (this.ownedScreen && this.resizeTimer !== undefined)) return;
+  /** 主视图与 transcript 视图共用的入口：主视图只追加，transcript 重画整屏。 */
+  private renderNow(force = false): void {
+    if (!this.started || !this.layout || this.closed || this.resizeTimer !== undefined) return;
+    // 用户正在往上翻历史：别再往底部写，否则终端会把视口拉回底部。
+    if (this.outputPaused && !force) return;
+    if (this.transcriptMode) this.renderTranscript();
+    else this.renderInline();
+  }
 
-    if (this.ownedScreen && (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS)) {
+  /** 多行粘贴在输入框里的占位提示（Claude Code 的 [Pasted text +N lines]）。 */
+  private pastePlaceholder(text: string): string {
+    const lines = text.split("\n").length;
+    return this.uiText(`[Pasted text +${lines} lines]`, `[已粘贴 ${lines} 行]`);
+  }
+
+  /** 提交一行：审批不消费文本行；占位提示换成多行粘贴的原文。 */
+  private submitLine(line: string): void {
+    // 审批不消费文本行；粘贴、数字或旧任务不能成为隐形的授权答案，
+    // 也不能在审批结束后进入下一轮任务队列。
+    if (this.approvalMenuActive) return;
+    // Enter 提交当前高亮命令，避免把不完整的 /per 发给模型。
+    const candidates = this.slashMenuCandidates(line);
+    const submitted = this.layout && this.promptActive && !this.slashDismissed && candidates.length > 0
+      ? candidates[Math.min(this.slashSelected, candidates.length - 1)]!.command
+      : line;
+    this.slashDismissed = false;
+    this.slashSelected = 0;
+    this.slashDraft = "";
+    this.slashDraftCursor = 0;
+    // 占位提示对应一段多行粘贴：真正交给模型的是原文。
+    const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
+    if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
+    const resolve = this.waiting.shift();
+    if (resolve === undefined) {
+      this.lines.push(payload);
+      this.inputDirty = true;
+    } else {
+      resolve(payload);
+    }
+  }
+
+  /** 冻结活动区重绘，把视口交给终端；PgDn / Esc 恢复。 */
+  private pauseOutput(): void {
+    if (this.outputPaused) return;
+    this.outputPaused = true;
+    this.pushLog(this.uiText(
+      "Live output paused - scroll freely, PgDn or Esc resumes",
+      "已暂停刷新 · 可以自由翻看历史，PgDn 或 Esc 恢复",
+    ), "muted");
+    this.renderNow(true);
+  }
+
+  private resumeOutput(): void {
+    if (!this.outputPaused) return;
+    this.outputPaused = false;
+    this.renderNow(true);
+  }
+
+  /** 结束后内容已提交进 scrollback，改不了：历史详情只能去 transcript 视图看。 */
+  private isPrintedTurn(turn: TurnActivity): boolean {
+    return turn.endedAt !== undefined;
+  }
+
+  /** 历史详情改不了，就明确告诉用户去哪里看，而不是按了没反应。 */
+  private historyHint(): void {
+    // 已打印的内容改不了，「原地展开」在追加式视图里做不到——Claude Code 和 Codex
+    // 的解法都是切到一个临时全屏视图去展开。所以这里直接把 transcript 打开，
+    // 而不是只打一行提示（那样按了像没反应，还容易刷屏）。
+    if (!this.transcriptMode) this.toggleTranscript();
+  }
+
+  /** 进/出 transcript 视图。备用屏只用在这里：临时独占整屏回看历史，退出原样还回主屏。 */
+  private toggleTranscript(): void {
+    if (this.closed) return;
+    if (this.transcriptMode) {
+      this.exitTranscript();
+      return;
+    }
+    this.transcriptMode = true;
+    this.output.write("\x1b[?1049h\x1b[?25l");
+    this.altScreenActive = true;
+    this.clearBeforeNextFrame = true;
+    this.lastFrame = [];
+    this.renderNow();
+  }
+
+  private exitTranscript(): void {
+    if (!this.transcriptMode) return;
+    this.transcriptMode = false;
+    this.output.write("\x1b[?25h\x1b[?1049l");
+    this.altScreenActive = false;
+    this.lastFrame = [];
+    // 光标由 1049l 还原到进入前的输入行；lastRowsAboveInput 仍然有效，直接重画活动区。
+    this.renderNow();
+  }
+
+  /** 主视图的抬头：只打印一次，之后随历史一起往上滚。 */
+  private printHeader(): void {
+    const width = this.contentWidth();
+    this.output.write(
+      `${this.titleLine(width)}\r\n${this.style.paint("muted", fitPath(singleLine(this.workspace), width))}\r\n` +
+      `${this.dividerLine(width)}\r\n`,
+    );
+  }
+
+  /** transcript 视图：临时独占备用屏，整屏重绘，可滚动、可展开历史。 */
+  private renderTranscript(): void {
+    // 这里是「已启动且还没关闭」才画；之前写成 !this.closed，等于只有关闭之后才画，
+    // 于是 Ctrl+T 进去只有一块空白屏——提示用户来看详情，结果什么都没有。
+    if (!this.started || this.closed) return;
+
+    if (this.columns < MIN_COLUMNS || this.rows < MIN_ROWS) {
       // 小窗口保持在独立屏幕里，仅显示提示；不要退回逐行打印而制造重复历史。
       const message = clip(this.uiText("Terminal too small; resize to continue", "窗口太小，放大后继续"),
         Math.max(1, this.columns - 1));
@@ -1897,7 +2148,8 @@ export class Tui {
     const menuRows = Math.min(slashCandidates.length, Math.max(0, this.rows - 11), 5);
     this.recomputeGeometry(menuRows);
     const width = this.contentWidth();
-    const lines = this.wrappedDisplayLines();
+    // transcript 是详情视图：默认展开所有过程层。
+    const lines = this.wrappedDisplayLines(false, true);
     if (this.approvalMenuActive) {
       // 审批独占可视区域：不再为隐藏的聊天输入框与状态栏保留四行。
       this.logHeight = Math.max(1, this.rows - LOG_TOP);
@@ -1994,9 +2246,8 @@ export class Tui {
     this.inputDirty = false;
     if (!this.approvalMenuActive) frame += this.inputCursorSequence();
     // 同一帧通过一次输出写入，避免终端在多次 write 之间露出半张画面。
-    if (frame !== "") this.output.write(this.ownedScreen
-      ? `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`
-      : frame);
+    if (frame !== "") this.output.write(
+      `\x1b[?2026h\x1b[?25l${frame}${this.approvalMenuActive ? "" : "\x1b[?25h"}\x1b[?2026l`);
   }
 
   /** 确保审批结束、取消或 resize 后不会把终端光标留在隐藏状态。 */
@@ -2004,6 +2255,89 @@ export class Tui {
     if (!this.terminalControls || this.approvalCursorHidden === hidden) return;
     this.output.write(hidden ? "\x1b[?25l" : "\x1b[?25h");
     this.approvalCursorHidden = hidden;
+  }
+
+  /**
+   * 主视图：只追加。
+   *
+   * 已定稿的行用普通输出打印一次，之后随 Shell 滚动历史一起上移，不再重绘；
+   * 底部活动区（当前轮的可变内容 + 输入框 + 状态行）每帧清掉重画。
+   * 这就是 Claude Code 的 `<Static>` 和 Codex 的 inline viewport 的做法：
+   * 历史不可改，想改历史就切到 transcript 视图。
+   */
+  private renderInline(): void {
+    const width = this.contentWidth();
+    const slashCandidates = this.slashMenuItems();
+    const menuRows = Math.min(slashCandidates.length, 5);
+    // 主视图拍平：一个工具一行，没有第三层、没有展开箭头；详情去 transcript 看。
+    const lines = this.wrappedDisplayLines(true);
+
+    // 折叠一轮会让展示行变少，已经打印出去的行收不回来。这时必须把游标退回到当前长度：
+    // 否则 printedLines 会一直大于 lines.length，之后新增的行全部落在游标之前，
+    // 永远不会被打印——表现就是「间距没了、整段内容消失」。
+    if (lines.length < this.printedLines) this.printedLines = lines.length;
+
+    // 提交边界：最后一组 entry 还在变（流式正文、运行中的工具），留在活动区；其余可以定稿。
+    const tailBudget = Math.max(1, Math.min(this.rows - 6, 12));
+    const lastId = lines.at(-1)?.id;
+    let boundary = lines.length;
+    while (boundary > 0 && lines[boundary - 1]?.id === lastId) boundary--;
+    const commitTarget = Math.max(0, Math.min(lines.length - tailBudget, boundary));
+    const commitTo = Math.min(Math.max(this.printedLines, commitTarget), lines.length);
+    const tail = lines.slice(commitTo);
+    // 输入框上方 = 活动区尾部实际占用的终端行数 + 输入框上边框。
+    // 不能直接用 tail.length：终端在行尾会自动折行，一条逻辑行可能占两行；
+    // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
+    const rowsAboveInput = tail.reduce(
+      (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0) + 1;
+
+    let frame = "\x1b[?2026h";
+    if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
+    frame += "\r\x1b[J";
+
+    for (let index = this.printedLines; index < commitTo; index++) {
+      frame += `${this.paintLogLine(lines[index]!, width)}\r\n`;
+    }
+    this.printedLines = commitTo;
+
+    for (const line of tail) frame += `${this.paintLogLine(line, width)}\r\n`;
+    // 审批时隐藏输入框：菜单独占这块区域，和 Claude Code 一致。
+    // 留着输入框会让人以为「还能打字」，而按键其实全给了菜单。
+    frame += this.approvalMenuActive
+      ? `${this.dividerLine(width)}\r\n`
+      : `${this.dividerLine(width)}\r\n${this.inputLine(width)}\r\n${this.dividerLine(width)}\r\n`;
+    if (menuRows > 0) {
+      const first = Math.min(Math.max(0, this.slashSelected - menuRows + 1),
+        Math.max(0, slashCandidates.length - menuRows));
+      for (let index = 0; index < menuRows; index++) {
+        frame += `${this.slashMenuLine(slashCandidates[first + index]!, first + index === this.slashSelected, width)}\r\n`;
+      }
+    }
+    frame += this.footerLine(width);
+
+    // 光标从状态行回到输入行：下边框 + 菜单 + 状态行都在它下面。
+    // 审批时没有输入行，少退一行，并且不显示光标（按键全归菜单）。
+    if (this.approvalMenuActive) {
+      frame += `\x1b[${1 + menuRows}A\r\x1b[?25l`;
+    } else {
+      frame += `\x1b[${1 + menuRows + 1}A\r${this.inputColumnSequence()}\x1b[?25h`;
+    }
+    frame += "\x1b[?2026l";
+
+    this.lastRowsAboveInput = rowsAboveInput;
+    this.inputDirty = false;
+    this.clearBeforeNextFrame = false;
+    this.output.write(frame);
+  }
+
+  /** 主视图的输入光标：相对活动区，按 prompt 宽度和已输入内容算列偏移。 */
+  private inputColumnSequence(): string {
+    const plainPrompt = this.promptText === COMMAND_PROMPT
+      ? `${this.glyphs.user} `
+      : singleLine(this.promptText);
+    const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
+    const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
+    return column > 1 ? `\x1b[${column - 1}C` : "";
   }
 
   private paintLogLine(line: LogLine, width: number): string {
@@ -2195,7 +2529,7 @@ export class Tui {
     if (overflow > 0) this.log.splice(0, overflow);
   }
 
-  private wrappedDisplayLines(): LogLine[] {
+  private wrappedDisplayLines(flat = false, expandAll = false): LogLine[] {
     const logical: LogLine[] = [];
     const pendingLines = new Set(this.pendingTools.values());
     // 一个持久 ID 可以展开成多条逻辑行；偏移累计的是本次展示内容，不是换行后的行号。
@@ -2209,31 +2543,66 @@ export class Tui {
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
         // 展开中的标题下保留旧布局的节奏；折叠后只占一行。
-        const status = { ...this.turnStatusLine(line.turn), kind: "turn-status" as const, turn: line.turn };
+        const status = { ...this.turnStatusLine(line.turn, flat), kind: "turn-status" as const, turn: line.turn };
         append(line, line.turn.expanded
           ? [status, { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
           : [status]);
         continue;
       }
-      // 完成后只隐藏这轮的过程，不折叠用户提问、最终正式回复和轮次外的错误。
-      if (line.turn !== undefined && !line.turn.expanded && line.kind !== "final-reply") continue;
+      // 完成后只隐藏「详情层」，不折叠用户提问、最终正式回复、活动摘要和轮次外的错误。
+      // 摘要里有「哪个命令失败、为什么失败」，是安全信息，折叠时也必须看得见。
+      // 空白行不算「过程」：它是上下行之间的呼吸，折叠时也要留着（连续空行稍后压成一行）。
+      if (line.turn !== undefined && !line.turn.expanded &&
+          line.kind !== "final-reply" && line.kind !== "activity" && line.text !== "") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
+        // 活动组之间空一行：三段「列出 / 读取 / 编辑」连在一起会糊成一片。
+        if (logical.length > 0 && logical[logical.length - 1]!.text !== "") {
+          logical.push({ text: "", tone: "plain" });
+        }
         const group = line.activity;
+        // 轮次折叠时活动组也只显示摘要与失败行：详情属于「下面几层」。
+        const detailsOpen = expandAll || (group.expanded && line.turn?.expanded !== false);
+        if (flat) {
+          // 主视图拍平：一个工具一行（动词 + 目标），没有第三层、没有展开箭头。
+          const flatChildren: LogLine[] = [];
+          // 主视图不重复描述：工具行已经写了「读取 你好世界.txt」，
+          // 再来一句「已读取文件 你好世界.txt。」就是同一件事说两遍。
+          for (const item of group.tools) {
+            const failure = this.activityFailureLine(item, group.language);
+            if (failure !== undefined) {
+              flatChildren.push(failure);
+              continue;
+            }
+            // 还没返回的工具用运行符号 + 明确文案：扁平不等于看不出在跑。
+            // 这一轮已经结束的话就不是「在跑」，而是「没有结果」，不能继续显示运行中。
+            const pending = item.result === undefined && !group.finished;
+            flatChildren.push(this.makeLogLine(
+              `  ${pending ? this.glyphs.running : this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${formatToolEvent(item.call, group.language)}${
+                pending ? ` · ${this.uiText("Running...", "运行中...")}` : ""}`, "muted"));
+          }
+          if (flatChildren.length === 0) {
+            flatChildren.push(this.makeLogLine(
+              `  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}`, "muted"));
+          }
+          append(line, flatChildren);
+          continue;
+        }
         const children: LogLine[] = [];
         // 同一个阶段只有一条事实性概述；根据最近的实际操作原地更新，不向历史刷重复日志。
-        if (group.fallbackOverview && group.tools.length > 0) {
+        // 这一组已经结束就不再补叙述：摘要行和工具行已经说清了做过什么，再写一句「已列出目录」是第三遍。
+        if (group.fallbackOverview && group.tools.length > 0 && !group.finished) {
           const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
           children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
-            current.call, current.result, group.language, group.finished === true,
+            current.call, current.result, group.language, false,
             this.approvalMenuActive && current.call.function.name === "shell",
           )}`),
             tone: "info" });
         }
         children.push(
-          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(group.expanded)}`),
+          { text: escapeControlCharacters(`  ${this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${this.activitySummary(group)}  ${this.foldArrow(detailsOpen)} ${this.foldHint(detailsOpen, "Ctrl+O", group.language === "zh")}`),
             tone: "muted", kind: "activity", activity: group },
         );
-        if (group.expanded) {
+        if (detailsOpen) {
           for (const item of group.tools) children.push(...this.activityToolLines(item, group));
         } else {
           // 收起后异常仍然可见；不能把拒绝、错误藏进成功摘要。
@@ -2276,18 +2645,35 @@ export class Tui {
       // 中文对照：等待中，已经过 {seconds} 秒，以及已收到的工具结果数。
       this.maybeRotateMood();
       const waiting = `${spinner} Thinking... (${Math.floor(elapsed / 1000)}s${results})`;
+      // 「怎么取消」是全局提示，放底部状态栏；塞进内容行只会每帧重复一遍。
       logical.push({ text: this.withMood(waiting, this.contentWidth()), tone: "accent", kind: "thinking" });
-      // 中文对照：Ctrl-C 取消。
-      logical.push({ text: `  ${this.glyphs.boxBottomLeft} ${this.uiText("Ctrl-C to cancel", "Ctrl-C 取消")}`, tone: "muted" });
       }
     } else if (this.currentTurn?.endedAt === undefined && this.currentTurn?.expanded !== false &&
                this.activityState !== undefined && this.activityState !== "preparing" &&
-               !this.assistantOpen && !this.approvalMenuActive) {
+               !this.assistantOpen && !this.approvalMenuActive && !flat) {
+      // 主视图扁平后，下面那行「正在执行 · 已用时」已经说明了同一件事，这里不再叠一行「处理中」。
       // 临时语气不进入 Transcript；下一次事件取代它，而非新增日志行。
       this.maybeRotateMood();
       const status = formatActivityStateLabel(this.activityState, this.uiLanguage);
       if (status !== "") logical.push({ text: this.withMood(
         `  ${this.glyphs.running} ${status}`, this.contentWidth()), tone: "muted" });
+    }
+
+    // 折叠后可能留下连续空行（被隐藏的过程行原本夹在中间）：压成一行，只去掉开头那一行。
+    // 结尾的空行要留着——它就是回复和状态行之间的呼吸。
+    for (let index = logical.length - 1; index > 0; index--) {
+      if (logical[index]!.text === "" && logical[index - 1]!.text === "") logical.splice(index, 1);
+    }
+    while (logical.length > 0 && logical[0]!.text === "") logical.shift();
+
+    // 运行中的状态行只作为活动区尾部显示，不进日志；本轮结束时它才落账（排在回复之后）。
+    // 主视图在等待模型时已经有 Thinking 那一行（带秒数和工具结果数），再叠一行「正在执行」纯属重复。
+    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined && !(flat && this.thinking)) {
+      // 状态行是独立的一块，和上面的正文之间留一行：贴着正文会读成同一段话的续行。
+      if (logical.length > 0 && logical[logical.length - 1]!.text !== "") {
+        logical.push({ text: "", tone: "plain" });
+      }
+      logical.push({ ...this.turnStatusLine(this.currentTurn, flat), kind: "turn-status", turn: this.currentTurn });
     }
 
     const width = this.contentWidth();
@@ -2379,8 +2765,13 @@ export class Tui {
       right = `${requests}r ${lower}${formatNumber(this.stats?.usage.totalTokens ?? 0)}tok`;
     }
 
-    const rightText = clip(right, Math.max(1, innerWidth));
-    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
+    // 运行中才提示「怎么中断」：它属于全局状态，放状态栏；放进内容流就是每帧重复一行。
+    // 用内容宽度判断而不是逐项量宽：状态栏本身会被 clip 兜底，这里只决定要不要加这一段。
+    if (this.currentTurn !== undefined && this.currentTurn.endedAt === undefined && this.contentWidth() >= 40) {
+      right = `${right} · ${this.uiText("Ctrl-C cancel", "Ctrl-C 取消")}`;
+    }
+
+    const rightText = clip(right, Math.max(1, innerWidth));    const leftText = clip(left, Math.max(1, innerWidth - displayWidth(rightText) - 1));
     const gap = Math.max(1, innerWidth - displayWidth(leftText) - displayWidth(rightText));
     return (
       this.style.paint(this.fullAccessConfirmationPending || this.scrollOffset > 0 ? "warning" : permissionTone, leftText) +
@@ -2413,7 +2804,15 @@ export class Tui {
 
   private contentWidth(): number {
     // 只留最右一列，防止写满末列触发终端自动折行；其余边距交给终端配置。
-    return Math.max(1, this.columns - 1);
+    // 宽度必须取「真实终端」和「构造时记录的宽度」的较小值：窗口缩小时 stream.columns
+    // 可能比 this.columns 更早更新，一旦按较宽的尺寸排版，行会被终端自动折行，
+    // 而我们的行数估算按「一行一行」算——折出来的那一行会让后续清屏整体错位，
+    // 表现就是轮次之间的空行被擦掉、续行贴左。
+    const stream = this.output as NodeJS.WriteStream;
+    const live = typeof stream.columns === "number" && stream.columns > 0 ? stream.columns : this.columns;
+    // 留两列而不是一列：终端实际可用宽度可能比我们读到的少 1（滚动条、行尾自动折行、
+    // 模糊宽度的中文标点被渲染成两列）。差一列就会让每行多折一行，进而让活动区错位。
+    return Math.max(1, Math.min(this.columns, live) - 2);
   }
 
   private recomputeGeometry(menuRows = 0): void {
@@ -2427,6 +2826,8 @@ export class Tui {
   }
 
   private moveToInput(): void {
+    // 主视图里输入行的位置由 renderInline 用相对移动摆好；绝对行号只属于 transcript 的整屏网格。
+    if (!this.transcriptMode) return;
     this.output.write(`\x1b[${this.inputRow};1H`);
   }
 

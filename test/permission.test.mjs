@@ -194,7 +194,8 @@ test("异步 Shell 审批中撤权：即使用户后来批准，也不能执行�
   approve(true);
   const result = await pending;
 
-  assert.match(result, /^ERROR: permission denied: permission mode changed during approval; denied$/);
+  // 拒绝文本必须带「不要重试」，否则模型会换个写法无限重试。
+  assert.match(result, /^ERROR: permission denied: permission mode changed during approval; denied\. Do not retry this operation/);
   assert.equal(executed, 0);
   assert.equal(permission.mode, "read-only");
 });

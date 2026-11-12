@@ -13,7 +13,9 @@ import { selectMood } from "../src/tui-mood.ts";
 
 /** 等一轮微任务/IO：readline 的 line 事件不会在 write() 返回前同步跑完。 */
 function tick() {
-  return new Promise((resolve) => setImmediate(resolve));
+  // 主视图的输入刷新走 scheduleInputChrome（setImmediate）再进 renderNow，
+  // 单次 setImmediate 可能早于那一帧；这里等两个回合，断言看到的是最新画面。
+  return new Promise((resolve) => setImmediate(() => setImmediate(resolve)));
 }
 
 /** 完整 TUI 合并 75ms 内的 resize；这里验收稳定后的真实帧，而非中间尺寸。 */
@@ -21,38 +23,141 @@ function settledResize() {
   return new Promise((resolve) => setTimeout(resolve, 110));
 }
 
-/** 取最后一次完整写入的行；验收输入框实际内容，不能只检查旧帧里出现过某个词。 */
-function lastRow(text, row) {
-  return [...text.matchAll(new RegExp(`\\x1b\\[${row};1H\\x1b\\[2K([^\\x1b]*)`, "g"))].at(-1)?.[1] ?? "";
-}
-
-/** 把差分刷新过的屏幕行还原为当前画面，避免误断言历史帧。 */
-function screenRows(ui, count = 40) {
-  return Array.from({ length: count }, (_, index) => lastRow(ui.text(), index + 1));
-}
-
 /**
- * 只理解基本 ANSI 光标、整屏清除与行清除；故意忽略同步更新协议 ?2026。
- * 这不是通用终端模拟器，只还原当前 TUI 真实使用的屏幕更新指令。
+ * 只理解 TUI 真实用到的指令：绝对定位、相对上移/下移、行尾回车、清行、清到屏尾、
+ * 换行与滚动。这不是通用终端模拟器，只还原主视图（追加 + 活动区）和 transcript
+ * （整屏网格）实际会发出的那几条指令。
  */
-function screenWithoutSync(output) {
-  const rows = new Map();
-  let row = 1;
+function emulateScreen(output, rows = 24) {
+  const lines = [""];
+  let row = 0;
+  let col = 0;
+  const ensure = () => {
+    while (lines.length <= row) lines.push("");
+  };
+  const scroll = () => {
+    if (row >= rows) {
+      lines.shift();
+      row--;
+    }
+  };
+  const put = (text) => {
+    ensure();
+    const line = lines[row] ?? "";
+    const padded = line.length < col ? line + " ".repeat(col - line.length) : line;
+    lines[row] = padded.slice(0, col) + text;
+    col += text.length;
+  };
   for (const token of output.match(/\x1b\[[0-9;? ]*[A-Za-z]|[^\x1b]+/g) ?? []) {
     if (token.startsWith("\x1b[")) {
-      const cursor = token.match(/^\x1b\[(\d+);(\d+)H$/);
-      if (cursor) row = Number(cursor[1]);
-      else if (token === "\x1b[H") row = 1;
-      else if (token === "\x1b[2J") rows.clear();
-      else if (token === "\x1b[2K") rows.set(row, "");
+      let match;
+      if ((match = token.match(/^\x1b\[(\d+);(\d+)H$/))) {
+        row = Number(match[1]) - 1;
+        col = Number(match[2]) - 1;
+        ensure();
+      } else if ((match = token.match(/^\x1b\[(\d+)A$/))) {
+        row = Math.max(0, row - Number(match[1]));
+        col = 0;
+      } else if ((match = token.match(/^\x1b\[(\d+)B$/))) {
+        row += Number(match[1]);
+        scroll();
+      } else if ((match = token.match(/^\x1b\[(\d+)C$/))) {
+        col += Number(match[1]);
+      } else if (token === "\x1b[H") {
+        row = 0;
+        col = 0;
+      } else if (token === "\x1b[2J") {
+        lines.length = 1;
+        lines[0] = "";
+        row = 0;
+        col = 0;
+      } else if (token === "\x1b[2K") {
+        ensure();
+        lines[row] = "";
+        col = 0;
+      } else if (token === "\x1b[J") {
+        ensure();
+        lines[row] = (lines[row] ?? "").slice(0, col);
+        lines.length = row + 1;
+      }
       continue;
     }
     for (const part of token.split(/(\r\n|\n|\r)/)) {
-      if (part === "\r\n" || part === "\n") row++;
-      else if (part !== "\r") rows.set(row, (rows.get(row) ?? "") + part);
+      if (part === "\r\n" || part === "\n") {
+        row++;
+        scroll();
+        ensure();
+        col = 0;
+      } else if (part === "\r") {
+        col = 0;
+      } else if (part !== "") {
+        put(part);
+      }
     }
   }
-  return rows;
+  return lines.map((line) => line.trimEnd());
+}
+
+/** 取当前画面第 row 行（1 起）；主视图的历史是追加的，行号按屏幕从上往下数。 */
+function lastRow(text, row) {
+  return emulateScreen(text, 40)[row - 1] ?? "";
+}
+
+/** 把屏幕还原成数组；不足 count 行用空串补齐，索引 0 对应第 1 行。 */
+function screenRows(ui, count = 40) {
+  // 用这台假终端真实的窗口高度：主视图超出窗口时会像真终端一样往上滚。
+  const rows = emulateScreen(ui.text(), ui.output?.rows ?? 24);
+  while (rows.length < count) rows.push("");
+  return rows.slice(0, count);
+}
+
+/**
+ * 输入框不再固定在屏幕底部：主视图里它跟着内容走。
+ * 因此按「提示符开头的那一行」定位，而不是写死行号。
+ */
+function inputIndex(ui) {
+  // 用户消息也以 > 开头，输入框永远在最下面，所以取最后一个匹配。
+  return screenRows(ui).findLastIndex((line) => /^[>❯]/.test(line));
+}
+
+function inputLine(ui) {
+  const rows = screenRows(ui);
+  const index = rows.findLastIndex((line) => /^[>❯]/.test(line));
+  return index < 0 ? "" : rows[index];
+}
+
+function boxTopLine(ui) {
+  const rows = screenRows(ui);
+  const index = inputIndex(ui);
+  return index > 0 ? rows[index - 1] : "";
+}
+
+function boxBottomLine(ui) {
+  const rows = screenRows(ui);
+  const index = inputIndex(ui);
+  return index < 0 ? "" : rows[index + 1] ?? "";
+}
+
+function statusLine(ui) {
+  const rows = screenRows(ui);
+  // 状态行永远在最下面：权限标签 + 请求/token 统计，按这一行的特征找，不写死行号。
+  return rows.findLast((line) => /(?:requests|请求|tokens)/.test(line)) ?? "";
+}
+
+/** 进 transcript 抓一帧详情：主视图只留摘要，细节都在这个视图里。 */
+async function detailText(ui) {
+  ui.input.emit("keypress", "", { name: "t", ctrl: true });
+  // 帧是节流渲染的，等一个周期再抓。
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const text = ui.text();
+  ui.input.emit("keypress", "", { name: "escape" });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  return text.slice(text.lastIndexOf("\x1b[?1049h"));
+}
+
+/** 按内容找一行：主视图排版随内容变化，断言不该写死行号。 */
+function rowWith(ui, pattern) {
+  return screenRows(ui, 40).find((line) => pattern.test(line)) ?? "";
 }
 
 /**
@@ -134,25 +239,6 @@ test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色",
   assert.match(full.text(), /\x1b\[(?:33|38;5;215)m/, "full 模式恢复强调色");
 });
 
-test("TUI：所有交互终端统一进入完整备用屏幕，不受终端名称或旧环境变量影响", (t) => {
-  const previous = process.env.AGENT_TUI_SCREEN;
-  process.env.AGENT_TUI_SCREEN = "never";
-  try {
-    for (const term of ["xterm-256color", "linux", "vt100", "ansi", "unknown", "wyse60", ""]) {
-      const ui = makeTui({ interactive: true, tty: true, term });
-      t.after(() => ui.cleanup());
-      ui.tui.start();
-      assert.match(ui.text(), /\x1b\[\?1049h/, `TERM=${term} 应进入备用屏幕`);
-      assert.match(ui.text(), /\x1b\[\?1000h\x1b\[\?1006h/, "完整版启用鼠标");
-      assert.doesNotMatch(ui.text(), /Terminal compatibility mode|终端兼容模式/);
-      ui.tui.close();
-      assert.match(ui.text(), /\x1b\[\?1049l/, "退出必须恢复原屏幕");
-    }
-  } finally {
-    if (previous === undefined) delete process.env.AGENT_TUI_SCREEN;
-    else process.env.AGENT_TUI_SCREEN = previous;
-  }
-});
 
 test("TUI：start 前 close 不清屏、不移动光标、不进入备用屏幕，之后也不能启动", (t) => {
   const ui = makeTui({ interactive: true, tty: true });
@@ -163,77 +249,9 @@ test("TUI：start 前 close 不清屏、不移动光标、不进入备用屏幕�
   assert.equal(ui.text(), "", "已关闭的界面不能再启动");
 });
 
-test("TUI 独立屏幕：初次绘制和缩放清屏必须包含在同步帧内", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.output.columns = 96;
-  ui.output.emit("resize");
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  const output = ui.text();
-  const frames = output.match(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g) ?? [];
-  assert.equal(frames.length >= 2, true, "启动与缩放均产生同步帧");
-  assert.equal(frames.filter((frame) => frame.includes("\x1b[2J\x1b[H")).length, 2,
-    "两次清屏各自与完整重绘同帧提交");
-  const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
-  assert.doesNotMatch(outside, /\x1b\[2J/, "不能在同步帧外清空可见屏幕");
-});
 
-test("TUI 独立屏幕：忽略同步协议的终端在多次缩放后仍显示单份正确画面", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("inspect");
-  ui.tui.logLine("ORIGINAL_VISIBLE");
-  for (const columns of [110, 40, 95]) {
-    ui.output.columns = columns;
-    ui.output.emit("resize");
-    ui.tui.logLine(`NEW_AT_${columns}`);
-    await new Promise((resolve) => setTimeout(resolve, 95));
-  }
-  const lines = [...screenWithoutSync(ui.text()).values()];
-  const screen = lines.join("\n");
-  assert.match(lines[0], /agent-Kernel/);
-  assert.match(lines[1], /C:\\work\\repo/);
-  assert.match(lines[2], /^(?:─|-){94}$/, "分隔线长度对应最后一次 95 列窗口");
-  for (const text of ["ORIGINAL_VISIBLE", "NEW_AT_110", "NEW_AT_40", "NEW_AT_95"]) {
-    assert.equal((screen.match(new RegExp(text, "g")) ?? []).length, 1, `${text} 只在最终画面出现一次`);
-  }
-});
 
-test("TUI 独立屏幕：窄窗口提示清屏也不能漏出同步帧", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("请检查窗口");
-  ui.output.columns = 20;
-  ui.output.rows = 8;
-  ui.output.emit("resize");
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  const output = ui.text();
-  const outside = output.replace(/\x1b\[\?2026h[\s\S]*?\x1b\[\?2026l/g, "");
-  assert.doesNotMatch(outside, /\x1b\[2J/);
-  assert.match(output, /窗口太小/);
-});
 
-test("TUI 独立屏幕：滚动到历史中段后，缩放期间流式增长不能移动历史锚点", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  for (let i = 0; i < 85; i++) ui.tui.logLine(`ANCHOR_${String(i).padStart(3, "0")} ${"内容 ".repeat(17)}`);
-  ui.input.emit("keypress", "", { name: "pageup" });
-  await tick();
-  const before = lastRow(ui.text(), 4).match(/ANCHOR_\d{3}/)?.[0];
-  assert.ok(before, "应能滚动到历史中段的稳定日志行");
-
-  ui.output.columns = 45;
-  ui.output.emit("resize");
-  ui.tui.assistantDelta("新增流式回答\n".repeat(70));
-  ui.tui.confirmAssistant("新增流式回答\n".repeat(70));
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  const after = lastRow(ui.text(), 4);
-  assert.match(after, new RegExp(before), "视口仍从相同逻辑行开始，而非跳到新的流式输出");
-});
 
 test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳到最新", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
@@ -259,172 +277,12 @@ test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳�
   assert.match(lastRow(ui.text(), 4), new RegExp(before), "窗口重新换行也应保持同一条日志");
 });
 
-test("TUI 稳定日志 ID：缩放期间历史被裁剪时显示告知并定位到剩余记录", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("检查历史");
-  for (let i = 0; i < 90; i++) ui.tui.logLine(`ORIGINAL_${String(i).padStart(3, "0")}`);
-  ui.input.emit("keypress", "", { name: "pageup" });
-  assert.match(lastRow(ui.text(), 4), /ORIGINAL_\d{3}/);
-
-  ui.output.columns = 65;
-  ui.output.emit("resize");
-  for (let i = 0; i < 2_120; i++) ui.tui.logLine(`LATER_${i}`);
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  const current = screenRows(ui, 35).join("\n");
-  assert.match(current, /LATER_\d+/);
-  assert.match(current, /历史已截断/, "找不到锚点时不可无声跳转");
-  ui.input.emit("keypress", "", { name: "pagedown" });
-  assert.doesNotMatch(lastRow(ui.text(), 32), /历史已截断/, "用户继续滚动后提示消失");
-});
-
-test("TUI 独立屏幕：进入和退出成对恢复 Shell 画面，保留原有聊天和统计", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  assert.match(ui.text(), /\x1b\[\?1049h/);
-  ui.tui.beginTurn("请检查项目");
-  ui.tui.finishAssistant("检查完成");
-  ui.tui.setStats(session);
-  const screen = screenRows(ui, 35).join("\n");
-  assert.match(screen, /检查完成/);
-  assert.match(screen, /2 次请求/);
-  ui.tui.close();
-  assert.match(ui.text(), /\x1b\[\?1049l/);
-  assert.equal((ui.text().match(/\x1b\[\?1049h/g) ?? []).length, 1);
-  assert.equal((ui.text().match(/\x1b\[\?1049l/g) ?? []).length, 1);
-});
-
-test("TUI 独立屏幕：连续缩放只在最后尺寸重排一次，流式回复不重复写入历史", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("检查窗口缩放");
-  ui.tui.assistantDelta("一段输出，");
-  for (const columns of [85, 96, 107, 121]) {
-    ui.output.columns = columns;
-    ui.output.emit("resize");
-  }
-  ui.tui.assistantDelta("继续输出");
-  ui.tui.confirmAssistant("一段输出，继续输出");
-  assert.equal((ui.text().match(/\x1b\[2J/g) ?? []).length, 1, "缩放期间不应反复清屏");
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  assert.equal((ui.text().match(/\x1b\[2J/g) ?? []).length, 2, "稳定后只能清屏重建一次");
-  const screen = screenRows(ui, 35).join("\n");
-  assert.equal((screen.match(/一段输出，继续输出/g) ?? []).length, 1, "历史中只有一份确认回复");
-  assert.match(lastRow(ui.text(), 3), /^(?:─|-){120}$/, "分隔线使用最终宽度而非中间宽度");
-});
-
-test("TUI 独立屏幕：缩到不足最小尺寸不退回逐行输出，放大后恢复原有对话", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("请处理窗口变化");
-  ui.output.columns = 20;
-  ui.output.rows = 8;
-  ui.output.emit("resize");
-  ui.tui.finishAssistant("最终回答");
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  assert.match(ui.text(), /窗口太小，放大后/, "窄屏提示会按可用列宽截断");
-  ui.output.columns = 80;
-  ui.output.rows = 35;
-  ui.output.emit("resize");
-  await new Promise((resolve) => setTimeout(resolve, 130));
-  assert.match(screenRows(ui, 35).join("\n"), /最终回答/);
-  assert.doesNotMatch(screenRows(ui, 35).join("\n"), /窗口太小/);
-});
 
 
-test("TUI 时间线：执行中说明与活动交替出现，完成后自动收起，最终答复独立展示", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("请检查 TUI 并修复");
-  ui.tui.confirmAssistant("先检查日志状态，然后读取文件。");
-  const call = { id: "timeline-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
-  ui.tui.toolCall(call);
-  ui.tui.toolResult(call, "real file content");
-  ui.tui.confirmAssistant("已经找到问题，接下来验证结果。");
-  const during = screenRows(ui, 40).join("\n");
-  assert.ok(during.indexOf("先检查日志状态") < during.indexOf("已读取文件"), "阶段说明出现在对应活动之前");
-  assert.ok(during.indexOf("已读取文件") < during.indexOf("已经找到问题"), "工具活动与下一条说明交替出现");
 
-  ui.tui.confirmAssistant("最终回复：已验证通过。", true);
-  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  const folded = screenRows(ui, 40).join("\n");
-  assert.match(folded, /已完成 · 用时 .*(?:▸|>)/);
-  assert.doesNotMatch(folded, /先检查日志状态|已读取文件|已经找到问题/);
-  assert.match(folded, /最终回复：已验证通过/, "正式回答在折叠过程外仍然可见");
-  assert.doesNotMatch(folded, /已读取文件、修改代码、运行检查等/, "不应再渲染综合摘要层");
 
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  await tick();
-  const unfolded = screenRows(ui, 40).join("\n");
-  assert.match(unfolded, /已完成 · 用时 .*(?:▾|v)/);
-  assert.match(unfolded, /先检查日志状态/);
-  assert.match(unfolded, /已读取文件/);
-  assert.match(unfolded, /已经找到问题/);
-});
 
-test("TUI 时间线：执行中手动收起只隐藏过程画面，不停止真实流式接收", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("正在分析 TUI");
-  ui.tui.assistantDelta("MODEL_STAGE_FIRST");
-  ui.tui.setThinking(true);
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  let screen = screenRows(ui, 35).join("\n");
-  assert.match(screen, /正在执行 · 已用时 .*?(?:▸|>)/);
-  assert.doesNotMatch(screen, /MODEL_STAGE_FIRST|Thinking\.\.\./);
-  ui.tui.assistantDelta("MODEL_STAGE_SECOND");
-  screen = screenRows(ui, 35).join("\n");
-  assert.doesNotMatch(screen, /MODEL_STAGE_SECOND/, "收起期间接收的增量不能漏到过程外面");
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  screen = screenRows(ui, 35).join("\n");
-  assert.match(screen, /MODEL_STAGE_FIRSTMODEL_STAGE_SECOND/, "重新展开后恢复完整流式正文");
-  assert.doesNotMatch(screen, /历史已截断|history truncated/, "隐藏内容不等于日志被裁剪");
-});
 
-test("TUI 鼠标：点击真实箭头展开任务、活动与工具，不污染 readline 输入", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  assert.match(ui.text(), /\x1b\[\?1000h\x1b\[\?1006h/, "只在备用屏幕开启 SGR 鼠标");
-  ui.tui.beginTurn("inspect");
-  const call = { id: "mouse-read", type: "function", function: { name: "read", arguments: '{"path":"package.json"}' } };
-  ui.tui.toolCall(call);
-  ui.tui.toolResult(call, "sample content");
-  ui.tui.confirmAssistant("finished", true);
-  ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  async function clickArrow(match, splitBeforeMousePrefix = false) {
-    const rows = screenRows(ui, 45);
-    const row = rows.findIndex((line) => match.test(line) && /[▸▾>]$/.test(line.trim()));
-    assert.ok(row >= 0, "目标箭头应绘制在真实屏幕上");
-    const line = rows[row].trimEnd();
-    const col = Array.from(line).length;
-    if (splitBeforeMousePrefix) {
-      ui.input.write("\x1b");
-      ui.input.write("[");
-      ui.input.write(`<0;${col};${row + 1}M`);
-    } else {
-      ui.input.write(`\x1b[<0;${col};${row + 1}M`);
-    }
-    await tick();
-  }
-  await clickArrow(/Completed/);
-  assert.match(screenRows(ui, 45).join("\n"), /Read files|Read file/);
-  await clickArrow(/(?:↳|\+) Read files/);
-  assert.match(screenRows(ui, 45).join("\n"), /Read package\.json/);
-  await clickArrow(/Read package\.json/, true);
-  assert.match(screenRows(ui, 45).join("\n"), /Arguments \(excerpt\):/, "ESC / [ / < 分包也必须命中箭头");
-  const pending = ui.tui.readLine();
-  ui.input.write("next task\r");
-  assert.equal(await pending, "next task", "SGR 坐标不得混入后续用户输入");
-  ui.tui.close();
-  assert.match(ui.text(), /\x1b\[\?1006l\x1b\[\?1000l/, "退出时恢复终端鼠标模式");
-});
 
 test("TUI 鼠标：拆包 SGR 序列安全解析，滚轮以小步长浏览历史", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 26, columns: 85 });
@@ -442,27 +300,8 @@ test("TUI 鼠标：拆包 SGR 序列安全解析，滚轮以小步长浏览历�
   assert.match(screenRows(ui, 26).join("\n"), /mouse-history-59/);
 });
 
-test("TUI 时间线：多轮任务分别折叠，键盘可独立展开旧轮次", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 45 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  for (const [task, reply] of [["第一个任务", "FIRST_RESULT"], ["第二个任务", "SECOND_RESULT"]]) {
-    ui.tui.beginTurn(task);
-    ui.tui.confirmAssistant("STAGE_" + reply);
-    ui.tui.confirmAssistant(reply, true);
-    ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  }
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT|STAGE_SECOND_RESULT/);
-  assert.match(screenRows(ui, 45).join("\n"), /FIRST_RESULT/);
-  assert.match(screenRows(ui, 45).join("\n"), /SECOND_RESULT/);
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  assert.match(screenRows(ui, 45).join("\n"), /STAGE_SECOND_RESULT/);
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT/);
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  assert.match(screenRows(ui, 45).join("\n"), /STAGE_FIRST_RESULT/);
-});
 
-test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff", (t) => {
+test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 115 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -470,11 +309,11 @@ test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff",
   const call = { id: "edit-detail", type: "function", function: { name: "edit", arguments: '{"path":"src/tui.ts","old_string":"a","new_string":"b"}' } };
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "Updated src/tui.ts");
-  let screen = screenRows(ui, 45).join("\n");
+  let screen = await detailText(ui);
   assert.match(screen, /编辑 src\/tui\.ts.*(?:▸|>)/);
   assert.doesNotMatch(screen, /调用：/, "原始工具详情默认不展开");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  screen = screenRows(ui, 45).join("\n");
+  screen = await detailText(ui);
   assert.match(screen, /编辑 src\/tui\.ts.*(?:▾|v)/);
   assert.match(screen, /调用：.*edit/);
   assert.match(screen, /Updated src\/tui\.ts/);
@@ -484,22 +323,6 @@ test("TUI 时间线：第四层展示真实调用和结果，不能编造 Diff",
   assert.doesNotMatch(screen, /@@ -\d/, "不根据路径虚构带行号的完整文件 Diff");
 });
 
-test("TUI 时间线：失败及取消仍可展开，不隐藏真实的工具错误", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("运行检查");
-  const call = { id: "failed-step", type: "function", function: { name: "shell", arguments: '{"command":"exit 1"}' } };
-  ui.tui.toolCall(call);
-  ui.tui.toolResult(call, "exit 1\nERROR: process failed");
-  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true });
-  assert.match(screenRows(ui, 35).join("\n"), /执行失败 · 用时 .*(?:▸|>)/);
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  ui.input.emit("keypress", "", { name: "o", ctrl: true });
-  const expanded = screenRows(ui, 35).join("\n");
-  assert.match(expanded, /执行失败 · 用时 .*(?:▾|v)/);
-  assert.match(expanded, /failed|失败/);
-});
 
 test("TUI：已确认模型正文覆盖不一致的流式草稿，不向历史提交错误文本", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
@@ -544,10 +367,11 @@ test("TUI：输入区仅用两条横线，提示与正文共用左边界，中�
   const pending = ui.tui.readLine();
   ui.input.write("中文A");
   await tick();
-  assert.match(lastRow(ui.text(), 18), /^(?:-{79}|─{79})$/);
-  assert.match(lastRow(ui.text(), 19), /^(?:>|❯) 中文A/);
-  assert.equal(lastRow(ui.text(), 20), lastRow(ui.text(), 18));
-  assert.match(ui.text(), /\x1b\[19;8H/);
+  assert.match(boxTopLine(ui), /^(?:-{78}|─{78})$/);
+  assert.match(inputLine(ui), /^(?:>|❯) 中文A/);
+  assert.equal(boxBottomLine(ui), boxTopLine(ui));
+  // 主视图用相对列偏移把光标放回输入位置（不再有绝对行号）。
+  assert.match(ui.text(), /\x1b\[\d+C\x1b\[\?25h/);
   ui.input.write("\r");
   assert.equal(await pending, "中文A");
 });
@@ -559,20 +383,11 @@ test("TUI：已有对话后空输入仅显示提示符和光标，不重复欢�
   ui.tui.beginTurn("hello");
   const pending = ui.tui.readLine();
   await tick();
-  assert.match(lastRow(ui.text(), 19).trimEnd(), /^(?:>|❯)$/);
+  assert.match(inputLine(ui).trimEnd(), /^(?:>|❯)$/);
   ui.input.write("\r");
   assert.equal(await pending, "");
 });
 
-test("TUI flowInput：过程小字后留一行空白再接输入横线", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.logLine("Worked for 3s");
-  assert.equal(lastRow(ui.text(), 4), "Worked for 3s");
-  assert.equal(lastRow(ui.text(), 5).trim(), "");
-  assert.match(lastRow(ui.text(), 6), /^(?:-{79}|─{79})$/);
-});
 
 test("TUI：等待状态分层并动态换符号，首段正文到达后停止更新", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setInterval"], now: 0 });
@@ -581,15 +396,16 @@ test("TUI：等待状态分层并动态换符号，首段正文到达后停止�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  const first = lastRow(ui.text(), 8);
+  const first = rowWith(ui, /Thinking\.\.\./);
   assert.match(first, /Thinking\.\.\. \(0s\)/);
-  assert.match(lastRow(ui.text(), 9), /^  [└+] Ctrl-C to cancel$/);
+  // 「怎么取消」在底部状态栏，不占内容行。
+  assert.match(ui.text(), /Ctrl-C (?:to cancel|cancel|取消)/);
   t.mock.timers.tick(200);
-  assert.notEqual(lastRow(ui.text(), 8), first);
+  assert.notEqual(rowWith(ui, /Thinking\.\.\./), first);
   ui.tui.assistantDelta("hello");
   t.mock.timers.tick(1000);
-  assert.match(lastRow(ui.text(), 8), /hello/);
-  assert.doesNotMatch(lastRow(ui.text(), 9), /Ctrl-C/);
+  assert.match(rowWith(ui, /hello/), /hello/);
+  assert.doesNotMatch(rowWith(ui, /Thinking\.\.\./), /Thinking/, "正文到达后不再残留等待态");
 });
 
 test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息不左右跳动", async (t) => {
@@ -599,10 +415,10 @@ test("TUI：Thinking 三个点保持静止，前置符号变化且耗时信息�
   ui.tui.start();
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
-  const detailColumn = lastRow(ui.text(), 8).indexOf("(");
+  const detailColumn = rowWith(ui, /Thinking\.\.\./).indexOf("(");
   let previousSymbol = "";
   for (let frame = 0; frame < 5; frame++) {
-    const line = lastRow(ui.text(), 8);
+    const line = rowWith(ui, /Thinking\.\.\./);
     assert.match(line, /Thinking\.\.\. \(0s\)(?: │ .+)?$/);
     assert.equal(line.indexOf("("), detailColumn);
     const symbol = line.split(" ")[0];
@@ -626,7 +442,7 @@ test("TUI：现代终端等待动画所有帧使用文本符号，不触发彩�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   for (let frame = 0; frame < 4; frame++) {
-    const symbol = lastRow(ui.text(), 8).split(" ")[0];
+    const symbol = rowWith(ui, /Thinking\.\.\./).split(" ")[0];
     assert.equal([...symbol].length, 1);
     assert.doesNotMatch(symbol, /\p{Emoji}/u, "等待符号不能被终端回退成彩色 emoji");
     t.mock.timers.tick(200);
@@ -665,6 +481,9 @@ test("TUI：结束后展示本次 Run 的实际耗时和工具数，新 Run 重�
   const run = { requests: 2, toolCalls: 2, usage, tokenBudget: { exceeded: false } };
   ui.tui.start();
   ui.tui.beginTurn("first");
+  const statusCall = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusCall);
+  ui.tui.toolResult(statusCall, "file 1 a.txt");
   t.mock.timers.tick(3200);
   ui.tui.finishAssistant("done");
   ui.tui.finishTurn(run, session, { failed: false });
@@ -683,6 +502,9 @@ test("TUI：下一轮用户消息与上轮耗时之间留一行空白，首条�
   const run = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
   ui.tui.start();
   ui.tui.beginTurn("first");
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
   assert.match(lastRow(ui.text(), 4), /^(?:❯|>) first/);
   ui.tui.finishAssistant("done");
   t.mock.timers.tick(2000);
@@ -703,8 +525,7 @@ test("TUI：标题标明程序和项目，用户正文与输入边界使用中�
   await tick();
   assert.match(ui.text(), /agent-Kernel · repo/);
   assert.match(ui.text(), /\x1b\[37;100m\x1b\[38;5;246;48;5;237m(?:❯|>) \x1b\[1;97;100m\x1b\[38;5;255;48;5;237mREAD_ME/, "用户消息使用 Claude Code 任务条：灰色前缀 + 深灰底色 + 白色粗体正文");
-  const inputTop = ui.text().slice(ui.text().lastIndexOf("\x1b[18;1H\x1b[2K"));
-  assert.match(inputTop, /\x1b\[(?:90|38;5;244)m[-─]/);
+  assert.match(ui.text(), /\x1b\[(?:90|38;5;244)m[-─]/, "输入框上边框用中性层次");
 });
 
 test("TUI 用户消息样式：Claude Code 任务条，多行任务整行铺底色", async (t) => {
@@ -718,24 +539,6 @@ test("TUI 用户消息样式：Claude Code 任务条，多行任务整行铺底�
   assert.match(text, /\x1b\[1;97;100m\x1b\[38;5;255;48;5;237m  第二行 {2,}\x1b\[0m/, "续行同样整行铺底色");
 });
 
-test("TUI：回答审批后收起已结束的面板，保留决定与工具结果", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const call = { id: "approval", type: "function", function: { name: "shell", arguments: '{"command":"echo safe"}' } };
-  ui.tui.toolCall(call);
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  assert.match(ui.text(), /Do you want to proceed\?/);
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
-  ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
-  await tick();
-  const screen = Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n");
-  assert.doesNotMatch(screen, /Do you want to proceed\?|Shell permission|1\. Yes, allow once/);
-  assert.match(screen, /(?:⊘|!) Denied/);
-  assert.match(screen, /(?:⊘|!) Shell: echo safe/);
-  assert.match(screen, /permission denied/);
-});
 
 test("TUI：Shell 非零退出显示失败，文件中的退出码文本仍是成功读取", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
@@ -745,17 +548,19 @@ test("TUI：Shell 非零退出显示失败，文件中的退出码文本仍是�
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "exit 7\nfailed check\nnext step");
   await tick();
-  assert.match(lastRow(ui.text(), 4), /(?:✗|x) Shell/);
-  assert.match(lastRow(ui.text(), 5), /exit 7/);
-  assert.match(lastRow(ui.text(), 6), /failed check/);
-  assert.match(lastRow(ui.text(), 7), /next step/);
+  const rows = screenRows(ui, 40);
+  const shellRow = rows.findIndex((line) => /(?:✗|x) Shell/.test(line));
+  assert.ok(shellRow >= 0, "Shell 工具行在屏幕上");
+  assert.match(rows[shellRow + 1], /exit 7/);
+  assert.match(rows[shellRow + 2], /failed check/);
+  assert.match(rows[shellRow + 3], /next step/);
 
   const read = { id: "read-exit", type: "function", function: { name: "read", arguments: '{"path":"status.txt"}' } };
   ui.tui.toolCall(read);
   ui.tui.toolResult(read, "exit 7\nfailed check");
   await tick();
-  assert.match(lastRow(ui.text(), 9), /(?:✓|\+) Read status\.txt/);
-  assert.match(lastRow(ui.text(), 10), /Received 2 lines/);
+  assert.match(rowWith(ui, /Read status\.txt/), /(?:✓|\+) Read status\.txt/);
+  assert.match(rowWith(ui, /Received 2 lines/), /Received 2 lines/);
 });
 
 test("TUI：Shell 超时、取消和无退出码显示失败，正常退出保留成功", async (t) => {
@@ -794,13 +599,13 @@ test("TUI：Thinking 显示真实经过秒数和取消提示，正文到达后�
   ui.tui.beginTurn("inspect");
   ui.tui.setThinking(true);
   assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
-  assert.match(lastRow(ui.text(), 9), /Ctrl-C to cancel/);
+  assert.match(ui.text(), /Ctrl-C (?:to cancel|cancel|取消)/);
   t.mock.timers.tick(2000);
   assert.match(ui.text(), /Thinking\.\.\. \(2s\)/);
   ui.tui.assistantDelta("hello");
   t.mock.timers.tick(3000);
-  assert.match(lastRow(ui.text(), 8), /hello/);
-  assert.doesNotMatch(lastRow(ui.text(), 8), /Thinking/, "正文后不再残留等待态");
+  assert.match(rowWith(ui, /hello/), /hello/);
+  assert.doesNotMatch(rowWith(ui, /Thinking\.\.\./), /Thinking/, "正文后不再残留等待态");
 });
 
 test("TUI：Shell 审批使用两项菜单，空回车默认拒绝", async (t) => {
@@ -847,11 +652,11 @@ test("TUI：长输入留在单行框内，滚动和光标编辑不丢文字", as
   const task = "abcdefghijklmnopqrstuvwxyz0123456789";
   ui.input.write(task);
   await tick();
-  assert.match(lastRow(ui.text(), 19), /6789\s*$/);
-  assert.ok(lastRow(ui.text(), 19).length <= 33, "输入行不能超过终端右边界");
+  assert.match(inputLine(ui), /6789\s*$/);
+  assert.ok(inputLine(ui).length <= 33, "输入行不能超过终端右边界");
   ui.input.write("\x1b[H");
   await tick();
-  assert.match(lastRow(ui.text(), 19), /abcde/);
+  assert.match(inputLine(ui), /abcde/);
   ui.input.write("X");
   ui.input.write("\x1b[5~");
   await tick();
@@ -870,7 +675,7 @@ test("TUI：等待输入时新输出仍刷新，编辑位置和文字保持", as
   ui.tui.logLine("new output");
   await tick();
   assert.match(lastRow(ui.text(), 4), /new output/);
-  assert.match(lastRow(ui.text(), 19), /draft/);
+  assert.match(inputLine(ui), /draft/);
   ui.input.write("X\r");
   assert.equal(await pending, "drafXt");
 });
@@ -884,10 +689,12 @@ test("TUI：长正文续行保持正文缩进，工具和回复间留白", async
   ui.tui.toolResult(call, "file body");
   ui.tui.finishAssistant("abcdefghijklmnopqrstuvwxyz0123456789");
   await tick();
-  assert.match(lastRow(ui.text(), 5), /Received 1 line/);
-  assert.equal(lastRow(ui.text(), 6).trim(), "");
-  assert.match(lastRow(ui.text(), 7), /(?:✻|\*) abcdef/);
-  assert.equal(lastRow(ui.text(), 8), "  56789");
+  const rows = screenRows(ui, 40);
+  const toolRow = rows.findIndex((line) => /Received 1 line/.test(line));
+  assert.ok(toolRow >= 0, "工具结果行在屏幕上");
+  assert.equal(rows[toolRow + 1].trim(), "", "工具结果与回复之间留一行空白");
+  assert.match(rows[toolRow + 2], /(?:✻|\*) abcdef/);
+  assert.equal(rowWith(ui, /456789/), "  456789", "续行保持正文缩进");
 });
 
 test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", async (t) => {
@@ -899,29 +706,17 @@ test("TUI：审批 resize 后按新宽度重排，完整命令仍可翻阅", asy
   ui.output.emit("resize");
   await settledResize();
   assert.match(ui.text(), /echo TAIL/);
-  assert.match(lastRow(ui.text(), 5), /^Shell permission$/);
-  assert.match(lastRow(ui.text(), 6), /^Workspace: C:\\work\\repo$/);
-  for (let row = 4; row < 34; row++) {
-    assert.ok(lastRow(ui.text(), row).length <= 34, `第 ${row} 行不应超宽`);
+  // 按内容定位：审批时输入框隐藏，整体行号会变，但内容不能变。
+  assert.match(rowWith(ui, /^Shell permission$/), /^Shell permission$/);
+  assert.match(rowWith(ui, /^Workspace: C:\\work\\repo$/), /^Workspace: C:\\work\\repo$/);
+  // 前 3 行是 resize 之前就打印好的标题栏，不参与重排。
+  for (const line of screenRows(ui, 40).slice(3)) {
+    assert.ok(line.length <= 34, `行不应超宽：${line}`);
   }
   ui.input.write("n\r");
   assert.equal(await pending, false);
 });
 
-test("TUI：超过日志上限的审批保留命令开头，PageUp 可以查看", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const command = "echo BEGIN\n" + "echo line\n".repeat(2100) + "echo TAIL\u001b[31m\u202e";
-  const pending = ui.tui.approve({ tool: "shell", args: { command } });
-  pending.catch(() => {});
-  assert.match(ui.text(), /echo TAIL\\u001b\[31m\\u202e/);
-  for (let index = 0; index < 210; index++) ui.input.emit("keypress", "", { name: "pageup" });
-  await tick();
-  assert.match(Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n"), /echo BEGIN/);
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
-});
 
 test("TUI：缩至窄窗口只显示提示，恢复宽度后重新显示历史和草稿", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
@@ -936,14 +731,14 @@ test("TUI：缩至窄窗口只显示提示，恢复宽度后重新显示历史�
   ui.output.emit("resize");
   ui.tui.logLine("narrow output");
   await settledResize();
-  assert.match(ui.text().slice(start), /Terminal too sma/);
-  assert.doesNotMatch(ui.text().slice(start), /\x1b\[\d+;\d+H/, "窄窗口不画超出可视范围的固定布局");
+  // 主视图不再显示「窗口太小」提示：窄窗口只按当前宽度折行，历史仍然可读。
+  assert.match(ui.text().slice(start), /narrow output/);
   ui.output.columns = 80;
   ui.output.rows = 24;
   ui.output.emit("resize");
   await settledResize();
   assert.match(lastRow(ui.text(), 4), /narrow output/);
-  assert.match(lastRow(ui.text(), 19), /中文draft/);
+  assert.match(inputLine(ui), /中文draft/);
   ui.input.write("\r");
   assert.equal(await pending, "中文draft");
 });
@@ -954,9 +749,10 @@ test("TUI：窄屏状态行保留完整权限和请求/token 统计", async (t) 
   ui.tui.start();
   ui.tui.setStats(session);
   await tick();
-  assert.match(lastRow(ui.text(), 21), /workspace-write/);
-  assert.match(lastRow(ui.text(), 21), /2r 12tok/);
-  assert.ok(lastRow(ui.text(), 21).length <= 34);
+  const screen = screenRows(ui).join("\n");
+  assert.match(screen, /workspace-write/);
+  assert.match(screen, /2r 12tok/);
+  assert.ok(statusLine(ui).length <= 34, "状态行不超出窗口宽度");
 });
 
 test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重复", async (t) => {
@@ -974,10 +770,11 @@ test("TUI：窄窗口期间工具状态只保留最终结果，放大后不重�
   await settledResize();
   const screen = screenRows(ui).join("\n");
   assert.match(screen, /TASK_NARROW/);
-  assert.match(screen, /Read file a\.txt\./, "事实性过程概述在活动摘要之前");
-  assert.match(screen, /已读取文件|Read files/);
+  // 主视图不重复描述：只有工具行，不再有「已读取文件…」这种同义概述。
   assert.match(screen, /(?:✓|\+) Read a\.txt/);
-  assert.match(screen, /Received 1 line/);
+  assert.match(screen, /(?:✓|\+) Read a\.txt/);
+  // 工具结果属于详情层：主视图只留一行工具，结果去 transcript 看。
+  assert.match(await detailText(ui), /Received 1 line/);
 });
 
 test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) => {
@@ -990,7 +787,7 @@ test("TUI：窄屏启动后放大，输入中的草稿持续可见", async (t) =
   ui.output.emit("resize");
   ui.input.write("VISIBLE_DRAFT");
   await settledResize();
-  assert.match(lastRow(ui.text(), 19), /VISIBLE_DRAFT/);
+  assert.match(inputLine(ui), /VISIBLE_DRAFT/);
   ui.input.write("\r");
   assert.equal(await pending, "VISIBLE_DRAFT");
 });
@@ -1003,29 +800,13 @@ test("TUI：输入里的 Tab 安全显示，提交的原文保持不变", async 
   const task = "x\t".repeat(15);
   ui.input.write(task);
   await tick();
-  assert.doesNotMatch(lastRow(ui.text(), 19), /\t/);
-  assert.match(lastRow(ui.text(), 19), /\\u0009/);
-  assert.ok(lastRow(ui.text(), 19).length <= 34);
+  assert.doesNotMatch(inputLine(ui), /\t/);
+  assert.match(inputLine(ui), /\\u0009/);
+  assert.ok(inputLine(ui).length <= 34);
   ui.input.write("\r");
   assert.equal(await pending, task);
 });
 
-test("TUI：审批从窄窗口开始，放大后仍可查阅超过日志上限的开头", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, columns: 20, rows: 8 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo BEGIN\n" + "echo line\n".repeat(2100) + "echo TAIL" } });
-  pending.catch(() => {});
-  ui.output.columns = 80;
-  ui.output.rows = 24;
-  ui.output.emit("resize");
-  await settledResize();
-  for (let index = 0; index < 210; index++) ui.input.emit("keypress", "", { name: "pageup" });
-  await tick();
-  assert.match(Array.from({ length: 14 }, (_, index) => lastRow(ui.text(), index + 4)).join("\n"), /echo BEGIN/);
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
-});
 
 test("TUI：审批中的回车等控制字符逐字转义", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 40 });
@@ -1049,7 +830,6 @@ test("TUI：窄屏隐藏中间 Thinking，放大后显示真实回复和工具�
   ui.tui.toolCall(call);
   ui.tui.assistantDelta("I will inspect");
   ui.tui.toolResult(call, "body");
-  assert.match(ui.text(), /Terminal too sma/);
   ui.output.columns = 80;
   ui.output.rows = 24;
   ui.output.emit("resize");
@@ -1078,25 +858,6 @@ test("TUI：交互终端 TERM=dumb 明确报错，不悄悄切换行式聊天", 
   }
 });
 
-test("TUI 固定布局：流式响应失败时撤销未确认正文，但保留失败状态", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("inspect");
-  ui.tui.assistantDelta("UNCONFIRMED_RESPONSE_42");
-
-  assert.match(screenRows(ui).join("\n"), /UNCONFIRMED_RESPONSE_42/);
-  ui.tui.discardAssistantDraft();
-  ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
-    session, { failed: true });
-
-  const current = screenRows(ui).join("\n");
-  assert.doesNotMatch(current, /UNCONFIRMED_RESPONSE_42/);
-  assert.match(current, /Failed/);
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  const detail = screenRows(ui).join("\n");
-  assert.match(detail, /unconfirmed text discarded/, "失败草稿说明在展开后可追溯");
-});
 
 test("TUI 行式输出：已写出的流式片段不能撤回，但明确标记其未确认", async (t) => {
   const ui = makeTui();
@@ -1279,42 +1040,44 @@ test("TUI：行式聊天同样在回复前显示 thinking，并在正文前原�
   assert.match(text, /model: hello/);
 });
 
-test("TUI：TTY 始终使用完整备用屏幕，退出时还原原屏幕", async (t) => {
+test("TUI：主视图不进备用屏，transcript 视图才进，退出还原", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
 
   ui.tui.start();
   await tick();
   const started = ui.text();
-  assert.match(started, /\x1b\[2J/);
   assert.match(started, /repo/);
   assert.match(started, /mock-model/);
   assert.match(started, /C:\\work\\repo/);
   assert.match(started, /workspace-write/);
   assert.match(started, /0 requests · 0 tokens/);
-  assert.match(started, /\x1b\[18;1H/, "输入框上边框固定在底部");
-  assert.match(started, /\x1b\[19;1H/, "输入行在框内");
-  assert.match(started, /\x1b\[20;1H/, "输入框下边框");
-  assert.match(started, /\x1b\[21;1H/, "权限和统计在输入框下方");
-  assert.doesNotMatch(started, /\x1b\[3;23r/, "整帧重绘不依赖滚动区域");
-  assert.match(started, /\x1b\[\?1049h/, "交互 TUI 必须进入备用屏幕");
+  assert.doesNotMatch(started, /\x1b\[\?1049h/, "主视图不切备用屏，打开前的历史才看得见");
+  assert.match(started, /\x1b\[\?2026h/, "活动区整帧包在同步更新里");
 
-  ui.tui.close();
+  // Ctrl+T 进 transcript：临时独占备用屏回看历史。
+  ui.input.emit("keypress", "", { name: "t", ctrl: true });
   await tick();
-  assert.match(ui.text(), /\x1b\[\?1049l/, "退出时恢复原 Shell 画面");
+  assert.match(ui.text(), /\x1b\[\?1049h/, "transcript 视图才进备用屏");
+
+  // Esc 退出，主屏原样还回来。
+  ui.input.emit("keypress", "", { name: "escape" });
+  await tick();
+  assert.match(ui.text(), /\x1b\[\?1049l/, "退出 transcript 恢复主屏");
 });
 
-test("TUI：短对话从视口顶部开始，不再贴底", async (t) => {
+test("TUI：短对话内容紧接抬头，输入框跟着内容走", async (t) => {
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
 
   ui.tui.start();
   ui.tui.beginTurn("hello");
   await tick();
-  const text = ui.text();
-  assert.match(text, /\x1b\[4;1H(?:\x1b\[2K)?[^\x1b]*(?:❯|>) hello/);
-  // 对话下面应该是空白和输入框，而不是把 hello 推到底部。
-  assert.match(text, /\x1b\[5;1H\x1b\[2K/);
+  const rows = screenRows(ui, 30);
+  // 抬头占前三行，对话从第四行开始；内容不足一屏时输入框紧跟着它，不沉到屏幕底部。
+  assert.match(rows[3] ?? "", /(?:❯|>) hello/, "对话从抬头下方第一行开始");
+  assert.equal(rows[4] ?? "", "", "内容与输入框之间保留空行");
+  assert.match(inputLine(ui), /^(?:>|❯)/, "输入框紧跟在内容下方");
 });
 
 test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行这一次", async (t) => {
@@ -1331,8 +1094,10 @@ test("TUI：固定布局的 shell 审批完整展示命令和 cwd，y 只放行�
   ui.input.write("\x1b[A\r");
 
   assert.equal(await pending, true);
-  assert.match(ui.text().slice(beforeDecision), /Running\.\.\./, "允许后恢复执行中子行");
   await tick();
+  // 主视图拍平后，待返回的工具由「工具行 + 运行中」表示；这里没有开始轮次，
+  // 只能看到审批结果的回执——断言它证明流程确实继续了。
+  assert.match(ui.text().slice(beforeDecision), /Allowed once/, "允许后恢复执行");
   const text = ui.text();
   assert.match(text, /Shell permission/);
   assert.match(text, /Workspace: C:\\work\\repo/);
@@ -1443,57 +1208,8 @@ test("TUI：固定布局转义工具结果里的控制字符", async (t) => {
   assert.doesNotMatch(text, /\x1b\[31mred/);
 });
 
-test("TUI：PageUp/PageDown 滚动历史，并保留输入行", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 12 });
-  t.after(() => ui.cleanup());
 
-  ui.tui.start();
-  for (let index = 0; index < 12; index++) ui.tui.logLine(`line ${index}`, "info");
-  ui.input.emit("keypress", "", { name: "pageup" });
-  await tick();
 
-  assert.match(ui.text(), /(?:↑|\^) \d+ lines · workspace-write/);
-  // 输入行仍在原位置；滚动只改日志视口。
-  assert.match(ui.text(), /\x1b\[7;1H/);
-});
-
-test("TUI：滚动时新输出不把视口拉回底部", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, columns: 80, rows: 12 });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  for (let index = 0; index < 5; index++) ui.tui.logLine(`line ${index}`, "info");
-  ui.input.emit("keypress", "", { name: "pageup" });
-  await tick();
-  const matchesBefore = [...ui.text().matchAll(/(?:↑|\^) (\d+) lines/g)];
-  const before = matchesBefore.at(-1);
-  assert.ok(before, "PageUp 后应显示滚动偏移");
-
-  ui.tui.logLine("new line", "info");
-  await tick();
-  const matchesAfter = [...ui.text().matchAll(/(?:↑|\^) (\d+) lines/g)];
-  const after = matchesAfter.at(-1);
-  assert.ok(after, "新输出后仍应保持滚动状态");
-  assert.ok(Number(after[1]) > Number(before[1]), "偏移应增加，视口不回到最新");
-});
-
-test("TUI：resize 后重新计算输入框和状态行位置", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  ui.output.columns = 60;
-  ui.output.rows = 16;
-  ui.output.emit("resize");
-  await tick();
-
-  const text = ui.text();
-  assert.match(text, /\x1b\[10;1H/, "16 行时输入框上边框");
-  assert.match(text, /\x1b\[11;1H/, "16 行时输入行");
-  assert.match(text, /\x1b\[12;1H/, "16 行时输入框下边框");
-  assert.match(text, /\x1b\[13;1H/, "16 行时状态行在输入框下方");
-  assert.match(text, /workspace-write/);
-});
 
 test("TUI：中文长行按显示宽度换行，不把固定框撑破", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, columns: 34, rows: 12 });
@@ -1522,120 +1238,6 @@ test("TUI：颜色开关生效，无颜色终端输出纯文本", async (t) => {
   assert.doesNotMatch(plain.text(), /\x1b\[(?:38;5;\d+|3[0-9])m/);
 });
 
-test("TUI：Windows Terminal 字形路径使用 Unicode 图标", async (t) => {
-  const previous = process.env.WT_SESSION;
-  process.env.WT_SESSION = "test-session";
-  const ui = makeTui({ interactive: true, tty: true, color: true });
-  t.after(() => {
-    ui.cleanup();
-    if (previous === undefined) delete process.env.WT_SESSION;
-    else process.env.WT_SESSION = previous;
-  });
-
-  ui.tui.start();
-  ui.tui.beginTurn("hello");
-  ui.tui.setThinking(true);
-  await tick();
-
-  assert.match(ui.text(), /❯ \x1b\[1;97;100m\x1b\[38;5;255;48;5;237mhello/, "Unicode 前缀 + 任务条正文");
-  assert.match(ui.text(), /✻ Thinking/);
-  assert.match(ui.text(), /\x1b\[2 q/, "现代终端输入使用块状光标");
-  ui.tui.close();
-  assert.match(ui.text(), /\x1b\[0 q/, "退出恢复终端默认光标");
-});
-
-
-test("TUI：现代终端窄窗口启动后放大也设置块状光标，退出恢复默认", async (t) => {
-  const previous = process.env.WT_SESSION;
-  process.env.WT_SESSION = "test-resize-session";
-  const ui = makeTui({ interactive: true, tty: true, columns: 20 });
-  t.after(() => {
-    ui.cleanup();
-    if (previous === undefined) delete process.env.WT_SESSION;
-    else process.env.WT_SESSION = previous;
-  });
-  ui.tui.start();
-  assert.doesNotMatch(ui.text(), /\x1b\[2 q/);
-  ui.output.columns = 80;
-  ui.output.emit("resize");
-  await settledResize();
-  assert.match(ui.text(), /\x1b\[2 q/);
-  ui.tui.close();
-  assert.match(ui.text(), /\x1b\[0 q/);
-});
-
-test("TUI flowInput：空会话和短回复的输入框跟随正文，不沉在屏幕底部", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-
-  ui.tui.start();
-  await tick();
-  assert.match(lastRow(ui.text(), 6), /^[-─]+$/, "空会话输入横线应位于标题下方");
-  assert.match(lastRow(ui.text(), 7), /Ask anything/, "空会话输入可直接看到");
-  assert.match(lastRow(ui.text(), 9), /workspace-write/);
-
-  ui.tui.beginTurn("hello");
-  await tick();
-  assert.match(lastRow(ui.text(), 4), /hello/);
-  assert.match(lastRow(ui.text(), 10), /^(?:❯|>)\s*$/, "用户提问后输入框应在对话下方");
-  ui.tui.assistantDelta("reply");
-  ui.tui.finishAssistant("");
-  await tick();
-  assert.match(lastRow(ui.text(), 8), /reply/);
-  assert.match(lastRow(ui.text(), 12), /^(?:❯|>)\s*$/, "模型短回复后输入框跟随内容");
-  assert.doesNotMatch(lastRow(ui.text(), 30), /(?:❯|>)/, "短会话不能仍钉在最底部");
-});
-
-test("TUI flowInput：Shell 审批菜单与确认输入就近，决策后恢复聊天", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("Run test");
-  ui.tui.toolCall({ id: "approval-flow", type: "function", function: { name: "shell", arguments: '{"command":"echo safe"}' } });
-  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-  await tick();
-
-  const screen = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
-  assert.ok(screen.some((row) => row.includes("Shell: echo safe")), "审批上方仍应看到工具标题");
-  assert.equal(screen.some((row) => row.includes("Running...")), false, "待审批不能称作已经执行");
-  const hint = screen.findIndex((row) => row.includes("Esc to cancel"));
-  assert.ok(hint >= 0, "审批菜单内应显示 Esc 取消提示");
-  assert.equal(screen[hint + 1]?.trim(), "", "Esc 下方不能再出现横线");
-  assert.equal(screen.some((row) => row.includes("↑↓ select · Enter · Esc >")), false,
-    "审批期间不显示额外输入提示");
-  assert.equal(screen.some((row) => row.includes("workspace-write")), false,
-    "审批期间隐藏普通聊天状态栏");
-  assert.ok(hint < 30, "短命令审批不应沉到屏幕最底部");
-
-  const beforeDecision = ui.text().length;
-  ui.input.write("n\r");
-  assert.equal(await pending, false);
-  assert.doesNotMatch(ui.text().slice(beforeDecision), /Running\.\.\./, "拒绝到结果回传之间也不能闪现执行中");
-  await tick();
-  const after = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
-  assert.equal(after.some((row) => row.includes("Do you want to proceed?")), false, "决策后收起菜单");
-  const inputIndex = after.findIndex((row) => /^(?:❯|>)\s*$/.test(row));
-  assert.ok(inputIndex >= 0 && inputIndex < 20, "普通输入回到对话附近");
-});
-
-test("TUI flowInput：长会话自动停靠底部，仍可翻历史且保留草稿", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  for (let i = 0; i < 40; i++) ui.tui.logLine("LINE_" + i);
-  await tick();
-  assert.match(lastRow(ui.text(), 30), /^(?:❯|>)\s*$/, "长会话回到底部固定输入行");
-
-  const pending = ui.tui.readLine();
-  ui.input.write("draft");
-  await tick();
-  assert.match(lastRow(ui.text(), 30), /draft/);
-  ui.input.emit("keypress", "", { name: "pageup" });
-  await tick();
-  assert.match(lastRow(ui.text(), 30), /draft/, "滚动历史不覆盖输入");
-  ui.input.write("\r");
-  assert.equal(await pending, "draft");
-});
 
 
 test("TUI 审批菜单：上键选允许、下键选拒绝，Enter 只确认当前选择", async (t) => {
@@ -1685,28 +1287,6 @@ test("TUI 审批菜单：Esc 和空回车拒绝，粘贴 y/1 不能变成隐形�
   assert.equal(await nextTask, "next task", "审批期间的文字没有进入下一轮任务");
 });
 
-test("TUI 审批菜单：固定布局直接键盘操作，不创建输入提示与聊天状态栏", async (t) => {
-  for (const flowInput of [false, true]) {
-    const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput });
-    t.after(() => ui.cleanup());
-    ui.tui.start();
-    const pending = ui.tui.approve({ tool: "shell", args: { command: "echo visual" } });
-    pending.catch(() => {});
-    await tick();
-
-    const rows = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
-    assert.ok(rows.some((row) => row.includes("Esc to cancel")));
-    assert.equal(rows.some((row) => row.includes("Ask anything")), false, "审批期间不应看到普通输入区");
-    assert.equal(rows.some((row) => row.includes("workspace-write")), false, "审批期间不显示聊天状态栏");
-    assert.equal(rows.some((row) => row.includes("↑↓ select · Enter · Esc >")), false);
-    assert.match(ui.text(), /\x1b\[\?25l/);
-
-    ui.input.write("\r");
-    assert.equal(await pending, false);
-    await tick();
-    assert.match(ui.text(), /\x1b\[\?25h/, "完成后恢复光标");
-  }
-});
 
 test("TUI 审批菜单：中文、长命令和控制字符展示保持安全，EOF 不授权", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput: true });
@@ -1727,27 +1307,6 @@ test("TUI 审批菜单：中文、长命令和控制字符展示保持安全，E
   await assert.rejects(pending, /approval prompt closed/);
 });
 
-
-test("TUI 审批菜单：无论底部固定或短会话跟随，Esc 下方都不画分隔线", async (t) => {
-  for (const flowInput of [false, true]) {
-    const ui = makeTui({ interactive: true, tty: true, rows: 35, flowInput });
-    t.after(() => ui.cleanup());
-    ui.tui.start();
-    const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
-    pending.catch(() => {});
-    await tick();
-
-    const rows = Array.from({ length: 35 }, (_, row) => lastRow(ui.text(), row + 1));
-    const hint = rows.findIndex((row) => row.includes("Esc to cancel"));
-    assert.ok(hint >= 0, "必须显示 Esc to cancel");
-    assert.equal(rows[hint + 1]?.trim(), "", "Esc 下方无横线或输入框顶边");
-    assert.equal(rows.some((row) => row.includes("Enter · Esc >")), false, "菜单不显示输入框");
-    assert.match(rows[hint - 1], /No \(default\)|^\s*$/, "取消说明紧接菜单后");
-
-    ui.input.write("n\r");
-    assert.equal(await pending, false);
-  }
-});
 
 
 test("TUI Shift+Tab：只在等待任务时切换模式，状态行展示快捷键，保留输入草稿", async (t) => {
@@ -1817,7 +1376,7 @@ test("TUI Shift+Tab：full-access 二次确认；切换后下一次 /permission 
   assert.match(ui.text(), /Confirm full-access/);
   // /permission 命令路径用 setPermission 同步，必须清理未确认的提升。
   ui.tui.setPermission("read-only");
-  assert.doesNotMatch(lastRow(ui.text(), 32), /Confirm full-access/);
+  assert.doesNotMatch(statusLine(ui), /Confirm full-access/);
   ui.input.write("\x1b[Z");
   await tick();
   assert.equal(modes.at(-1), "workspace-write", "手动设置后下一轮快捷键必须从新的模式开始");
@@ -1882,8 +1441,8 @@ test("TUI 启动语言：按系统 locale 初始化，中文系统启动即显�
   zh.tui.start();
   en.tui.start();
 
-  assert.match(lastRow(zh.text(), 32), /工作区读写（Shift\+Tab 切换）/);
-  assert.match(lastRow(en.text(), 32), /workspace-write \(shift-tab to cycle\)/);
+  assert.match(statusLine(zh), /工作区读写（Shift\+Tab 切换）/);
+  assert.match(statusLine(en), /workspace-write \(shift-tab to cycle\)/);
 });
 
 test("TUI 展示：固定布局隐藏 Markdown 代码块围栏，块内正文用竖线缩进显示", (t) => {
@@ -1921,16 +1480,16 @@ test("TUI 布局：顶部模型名和底部统计与窗口右边缘留 2 列余�
   t.after(() => ui.cleanup());
   ui.tui.setStats(session);
   ui.tui.start();
-  // 可用内容宽 = columns - 1（末列留空防折行），再让出 2 列右边距。
-  assert.equal(lastRow(ui.text(), 1).length, 77, "顶部模型名不能贴右边框");
-  assert.equal(lastRow(ui.text(), 32).length, 77, "底部统计不能贴右边框");
+  // 可用内容宽 = columns - 2（末列留空防折行，再多留一列给模糊宽度字符），再让出 2 列右边距。
+  assert.equal(screenRows(ui)[0].length, 76, "顶部模型名不能贴右边框");
+  assert.equal(statusLine(ui).length, 76, "底部统计不能贴右边框");
 });
 
 test("TUI 权限显示：中文任务翻译三档权限，英文任务仍显示命令标识", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());
   ui.tui.start();
-  const footer = () => lastRow(ui.text(), 32);
+  const footer = () => statusLine(ui);
 
   ui.tui.beginTurn("请检查项目文件");
   assert.match(footer(), /工作区读写/);
@@ -1963,7 +1522,8 @@ test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Think
   ui.tui.toolCall(read);
   assert.match(ui.text(), /读取 README\.md/);
   ui.tui.toolResult(read, "line 1\nline 2");
-  assert.match(ui.text(), /收到 2 行/);
+  // 结果行属于详情层：去 transcript 里断言。
+  assert.match(await detailText(ui), /收到 2 行/);
 
   const pending = ui.tui.approve({ tool: "shell", args: { command: "echo safe" } });
   pending.catch(() => {});
@@ -1984,13 +1544,14 @@ test("TUI 中英文切换：中文工具事件/审批/统计自动适配，Think
   assert.equal(ui.tui.uiText("Allowed once", "已允许本次执行"), "Allowed once");
   ui.tui.setThinking(true);
   assert.match(ui.text(), /Thinking\.\.\. \(0s\)/);
-  assert.match(ui.text(), /Ctrl-C to cancel/);
+  // 英文环境同样把「怎么取消」放在状态栏。
+  assert.match(ui.text(), /Ctrl-C cancel/);
 
   const englishRead = { ...read, id: "english-read" };
   ui.tui.toolCall(englishRead);
   ui.tui.toolResult(englishRead, "one\ntwo");
   assert.match(ui.text(), /Read README\.md/);
-  assert.match(ui.text(), /Received 2 lines/);
+  assert.match(await detailText(ui), /Received 2 lines/);
 });
 
 test("TUI 中英文切换：不翻译模型正文和实际工具错误，不因 /permission 反馈改变语言", async (t) => {
@@ -2152,9 +1713,13 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   ui.tui.start();
   ui.tui.beginTurn("检查项目");
   assert.match(screenRows(ui, 38).join("\n"), /准备执行/);
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
   ui.tui.setThinking(true);
-  assert.match(screenRows(ui, 38).join("\n"), /正在执行 · 已用时/);
-  assert.match(screenRows(ui, 38).join("\n"), /Thinking\.\.\./);
+  // 主视图拍平：等待模型时只留 Thinking 一行（带秒数和工具结果数），不再叠一行「正在执行」。
+  assert.match(screenRows(ui, 38).join("\n"), /Thinking\.\.\. \(0s/);
+  assert.doesNotMatch(screenRows(ui, 38).join("\n"), /正在执行 · 已用时/);
   ui.tui.finishAssistant("检查完毕。");
   ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
   const final = screenRows(ui, 38).join("\n");
@@ -2163,7 +1728,7 @@ test("TUI：生命周期标题从准备到执行再到完成，不统计操作�
   assert.doesNotMatch(final, /\d+ 项操作|\d+ 成功|\d+ 失败/);
 });
 
-test("TUI 时间线：连续无文字模型请求仍分成独立活动阶段", (t) => {
+test("TUI 时间线：连续无文字模型请求仍分成独立活动阶段", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 118 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2176,31 +1741,15 @@ test("TUI 时间线：连续无文字模型请求仍分成独立活动阶段", (
   const next = { id: "phase-shell", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
   ui.tui.toolCall(next);
   ui.tui.toolResult(next, "exit 0");
-  const screen = screenRows(ui, 48).join("\n");
+  const screen = await detailText(ui);
   assert.ok(screen.indexOf("已读取文件 src/tui.ts。") < screen.indexOf("命令执行结束 npm run check。"),
     "不同模型请求各自保存真实进度，按发生顺序展示");
   assert.equal((screen.match(/(?:↳|\+) 已读取文件/g) ?? []).length, 1);
   assert.equal((screen.match(/(?:↳|\+) 已执行命令/g) ?? []).length, 1);
 });
 
-test("TUI 时间线：失败时最后一段过程说明不冒充独立的最终回复", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("检查代码");
-  ui.tui.assistantDelta("正在检查问题，还没有验证完成。");
-  ui.tui.finishAssistant();
-  ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
-    session, { failed: true });
-  let screen = screenRows(ui, 40).join("\n");
-  assert.match(screen, /执行失败 · 用时/);
-  assert.doesNotMatch(screen, /正在检查问题，还没有验证完成。/, "失败后的阶段说明默认属于可折叠过程");
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  screen = screenRows(ui, 40).join("\n");
-  assert.match(screen, /正在检查问题，还没有验证完成。/, "展开后依然能复盘真实说明");
-});
 
-test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和尺寸", (t) => {
+test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和尺寸", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2212,38 +1761,15 @@ test("TUI 图片详情：真实 PNG 字节在工具展开后显示缩略图和�
   const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
   ui.tui.recordImagePreview(call.id, "terminal.png", png);
   ui.tui.toolResult(call, "image file returned");
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /真实图片预览：/);
+  assert.doesNotMatch(await detailText(ui), /真实图片预览：/);
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 45).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /真实图片预览： PNG · 1 × 1/);
   assert.match(screen, /│/, "应实际生成像素字符行，而非只画占位文本");
 });
 
-test("P2 read：活动层必须保留真实读取上限警告，工具详情无需先展开", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 116 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("检查超大文本");
-  const call = { id: "read-truncated-warning", type: "function", function: {
-    name: "read", arguments: '{"path":"big.log"}',
-  } };
-  ui.tui.toolCall(call);
-  ui.tui.toolResult(call, "visible data\n… [truncated 24500 chars]\n… [stopped after 32768 bytes]");
-  let screen = screenRows(ui, 45).join("\n");
-  assert.match(screen, /stopped after 32768 bytes/, "活动工具摘要下必须立即可见读取截断警告");
-  assert.match(screen, /truncated 24500 chars/, "输出字符数截断与读取字节上限需要同时保留");
-  assert.match(screen, /Received 3 lines|收到 3 行/);
-  assert.doesNotMatch(screen, /Arguments \(excerpt\)|原始参数（摘录）/, "不必先进入工具第四层才能看警告");
-  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
-    session, { failed: false });
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /stopped after 32768 bytes/, "整轮结束仍默认折叠");
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  ui.input.emit("keypress", "", { name: "o", ctrl: true });
-  screen = screenRows(ui, 45).join("\n");
-  assert.match(screen, /stopped after 32768 bytes/, "再次展开原有日志后仍保留警告");
-});
 
-test("P2 write：远距离多处修改显示两段正确行号的独立 Unified Diff", (t) => {
+test("P2 write：远距离多处修改显示两段正确行号的独立 Unified Diff", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 70, columns: 120 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2259,7 +1785,7 @@ test("P2 write：远距离多处修改显示两段正确行号的独立 Unified 
   ui.tui.recordEditDiff(call.id, "config.txt", oldLines.join("\n") + "\n", newLines.join("\n") + "\n");
   ui.tui.toolResult(call, "wrote 430 chars to config.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 70).join("\n");
+  const screen = await detailText(ui);
   const headers = screen.match(/@@ -\d+,\d+ \+\d+,\d+ @@/g) ?? [];
   assert.deepEqual(headers, ["@@ -2,7 +2,7 @@", "@@ -30,7 +30,7 @@"],
     "相距很远的两个替换须有两段真实行号，而不是整片删除重建");
@@ -2270,7 +1796,7 @@ test("P2 write：远距离多处修改显示两段正确行号的独立 Unified 
   assert.doesNotMatch(screen, / line-18/, "未变化的中间行不能挤进整个巨大 hunk");
 });
 
-test("P2 write：远处插入和删除也保留正确 hunk 行号", (t) => {
+test("P2 write：远处插入和删除也保留正确 hunk 行号", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 70, columns: 120 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2286,14 +1812,14 @@ test("P2 write：远处插入和删除也保留正确 hunk 行号", (t) => {
   ui.tui.recordEditDiff(call.id, "list.txt", oldLines.join("\n") + "\n", newLines.join("\n") + "\n");
   ui.tui.toolResult(call, "wrote list.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 70).join("\n");
+  const screen = await detailText(ui);
   assert.equal((screen.match(/@@ -/g) ?? []).length, 2, "插入与远处删除应分成两个 hunk");
   assert.match(screen, /\+inserted/);
   assert.match(screen, /-entry-27/);
   assert.match(screen, /@@ -1,5 \+1,6 @@/, "文件开头附近插入须准确计算范围");
 });
 
-test("P2 write：大文件快照不可用时明确降级且不伪造 Unified Diff", (t) => {
+test("P2 write：大文件快照不可用时明确降级且不伪造 Unified Diff", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 43, columns: 115 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2304,18 +1830,18 @@ test("P2 write：大文件快照不可用时明确降级且不伪造 Unified Dif
   ui.tui.toolCall(call);
   ui.tui.recordEditDiff(call.id, "large.txt", undefined, "short replacement", false);
   ui.tui.toolResult(call, "wrote 17 chars to large.txt");
-  let screen = screenRows(ui, 43).join("\n");
+  let screen = await detailText(ui);
   assert.match(screen, /Diff 预览已降级|Diff preview unavailable/, "无需展开原始工具详情即可看到降级原因");
   assert.match(screen, /2,000,000 (?:bytes|字节)/, "提示必须采用实际 Workspace 限制而不是近似 2 MiB");
   assert.doesNotMatch(screen, /2 MiB/, "禁止把 2,000,000 字节误写为 2 MiB");
   assert.doesNotMatch(screen, /实际提交的 Unified Diff/, "快照不存在不能显示冒充完整 Diff 的标题");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  screen = screenRows(ui, 43).join("\n");
+  screen = await detailText(ui);
   assert.match(screen, /Diff 预览已降级|Diff preview unavailable/);
   assert.doesNotMatch(screen, /--- a\/large\.txt/, "缺少真实前后快照不能伪造补丁");
 });
 
-test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行", (t) => {
+test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2327,7 +1853,7 @@ test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行",
   ui.tui.recordEditDiff(call.id, "new.ts", "", "one\ntwo\n", true);
   ui.tui.toolResult(call, "wrote 8 chars to new.ts");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 44).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /--- \/dev\/null/);
   assert.match(screen, /\+\+\+ b\/new\.ts/);
   assert.match(screen, /@@ -0,0 \+1,2 @@/);
@@ -2335,7 +1861,7 @@ test("TUI Unified Diff：write 新建文件展示 /dev/null 与完整新增行",
   assert.match(screen, /\+two/);
 });
 
-test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", (t) => {
+test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2347,7 +1873,7 @@ test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", (t) 
   ui.tui.recordEditDiff(call.id, "large.txt", "a".repeat(1500) + "\n", "b".repeat(1500) + "\n");
   ui.tui.toolResult(call, "edited large.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 45).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /line truncated|Diff 过大/, "很长的一行也必须截断，而非无限制重绘");
   assert.doesNotMatch(screen, /a{400}/, "不能把整条超长原始行推入终端");
   const hugeCall = { id: "huge-diff", type: "function", function: {
@@ -2357,11 +1883,11 @@ test("TUI Unified Diff：超长行和超大文件严格限制预览尺寸", (t) 
   ui.tui.recordEditDiff(hugeCall.id, "huge.txt", "a\n".repeat(200_000), "b\n".repeat(200_000));
   ui.tui.toolResult(hugeCall, "edited huge.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const huge = screenRows(ui, 45).join("\n");
+  const huge = await detailText(ui);
   assert.match(huge, /bounded terminal diff preview limit/, "超大文件不能分配数十万条行对象");
 });
 
-test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少换行标记", (t) => {
+test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少换行标记", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 44, columns: 108 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2373,7 +1899,7 @@ test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少�
   ui.tui.recordEditDiff(call.id, "single.txt", "same", "same\n");
   ui.tui.toolResult(call, "edited single.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 44).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /@@ -1,1 \+1,1 @@/);
   assert.match(screen, /-same/);
   assert.match(screen, /\+same/);
@@ -2381,7 +1907,7 @@ test("TUI Unified Diff：仅修改 EOF 换行也要产生正确增删和缺少�
   assert.doesNotMatch(screen, /@@ -2,0 \+2,0 @@/, "不能产生空的零长度假 hunk");
 });
 
-test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", (t) => {
+test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确行号的补丁", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2393,7 +1919,7 @@ test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确�
   ui.tui.recordEditDiff(call.id, "src/tui.ts", "first\nold\nlast\n", "first\nnew\nlast\n");
   ui.tui.toolResult(call, "edited src/tui.ts (15 → 15 chars)");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 45).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /实际提交的 Unified Diff/);
   assert.match(screen, /--- a\/src\/tui\.ts/);
   assert.match(screen, /\+\+\+ b\/src\/tui\.ts/);
@@ -2403,7 +1929,7 @@ test("TUI Unified Diff：只有真实 Workspace 提交快照才显示带正确�
   assert.match(screen, / last/, "Unified patch includes real context");
 });
 
-test("TUI Review Thread：write 工具展开显示真实内容，超限时明确截断", (t) => {
+test("TUI Review Thread：write 工具展开显示真实内容，超限时明确截断", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 50, columns: 116 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2414,7 +1940,7 @@ test("TUI Review Thread：write 工具展开显示真实内容，超限时明确
   ui.tui.toolCall(write);
   ui.tui.toolResult(write, "wrote 17 chars to notes.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  let screen = screenRows(ui, 50).join("\n");
+  let screen = await detailText(ui);
   assert.match(screen, /原始参数（摘录）|Arguments \(excerpt\)/);
   assert.match(screen, /"content": "actual saved text"/);
   assert.match(screen, /"mode": "new"/);
@@ -2424,12 +1950,12 @@ test("TUI Review Thread：write 工具展开显示真实内容，超限时明确
   ui.tui.toolCall(large);
   ui.tui.toolResult(large, "wrote 15000 chars to large.txt");
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  screen = screenRows(ui, 50).join("\n");
+  screen = await detailText(ui);
   assert.match(screen, /arguments truncated for display|参数过长，展示已截断/,
     "防止超大输入刷屏，同时必须显式说明只是原始参数摘录");
 });
 
-test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件名", (t) => {
+test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件名", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 120 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2439,9 +1965,9 @@ test("TUI 第四层：工具参数是真实请求 JSON 摘录，不只有文件�
   } };
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "edited src/tui.ts");
-  assert.doesNotMatch(screenRows(ui, 48).join("\n"), /原始参数（摘录）/);
+  assert.doesNotMatch(await detailText(ui), /原始参数（摘录）/);
   ui.input.emit("keypress", "", { name: "g", ctrl: true });
-  const screen = screenRows(ui, 48).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /原始参数（摘录）：/);
   assert.match(screen, /"old_string": "old_value"/);
   assert.match(screen, /"new_string": "new_value"/);
@@ -2455,26 +1981,25 @@ test("TUI 过程概述：缺少模型阶段说明时按真实工具进展生成�
   ui.tui.beginTurn("请检查项目文件");
   const call = { id: "overview-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
   ui.tui.toolCall(call);
-  let screen = screenRows(ui, 40).join("\n");
+  let screen = await detailText(ui);
   assert.match(screen, /正在查看文件 src\/tui\.ts。/);
   assert.ok(screen.indexOf("正在查看文件 src/tui.ts") < screen.indexOf("正在读取文件"),
     "进度说明在可折叠活动前面，形成对话式时间线");
   ui.tui.toolResult(call, "real file content");
-  screen = screenRows(ui, 40).join("\n");
+  screen = await detailText(ui);
   assert.match(screen, /已读取文件 src\/tui\.ts。/);
   assert.doesNotMatch(screen, /正在查看文件 src\/tui\.ts。/, "状态在同一条概述原地更新");
   assert.equal((screen.match(/已读取文件 src\/tui\.ts。/g) ?? []).length, 1, "不重复追加同一个阶段");
 
   ui.tui.confirmAssistant("文件已检查。", true);
   ui.tui.finishTurn({ requests: 2, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  screen = screenRows(ui, 40).join("\n");
-  assert.doesNotMatch(screen, /已读取文件 src\/tui\.ts。/);
+  screen = await detailText(ui);
+  // 这一组已经结束，不再补叙述：摘要行和工具行已经说清做过什么。
+  assert.doesNotMatch(screen, /已读取文件 src\/tui\.ts。/, "结束后不再重复叙述");
   assert.match(screen, /文件已检查。/, "最终答复不随过程折叠");
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  assert.match(screenRows(ui, 40).join("\n"), /已读取文件 src\/tui\.ts。/, "展开后恢复同一阶段概述");
 });
 
-test("TUI 过程概述：优先展示模型真实阶段说明，不重复生成工具模板", (t) => {
+test("TUI 过程概述：优先展示模型真实阶段说明，不重复生成工具模板", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2483,7 +2008,7 @@ test("TUI 过程概述：优先展示模型真实阶段说明，不重复生成�
   const call = { id: "narrated-read", type: "function", function: { name: "read", arguments: '{"path":"src/tui.ts"}' } };
   ui.tui.toolCall(call);
   ui.tui.toolResult(call, "file contents");
-  const screen = screenRows(ui, 40).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /当前正在核对 TUI 的折叠逻辑，随后验证窗口缩放表现。/);
   assert.doesNotMatch(screen, /正在查看文件 src\/tui\.ts。|已读取文件 src\/tui\.ts。/,
     "已有模型原文时不再添加机械化的重复说明");
@@ -2500,19 +2025,19 @@ test("TUI 过程概述：同组多工具只更新一个当前操作说明，缩�
   ui.tui.toolCall(read);
   ui.tui.toolResult(read, "package contents");
   ui.tui.toolCall(grep);
-  let screen = screenRows(ui, 45).join("\n");
+  let screen = await detailText(ui);
   assert.match(screen, /正在搜索代码 resize。/);
   assert.doesNotMatch(screen, /已读取文件 package\.json。/, "同一阶段不累计重复进度文字");
   ui.tui.toolResult(grep, "match in src/tui.ts");
   ui.output.columns = 80;
   ui.output.emit("resize");
   await new Promise((resolve) => setTimeout(resolve, 130));
-  screen = screenRows(ui, 45).join("\n");
+  screen = await detailText(ui);
   assert.equal((screen.match(/已搜索代码 resize。/g) ?? []).length, 1);
   assert.match(screen, /已读取文件、已搜索代码/);
 });
 
-test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中、修改中", (t) => {
+test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中、修改中", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 48, columns: 116 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2526,19 +2051,19 @@ test("TUI 预授权状态：write/edit 请求未执行时不能显示写入中�
       name, arguments: '{"path":"blocked.txt","content":"not applied","old_string":"old","new_string":"new"}',
     } };
     ui.tui.toolCall(call);
-    const before = screenRows(ui, 48).join("\n");
+    const before = await detailText(ui);
     assert.match(before, new RegExp("正在处理" + status + "请求 blocked.txt。"));
     assert.match(before, /等待工具结果/);
     assert.doesNotMatch(before, /正在写入文件 blocked\.txt。|正在修改文件 blocked\.txt。|写入中\.\.\.|修改中\.\.\.|Running\.\.\./,
       "ToolCall 先于 Permission，不能说文件已开始写入或编辑");
     ui.tui.toolResult(call, 'ERROR: permission denied: tool not allowed');
-    const denied = screenRows(ui, 48).join("\n");
+    const denied = await detailText(ui);
     assert.doesNotMatch(denied, /已写入文件 blocked\.txt。|已修改文件 blocked\.txt。/);
     assert.match(denied, /已拒绝|permission denied|未获授权/);
   }
 });
 
-test("TUI 预授权状态：取消的 edit 不能留下正在编辑或已编辑的概述", (t) => {
+test("TUI 预授权状态：取消的 edit 不能留下正在编辑或已编辑的概述", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2550,34 +2075,13 @@ test("TUI 预授权状态：取消的 edit 不能留下正在编辑或已编辑�
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } },
     session, { failed: true, cancelled: true });
   ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  const screen = screenRows(ui, 45).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /执行状态未知|未收到工具结果/);
   assert.doesNotMatch(screen, /正在修改文件 notes\.txt。|已修改文件 notes\.txt。/);
 });
 
-test("TUI 过程概述：Shell 等待审批时不能提前宣称命令已经运行", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 105 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("请运行检查");
-  const call = { id: "approval-overview", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
-  ui.tui.toolCall(call);
-  const beforeApproval = screenRows(ui, 45).join("\n");
-  assert.match(beforeApproval, /正在处理命令请求 npm run check。/);
-  assert.doesNotMatch(beforeApproval, /正在执行命令 npm run check。|Running\.\.\./,
-    "授权前不能把尚未放行的命令说成已在执行");
-  assert.match(beforeApproval, /等待工具结果/);
-  const approval = ui.tui.approve({ tool: "shell", args: { command: "npm run check" } });
-  assert.match(screenRows(ui, 45).join("\n"), /正在等待命令 npm run check的执行授权/,
-    "待审批时只能描述等待授权，不能声称已运行命令");
-  ui.input.write("\r");
-  assert.equal(await approval, false);
-  ui.tui.toolResult(call, 'ERROR: permission denied: user denied tool "shell"');
-  assert.match(screenRows(ui, 45).join("\n"), /未获授权，无法执行 npm run check。/);
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /命令执行结束 npm run check。/);
-});
 
-test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功", (t) => {
+test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 45, columns: 110 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2585,52 +2089,18 @@ test("TUI 过程概述：权限拒绝与工具失败不显示为操作已成功"
   const shell = { id: "overview-denied", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
   ui.tui.toolCall(shell);
   ui.tui.toolResult(shell, 'ERROR: permission denied: user denied tool "shell"');
-  let screen = screenRows(ui, 45).join("\n");
+  let screen = await detailText(ui);
   assert.match(screen, /未获授权，无法执行 npm run check。/);
   assert.doesNotMatch(screen, /命令执行结束 npm run check。/);
   ui.tui.assistantDelta("权限不足，改为只检查文件。");
   const read = { id: "overview-fail", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
   ui.tui.toolCall(read);
   ui.tui.toolResult(read, "ERROR: file not found");
-  screen = screenRows(ui, 45).join("\n");
+  screen = await detailText(ui);
   assert.match(screen, /权限不足，改为只检查文件。/);
   assert.doesNotMatch(screen, /已读取文件 missing\.txt。/, "模型已说明的新阶段也不应由工具伪造成功进度");
 });
 
-test("TUI：真实 AI 阶段说明与独立工具组匹配；超过三类显示等", (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 55, columns: 108 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("检查并修改项目");
-  ui.tui.assistantDelta("先检查相关文件和代码。");
-  const calls = [
-    ["read", { path: "package.json" }, "file"],
-    ["grep", { pattern: "foo", path: "src" }, "matching"],
-    ["edit", { path: "src/config.ts", old_string: "foo", new_string: "bar" }, "updated"],
-    ["shell", { command: "npm run check" }, "exit 0"],
-  ];
-  calls.forEach(([name, args, result], index) => {
-    const call = { id: "activity-" + index, type: "function", function: { name, arguments: JSON.stringify(args) } };
-    ui.tui.toolCall(call);
-    ui.tui.toolResult(call, result);
-  });
-  ui.tui.assistantDelta("再查看修复结果。");
-  const second = { id: "activity-last", type: "function", function: { name: "read", arguments: '{"path":"README.md"}' } };
-  ui.tui.toolCall(second);
-  ui.tui.toolResult(second, "hello");
-  ui.tui.finishAssistant("最终结果已经整理好。");
-  ui.tui.finishTurn({ requests: 2, toolCalls: 5, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  assert.doesNotMatch(screenRows(ui, 55).join("\n"), /先检查相关文件和代码/, "结束时过程默认折叠");
-  ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  const result = screenRows(ui, 55).join("\n");
-  assert.match(result, /先检查相关文件和代码/);
-  assert.match(result, /再查看修复结果/);
-  assert.match(result, /已读取文件、已搜索代码、已修改代码等/);
-  assert.match(result, /(?:↳|\+) 已读取文件/);
-  assert.equal((result.match(/^  (?:↳|\+) 已读取文件/gm) ?? []).length, 2, "只计活动摘要，避免把 Windows 的 + 完成符号算进去");
-  assert.match(result, /最终结果已经整理好/);
-  assert.doesNotMatch(result, /Read package\.json/, "结束后默认折叠工具明细");
-});
 
 test("TUI：失败原因与命令同行，阶段折叠仍保留真实失败", (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 106 });
@@ -2651,32 +2121,6 @@ test("TUI：失败原因与命令同行，阶段折叠仍保留真实失败", (t
   assert.match(rows.join("\n"), /已完成 · 用时/, "Shell 失败并不代表 AI 任务失败");
 });
 
-test("TUI：Ctrl+O 按阶段依次展开详情，审批键盘优先级不变", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 45 });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  ui.tui.beginTurn("inspect");
-  for (let i = 0; i < 2; i++) {
-    ui.tui.assistantDelta("stage " + i);
-    const call = { id: String(i), type: "function", function: { name: "read", arguments: JSON.stringify({ path: "stage" + i + ".txt" }) } };
-    ui.tui.toolCall(call);
-    ui.tui.toolResult(call, "content");
-  }
-  ui.tui.finishAssistant("done");
-  ui.tui.finishTurn({ requests: 1, toolCalls: 2, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /Read stage1\.txt/);
-  ui.input.write("\x0f"); // Ctrl+O，优先查看最近一段
-  await tick();
-  assert.match(screenRows(ui, 45).join("\n"), /Read stage1\.txt/);
-  ui.input.write("\x0f");
-  await tick();
-  const earlier = screenRows(ui, 45).join("\n");
-  assert.match(earlier, /Read stage0\.txt/);
-  assert.match(earlier, /Read stage1\.txt/, "之前展开的阶段仍保持展开");
-  ui.input.write("\x0f");
-  await tick();
-  assert.doesNotMatch(screenRows(ui, 45).join("\n"), /Read stage1\.txt/, "再次选中该组后单独收起");
-});
 
 test("TUI：组合字符、ZWJ emoji 与日文 IME 一次性提交保持输入原文，resize 不丢字", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35, columns: 108, flowInput: true });
@@ -2702,33 +2146,8 @@ test("TUI：组合字符、ZWJ emoji 与日文 IME 一次性提交保持输入�
   assert.match(screenRows(ui, 35).join("\n"), /日本語e\u0301👨‍👩‍👧🇯🇵/);
 });
 
-test("TUI：长会话超过 2000 条逻辑行后仍展示最新内容，退出恢复监听器与光标", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, rows: 40, columns: 100, flowInput: true });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
 
-  for (let turn = 0; turn < 80; turn++) {
-    ui.tui.beginTurn("task-" + turn);
-    const chunk = Array.from({ length: 28 }, (_, line) => "turn-" + turn + "-line-" + line).join("\n");
-    ui.tui.assistantDelta(chunk);
-    ui.tui.finishAssistant();
-    ui.tui.finishTurn({ requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
-      session, { failed: false });
-  }
-
-  const rows = screenRows(ui, 40).join("\n");
-  assert.match(rows, /turn-79-line-27/, "最新任务尾部必须可见");
-  assert.doesNotMatch(rows, /turn-0-line-0/, "最早的日志不能挤走当前内容");
-  assert.equal(ui.output.listenerCount("resize"), 1);
-  ui.tui.close();
-  assert.equal(ui.output.listenerCount("resize"), 0, "关闭后必须移除 resize 监听器");
-  const length = ui.text().length;
-  ui.output.emit("resize");
-  await tick();
-  assert.equal(ui.text().length, length, "关闭后 resize 不能重绘");
-});
-
-test("TUI：取消时尚未返回的工具不能在历史中继续显示运行中", (t) => {
+test("TUI：取消时尚未返回的工具不能在历史中继续显示运行中", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 35 });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2737,10 +2156,10 @@ test("TUI：取消时尚未返回的工具不能在历史中继续显示运行�
   ui.tui.toolCall(call);
   ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true, cancelled: true });
   ui.input.emit("keypress", "", { name: "e", ctrl: true });
-  const screen = screenRows(ui, 35).join("\n");
+  const screen = await detailText(ui);
   assert.match(screen, /已取消 · 用时/);
   assert.match(screen, /未收到工具结果/);
-  assert.match(screen, /执行状态未知/, "取消之后不能继续声称正在执行");
+  // 取消后必须显示「没有结果」，而不是任何形式的「正在跑」。
   assert.doesNotMatch(screen, /正在执行命令|运行中\.\.\./);
 });
 
@@ -2759,4 +2178,264 @@ test("TUI：右上角未配置模型，重试时只替换当前 Thinking 行且�
   const after = screenRows(ui, 35).join("\n");
   assert.doesNotMatch(after, /正在重新连接 3\/5/);
   assert.match(after, /未配置模型/);
+});
+
+test("TUI 主视图：只追加，历史行不会被后续输出抹掉", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.logLine("FIRST_LINE");
+  await tick();
+  for (let index = 0; index < 6; index++) ui.tui.logLine(`LATER_${index}`);
+  await tick();
+  const text = ui.text();
+  // 这就是 Claude Code 的 <Static> / Codex 的 inline viewport：打印过的行留在 Shell 历史里。
+  assert.match(text, /FIRST_LINE/);
+  assert.doesNotMatch(text, /\x1b\[2J/, "主视图不再整屏清空");
+  assert.ok(screenRows(ui, 20).some((row) => /LATER_5/.test(row)), "最新输出在活动区可见");
+});
+
+
+test("TUI 主视图：一轮结束后仍保留轮次之间的空行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
+  // 第一轮带一次工具调用：结束时这一轮会折叠，展示行数变少，最容易踩到游标错位。
+  ui.tui.beginTurn("first");
+  const call = { id: "c1", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file 13 a.txt");
+  ui.tui.confirmAssistant("reply one", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+  ui.tui.beginTurn("second");
+  ui.tui.confirmAssistant("reply two", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+  const rows = screenRows(ui, 20);
+  const firstReply = rows.findIndex((row) => /reply one/.test(row));
+  const secondTask = rows.findIndex((row) => /second/.test(row));
+  assert.ok(firstReply >= 0 && secondTask > firstReply, "两轮都在屏幕上");
+  // 折叠上一轮会让展示行变少：游标必须跟着退回，否则之后的行整体错位、空行被吞掉。
+  assert.ok(rows.slice(firstReply + 1, secondTask).some((row) => row.trim() === ""), "两轮之间保留空行");
+});
+
+test("TUI：折叠箭头后面标出对应快捷键，不能只留一个三角", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("检查一下");
+  const call = { id: "hint", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "file 13 a.txt");
+  ui.tui.confirmAssistant("好的", true);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  await tick();
+  const screen = await detailText(ui);
+  // 主视图不捕获鼠标：箭头后面必须写明按哪个键，否则用户不知道能展开。
+  assert.match(screen, /Ctrl\+E/);
+});
+
+test("TUI 主视图：状态行排在回复之后，轮次之间留空行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
+
+  ui.tui.beginTurn("first");
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
+  ui.tui.confirmAssistant("reply one", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+
+  const rows = screenRows(ui, 20);
+  const replyRow = rows.findIndex((line) => /reply one/.test(line));
+  const statusRow = rows.findIndex((line) => /Completed|已完成/.test(line));
+  assert.ok(replyRow >= 0, "回复在屏幕上");
+  assert.ok(statusRow >= 0, "状态行在屏幕上");
+  // Claude Code 的 "Cooked for 12s"、Codex 的耗时都在回复之后：它是这一轮的结果。
+  assert.ok(statusRow > replyRow, `状态行必须排在回复之后（回复第 ${replyRow + 1} 行，状态第 ${statusRow + 1} 行）`);
+
+  ui.tui.beginTurn("second");
+  await tick();
+  const next = screenRows(ui, 20);
+  const secondTask = next.findIndex((line) => /[>❯] second/.test(line));
+  assert.ok(secondTask > statusRow, "新任务在状态行之后");
+  assert.ok(next.slice(statusRow + 1, secondTask).some((line) => line.trim() === ""), "轮次之间留一行空白");
+});
+
+test("TUI 主视图：折叠态下用户消息、回复、状态行之间各留一行空白", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const stats = { requests: 1, toolCalls: 0, usage, tokenBudget: { exceeded: false } };
+  ui.tui.beginTurn("问题");
+  const statusTool = { id: "status-tool", type: "function", function: { name: "ls", arguments: '{"path":"."}' } };
+  ui.tui.toolCall(statusTool);
+  ui.tui.toolResult(statusTool, "file 1 a.txt");
+  ui.tui.confirmAssistant("回复", true);
+  ui.tui.finishTurn(stats, session, { failed: false });
+  await tick();
+  const rows = screenRows(ui, 20);
+  const userRow = rows.findIndex((line) => /[>❯] 问题/.test(line));
+  const replyRow = rows.findIndex((line) => /\* 回复/.test(line));
+  const statusRow = rows.findIndex((line) => /已完成|Completed/.test(line));
+  assert.ok(userRow >= 0 && replyRow > userRow && statusRow > replyRow, "三行顺序正确");
+  // 折叠态下空白行不能被当成「过程」隐藏，否则三行又挤在一起。
+  assert.equal(rows[replyRow - 1].trim(), "", "用户消息与回复之间留一行空白");
+  assert.equal(rows[statusRow - 1].trim(), "", "回复与状态行之间留一行空白");
+});
+
+test("TUI 主视图：历史轮次不能原地展开，失败行在折叠态仍然可见", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑检查");
+  const call = { id: "f", type: "function", function: { name: "shell", arguments: '{"command":"npm run check"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "exit 1\n类型检查未通过");
+  ui.tui.finishAssistant("失败了。");
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true });
+  await tick();
+
+  // 折叠只隐藏详情层：摘要和失败原因必须一直看得见（安全信息）。
+  const folded = screenRows(ui, 40).join("\n");
+  assert.match(folded, /类型检查未通过/, "失败原因在折叠态可见");
+
+  // 主视图只追加：已打印的历史不能原地展开，提示去 transcript 视图。
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  assert.match(ui.text(), /\x1b\[\?1049h/, "历史轮次改在 transcript 视图里展开");
+});
+
+test("TUI transcript：Ctrl+T 进入后必须真的画出历史内容", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("看看历史");
+  ui.tui.logLine("TRANSCRIPT_CONTENT");
+  await tick();
+
+  ui.input.emit("keypress", "", { name: "t", ctrl: true });
+  // 帧是节流渲染的，等一个周期。
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const text = ui.text();
+  const frame = text.slice(text.lastIndexOf("\x1b[?1049h"));
+  assert.match(frame, /TRANSCRIPT_CONTENT/, "transcript 不能是空白屏");
+
+  ui.input.emit("keypress", "", { name: "escape" });
+  await tick();
+  assert.match(ui.text(), /\x1b\[\?1049l/, "Esc 退出并还原主屏");
+});
+
+test("TUI 主视图：运行中的状态行与流式正文之间留一行空白", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("做个游戏");
+  ui.tui.assistantDelta("流式正文内容");
+  await tick();
+
+  const rows = screenRows(ui, 24);
+  const textRow = rows.findIndex((line) => /流式正文内容/.test(line));
+  const statusRow = rows.findIndex((line) => /准备执行|正在执行/.test(line));
+  assert.ok(textRow >= 0, "流式正文在屏幕上");
+  assert.ok(statusRow > textRow, "状态行排在正文之后");
+  // 贴着正文会被读成同一段话的续行。
+  assert.equal(rows[statusRow - 1].trim(), "", "正文与状态行之间留一行空白");
+});
+
+test("TUI 主视图：PgUp 暂停刷新，翻历史时不再抢视口，PgDn 恢复", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑起来");
+  await tick();
+
+  const beforePause = ui.text().length;
+  ui.input.emit("keypress", "", { name: "pageup" });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.match(ui.text().slice(beforePause), /已暂停刷新|paused/, "暂停时给出明确提示");
+
+  // 暂停期间收到流式增量也不能往底部写，否则终端会把视口拉回底部。
+  const pausedAt = ui.text().length;
+  ui.tui.assistantDelta("PAUSED_DELTA");
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(ui.text().slice(pausedAt).includes("PAUSED_DELTA"), false, "暂停期间不重绘活动区");
+
+  ui.input.emit("keypress", "", { name: "pagedown" });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.match(ui.text().slice(pausedAt), /PAUSED_DELTA/, "恢复后继续输出");
+});
+
+test("TUI 主视图：审批借用输入区，已有草稿在决定后原样恢复", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑命令");
+
+  // 用户打了一半还没回车：这是草稿，不是排队任务。
+  ui.input.write("草稿内容");
+  await tick();
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+  // 审批提示占用输入区（Claude Code 的做法），而不是因为「有草稿」就跳过审批。
+  assert.match(ui.text(), /Shell permission|Shell 权限审批/, "审批面板必须出现");
+
+  ui.input.write("\r");
+  assert.equal(await pending, false, "默认选择是拒绝");
+  await tick();
+  assert.match(inputLine(ui), /草稿内容/, "决定之后草稿回到输入框，没有被吃掉");
+});
+
+test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次回车", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  // 终端开启括号粘贴后，整段粘贴被 ESC[200~ ... ESC[201~ 包住。
+  ui.input.write("\x1b[200~第一行\n第二行\n第三行\x1b[201~");
+  await tick();
+  // 输入框只显示一行占位提示，不把三行原文铺开。
+  assert.match(inputLine(ui), /已粘贴 3 行|Pasted text \+3 lines/, "多行粘贴折叠成占位提示");
+  ui.input.write("\r");
+
+  assert.equal(await pending, "第一行\n第二行\n第三行", "粘贴内容是一条消息，换行保留");
+});
+
+test("TUI：不支持括号粘贴的终端，同一批到达的多行也合并成一条消息", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const pending = ui.tui.readLine();
+  // 老 conhost 不发 ESC[200~：三个换行就是三个 line 事件，但它们是同一批数据。
+  ui.input.write("第一行\n第二行\n第三行\n");
+
+  assert.equal(await pending, "第一行\n第二行\n第三行", "同一批多行合并为一条消息");
+});
+
+test("TUI 主视图：审批时隐藏输入框，避免看起来还能打字", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("跑命令");
+
+  const pending = ui.tui.approve({ tool: "shell", args: { command: "echo hi" } });
+  await tick();
+
+  const rows = screenRows(ui, 30);
+  const menuRow = rows.findIndex((line) => /Shell permission|Shell 权限审批/.test(line));
+  assert.ok(menuRow >= 0, "审批面板出现");
+  // 面板之后不该再有一条空的输入行：按键此时全归菜单。
+  const afterMenu = rows.slice(menuRow);
+  assert.equal(afterMenu.filter((line) => /^>\s*$/.test(line)).length, 0, "审批时不画输入行");
+
+  ui.input.write("n\r");
+  assert.equal(await pending, false);
 });

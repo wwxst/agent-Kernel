@@ -220,14 +220,17 @@ export class ToolRegistry {
       try {
         const decision = await this.permission.check({ tool: tool.name, args });
         if (!decision.allowed) {
-          // 中文对照：ERROR: 权限被拒绝：{原因}
-          return `ERROR: permission denied: ${decision.reason}`;
+          // 拒绝文本必须自带「不要重试」：模型只看到 ERROR 会换个写法再试一遍，
+          // 连续被拒就会变成烧 token 的死循环（Claude Code 的拒绝结果同样带停止指令）。
+          // 中文对照：ERROR: 权限被拒绝：{原因}。不要重试同一个操作，换个做法或直接问用户。
+          return `ERROR: permission denied: ${decision.reason}. ` +
+            "Do not retry this operation; take a different approach or ask the user.";
         }
       } catch (error) {
         // Permission.check 已经把审批异常折成拒绝；这里兜的是策略模块自身的意外故障。
         // 审批模块的普通异常仍回灌为权限拒绝；仅进程树未确认具有不可恢复语义。
-        // 中文对照：ERROR: 权限被拒绝：{原因}
-        return `ERROR: permission denied: ${describeError(error)}`;
+        return `ERROR: permission denied: ${describeError(error)}. ` +
+          "Do not retry this operation; take a different approach or ask the user.";
       }
     }
 

@@ -11,20 +11,36 @@
 ```powershell
 Copy-Item .env.example .env    # 填入 API_KEY；用什么模型由你决定
 npm run agent -- "给这个仓库加一个 /health 接口并写测试"
-npm run agent -- --repl        # 多轮会话：/exit 退出、/reset 清空上下文、/permission 查看或切换权限、/help 看命令
-npm run agent -- --tui         # Claude Code 风格聊天 TUI：顶部信息、对话、固定输入、审批
+npm run agent --                 # 不带任务：直接进全屏 TUI（唯一的交互界面）
+npm run agent -- --tui         # 同上，显式指定；顶部信息、对话、固定输入、审批
 npm run agent -- --tui "先看看这个仓库的结构"   # TUI 先跑这个任务，之后继续等输入
 npm run agent -- --permission read-only "先看看这个仓库的结构"   # 只读模式
 npm run agent -- --permission full-access "跑测试并修掉失败"     # 全部工具、不审批
+npm run agent -- --cwd "C:\path\to\other-project" "先看看这个项目的结构"   # 工作区指向别的目录，项目不用搬过去
 ```
 
-### TUI 独立屏幕与窗口缩放
+### 在任意目录里跑（像 Claude Code 那样打开一个目录）
 
-`--tui` 在交互式终端**始终使用完整 TUI**：独立屏幕显示对话、工具活动、固定输入栏和动态状态，退出时恢复原来的 Shell 画面。不再检测终端名称切换「兼容模式」，也不再支持 `AGENT_TUI_SCREEN=auto/always/never`。若终端明确声明 `TERM=dumb`，交互式 TUI 会报错，请改用支持 ANSI 控制序列的终端（例如 Windows Terminal），而不是静默降级。
+`npm run` 只认当前目录的 `package.json`，所以想「进到某个项目里直接开」就先装一次全局命令：
 
-拖动窗口时将连续 resize 合并，75ms 内不反复清屏；窗口太小仅显示提示，放大后恢复原会话。独立屏幕不是 Shell 滚动历史：可以用 PageUp/PageDown 浏览。每条展示日志分配仅在本次会话有效的内部 ID，缩放和展开时按锚点恢复历史；被日志上限裁剪的锚点会提示「历史已截断」。同步更新协议用于减少闪烁，实际效果需在 Windows Terminal 人工验收。
+```powershell
+npm link                                  # 在本仓库执行一次，注册 agent / agent-kernel 命令
+cd D:\some\project                        # 之后去任何目录
+agent --tui                               # 工作区 = 当前目录，.env 仍从本仓库读
+agent --permission read-only "看看这个项目怎么跑"
+```
 
-`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
+两个命令名指向同一个入口（`bin/agent.mjs`）：`agent` 是短名，`agent-kernel` 保留以免和别的工具重名。它们会先用包内绝对路径加载 `.env`，再进 `src/cli.ts`；`--cwd` 依然可用，优先级高于当前目录。
+
+### TUI 主视图与 transcript 视图
+
+`--tui`（不带任务时默认）**在主屏就地渲染**：已定稿的对话用普通输出打印一次，留在 Shell 滚动历史里，所以打开 TUI 之前敲过的命令仍然看得见；只有底部活动区（当前轮内容 + 输入框 + 状态行）会重画。这和 Claude Code 的 `<Static>`、Codex 的 inline viewport 是同一个模型。
+
+按 **`Ctrl+T` 进入 transcript 视图**：临时占用整屏（备用屏幕）回看和展开历史，`Ctrl+T` 或 `Esc` 退出，主屏原样还回来。主视图里的历史不可原地修改，这是终端 scrollback 的物理约束，不是实现缺陷；详见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)。
+
+不捕获鼠标：滚轮、滚动条、选中复制、终端搜索全部保持原生行为；展开历史走 `Ctrl+T` + 键盘。若终端明确声明 `TERM=dumb`，交互式 TUI 会报错，请改用支持 ANSI 控制序列的终端。
+
+`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具权限或模型请求。
 
 `npm install` 只在跑类型检查和测试时需要；`npm run agent` 本身不需要任何依赖。
 
@@ -55,7 +71,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/approval.ts` | 审批提示的格式化与读取：完整命令、cwd、控制字符转义，并把 `AbortSignal`、readline 关闭、正常回答一起收口 |
 | `src/workspace.ts` | 工作区：文件工具作用的那棵目录树 —— 读、写、改、找文件、搜内容、列目录、跑命令，外加路径守卫、有界读取、扫描预算与取消 |
 | `src/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
-| `src/tui.ts` | TUI：聊天布局、任务前/中/结束状态、真实 AI 阶段说明与工具活动分组、工具失败同行展示、Ctrl+O 活动详情与审批；交互式终端统一独立屏幕，不触碰 Agent Loop |
+| `src/tui.ts` | TUI：聊天布局、任务前/中/结束状态、真实 AI 阶段说明与工具活动分组、工具失败同行展示、Ctrl+O 活动详情与审批；主视图在主屏就地追加、`Ctrl+T` 进 transcript 整屏视图，不触碰 Agent Loop |
 | `src/tui-mood.ts` | 状态驱动的中英文角色短句库：元气、调皮、好奇、温柔为主，少量傲娇/天然；临时展示、不写 Transcript |
 | `src/cli.ts` | 组装层：命令行参数 / 环境变量 → 对象图 → 跑一次任务、进 REPL 或进 TUI |
 | `src/cli-presenter.ts` | CLI 展示：执行阶段、动态台词、工具日志精简/详细视图；不写入 Transcript |
@@ -178,7 +194,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 ## 轻量 TUI v0.3
 
-`npm run agent -- --tui` 在同一个 Agent / Permission 会话外面套一个聊天式终端界面；`--repl` 保持原样，两者不能同时用。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。布局与验收规则见 [TUI v0.3 规范](./docs/design/tui-v0.3-layout-spec.md)。
+`npm run agent -- --tui`（不带任务时默认就是这个）在同一个 Agent / Permission 会话外面套一个聊天式终端界面，它是唯一的交互模式：原来的逐行 REPL 和 `--repl` 开关已经移除。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。布局与验收规则见 [TUI v0.3 规范](./docs/design/tui-v0.3-layout-spec.md)。
 
 布局：
 
@@ -190,12 +206,12 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - **状态行**：始终紧跟输入框**下方**，左边当前权限（`read-only` / `workspace-write` / `full-access`），有空间时显示 `(shift-tab to cycle)`，右边 requests / tool calls / tokens。
 - **中英文自动适配**：交互式 TUI 启动时按系统语言初始化（中文系统用中文，其余用英文；非 TTY 输出保持英文）；每次用户提交自然语言任务时，根据任务主要语言切换界面自带的工具标签、审批菜单、统计、状态和命令帮助。路径、代码片段、文件名不作为语言识别依据；混合输入按中文字符数与英文单词数判断；无语言内容时沿用上一轮语言。不翻译模型回复、Shell 命令、工具实际返回内容或权限模式 ID（`read-only` 等）。**`Thinking...` 永远保持英文、动画和计时逻辑不变。** 不增加运行时依赖。
 
-- 交互式 TUI 始终使用 alternate screen，不引 TUI 库；普通帧差分绘制、清屏与内容在一个同步帧内写出。非 TTY（管道、CI、e2e）保留逐行文本输出，不作为可选 UI 模式。
+- 交互式 TUI 在主屏就地追加：已定稿的行打印一次进 Shell 滚动历史，只有底部活动区重绘；`Ctrl+T` 打开的 transcript 视图才用备用屏整屏重绘。不引 TUI 库。非 TTY（管道、CI、e2e）保留逐行文本输出，不作为可选 UI 模式。
 
 工具与审批：
 
 - **过程概述**：仅在 TUI 模式下用简短提示鼓励模型按重要阶段说明「当前做什么、已观察到什么、接下来准备什么」，优先展示实际生成的可见阶段说明，不展示隐藏推理，也不增加模型调用次数。模型没有说明时，在活动摘要之前显示**只由真实工具调用和返回驱动的事实性概述**（例如「正在查看文件 src/tui.ts。」→「已读取文件 src/tui.ts。」），同一活动只更新原概述、不反复刷历史；连续模型请求即使没有输出阶段文字也会按真实请求边界区分阶段。Shell 请求尚未完成授权时只说「正在处理命令请求」，审批时标明等待授权，任务取消且工具未回报时标明「执行状态未知」，绝不臆测发现、后续计划或成功结果。完成后与执行过程一起自动折叠。生成的兜底说明属于 UI 展示层，不写入 Transcript。非 TUI 模式的默认提示词不变。
-- **工具活动**：读取/搜索/修改/执行命令等真实事件穿插在模型阶段说明之间，每段摘要最多显示 **3 种不同操作**，第 4 种起加「等」（英文 `etc.`）。任务完成后默认收起整轮过程，而不是把各段摘要单独留在屏幕上。工具事件本身可进一步展开实际工具输入的参数摘录（最多 12 行）和原始返回摘录（最多 20 行），超量会标明截断；成功的 `edit`、`write` 在 Workspace 原子提交后从实际文件前后快照计算带行号的 Unified Diff；`write` 的多处修改生成分离的 hunk，超出有界逐行比较预算则明确标记简化预览；`edit` 没有提交快照时仅展示实际请求的替换片段，`write` 文件超过 2,000,000 字节或旧内容无法读取时明确显示「Diff 预览已降级」，不会伪造补丁。终端 Unified Diff 按真实行号和末尾换行标记生成，最多预览 800 行、每行 240 字符；源文件超过预览预算时直接提示限制，不因超长行或超多行卡住 TUI。获准执行的 `read` 保留 8 KiB 输出/32 KiB 文件读取的截断警告；若实际读取 PNG，先校验各 Chunk CRC、IHDR/IDAT/IEND 的顺序与完整性，损坏或无效结构不生成预览；合法且受支持的 PNG 展示真实像素文字缩略图（含 RGBA、灰度/RGB tRNS 透明像素合成）；16 位等暂不支持的 PNG 以及 JPEG/GIF/WebP 会显示实际格式及兼容性说明，不冒充完成像素解码；未获准或未知格式不伪造预览。尾部箭头（`▸/▾`，旧终端用 `>/v`）表示收起/展开，键盘 `Ctrl+E` 按最近到最早循环切换轮次、`Ctrl+O` 切换活动、`Ctrl+G` 切换工具详情；在固定布局中输入 `/help` 可查看快捷键；拥有备用屏幕并支持 SGR 1006 的终端还可**鼠标点击文字末尾箭头**展开/折叠，滚轮每次浏览 3 行。鼠标事件在进入 readline 前过滤，审批仍必须使用原键盘菜单，退出时关闭鼠标跟踪；不支持的终端继续用快捷键。不占用 Agent 的真实执行状态。
+- **工具活动**：读取/搜索/修改/执行命令等真实事件穿插在模型阶段说明之间，每段摘要最多显示 **3 种不同操作**，第 4 种起加「等」（英文 `etc.`）。任务完成后默认收起整轮过程，而不是把各段摘要单独留在屏幕上。工具事件本身可进一步展开实际工具输入的参数摘录（最多 12 行）和原始返回摘录（最多 20 行），超量会标明截断；成功的 `edit`、`write` 在 Workspace 原子提交后从实际文件前后快照计算带行号的 Unified Diff；`write` 的多处修改生成分离的 hunk，超出有界逐行比较预算则明确标记简化预览；`edit` 没有提交快照时仅展示实际请求的替换片段，`write` 文件超过 2,000,000 字节或旧内容无法读取时明确显示「Diff 预览已降级」，不会伪造补丁。终端 Unified Diff 按真实行号和末尾换行标记生成，最多预览 800 行、每行 240 字符；源文件超过预览预算时直接提示限制，不因超长行或超多行卡住 TUI。获准执行的 `read` 保留 8 KiB 输出/32 KiB 文件读取的截断警告；若实际读取 PNG，先校验各 Chunk CRC、IHDR/IDAT/IEND 的顺序与完整性，损坏或无效结构不生成预览；合法且受支持的 PNG 展示真实像素文字缩略图（含 RGBA、灰度/RGB tRNS 透明像素合成）；16 位等暂不支持的 PNG 以及 JPEG/GIF/WebP 会显示实际格式及兼容性说明，不冒充完成像素解码；未获准或未知格式不伪造预览。尾部箭头（`▸/▾`，旧终端用 `>/v`）表示收起/展开，箭头后面直接标出对应快捷键（`（Ctrl+E 展开）` / `（Ctrl+O 展开）` / `（Ctrl+G 展开）`，展开状态下提示「收起」），因为主视图不再捕获鼠标，不能只留一个孤零零的三角；在固定布局中输入 `/help` 可查看快捷键；主视图不捕获鼠标：滚轮、滚动条、选中复制都保持原生；展开历史请用 `Ctrl+T` 的 transcript 视图。审批始终使用键盘菜单。不占用 Agent 的真实执行状态。
 - **失败/拒绝/未执行**：活动组展开时，失败摘要与具体命令**同行**（例如 `✗ npm run check 失败 · exit 1 · TypeScript 类型检查未通过`）；即使单个活动组已经折叠，失败行仍可查看，整轮任务折叠时需先展开任务。工具事件详情可以展开真实错误返回；错误原因不由界面猜测。权限拒绝绝不标成已执行；不把读取文件的原始正文整份刷进摘要。
 - `workspace-write` 下的 `shell` 审批在固定 TUI 里使用 Claude Code 风格的**两项键盘菜单**：完整 workspace、原始多行命令、`1. Yes, allow once` / `2. No (default)`；上下键选择、Enter 确认、Esc 拒绝，默认选中 No。审批时不显示额外的文本输入框或聊天状态栏，误输入/粘贴 `y`、`1` 也不会隐形授权；菜单结果只作用于本次调用，**没有永久授权选项**。非 TTY 没有审批通道，默认拒绝。
 
@@ -205,7 +221,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 - Windows Terminal / VS Code 终端 / Linux 使用 `❯`、`✻`、`●`、`✓`、`✗`、`⊘`、`┌┐└┘─│`；传统 Windows conhost 退化成 `>`、`*`、`o`、`+`、`x`、`!`、`-`、`|`，不会显示方框。
 - **流式内容与失败**：TUI 固定布局在模型响应写入 Transcript 前显示暂态正文；若最新请求流式失败，则撤销未确认草稿并提示中断。若响应已经确认，但之后触发 Step、Token 或工具调用预算失败，则**保留真实模型正文，同时把整个 Run 标成失败**；已通过工具开始事件提交的阶段正文也不重复展示。逐行终端不能收回已经输出的字节，会明确标记其未确认。普通 CLI 同样对模型正文、工具结果、工具名里的控制字符与 bidi 字符做可见转义。
 - **实时状态与角色语气**：`Thinking...` 保留英文、200ms 文本符号动画和真实计时；读取/搜索/编辑/写入/运行命令等状态只由真实 Agent 回调与工具名驱动。状态右侧 `│` 后显示一条轻快、略带傲娇的中英文短句，按状态和人格元素加权抽取，避开最近重复；持续约 15 秒才可能更换。短句不是模型思考内容，不增加 API 请求，也**不写入执行历史或最终回复**。窄屏时隐藏短句；审批和失败只展示明确、可信的操作信息，不能用俏皮话掩盖授权或错误。
-- **历史滚动**：PageUp / PageDown 查看之前对话，状态行显示 `↑ N lines` / `^ N lines`；滚动期间新输出不把视口拉回底部，发送新任务时回到最新。
+- **历史滚动**：主视图的历史就是 Shell 的 scrollback，用终端自己的滚轮/滚动条翻；`Ctrl+T` 打开的 transcript 视图里用 PageUp / PageDown 翻本次会话的完整记录。
 - **窗口 resize**：监听 stdout 的 resize 事件，重新计算标题、对话视口、审批面板、输入框和状态行。小于 12 行或 30 列时使用逐行输出，放大后恢复固定布局并保留草稿与 Run log；`TERM=dumb` 始终逐行显示。
 - **Slash 命令补全**：TUI 中输入 `/` 会在输入框**下方**展开当前程序实际支持的 `/help`、`/permission`、`/reset`、`/exit`、`/quit`；继续输入前缀实时筛选。方向键只移动高亮，不改变 readline 的输入历史；`Tab` 把高亮命令补全到编辑框但不执行，`Enter` 执行高亮命令，`Esc` 收起菜单且保留原输入；查询变更后可重新弹出。说明文案跟随中英文 UI 语言，不展示尚未实现的 Claude Code 命令。菜单不写入 Transcript，已有 `/permission read-only` 等参数命令照常处理。小终端最多显示可容纳的条目，支持 resize；审批菜单优先，不混用按键。
 - **权限快捷键**：在等待输入下一条任务时按 `Shift+Tab`，依次从 `read-only` → `workspace-write` → `full-access` → `read-only` 循环。进入 `full-access` 须再按一次 `Shift+Tab` 确认，Esc 或其他键取消待确认；运行中和 Shell 审批中不可用。快捷键直接更新同一个 Permission 对象，下次模型请求读取更新后的权限说明，不改变 Transcript；普通 Tab 不切模式。部分终端不能区分 Shift+Tab 时仍可使用 `/permission [mode]`。
@@ -215,7 +231,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 
-已知边界：完整固定布局要求终端至少 12 行、30 列（备用屏幕尺寸不足时只显示提示）；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；差分重绘在慢终端上仍可能闪烁；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；SGR 鼠标能力不明时降级为键盘操作，暂不支持多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
+已知边界：完整布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；主视图不捕获鼠标，历史靠终端原生滚动；Run log 保留最近 2000 条逻辑行，待审批的完整命令独立保留至回答；暂不支持多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
 
 ## 配置
 
@@ -232,6 +248,7 @@ Agent 每次模型请求前都会把当前 `permissionPrompt(mode)` 写进唯一
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应最多生成多少 token |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
 | `--permission` | `workspace-write` | CLI 参数（不是环境变量）：`read-only` / `workspace-write` / `full-access` |
+| `--cwd` | 当前目录，其次 `WORKDIR` | CLI 参数（不是环境变量）：把工作区根目录指向另一个目录，等于先 `cd` 过去再启动；优先于 `WORKDIR`，目录不存在时启动前就报错 |
 
 ### 模型连接与错误提示
 
@@ -300,9 +317,9 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 保持「内核」的边界，下面这些留给上层或后续迭代：
 
-- 会话持久化到磁盘：进程内的多轮 REPL / TUI 已经有了（`--repl`、`--tui`），跨进程恢复 transcript 没有做
+- 会话持久化到磁盘：进程内的多轮 TUI 已经有了，跨进程恢复 transcript 没有做
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
-- 鼠标、多行输入和 Hooks 尚未做；TUI 已支持对可识别终端的 alternate screen 与窗口缩放重绘，仍保留顶部对话、输入区、滚动审批面板、Ctrl+O 活动明细及 `/` Slash 自动补全（早期布局决策见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)）。
+- 鼠标、多行输入和 Hooks 尚未做；TUI 主视图只追加、`Ctrl+T` 回看并展开历史，仍保留底部输入区、滚动审批面板、`Ctrl+E/O/G` 逐层浏览及 `/` Slash 自动补全（早期布局决策见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)，主屏渲染见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)）。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 操作系统级隔离：Permission v0.1 只做工具调用策略（见 [ADR-0013](./docs/adr/0013-permission-is-a-policy-not-a-sandbox.md)），不是 Sandbox；`shell` 放行后仍是启动者的权限（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、非 TUI 模式的自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）

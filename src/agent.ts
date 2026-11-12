@@ -59,8 +59,10 @@ function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
 
-/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */
-function cancellationError(signal: AbortSignal): Error {
+/** 同一个操作连续被拒几次就停下：对齐 Claude Code 的 3 次阈值。 */
+const MAX_CONSECUTIVE_DENIALS = 3;
+
+/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */function cancellationError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   const detail = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
   return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
@@ -204,6 +206,9 @@ export class Agent {
 
   /** 已经过 ToolRegistry 的调用次数，含拒绝与校验失败，预算跳过不计；供限额与失败报告使用。 */
   private runToolCalls = 0;
+
+  /** 连续被拒次数：达到上限就中止本轮，避免模型换个写法无限重试。 */
+  private consecutiveDenials = 0;
 
   /** 本次 Run 发出去的模型请求数：在 await 之前加，所以取消/失败的请求也算一次尝试。 */
   private runRequests = 0;
@@ -365,7 +370,7 @@ export class Agent {
   /**
    * 预算用尽就停手：不再发请求，也不执行「没有下一次请求去验证」的工具。
    *
-   * 只看**本次 Run** 的合计：REPL 里的第二轮不该被第一轮的花费挤掉工具额度。
+   * 只看**本次 Run** 的合计：TUI 里的第二轮不该被第一轮的花费挤掉工具额度。
    * 只在已知合计达到上限时触发；usage 缺失时这条闸门拦不住那部分消耗，
    * 所以错误文案和 stats 都只说「已统计到多少」，不说「实际花了多少」。
    */
@@ -402,7 +407,7 @@ export class Agent {
    * 把结果塞回去，直到它不再要工具。这里用带计数器的 for 代替 while (true)，
    * 并加了三道闸门：模型请求次数、工具执行次数、取消信号。
    *
-   * 一个 Agent 可以连续跑多个 Run（REPL 就是这样一个循环），Transcript 跨 Run 累积；
+   * 一个 Agent 可以连续跑多个 Run（TUI 就是这样一个循环），Transcript 跨 Run 累积；
    * 但同一时刻只允许一个 Run —— 两个循环同时往一条 transcript 里写，顺序无法解释。
    *
    * 失败时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
@@ -431,6 +436,7 @@ export class Agent {
     this.runRequests = 0;
     this.runRetries = 0;
     this.runToolCalls = 0;
+    this.consecutiveDenials = 0;
     this.runUsage = emptyUsage();
   }
 
@@ -547,6 +553,20 @@ export class Agent {
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
         this.notifyObserver(this.onToolResult, structuredClone(call), result);
+        // 连续被拒是死循环的前兆：模型看到「被拒绝」会换个写法重试，再被拒，再重试。
+        // Claude Code 的做法是同一个操作连续被拒 3 次就停下问人；这里没有「问人」的通道，
+        // 所以第 3 次直接中止本轮，把原因说清楚——比烧掉几万 token 重试 20 次好。
+        if (result.startsWith("ERROR: permission denied")) {
+          this.consecutiveDenials++;
+          if (this.consecutiveDenials >= MAX_CONSECUTIVE_DENIALS) {
+            throw new Error(
+              `tool "${call.function.name}" was denied ${this.consecutiveDenials} times in a row; ` +
+                "stopping instead of retrying the same operation",
+            );
+          }
+        } else {
+          this.consecutiveDenials = 0;
+        }
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
