@@ -15,10 +15,11 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
-import { constants } from "node:fs";
+import { closeSync, constants, mkdirSync, openSync } from "node:fs";
 import type { Dir, Stats } from "node:fs";
 import { lstat, mkdir, opendir, open, realpath, rename, stat, unlink } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
@@ -93,6 +94,30 @@ const TASKKILL_TIMEOUT_MS = 2_000;
 const PROCESS_CLOSE_TIMEOUT_MS = 4_000;
 
 /**
+ * 后台任务的日志落在系统临时目录，不落在工作区。
+ *
+ * 放工作区会污染用户的仓库（还得进 .gitignore），而这些日志是运行期产物、
+ * 生命周期跟着进程走，跟项目源码没有任何关系。代价是模型不能再用 `read` 直接看，
+ * 必须走 `shell-output` —— 这正是它存在的理由。
+ */
+const JOB_LOG_DIR = path.join(tmpdir(), "agent-kernel-jobs");
+
+/** 单次 shell-output 最多返回多少字符，与 shell 前台保持同一个上限。 */
+const MAX_JOB_OUTPUT_CHARS = 8_000;
+
+/** 单次 shell-output 最多从日志读进多少字节；日志可能是几百 MB。 */
+const MAX_JOB_READ_BYTES = 32_768;
+
+/**
+ * 等新输出只能靠轮询：日志是普通文件，没有可订阅的事件。
+ * 50 毫秒对「等一条日志」够快，又不会把 CPU 拉满。
+ */
+const JOB_POLL_MS = 50;
+
+/** shell-output 一次最多等多久；模型要等更久应该分多次调用，而不是卡住一个 Step。 */
+const MAX_JOB_WAIT_MS = 60_000;
+
+/**
  * POSIX 的 O_NOFOLLOW 防止校验后最后一段路径被换成符号链接。
  * Windows 不支持此 open 标志，因此依赖真实路径与再次校验。
  * 已知边界：恶意并发替换父目录仍需要 OS 级隔离或 dirfd/openat 系列 API 才能彻底封闭。
@@ -132,10 +157,53 @@ export interface GrepOptions {
 }
 
 /**
+ * 一个后台任务：进程本身、它的日志文件、以及「已经交给模型多少字节」。
+ *
+ * cursor 是增量的关键：模型第二次调 shell-output 时只该看到新长出来的部分，
+ * 而不是把整段日志再读一遍 —— 重复内容既烧 token，又让模型误判「这条错误又出现了」。
+ */
+interface BackgroundJob {
+  id: string;
+  command: string;
+  pid: number | undefined;
+  child: ChildProcess;
+  logPath: string;
+  /** 已返回给模型的字节偏移。 */
+  cursor: number;
+  status: "running" | "exited" | "killed" | "unverified";
+  exitCode: number | null;
+}
+
+/**
+ * 返回 buf 里「完整 UTF-8 字符」占的字节数。
+ *
+ * 日志按字节偏移切着读，切口会正好落在汉字的三个字节中间。
+ * 直接 toString 会把它变成一个替换字符，下一次又从中间接着读 —— 一个字坏两次。
+ * 所以末尾被切断的那截不消费，留给下一次。
+ */
+function completeUtf8Prefix(buf: Buffer): number {
+  // UTF-8 一个字符最多 4 字节，所以最多回退 3 个字节就能找到起始字节。
+  for (let back = 0; back < 4; back++) {
+    const index = buf.length - 1 - back;
+    if (index < 0) break;
+    const byte = buf[index]!;
+    // 10xxxxxx 是续字节，继续往前找。
+    if ((byte & 0b1100_0000) === 0b1000_0000) continue;
+    const need = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return index + need <= buf.length ? buf.length : index;
+  }
+  return buf.length;
+}
+
+/**
  * 一套「最小可用」的编码能力：读、写、改、找文件、搜内容、列目录、跑命令。
  *
- * 刻意只有七个。工具越多，系统提示词越长、模型选错工具的概率越高；
+ * 前台能力刻意只有七个。工具越多，系统提示词越长、模型选错工具的概率越高；
  * 真的需要更多能力时，优先让 shell 工具去组合，而不是继续加方法。
+ *
+ * 后台的两个工具（`shell-output` / `shell-kill`）不算扩张能力面：
+ * 它们是 `shell` 那半个功能的收尾。只起不停，等于让模型亲手拼 `taskkill /PID x /T /F`，
+ * 在 POSIX 上还得自己算进程组负号 —— 这是把内核该干的活推给了模型。
  */
 export class Workspace {
   private readonly root: string;
@@ -159,6 +227,17 @@ export class Workspace {
   private editObserverFailures = 0;
 
   get editObserverFailureCount(): number { return this.editObserverFailures; }
+
+  /**
+   * 这个工作区起过的后台任务，按 id 索引。
+   *
+   * 跟着 Workspace 走而不是跟 WorkspaceOptions 走：任务的生命周期就是工作区的生命周期，
+   * 换一个工作区就不该还能杀上一个工作区起的进程。
+   */
+  private readonly jobs = new Map<string, BackgroundJob>();
+
+  /** 后台任务编号只增不减，同一会话里 `job-3` 永远指同一个进程。 */
+  private jobSeq = 0;
 
   /** 工作区根目录的真实路径（链接解析后）。懒算一次，之后复用。 */
   private rootReal?: string;
@@ -583,12 +662,195 @@ export class Workspace {
    * 已知边界：Windows taskkill 失败后的直接 child.kill 不能清理全部后代；必须在有界等待后报错，
    * 而不是把「已经尝试停止」冒充「已完成进程树清理」。
    */
-  async run(command: string): Promise<string> {
+  /**
+   * 后台执行：起服务这类永不退出的命令。
+   *
+   * 不并入 run 的等待逻辑：后台进程本来就不会 close，等它就是等超时。
+   * 输出写文件而不是接管道 —— 这是实测出来的：`stdio: "pipe"` 加上 `unref()` 之后，
+   * 管道的 handle 仍然挂在宿主的 event loop 上，任务跑完了 agent 也退不出去（要等 4 秒硬杀）。
+   * 写文件则一个句柄都不留，`unref()` 的语义才真的成立。
+   */
+  private runInBackground(command: string): string {
+    const id = `job-${++this.jobSeq}`;
+    // 带上宿主 pid：同一台机器上同时开着两个 agent 时，日志文件不会互相覆盖。
+    const logPath = path.join(JOB_LOG_DIR, `${process.pid}-${id}.log`);
+    mkdirSync(JOB_LOG_DIR, { recursive: true });
+
+    const fd = openSync(logPath, "w");
+    let child: ChildProcess;
+    try {
+      child = spawn(command, {
+        cwd: this.root,
+        shell: true,
+        windowsHide: true,
+        // POSIX 上开新进程组，`kill -- -pid` 才能连后代一起收掉；
+        // Windows 上**不能** detached：`shell:true` + `detached:true` 时 cmd.exe 的输出
+        // 会整个丢掉（实测日志恒为 0 字节，连 shell 自己的 `> file` 重定向都救不回来），
+        // 而 Windows 本来就不靠进程组收尾，用的是 `taskkill /T`。
+        // 前台 run 用的是同一条规则，两处必须一致。
+        detached: process.platform !== "win32",
+        // 进程要脱离父进程，但输出不能丢：丢掉的正是「起没起来」的证据。
+        stdio: ["ignore", fd, fd],
+      });
+    } finally {
+      // child 已经复制了 fd；父进程再留着它只是多一个句柄，而且 Windows 上会锁住文件。
+      closeSync(fd);
+    }
+    child.unref();
+
+    const job: BackgroundJob = {
+      id,
+      command,
+      pid: child.pid,
+      child,
+      logPath,
+      cursor: 0,
+      status: "running",
+      exitCode: null,
+    };
+    // 自己退出的任务要能报出 exit code；被 kill 的任务不能在这里被改回 exited ——
+    // 模型需要知道是自己停的，而不是它自己崩了。
+    child.on("exit", (code) => {
+      if (job.status !== "running") return;
+      job.status = "exited";
+      job.exitCode = code;
+    });
+    this.jobs.set(id, job);
+
+    return `started ${id} (pid ${child.pid ?? "unknown"}) in the background; ` +
+      `read new output with shell-output, stop it with shell-kill`;
+  }
+
+  /**
+   * 读一个后台任务自上次调用之后新产生的输出。
+   *
+   * 三个决定：
+   *   - **增量**：只返回新字节，模型不会把同一段日志反复读进上下文；
+   *   - **有界**：单次最多 8k 字符，超出的不消费，明确告诉模型「还有，再调一次」；
+   *   - **带状态**：第一行永远是「还在跑 / 退出了，exit N / 被我停了」，否则模型会把
+   *     「服务已经崩了」看成「服务还没输出」。
+   *
+   * wait 期间只能轮询：日志是普通文件，没有事件可订阅。
+   */
+  async readJobOutput(jobId: string, waitMs = 0): Promise<string> {
+    const job = this.job(jobId);
+    const budget = Math.min(Math.max(waitMs, 0), MAX_JOB_WAIT_MS);
+    const deadline = Date.now() + budget;
+
+    let text = "";
+    for (;;) {
+      const size = await this.jobLogSize(job);
+      if (size > job.cursor) {
+        text = await this.readJobText(job, size);
+        // 空串只可能是「末尾只剩半个多字节字符」：这时候必须继续等，
+        // 否则第一次调用返回空、第二次调用又立刻返回空，永远等不到那个字补齐。
+        if (text !== "") break;
+      }
+      // 进程已经不在了就没什么可等的；再等下去只是把 Step 拖长。
+      if (job.status !== "running") break;
+      if (Date.now() >= deadline) break;
+      await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
+    }
+
+    const header = this.jobHeader(job);
+    if (text === "") return `${header}\n(no new output)`;
+
+    let shown = text;
+    let tail = "";
+    if (shown.length > MAX_JOB_OUTPUT_CHARS) {
+      shown = shown.slice(0, MAX_JOB_OUTPUT_CHARS);
+      // 只推进「真正给出去的字节」，剩下的留在日志里等下一次调用。
+      tail = `\n… [${text.length - shown.length} chars not shown; call shell-output again]`;
+    }
+    job.cursor += Buffer.byteLength(shown);
+
+    return `${header}\n${shown}${tail}`;
+  }
+
+  /** 从 cursor 开始读到 size，只返回完整的 UTF-8 字符；末尾被切断的那截不消费。 */
+  private async readJobText(job: BackgroundJob, size: number): Promise<string> {
+    const take = Math.min(size - job.cursor, MAX_JOB_READ_BYTES);
+    const handle = await open(job.logPath, "r");
+    try {
+      const buffer = Buffer.alloc(take);
+      const { bytesRead } = await handle.read(buffer, 0, take, job.cursor);
+      return buffer.subarray(0, completeUtf8Prefix(buffer.subarray(0, bytesRead))).toString("utf8");
+    } finally {
+      await handle.close();
+    }
+  }
+
+  /**
+   * 停掉一个后台任务，连同它的后代进程。
+   *
+   * 未确认时抛异常而不是返回「已停止」：`taskkill` 只杀外层、POSIX 上回退只杀直接子进程，
+   * 这两种情况后代可能还活着。冒充成功会让模型以为端口已经释放，然后在一个还占着端口的
+   * 世界里继续排查 —— 那是把一次失败变成一串莫名其妙的失败。
+   */
+  async killJob(jobId: string): Promise<string> {
+    const job = this.job(jobId);
+    if (job.status === "exited") return `${job.id} already exited with code ${job.exitCode ?? "unknown"}`;
+    if (job.status === "killed") return `${job.id} is already stopped`;
+
+    const confirmed = await terminateTree(job.child);
+    job.status = confirmed ? "killed" : "unverified";
+    if (!confirmed) {
+      // 中文对照：进程树清理未确认；后代进程可能仍在运行。
+      throw new ProcessCleanupError(
+        `process tree cleanup unverified for ${job.id}; descendant processes may still be running`,
+      );
+    }
+    // 等进程真的退场再回答。pid 不再响应信号，不等于系统已经放掉它的 cwd 和句柄 ——
+    // 宿主紧接着删目录会撞上 EBUSY，而模型会以为「停了」之后立刻能重用那个目录。
+    await this.awaitExit(job);
+    return `stopped ${job.id}`;
+  }
+
+  /** 有界地等一个任务退出；已经退出就立刻返回。 */
+  private awaitExit(job: BackgroundJob): Promise<void> {
+    if (job.child.exitCode !== null || job.child.signalCode !== null) return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, PROCESS_CLOSE_TIMEOUT_MS);
+      job.child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
+
+  /** 取一个后台任务，取不到就报出还有哪些可用 —— 模型据此改正编号，而不是重新起一个。 */
+  private job(jobId: string): BackgroundJob {
+    const job = this.jobs.get(jobId);
+    if (job !== undefined) return job;
+    const known = this.jobs.size === 0 ? "none" : [...this.jobs.keys()].join(", ");
+    throw new Error(`unknown background job "${jobId}" (known: ${known})`);
+  }
+
+  /** 日志文件的当前字节数；文件被外部删掉时当作 0，不让读输出这件事整个失败。 */
+  private async jobLogSize(job: BackgroundJob): Promise<number> {
+    try {
+      return (await stat(job.logPath)).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  /** 状态行：模型先看这一行，再决定是继续等、去修，还是收工。 */
+  private jobHeader(job: BackgroundJob): string {
+    const status = job.status === "exited" ? `exited with code ${job.exitCode ?? "unknown"}` : job.status;
+    const pid = job.pid === undefined ? "unknown pid" : `pid ${job.pid}`;
+    return `${job.id} (${status}, ${pid}) ran: ${job.command}`;
+  }
+
+  async run(command: string, options: { background?: boolean; timeoutMs?: number } = {}): Promise<string> {
     const signal = this.signal;
     if (signal?.aborted) {
       // 取消之后不再启动新进程：这是「不能在取消后继续启动新工具」的最后一道闸门。
       throw new Error("cancelled before the command started");
     }
+    // 后台进程：起服务这类永不退出的命令必须走这里，否则会一直等到超时，
+    // 再被判成「进程树没杀干净」而终止整个任务。Claude Code 的 run_in_background 同理。
+    if (options.background === true) return this.runInBackground(command);
 
     const { status, output, dropped } = await new Promise<{
       status: string;
@@ -623,7 +885,8 @@ export class Workspace {
         }
       };
 
-      const timer = setTimeout(() => stop(`timeout after ${this.timeoutMs}ms`), this.timeoutMs);
+      const effectiveTimeout = options.timeoutMs ?? this.timeoutMs;
+      const timer = setTimeout(() => stop(`timeout after ${effectiveTimeout}ms`), effectiveTimeout);
       const onAbort = () => stop("cancelled by signal");
       signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -1267,16 +1530,76 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     {
       name: "shell",
       // 在工作区根目录跑一条 shell 命令；返回 exit code 和 stdout/stderr。
-      description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr.",
+      // 起服务这类不退出命令必须用 background，否则会阻塞到超时。
+      description: "Run a shell command in the workspace root; returns exit code plus stdout/stderr. " +
+        "Use background:true for servers or anything that never exits - a foreground call blocks until it times out.",
       parameters: {
         type: "object",
         properties: {
           // 要执行的命令；工作区根目录就是它的 cwd。
           command: { type: "string", description: "Shell command, executed with the workspace root as cwd." },
+          // 后台执行：立即返回任务编号，进程不会随这次调用结束；用 shell-output 看输出，shell-kill 停掉。
+          background: {
+            type: "boolean",
+            description:
+              "Start detached and return a job id immediately; the process keeps running. " +
+              "Read it with shell-output and stop it with shell-kill.",
+          },
+          // 前台命令的超时（毫秒），默认 120000，上限 600000。
+          timeout: {
+            type: "number",
+            description: "Timeout in milliseconds for a foreground command (default 120000, max 600000).",
+          },
         },
         required: ["command"],
       },
-      run: async (args) => workspace.run(String(args.command)),
+      run: async (args) => workspace.run(String(args.command), {
+        background: args.background === true,
+        timeoutMs: typeof args.timeout === "number"
+          ? Math.min(600_000, Math.max(1_000, args.timeout))
+          : undefined,
+      }),
+    },
+    {
+      name: "shell-output",
+      // 读一个后台任务自上次调用之后的新输出；第一行是它的状态（还在跑 / 退出了 / 被停了）。
+      description:
+        "Read the output a background shell job produced since your last read. " +
+        "The first line reports its status (running / exited with a code / killed). " +
+        "Set wait to block until something new appears.",
+      parameters: {
+        type: "object",
+        properties: {
+          // shell 带 background:true 时返回的任务编号，例如 "job-1"。
+          job_id: { type: "string", description: 'Job id returned by shell, such as "job-1".' },
+          // 最多等多少毫秒再返回（默认 0，立即返回已有输出），上限 60000。
+          wait: {
+            type: "number",
+            description: "Milliseconds to wait for new output before returning (default 0, max 60000).",
+          },
+        },
+        required: ["job_id"],
+      },
+      run: async (args) => workspace.readJobOutput(
+        String(args.job_id),
+        typeof args.wait === "number" ? Math.min(60_000, Math.max(0, args.wait)) : 0,
+      ),
+    },
+    {
+      name: "shell-kill",
+      // 停掉一个后台任务连同它的后代进程；停不干净会明确报错，不会假装已经停了。
+      description:
+        "Stop a background shell job and its descendant processes. " +
+        "Fails loudly when the process tree cleanup cannot be confirmed.",
+      parameters: {
+        type: "object",
+        properties: {
+          // shell 带 background:true 时返回的任务编号。
+          job_id: { type: "string", description: 'Job id returned by shell, such as "job-1".' },
+        },
+        required: ["job_id"],
+      },
+      run: async (args) => workspace.killJob(String(args.job_id)),
     },
   ];
 }

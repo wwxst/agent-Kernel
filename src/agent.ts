@@ -547,7 +547,10 @@ export class Agent {
           this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
           this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
-          throw error;
+          // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作（Claude Code 的
+          // 超时只是把错误交回模型，任务继续）。但本批剩余调用全部跳过——进程树没确认
+          // 停掉之前，不能再启动新的工具去写文件。模型看到这条错误后应当收尾报告。
+          break;
         }
         this.runToolCalls++;
         this.sessionToolCalls++;
