@@ -13,7 +13,8 @@
  *   - `Config` / `CliArgs` / `AgentCallbacks` / `SessionCommand`：装配用到的几种形状。
  *   - `parseArgs()`：命令行参数；`--permission` / `--repl` 已移除，传入即报错。
  *   - `loadConfig()`：环境变量 → `Config`；占位 API Key 在发请求前就拒绝。
- *   - `createAgent()`：把客户端、工具注册表、系统提示、预算、回调装成一个 `Agent`。
+ *   - `createAgent()`：把客户端、工具注册表、系统提示、预算、回调，以及可选的工具调用日志 Hook
+ *     装成一个 `Agent`。
  *   - `runTurn()`：跑一次任务并打印结果；`printUsage()`：打印统计。
  *   - `tuiSession()`：TUI 会话，含 `/help`、`/reset` 等命令的分发。
  *   - `describeForUser()`：把模型类错误翻成「标题 + 建议 + 详情」三段。
@@ -32,6 +33,8 @@ import type { AgentView, AgentVoice } from "./ui/cli-presenter.ts";
 import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./protocol/errors.ts";
 import { Llm } from "./model/llm.ts";
 import { ToolRegistry } from "./core/tool-registry.ts";
+import { ToolHooks } from "./core/tool-hooks.ts";
+import { createToolLogHooks } from "./core/tool-log.ts";
 import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./ui/tui.ts";
 import type { ToolCall } from "./protocol/types.ts";
 import { Workspace, createWorkspaceTools } from "./tools/workspace.ts";
@@ -302,10 +305,16 @@ function createAgent(
     onWriteCommitted?: (path: string, before: string | undefined, after: string | undefined, created: boolean) => void;
     onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
+  // 工具调用日志：设了 AGENT_TOOL_LOG 才登记 Hook，不设就完全没变化（空执行器）。
+  // 它挂在唯一的执行入口上，所以九个工具自动全部记到，不用逐个接线。
+  const toolLogPath = process.env.AGENT_TOOL_LOG?.trim() ?? "";
+  const hooks = toolLogPath === "" ? undefined : new ToolHooks(createToolLogHooks(toolLogPath));
+
   const tools = new ToolRegistry(
     createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
       onEditCommitted: options.onEditCommitted, onWriteCommitted: options.onWriteCommitted,
       onImageRead: options.onImageRead })),
+    hooks,
   );
 
   if (options.announce !== false) {
@@ -314,7 +323,9 @@ function createAgent(
     console.log(`model:     ${config.model}`);
     if (config.demo) console.log("mode:      demo (external mock; connection not verified)");
     console.log(`access:    full-access (no approvals, no workspace sandbox)`);
-    console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}\n`);
+    console.log(`tools:     ${tools.definitions.map((tool) => tool.name).join(", ")}`);
+    if (hooks !== undefined) console.log(`tool log:  ${toolLogPath}`);
+    console.log("");
   }
 
   const callbacks = options.callbacks;
@@ -610,8 +621,8 @@ const usage = [
   "       --cwd <dir>  use another directory as the default for relative paths (like cd before start); overrides WORKDIR",
   // 中文对照：权限固定为完全访问：没有审批，也没有工作区沙箱。
   "       access: full-access only (no approvals, no workspace sandbox)",
-  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS
-  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_COLOR, AGENT_TUI_THEME",
+  // 中文对照：环境变量：BASE_URL、API_KEY、MODEL、WORKDIR、MAX_STEPS、MAX_TOOL_CALLS、MAX_TOTAL_TOKENS、MAX_OUTPUT_TOKENS、TOOL_TIMEOUT_MS、AGENT_TOOL_LOG
+  "env:   BASE_URL, API_KEY, MODEL, AGENT_DEMO, WORKDIR, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_TOKENS, MAX_OUTPUT_TOKENS, TOOL_TIMEOUT_MS, AGENT_TOOL_LOG, AGENT_VIEW, AGENT_VOICE, AGENT_TUI_COLOR, AGENT_TUI_THEME",
 ].join("\n");
 
 const cli = parseArgs(process.argv.slice(2));
