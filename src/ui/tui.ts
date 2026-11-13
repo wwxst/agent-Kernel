@@ -2060,7 +2060,9 @@ export class Tui {
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }
-        this.prunePastes(this.rl.line);
+        // 外部编辑器接管了整份草稿；返回文本中的占位样式字符串应按字面处理。
+        this.pastes.clear();
+        this.recoverablePastes.clear();
       } catch (error) {
         this.pushLog(this.uiText(
           `could not read the edited text: ${describeError(error)}`,
