@@ -588,7 +588,7 @@ export class Tui {
             if (text.includes("\n")) {
               const base = this.pastePlaceholder(text);
               const id = this.nextPasteId++;
-              const placeholder = id === 1 ? base : `${base.slice(0, -1)} #${id}]`;
+              const placeholder = `${base.slice(0, -1)} #${id}]`;
               this.pastes.set(placeholder, text);
               out += placeholder;
             } else {
@@ -716,14 +716,7 @@ export class Tui {
       const isKillCommand =
         (key?.ctrl && !key?.shift && (name === "u" || name === "k")) ||
         (key?.ctrl && key?.shift && (name === "backspace" || name === "delete"));
-      if (isKillCommand && previousLine !== currentLine) {
-        this.killRingGeneration++;
-        for (const placeholder of this.pastes.keys()) {
-          if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
-            this.yankablePastes.set(placeholder, this.killRingGeneration);
-          }
-        }
-      }
+      if (isKillCommand) this.trackKillRingChange(previousLine, currentLine);
 
       // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
       if (this.transcriptMode && name === "escape") {
@@ -1012,7 +1005,9 @@ export class Tui {
   private setEditorLine(text: string, cursor = text.length): void {
     const previousLine = this.rl.line;
     this.rl.write(null, { ctrl: true, name: "a" });
+    const killedLine = this.rl.line;
     this.rl.write(null, { ctrl: true, name: "k" });
+    this.trackKillRingChange(killedLine, this.rl.line);
     this.rl.write(text);
     for (let i = 0; i < [...text.slice(cursor)].length; i++) {
       this.rl.write(null, { name: "left" });
@@ -2020,6 +2015,17 @@ export class Tui {
     }
   }
 
+  /** 记录 readline 新增的 kill ring 项，使程序化编辑也保留可 Ctrl+Y 恢复的原文。 */
+  private trackKillRingChange(previousLine: string, currentLine: string): void {
+    if (previousLine === currentLine) return;
+    this.killRingGeneration++;
+    for (const placeholder of this.pastes.keys()) {
+      if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
+        this.yankablePastes.set(placeholder, this.killRingGeneration);
+      }
+    }
+  }
+
   /** 回收当前缓冲区与 readline 的 undo / redo 历史都不再引用的原文。 */
   private prunePastes(currentLine: string): void {
     for (const placeholder of this.pastes.keys()) {
@@ -2093,10 +2099,9 @@ export class Tui {
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }
-        // 外部编辑器接管了整份草稿；返回文本中的占位样式字符串应按字面处理。
-        this.pastes.clear();
-        this.undoablePastes.clear();
-        this.yankablePastes.clear();
+        // 不清空旧映射：readline 的 undo / redo 与 kill ring 仍可能恢复旧占位符。
+        // 每段粘贴都有唯一编号，编辑器正文里的普通提示样式文字不会与之冲突；
+        // 后续由 prunePastes 按 readline 历史有效期回收原文。
       } catch (error) {
         this.pushLog(this.uiText(
           `could not read the edited text: ${describeError(error)}`,

@@ -2333,6 +2333,34 @@ test("TUI：提交多行粘贴后，上键能恢复原文再次提交", async (t
   assert.equal(await next, "first\nsecond");
 });
 
+test("TUI：外部编辑器往返后连续撤销仍能恢复原始粘贴", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-undo-${process.pid}.mjs`);
+  await writeFile(script, "process.exitCode = 0;\\n");
+  const previousEditor = process.env.EDITOR;
+  const previousVisual = process.env.VISUAL;
+  delete process.env.VISUAL;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previousEditor === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previousEditor;
+    if (previousVisual === undefined) delete process.env.VISUAL;
+    else process.env.VISUAL = previousVisual;
+    rmSync(script, { force: true });
+  });
+
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("\\x1b[200~first\\nsecond\\x1b[201~");
+  await tick();
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  ui.input.write("\\x1f\\x1f\\r");
+  assert.equal(await pending, "first\\nsecond");
+});
+
 test("TUI：外部编辑器接收粘贴原文，正文里的提示文字不会再次展开", async (t) => {
   const script = path.join(tmpdir(), `agent-editor-paste-${process.pid}.mjs`);
   await writeFile(script, "process.exitCode = 0;\n");
