@@ -2222,6 +2222,27 @@ test("TUI：提交其他任务后 Ctrl+Y 仍能恢复上一条被剪切的粘贴
   assert.equal(await next, "first\nsecond");
 });
 
+test("TUI：已提交的剪切占位不会被后续同长度粘贴复用", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x15");
+  await tick();
+  ui.input.write("\x19\r");
+  assert.equal(await first, "first\nsecond");
+  assert.equal(ui.tui.pastes.size, 1, "仍在 kill ring 的已提交原文必须保留");
+
+  const second = ui.tui.readLine();
+  ui.input.write("\x1b[200~third\nfourth\x1b[201~");
+  await tick();
+  ui.input.write("\x19\r");
+  assert.equal(await second, "third\nfourthfirst\nsecond");
+});
+
 test("TUI：撤销删除多行粘贴提示后仍能恢复原文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());

@@ -447,7 +447,7 @@ export class Tui {
   /** 上一次 readline keypress 处理后的编辑内容，用来识别 kill 命令。 */
   private lastEditorLine = "";
 
-  /** 只增不减，消费部分提示后也不会复用仍在编辑中的身份。 */
+  /** 只增不减；即使旧提示已提交但仍在 kill ring，也不会复用它的身份。 */
   private nextPasteId = 1;
 
   /** 关闭时恢复输入流，不能让已关闭的界面继续拦截后续消费者的数据。 */
@@ -588,7 +588,7 @@ export class Tui {
             if (text.includes("\n")) {
               const base = this.pastePlaceholder(text);
               const id = this.nextPasteId++;
-              const placeholder = this.pastes.size === 0 ? base : `${base.slice(0, -1)} #${id}]`;
+              const placeholder = id === 1 ? base : `${base.slice(0, -1)} #${id}]`;
               this.pastes.set(placeholder, text);
               out += placeholder;
             } else {
@@ -1993,9 +1993,9 @@ export class Tui {
     }
     // 同一 data 块可能还带着下一条粘贴消息，只移除本次实际消费的提示。
     for (const placeholder of this.pastes.keys()) {
-      if (submitted.includes(placeholder)) {
+      // readline 的 kill ring 跨 Enter 保留；已提交但仍可 Ctrl+Y 恢复的提示不能丢映射。
+      if (submitted.includes(placeholder) && !this.yankablePastes.has(placeholder)) {
         this.pastes.delete(placeholder);
-        this.yankablePastes.delete(placeholder);
       }
     }
     // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
