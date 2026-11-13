@@ -37,6 +37,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/core/tool-hooks.ts` | 工具执行的三个扩展事件（`PreToolUse` / `PostToolUse` / `PostToolUseFailure`）：登记顺序、阻止、故障隔离 |
 | `src/core/tool-log.ts` | 第一个真实 Hook 用户：每次调用追加一行 JSON 到 `AGENT_TOOL_LOG` 指定的文件 |
 | `src/core/tool-result-status.ts` | 判断一次工具结果算不算失败，给 CLI / TUI 上色用 |
+| `src/tools/todo.ts` | TodoWrite：校验和更新会话内任务计划，对模型提供 `todo_write` 工具 |
 | `src/tools/workspace.ts` | 给模型的文件与 shell 工具：读写改、搜索、跑命令（含后台任务） |
 | `src/tools/grep-worker.ts` | `grep` 的正则匹配放独立线程跑，好让主线程能超时打断 |
 | `src/model/llm.ts` | 跟模型服务说话：发请求、收流式响应、解析用量 |

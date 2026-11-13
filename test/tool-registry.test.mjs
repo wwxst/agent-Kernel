@@ -251,15 +251,37 @@ test("注册：重名工具直接拒绝", () => {
   assert.throws(() => makeRegistry([echoTool(), echoTool()]), /duplicate tool name "echo"/);
 });
 
-test("注册：声明 array / object 参数直接拒绝（校验器不懂它们）", () => {
-  assert.throws(
-    () => makeRegistry([schemaTool({ type: "object", properties: { tags: { type: "array" } } })]),
-    /parameter "tags" has unsupported type "array"/,
-  );
-  assert.throws(
-    () => makeRegistry([schemaTool({ type: "object", properties: { cfg: { type: "object" } } })]),
-    /parameter "cfg" has unsupported type "object"/,
-  );
+test("注册：array 缺 items 或对象必填字段未声明时拒绝", () => {
+  assert.throws(() => makeRegistry([schemaTool({
+    type: "object", properties: { tags: { type: "array" } },
+  })]), /parameter "tags" must declare array items/);
+  assert.throws(() => makeRegistry([schemaTool({
+    type: "object", properties: { cfg: { type: "object", properties: {}, required: ["missing"] } },
+  })]), /required parameter "cfg.missing" is not declared/);
+  assert.throws(() => makeRegistry([schemaTool({
+    type: "object", properties: { tags: { type: "array", items: { type: "null" } } },
+  })]), /parameter "tags\\[\\]" has unsupported type "null"/);
+});
+
+test("execute：嵌套 array/object 必填及字段类型校验", async () => {
+  const seen = [];
+  const registry = makeRegistry([{
+    name: "batch", description: "nested schema test",
+    parameters: { type: "object", properties: { items: { type: "array", items: {
+      type: "object", properties: { label: { type: "string" }, status: { type: "string" } },
+      required: ["label", "status"],
+    } } }, required: ["items"] },
+    run: async (args) => { seen.push(args); return "ok"; },
+  }]);
+  assert.match(await registry.execute(call("batch", '{"items":{}}')), /argument "items" must be an array/);
+  assert.match(await registry.execute(call("batch", '{"items":[null]}')), /argument "items\\[0\\]" must be an object/);
+  assert.match(await registry.execute(call("batch", '{"items":[{"label":"a"}]}')),
+    /missing required argument "items\\[0\\].status"/);
+  assert.match(await registry.execute(call("batch", '{"items":[{"label":1,"status":"done"}]}')),
+    /argument "items\\[0\\].label" must be a string/);
+  assert.equal(seen.length, 0);
+  assert.equal(await registry.execute(call("batch", '{"items":[{"label":"a","status":"done"}]}')), "ok");
+  assert.equal(seen.length, 1);
 });
 
 test("注册：parameters 必须是 object schema", () => {

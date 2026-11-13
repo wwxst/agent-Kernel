@@ -27,7 +27,7 @@ import type { Tool, ToolCall, ToolDefinition } from "../protocol/types.ts";
 import { ToolHooks } from "./tool-hooks.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
-const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);
+const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean", "array", "object"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -36,10 +36,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * 注册时的 Schema 体检：只接受「这个注册表真的会校验」的形状。
  *
- * 为什么必须在注册时拒绝，而不是等到执行时才发现：一个声明 `array` / `object`
- * 参数的工具会顺利通过 validateArguments（因为校验器不认识这个类型，直接跳过），
- * 于是它「看起来被校验过」—— 这是最危险的一种安全假象。宁可在装配阶段就报错。
+ * JSON 数组和对象必须逐层校验；数组缺少 items、对象 required 引用未知字段时
+ * 在注册期拒绝，避免「看起来校验过，实际上没有检查」的安全假象。
  */
+function assertPropertySchema(toolName: string, path: string, schema: unknown): void {
+  if (!isRecord(schema) || typeof schema.type !== "string") {
+    throw new Error(`tool "${toolName}": parameter "${path}" must declare a type`);
+  }
+  if (!SUPPORTED_PARAMETER_TYPES.has(schema.type)) {
+    throw new Error(`tool "${toolName}": parameter "${path}" has unsupported type "${schema.type}"; ` +
+      `supported types: ${[...SUPPORTED_PARAMETER_TYPES].join(", ")}`);
+  }
+  if (schema.type === "array") {
+    if (!Object.hasOwn(schema, "items")) {
+      throw new Error(`tool "${toolName}": parameter "${path}" must declare array items`);
+    }
+    assertPropertySchema(toolName, `${path}[]`, schema.items);
+  }
+  if (schema.type === "object") {
+    const properties = schema.properties ?? {};
+    if (!isRecord(properties)) {
+      throw new Error(`tool "${toolName}": parameter "${path}" properties must be an object`);
+    }
+    for (const [key, child] of Object.entries(properties)) {
+      assertPropertySchema(toolName, `${path}.${key}`, child);
+    }
+    if (schema.required !== undefined) {
+      if (!Array.isArray(schema.required) || !schema.required.every((key) => typeof key === "string")) {
+        throw new Error(`tool "${toolName}": parameter "${path}" required must be an array of strings`);
+      }
+      for (const key of schema.required) {
+        if (!Object.hasOwn(properties, key)) {
+          throw new Error(`tool "${toolName}": required parameter "${path}.${key}" is not declared`);
+        }
+      }
+    }
+  }
+}
+
 function assertSupportedSchema(tool: Tool): void {
   const schema: unknown = tool.parameters;
   if (!isRecord(schema)) {
@@ -55,18 +89,10 @@ function assertSupportedSchema(tool: Tool): void {
   }
 
   for (const [key, property] of Object.entries(properties)) {
-    if (!isRecord(property) || typeof property.type !== "string") {
-      throw new Error(`tool "${tool.name}": parameter "${key}" must declare a type`);
-    }
-    if (!SUPPORTED_PARAMETER_TYPES.has(property.type)) {
-      throw new Error(
-        `tool "${tool.name}": parameter "${key}" has unsupported type "${property.type}"; ` +
-          `supported types: ${[...SUPPORTED_PARAMETER_TYPES].join(", ")}`,
-      );
-    }
+    assertPropertySchema(tool.name, key, property);
   }
 
-  const required = schema.required;
+    const required = schema.required;
   if (required === undefined) return;
   if (!Array.isArray(required)) {
     throw new Error(`tool "${tool.name}": parameters.required must be an array of strings`);
@@ -90,33 +116,40 @@ function assertSupportedSchema(tool: Tool): void {
  * 结果是把文件清空 —— 一次「看起来成功」的静默破坏，比报错危险得多。
  * 校验放在 execute() 里，和「失败折成文本」同一条路，任何工具都躲不过去。
  *
- * 覆盖范围刻意很小：只校验 `required` + `string` / `number` / `boolean` 三种类型。
- * 七个内置工具的参数全是字符串，够用；嵌套对象、数组、枚举都不看。
- * 但「不看」不等于「放过」：声明了校验器不认识的类型，注册时就会被 assertSupportedSchema 拒绝，
- * 所以不会出现「看起来校验过、其实完全没查」的工具。
+ * 支持基本类型和嵌套 array / object；不支持的 Schema 类型在注册时拒绝。
+ * 未声明的多余字段保留现有行为，由具体工具决定是否接受。
  */
-function validateArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
-  const schema = tool.parameters as {
-    required?: unknown;
-    properties?: Record<string, { type?: string }>;
-  };
-
-  const required = Array.isArray(schema.required) ? schema.required.filter((key): key is string => typeof key === "string") : [];
-  for (const key of required) {
-    if (args[key] === undefined) return `missing required argument "${key}"`;
+function validateValue(schema: Record<string, unknown>, value: unknown, path: string): string | undefined {
+  if (schema.type === "string") return typeof value === "string" ? undefined : `argument "${path}" must be a string`;
+  if (schema.type === "number") {
+    return typeof value === "number" && Number.isFinite(value) ? undefined : `argument "${path}" must be a finite number`;
   }
-
-  for (const [key, value] of Object.entries(args)) {
-    const expected = schema.properties?.[key]?.type;
-    if (expected === undefined) continue; // 没声明的字段不管，交给工具自己判断
-    if (expected === "string" && typeof value !== "string") return `argument "${key}" must be a string`;
-    if (expected === "number" && (typeof value !== "number" || !Number.isFinite(value))) {
-      return `argument "${key}" must be a finite number`;
+  if (schema.type === "boolean") return typeof value === "boolean" ? undefined : `argument "${path}" must be a boolean`;
+  if (schema.type === "array") {
+    if (!Array.isArray(value)) return `argument "${path}" must be an array`;
+    const items = schema.items as Record<string, unknown>;
+    for (let index = 0; index < value.length; index++) {
+      const problem = validateValue(items, value[index], `${path}[${index}]`);
+      if (problem !== undefined) return problem;
     }
-    if (expected === "boolean" && typeof value !== "boolean") return `argument "${key}" must be a boolean`;
+    return undefined;
   }
-
+  if (!isRecord(value)) return `argument "${path}" must be an object`;
+  const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
+  const required = (schema.required ?? []) as string[];
+  for (const key of required) {
+    if (value[key] === undefined) return `missing required argument "${path === "" ? key : `${path}.${key}`}"`;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (!Object.hasOwn(properties, key)) continue;
+    const problem = validateValue(properties[key], child, path === "" ? key : `${path}.${key}`);
+    if (problem !== undefined) return problem;
+  }
   return undefined;
+}
+
+function validateArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
+  return validateValue(tool.parameters, args, "");
 }
 
 export class ToolRegistry {

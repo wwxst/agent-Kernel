@@ -1,6 +1,6 @@
 # agent-Kernel
 
-最小 Coding Agent：**一个类、一个循环、九个工具、完全访问**，运行时零依赖。
+最小 Coding Agent：**一个类、一个循环、十个工具、完全访问**，运行时零依赖。
 
 > 当前状态：v0.5，个人练习项目。
 
@@ -85,6 +85,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/core/tool-hooks.ts` | 工具执行的三个扩展事件：`PreToolUse`（可阻止）/ `PostToolUse` / `PostToolUseFailure`；按登记顺序串行执行，Hook 自己出错只计数、不影响工具结果 |
 | `src/core/tool-log.ts` | 第一个真实 Hook 用户：每次工具调用追加一行 JSON 到 `AGENT_TOOL_LOG` 指定的文件；写不进去只提醒一次 |
 | `src/core/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
+| `src/tools/todo.ts` | TodoWrite：任务清单的校验、原子更新和进度渲染；每个 Agent 会话一份、不会跨进程保存 |
 | `src/tools/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
 | `src/model/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
 | `src/model/project-instructions.ts` | 读 `AGENTS.md` 注入系统提示：只做读取与有界截断，不发明格式 |
@@ -184,7 +185,9 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
-## 九个工具
+## 十个工具
+
+复杂任务可调用 `todo_write`，一次提交完整清单并更新 `pending` / `in_progress` / `done` 状态；最多 20 项，同一时刻最多一个 `in_progress`。计划只在当前 Agent 会话内有效，`/reset` 或重启后清空。它是进度记录，不会自行执行任务或判断目标达成；简单单步任务不要求使用。
 
 工具名是模型看到的接口，所以用的是 agent 生态里的通用叫法（`read` / `write` / `edit` / `glob` / `grep` / `ls` / `shell`），不是本仓库方法名的直译：
 
@@ -199,10 +202,11 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `shell` | 默认在默认目录跑 shell，命令内可 `cd` 到任意位置；超时/取消杀整棵进程树，输出有上限 | `Workspace.run` |
 | `shell-output` | 读后台任务自上次调用之后的新输出；第一行是它的状态 | `Workspace.readJobOutput` |
 | `shell-kill` | 停掉后台任务连同它的后代进程 | `Workspace.killJob` |
+| `todo_write` | 更新完整的任务计划，状态为 pending / in_progress / done | `TodoManager.update` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
 
-后两个不是新能力，是 `shell` 那半个功能的收尾。`shell` 带 `background:true` 时立刻返回一个任务编号（`job-1`），进程继续跑：
+`shell-output` 与 `shell-kill` 不是新能力，是 `shell` 那半个功能的收尾。`shell` 带 `background:true` 时立刻返回一个任务编号（`job-1`），进程继续跑：
 
 ```text
 shell { command: "npm run dev", background: true }

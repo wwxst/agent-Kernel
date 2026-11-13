@@ -789,6 +789,31 @@ test("CLI 读取以 exit 7 开头的文件仍显示成功，不把正文当成 S
   });
 });
 
+test("CLI TodoWrite：模型拿到结构化计划工具，更新结果进入下一轮", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("plan-1", "todo_write", { todos: [
+        { content: "检查代码", status: "done" }, { content: "运行测试", status: "in_progress" },
+      ] }),
+      finalReply("plan recorded"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /todo_write/);
+      assert.equal(mock.requests.length, 2);
+      const declared = mock.requests[0].tools.find((tool) => tool.function?.name === "todo_write");
+      assert.equal(declared?.function.parameters.properties.todos.type, "array");
+      const result = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.equal(result.tool_call_id, "plan-1");
+      assert.match(result.content, /Todo list \\(1\\/2 done\\)/);
+      assert.match(mock.requests[0].messages[0].content, /For multi-step tasks, call todo_write/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
 test("CLI 阶段：思考、工具开始与结果、回答和完成都有真实状态", async () => {
   await withWorkspace(async (workdir) => {
     const mock = await startMock([
