@@ -8,8 +8,8 @@
  *
  * 内容目录：
  *   - `withFile()`：临时目录里的一个 `history.jsonl`，跑完删掉。
- *   - 五个用例：文件不存在；坏行跳过；非对象 / 空文本 / 缺字段忽略；追加后读回、空文本不写；
- *     只返回最近 N 条。
+ *   - 容错：文件不存在、坏行、非对象 / 空文本 / 缺字段；追加后读回、空文本不写。
+ *   - 上限：只返回最近 N 条、零条上限、超大历史只读尾部并跳过边界残行。
  *
  * 模块关系：依赖 `src/ui/prompt-history.ts` 与 `node:test`，由 `npm test` 启动。
  */
@@ -66,5 +66,19 @@ test("历史：只返回最近 limit 条", async () => {
     for (let index = 0; index < 5; index++) appendHistory(`第 ${index} 句`, "/w", file);
     assert.deepEqual(loadHistory(file, 2), ["第 3 句", "第 4 句"]);
     assert.ok(loadHistory(file).length <= MAX_HISTORY_ENTRIES);
+  });
+});
+
+test("历史：上限为零时不返回旧记录", async () => {
+  await withFile(async (file) => {
+    appendHistory("old", "/w", file);
+    assert.deepEqual(loadHistory(file, 0), []);
+  });
+});
+
+test("历史：只读取最后 8 MiB，丢弃边界处残行并保留最新完整记录", async () => {
+  await withFile(async (file) => {
+    await writeFile(file, `${JSON.stringify({ text: "x".repeat(8_388_608) })}\n{"text":"latest"}\n{broken`);
+    assert.deepEqual(loadHistory(file), ["latest"]);
   });
 });

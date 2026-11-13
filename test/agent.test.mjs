@@ -15,7 +15,7 @@
  *   - 三个预算：步数上限（最后一批工具不执行）、工具调用预算（整批不执行、跨批累计）、
  *     token 预算（软预算，顶穿时最终答复仍成功但状态可见）。
  *   - 取消：开始前已 abort、中途 abort 后剩余调用留 `not run`、取消后仍返回的答案不提交。
- *   - 会话：第二个 Run 继承 transcript、预算按 Run 重算、并发 run 被拒、失败后还能继续。
+ *   - 会话：第二个 Run 继承 transcript、返回值不能篡改历史、预算按 Run 重算、并发被拒、失败后可继续。
  *   - 记账：usage 累加、缺失记 unknown 不补 0、请求失败也记账。
  *   - 系统提示词：默认一条、可替换、函数每次请求前求值、关键约定文案不变。
  *   - 重试：429 计入真实请求与未知成本且 Step 不重复；401 不重试、取消时退避立即停。
@@ -34,6 +34,20 @@ import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from
 function roles(messages) {
   return messages.map((message) => message.role);
 }
+
+test("会话：修改 run 返回值不能改写下一轮的 Transcript", async () => {
+  const chat = createScriptedChat([finalReply("original"), finalReply("next")]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
+  const reply = await agent.run("first");
+  reply.role = "tool";
+  reply.content = "tampered";
+  reply.tool_call_id = "orphan";
+  reply.tool_calls.push({ id: "injected" });
+  await agent.run("second");
+  assert.deepEqual(chat.requests[1].messages[2], {
+    role: "assistant", content: "original", tool_calls: [],
+  });
+});
 
 test("一轮工具调用：结果在下一轮请求前入栈，且带对了 tool_call_id", async () => {
   const chat = createScriptedChat([

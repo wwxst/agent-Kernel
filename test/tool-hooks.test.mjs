@@ -10,7 +10,8 @@
  *   - 上下文：拿到工具名、参数、结果、原始错误；拿到的是副本，改不动真实调用。
  *   - 阻止：返回 `{ block }` 后工具不执行、结果是带原因的 `ERROR` 文本、后面的前置 Hook 不再跑；
  *     原因写空、写 `false` 时怎么判定。
- *   - 故障隔离：Hook 同步抛错、返回 rejected Promise、工具也失败时，结果与错误文本都不变，只记失败次数。
+ *   - 故障隔离：Hook 同步抛错、返回 rejected Promise、决定字段 getter 抛错、工具也失败时，
+ *     结果与错误文本都不变，只记失败次数。
  *   - 边界：未知工具、坏 JSON、参数不合法不触发任何事件；`ProcessCleanupError` 先通知再照旧抛出；
  *     没有登记 Hook 时行为与以前一致。
  *   - 接入面：九个内置工具全部经过同一个入口；一次完整 `Agent.run` 的 Transcript 不受 Hook 影响。
@@ -31,6 +32,17 @@ import { callTool, createScriptedChat, echoTool, finalReply, withWorkspace } fro
 function call(name, args = {}, id = "call_1") {
   return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
 }
+
+test("故障隔离：读取前置 Hook 决定抛错时计数并继续后续 Hook", async () => {
+  const hooks = new ToolHooks({ preToolUse: [
+    () => ({ get block() { throw new Error("bad decision"); } }),
+    () => ({ block: "still checked" }),
+  ] });
+  const registry = new ToolRegistry([echoTool()], hooks);
+  assert.equal(await registry.execute(call("echo", { value: "hi" })),
+    'ERROR: tool "echo" blocked by hook: still checked');
+  assert.equal(hooks.failureCount, 1);
+});
 
 /** 一个总是失败的假工具，用来验证失败事件。 */
 function failingTool(message = "disk on fire") {

@@ -754,11 +754,12 @@ export class Workspace {
    */
   private async runInBackground(command: string): Promise<string> {
     const id = `job-${++this.jobSeq}`;
-    // 带上宿主 pid：同一台机器上同时开着两个 agent 时，日志文件不会互相覆盖。
-    const logPath = path.join(JOB_LOG_DIR, `${process.pid}-${id}.log`);
+    // 编号只在 Workspace 内唯一；同一宿主里的多个 Workspace 也必须隔离日志。
+    const logPath = path.join(JOB_LOG_DIR, `${process.pid}-${id}-${randomUUID()}.log`);
     mkdirSync(JOB_LOG_DIR, { recursive: true });
 
-    const fd = openSync(logPath, "w");
+    // 独占创建，避免覆盖已有文件；日志可能含敏感输出，POSIX 上只让当前用户读写。
+    const fd = openSync(logPath, "wx", 0o600);
     let child: ChildProcess;
     try {
       // POSIX 的 EXIT trap 会等待命令显式启动的后台子进程，避免 shell 先退出、

@@ -11,6 +11,7 @@
  *   - `LlmOptions`：地址、Key、模型名、温度、超时、单次输出上限、取消信号、是否流式。
  *   - `Llm`：实现 `ChatClient`；`chat()` 是唯一对外方法，内部按 `stream` 分两条路。
  *   - `StreamAssembly`：流式拼装器，把一串 delta 还原成一条完整消息（按 index 排序，参数分片合并）。
+ *   - 响应读取：JSON / SSE 共用 8 MiB 字节上限，完成或失败都主动取消未读响应。
  *   - 内部校验：`readMessage()` / `readToolCalls()` / `readFinishReason()` / `readUsage()`，
  *     形状不对就抛 `ChatResponseError`，绝不返回「空成功」。
  *
@@ -19,6 +20,9 @@
  */
 import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "../protocol/errors.ts";
 import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "../protocol/types.ts";
+
+/** 已知边界：按解压后的响应体累计，包含 SSE 元数据；不依赖服务端遵守 max_tokens。 */
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 export interface LlmOptions {
   /** 形如 https://api.deepseek.com/v1，末尾斜杠会被自动去掉。 */
@@ -124,21 +128,22 @@ export class Llm implements ChatClient {
 
     if (!response.ok) {
       // 把响应体带上：400 通常就是因为消息顺序/配对错了，错误详情很有价值。
-      const detail = (await response.text()).slice(0, 500);
+      const detail = await readResponseText(response, 500);
       // 中文对照：模型接口返回 HTTP {状态码}：{响应体}
       throw new ModelHttpError(response.status, detail);
     }
 
     if (this.stream) return this.readStreamed(response, options.onDelta);
 
-    const payload: unknown = await response.json();
     let usage: TokenUsage | undefined;
     try {
+      const payload: unknown = JSON.parse(await readResponseText(response));
       // 先读 usage：后面的 message 校验可能失败，但这次请求可能已经产生费用。
       // 顺序反过来，usage 就会随着「响应不合法」一起被丢掉，账上只能记成未知。
       usage = readUsage(payload);
       return { message: readMessage(payload), usage };
     } catch (error) {
+      if (this.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
       throw new ChatResponseError(describeError(error), usage);
     }
   }
@@ -161,11 +166,13 @@ export class Llm implements ChatClient {
     const assembly = new StreamAssembly();
     let buffer = "";
     let usage: TokenUsage | undefined;
+    let finished = false;
 
     const consume = (line: string): void => {
       if (!line.startsWith("data:")) return;
       const data = line.slice("data:".length).trim();
-      if (data === "" || data === "[DONE]") return;
+      if (data === "[DONE]") { finished = true; return; }
+      if (data === "") return;
       let chunk: unknown;
       try {
         chunk = JSON.parse(data);
@@ -181,25 +188,27 @@ export class Llm implements ChatClient {
       }
     };
 
-    const reader = response.body.getReader();
     try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      for await (const value of readResponseBytes(response)) {
         buffer += decoder.decode(value, { stream: true });
         let newline = buffer.indexOf("\n");
         while (newline !== -1) {
           const line = buffer.slice(0, newline).replace(/\r$/, "");
           buffer = buffer.slice(newline + 1);
           consume(line);
+          if (finished) break;
           newline = buffer.indexOf("\n");
         }
+        if (finished) break;
       }
-    } finally {
-      reader.releaseLock();
+    } catch (error) {
+      if (this.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      throw new ChatResponseError(describeError(error), usage,
+        error instanceof ChatResponseError ? error.code : "stream_incomplete");
     }
     // 最后一帧可能没有换行符收尾。
-    if (buffer.trim() !== "") consume(buffer.trim());
+    buffer += decoder.decode();
+    if (!finished && buffer.trim() !== "") consume(buffer.trim());
 
     try {
       return { message: assembly.toMessage(), usage };
@@ -210,6 +219,43 @@ export class Llm implements ChatClient {
       );
     }
   }
+}
+
+/** JSON 与 SSE 在同一处限制真实读取量；迭代提前退出或解析抛错时也释放连接。 */
+async function* readResponseBytes(response: Response): AsyncGenerator<Uint8Array> {
+  if (response.body === null) throw invalid("response has no body");
+  const reader = response.body.getReader();
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) {
+        throw new ChatResponseError(`LLM response is invalid: response exceeds ${MAX_RESPONSE_BYTES} bytes`);
+      }
+      yield value;
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // 流已失败时 cancel 会重复抛出底层故障；保留读取或解析阶段的原始异常。
+    } finally {
+      reader.releaseLock();
+    }
+  }
+}
+
+/** 错误详情够用就停，不为取前 500 字符把整份错误页面读完。 */
+async function readResponseText(response: Response, maxChars = Infinity): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = "";
+  for await (const bytes of readResponseBytes(response)) {
+    text += decoder.decode(bytes, { stream: true });
+    if (text.length >= maxChars) break;
+  }
+  return (text + decoder.decode()).slice(0, maxChars);
 }
 
 /**

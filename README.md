@@ -305,6 +305,8 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 
 流式正文只是临时展示。已确认的 `assistant.content` 才是最终权威消息：固定布局可以替换有偏差的草稿；CLI / 非 TTY 文本输出无法撤回已写入终端的字节，会追加明确的 `[stream corrected: confirmed message follows]` 更正提示。同一条 assistant 的多次工具调用只确认一次阶段说明，避免重复模型发言。
 
+资源边界：单次模型响应（JSON / SSE，按解压后的响应体计）最多读取 **8 MiB**，超限明确报错并关闭连接；HTTP 错误只读取前 500 字符详情，SSE 收到 `[DONE]` 就结束读取。输入历史只读取文件末尾最多 **8 MiB**，从中选取最近 500 条有效记录，切口处的残行跳过，磁盘上的旧记录保留。取舍见 [ADR-0022](./docs/adr/0022-bound-external-response-and-history-reads.md)。
+
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 
 已知边界：完整布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；主视图不捕获鼠标，历史靠终端原生滚动；Run log 保留最近 2000 条逻辑行；暂不支持多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。

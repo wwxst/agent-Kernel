@@ -47,9 +47,10 @@ const cache = new Map<string, CacheEntry>();
 
 /** 界面函数 listWorkspaceFiles（列文件清单）：递归列出工作区里的文件（相对路径），有数量上限，跳过常见的大目录。 */
 export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): string[] {
-  const cached = cache.get(root);
+  const key = JSON.stringify([root, limit]);
+  const cached = cache.get(key);
   const now = Date.now();
-  if (cached !== undefined && now - cached.at < CACHE_TTL_MS) return cached.files;
+  if (cached !== undefined && now - cached.at < CACHE_TTL_MS) return cached.files.slice();
 
   const files: string[] = [];
   const walk = (relative: string): void => {
@@ -75,8 +76,8 @@ export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): str
   walk("");
 
   files.sort();
-  cache.set(root, { at: now, files });
-  return files;
+  cache.set(key, { at: now, files });
+  return files.slice();
 }
 
 /** 界面函数 matchFiles（按名字过滤）：按片段过滤并排序——文件名完全一样 > 文件名开头一样 > 文件名里包含 > 路径里包含，同档短的优先。 */
