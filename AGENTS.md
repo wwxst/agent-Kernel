@@ -33,7 +33,8 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
 | `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
 | `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期 |
-| `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本 |
+| `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本；围着执行触发三个 Hook 事件 |
+| `src/core/tool-hooks.ts` | 工具执行的三个扩展事件（`PreToolUse` / `PostToolUse` / `PostToolUseFailure`）：登记顺序、阻止、故障隔离 |
 | `src/core/tool-result-status.ts` | 判断一次工具结果算不算失败，给 CLI / TUI 上色用 |
 | `src/tools/workspace.ts` | 给模型的文件与 shell 工具：读写改、搜索、跑命令（含后台任务） |
 | `src/tools/grep-worker.ts` | `grep` 的正则匹配放独立线程跑，好让主线程能超时打断 |
@@ -57,6 +58,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序。
 - `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、参数类型错误，以及每个失败分支都折成文本；进程树清理未确认仍抛 `ProcessCleanupError`。
+- `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行、Hook 拿到副本、Hook 抛错不影响工具结果、九个内置工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
 - `Workspace` 的九个方法：工作区外读写（绝对路径、`../`、符号链接）、有界读取、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、工作区外 shell、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、状态栏固定完全访问、`Shift+Tab` 不再是快捷键、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。

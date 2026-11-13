@@ -81,7 +81,8 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/protocol/types.ts` | 协议词汇：`Message`、`Tool`、`ToolDefinition`、`ChatClient`。不依赖任何人 |
 | `src/protocol/errors.ts` | 错误文案兜底：`describeError()` 把任何抛出物变成一行非空文本 |
 | `src/core/agent.ts` | 内核：循环、消息顺序、请求/工具预算、生命周期；system 提示支持函数式动态刷新 |
-| `src/core/tool-registry.ts` | 工具注册表：Schema 校验、按名字找工具、解析参数、执行工具、把失败折成 `ERROR` 文本 |
+| `src/core/tool-registry.ts` | 工具注册表：Schema 校验、按名字找工具、解析参数、执行工具、把失败折成 `ERROR` 文本；围着执行触发三个 Hook 事件 |
+| `src/core/tool-hooks.ts` | 工具执行的三个扩展事件：`PreToolUse`（可阻止）/ `PostToolUse` / `PostToolUseFailure`；按登记顺序串行执行，Hook 自己出错只计数、不影响工具结果 |
 | `src/core/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
 | `src/tools/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
 | `src/model/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
@@ -100,6 +101,29 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 它也不认识 `ui/tui.ts`：TUI 只是把 Agent 的回调接到显示层，循环本身不知道有没有界面。这就是为什么换模型、换工具集、换交互壳，循环一行都不用改。展示观察者精简为四个：`onRequestStart(step)`（每个 Run 从 1 计）、`onToolCall(call)`、`onToolResult(call, result)`、`onDelta(text)`；原先重复的 `onStepStart` / `onToolStart` 已移除，外部调用方需要迁移。
 
 命令、代码地图、测试放哪见 [AGENTS.md](./AGENTS.md)；怎么写代码（注释风格、模块形状、命名、错误处理）见 [CODING_STANDARDS.md](./CODING_STANDARDS.md)。
+
+### 工具执行 Hook（v1）
+
+三个事件围着一次工具执行：`PreToolUse`（执行前）、`PostToolUse`（成功之后）、`PostToolUseFailure`（失败之后）。它们挂在**唯一的执行入口** `ToolRegistry.execute` 上，所以九个内置工具自动全部经过，不用逐个接线；`Agent` 主循环一行没改。
+
+```ts
+import { ToolHooks } from "./src/core/tool-hooks.ts";
+
+const hooks = new ToolHooks({
+  // 同步、异步都收；返回 { block: "原因" } 就阻止这次调用，原因会进 ERROR 文本被模型读到。
+  preToolUse: [(context) => {
+    const command = typeof context.args.command === "string" ? context.args.command : "";
+    return command.includes("rm -rf") ? { block: "destructive command" } : undefined;
+  }],
+  // 成功之后能拿到结果原文；失败之后能拿到原始错误对象。
+  postToolUse: [(context) => console.log(context.call.function.name, context.result.length)],
+  postToolUseFailure: [(context) => console.error(context.call.function.name, context.error)],
+});
+
+const tools = new ToolRegistry(createWorkspaceTools(workspace), hooks);
+```
+
+规矩只有三条：同一事件按登记顺序串行执行；`PreToolUse` 第一个要拦的就结束整条链；Hook 自己抛错只记 `hooks.failureCount`，既不打断工具，也不改工具结果。第一版不读配置文件、不加载外部脚本，Hook 就是进程内的函数（见 [ADR-0020](./docs/adr/0020-tool-hooks-live-in-the-registry.md)）。
 
 ## 核心循环
 
@@ -302,12 +326,13 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-352 个用例，都不需要 API Key、不联网（其中 5 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限）：
+374 个用例，都不需要 API Key、不联网（其中 6 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限、1 条 POSIX 进程组）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、会话生命周期、取消、token 统计、系统提示词动态刷新 |
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
+| `test/tool-hooks.test.mjs` | 工具执行 Hook：三个事件的时机与顺序、前置 Hook 阻止执行、拿到的是副本、Hook 抛错不影响工具结果、九个内置工具全部经过、一次完整 Run 的 Transcript 不变 |
 | `test/workspace.test.mjs` | 工作区外读写（绝对路径、`../`、符号链接）、完整读取、截断、扫描预算、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、工作区外 shell、取消进程树和 Windows taskkill 错误/非零退出/卡住故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
 | `test/model-errors.test.mjs` | 错误分类：配置 / 鉴权 / 404 / 网络 / 流式中断各归哪一类，哪些能重试、哪些一律禁止重放 |

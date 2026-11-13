@@ -5,22 +5,26 @@
  * 区别在哪：崩了，整轮就结束，用户得从头再来；交回一句话，模型下一轮读到它，
  * 就能自己换个路径、换个参数再试 —— 这才是它该有的样子。
  *
- * 文件职责：负责工具查找、注册时体检、参数校验、执行、把失败折成文本。
- * 不负责定义具体工具（那是 `tools/workspace.ts`）、不负责跟模型对话（那是 `core/agent.ts`）。
+ * 文件职责：负责工具查找、注册时体检、参数校验、执行、把失败折成文本，
+ * 以及围着 `tool.run()` 触发三个 Hook 事件（`PreToolUse` / `PostToolUse` / `PostToolUseFailure`）。
+ * 不负责定义具体工具（那是 `tools/workspace.ts`）、不负责跟模型对话（那是 `core/agent.ts`）、
+ * 不负责 Hook 的登记与执行顺序（那是 `core/tool-hooks.ts`）。
  *
  * 内容目录：
  *   - `ToolRegistry`：注册表本体，构造时挡掉重名与不支持的 Schema。
  *   - `ToolRegistry.definitions`：发给模型的那一半，只有说明书，没有执行函数。
- *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本。
+ *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
+ *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
  *   - 内部：`assertSupportedSchema()` 注册时体检、`validateArguments()` 按 Schema 校验参数、
  *     `SUPPORTED_PARAMETER_TYPES` 校验器真正认识的那几种类型。
  *
- * 模块关系：依赖 `protocol/types.ts`（`Tool` / `ToolCall` / `ToolDefinition`）与
- * `protocol/errors.ts`（`describeError`、`ProcessCleanupError`）。
+ * 模块关系：依赖 `protocol/types.ts`（`Tool` / `ToolCall` / `ToolDefinition`）、
+ * `protocol/errors.ts`（`describeError`、`ProcessCleanupError`）与 `core/tool-hooks.ts`（`ToolHooks`）。
  * 由 `cli.ts` 装配、`core/agent.ts` 每轮调用；`test/support/harness.mjs` 也用它搭测试夹具。
  */
 import { describeError, ProcessCleanupError } from "../protocol/errors.ts";
 import type { Tool, ToolCall, ToolDefinition } from "../protocol/types.ts";
+import { ToolHooks } from "./tool-hooks.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
 const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean"]);
@@ -118,11 +122,14 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
 
+  /** 围着工具执行的那三个事件；不传就是空执行器，行为与没有 Hook 时完全一致。 */
+  private readonly hooks: ToolHooks;
+
   /**
    * 装配时就把不合法的工具挡掉：重名会让「按名字找工具」有歧义，
    * 不支持的 Schema 类型会让参数校验静默失效。两者都不该等到模型调用时才暴露。
    */
-  constructor(tools: readonly Tool[]) {
+  constructor(tools: readonly Tool[], hooks: ToolHooks = new ToolHooks()) {
     const seen = new Set<string>();
     for (const tool of tools) {
       if (seen.has(tool.name)) {
@@ -132,6 +139,7 @@ export class ToolRegistry {
       assertSupportedSchema(tool);
     }
     this.tools = tools;
+    this.hooks = hooks;
   }
 
   /** 工具箱成员 definitions（工具说明书）：发给模型的那一半，只有说明书，没有执行函数。 */
@@ -144,6 +152,9 @@ export class ToolRegistry {
    *
    * 普通工具失败折成 ERROR 文本，让模型继续纠正；但进程树清理未确认时，
    * 后代进程可能还在产生副作用，必须抛 ProcessCleanupError 阻断后续工具。
+   *
+   * 这里是**唯一**的执行入口，所以 Hook 也只需要挂在这里：所有工具自动经过它，
+   * 不用逐个工具接线（见 `docs/adr/0020-tool-hooks-live-in-the-registry.md`）。
    */
   async execute(call: ToolCall): Promise<string> {
     const name = call.function.name;
@@ -176,13 +187,27 @@ export class ToolRegistry {
       return `ERROR: invalid arguments: ${problem}`;
     }
 
+    // 参数过关之后才轮到 Hook：它看到的一定是「真实存在、参数合法」的调用，
+    // 也就没有机会把未知工具或缺参数洗成一次执行 —— Hook 不能绕过已有的执行约束。
+    const blocked = await this.hooks.runPreToolUse(call, args);
+    if (blocked !== undefined) {
+      // 中文对照：ERROR: 工具 "{名字}" 被 Hook 拦下：{原因}
+      return `ERROR: tool "${name}" blocked by hook: ${blocked}`;
+    }
+
     try {
-      return await tool.run(args);
+      const result = await tool.run(args);
+      // 先定结果，再通知 Hook：结果已经是不可变的字符串，Hook 只看得见、改不着。
+      await this.hooks.runPostToolUse(call, args, result);
+      return result;
     } catch (error) {
+      // 同样先折文本再通知：失败事件拿到原始错误，但回灌给模型的那句话已经定下来了。
+      // 中文对照：ERROR: {原因}
+      const text = `ERROR: ${describeError(error)}`;
+      await this.hooks.runPostToolUseFailure(call, args, error);
       // 进程树尚可能在运行：这是不可恢复的宿主故障，不能当作普通工具错误继续执行。
       if (error instanceof ProcessCleanupError) throw error;
-      // 中文对照：ERROR: {原因}
-      return `ERROR: ${describeError(error)}`;
+      return text;
     }
   }
 }
