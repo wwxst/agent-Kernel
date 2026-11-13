@@ -2272,7 +2272,7 @@ test("TUI：普通删除多行粘贴占位后保留撤销原文并在历史淘�
     ui.input.write(`\x1b[200~discard-${index}\nbody-${index}\x1b[201~`);
     await tick();
     assert.equal(ui.tui.pastes.size, index + 1, "当前编辑中的粘贴原文必须保留，之前删除的原文仍可撤销");
-    const placeholder = ui.tui.pastes.keys().next().value;
+    const placeholder = [...ui.tui.pastes.keys()].at(-1);
     ui.input.write("\x7f".repeat(placeholder.length));
     await tick();
     assert.equal(ui.tui.pastes.size, index + 1, "Backspace 删除后仍须支持 Ctrl+_ 撤销");
