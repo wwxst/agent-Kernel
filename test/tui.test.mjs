@@ -2234,7 +2234,7 @@ test("TUI：撤销删除多行粘贴提示后仍能恢复原文", async (t) => {
   assert.equal(await pending, "first\nsecond");
 });
 
-test("TUI：readline kill ring 淘汰剪切内容后释放粘贴原文", async (t) => {
+test("TUI：kill ring 淘汰后保留可撤销原文，历史淘汰后释放", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2262,7 +2262,7 @@ test("TUI：readline kill ring 淘汰剪切内容后释放粘贴原文", async (
   assert.equal(await pending, "keep");
 });
 
-test("TUI：普通删除多行粘贴占位后立即释放原文", async (t) => {
+test("TUI：普通删除多行粘贴占位后保留撤销原文并在历史淘汰后释放", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2271,11 +2271,11 @@ test("TUI：普通删除多行粘贴占位后立即释放原文", async (t) => {
   for (let index = 0; index < 3; index++) {
     ui.input.write(`\x1b[200~discard-${index}\nbody-${index}\x1b[201~`);
     await tick();
-    assert.equal(ui.tui.pastes.size, 1, "当前编辑中的粘贴原文必须保留");
+    assert.equal(ui.tui.pastes.size, index + 1, "当前编辑中的粘贴原文必须保留，之前删除的原文仍可撤销");
     const placeholder = ui.tui.pastes.keys().next().value;
     ui.input.write("\x7f".repeat(placeholder.length));
     await tick();
-    assert.equal(ui.tui.pastes.size, 1, "Backspace 删除后仍须支持 Ctrl+_ 撤销");
+    assert.equal(ui.tui.pastes.size, index + 1, "Backspace 删除后仍须支持 Ctrl+_ 撤销");
   }
 
   ui.input.write("x".repeat(2_048));
