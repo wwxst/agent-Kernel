@@ -22,6 +22,7 @@ import { test } from "node:test";
 import { MAX_LOG_FIELD_CHARS, createToolLogHooks } from "../src/core/tool-log.ts";
 import { ToolHooks } from "../src/core/tool-hooks.ts";
 import { ToolRegistry } from "../src/core/tool-registry.ts";
+import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import { echoTool, withWorkspace } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */
@@ -137,6 +138,22 @@ test("日志写不进去：工具结果不变，只往 stderr 提醒一次", asy
 
     assert.equal(warnings.length, 1, "同一个问题不该每次调用都刷一遍");
     assert.match(warnings[0], /^\[tool-log\] cannot write /);
+  });
+});
+
+test("shell 非零退出记为失败：和 CLI / TUI 用同一套判断", async () => {
+  await withWorkspace(async (dir) => {
+    const file = path.join(dir, "calls.jsonl");
+    const registry = new ToolRegistry(createWorkspaceTools(new Workspace({ root: dir })), logHooks(file));
+
+    // shell 不抛异常，它用第一行的退出码报告失败 —— 所以「成功与否」不能只看有没有抛错。
+    assert.equal((await registry.execute(call("shell", { command: "exit 3" }))).split("\n")[0], "exit 3");
+    assert.equal((await registry.execute(call("shell", { command: "echo ok" }))).split("\n")[0], "exit 0");
+
+    assert.deepEqual((await readLog(file)).map((record) => [record.tool, record.ok]), [
+      ["shell", false],
+      ["shell", true],
+    ]);
   });
 });
 

@@ -132,7 +132,11 @@ const tools = new ToolRegistry(createWorkspaceTools(workspace), hooks);
 {"ts":1794532936268,"tool":"read","id":"chatcmpl-tool-9267…","ok":false,"args":"{\"path\":\"missing.txt\"}","detail":"ENOENT: no such file or directory…"}
 ```
 
-成功和失败都记，字段一样（`ts` / `tool` / `id` / `ok` / `args` / `detail`），`args` 与 `detail` 各自最多 2000 字符，超出会写明截掉多少。写不进去时只在 stderr 提醒一次，工具照常执行。**已知缺口**：被前置 Hook 拦下的调用不会留记录 —— 它没有执行，也就没有结果；要审计「谁想跑但被拦了」，得让前置 Hook 自己写。
+成功和失败都记，字段一样（`ts` / `tool` / `id` / `ok` / `args` / `detail`）。`ok` 的口径和 CLI / TUI 标 ✗ 一致：`shell` 非零退出、超时、被取消都算失败，不是只看有没有抛异常。`args` 与 `detail` 各自最多 2000 字符，超出会写明截掉多少。写不进去时只在 stderr 提醒一次，工具照常执行。
+
+> **日志里会有敏感内容，请自己保管好。** `args` 和 `detail` 存的是原文：`write` 写进去的文件正文、`shell` 的命令行（可能带 token 或密码）、`read` 读到的文件内容都会记下来，**不做脱敏**。别把它放在会被提交进仓库、同步到网盘或分享出去的位置，用完按需删除。它的信任级别和 Transcript 一样。
+
+**已知缺口**：被前置 Hook 拦下的调用不会留记录 —— 它没有执行，也就没有结果；要审计「谁想跑但被拦了」，得让前置 Hook 自己写。
 
 ## 核心循环
 
@@ -319,7 +323,7 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 | `MAX_TOTAL_TOKENS` | `500000` | 单次 Run 的累计 token 预算（软上限：到线后不再发请求，已发生的费用照记）；`0` 表示不限制 |
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应最多生成多少 token |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条命令超时 |
-| `AGENT_TOOL_LOG` | 未启用 | 设为文件路径时，每次工具调用追加一行 JSON 日志（成功与失败都记）；不设则完全不写。写不进去只在 stderr 提醒一次，不影响工具执行 |
+| `AGENT_TOOL_LOG` | 未启用 | 设为文件路径时，每次工具调用追加一行 JSON 日志（成功与失败都记）；不设则完全不写。写不进去只在 stderr 提醒一次，不影响工具执行。**日志含参数与结果原文，可能包含敏感内容**，见上文提醒 |
 | `--cwd` | 当前目录，其次 `WORKDIR` | CLI 参数（不是环境变量）：把默认目录指向另一个目录，等于先 `cd` 过去再启动；优先于 `WORKDIR`，目录不存在时启动前就报错 |
 
 ### 模型连接与错误提示
@@ -336,14 +340,14 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-380 个用例，都不需要 API Key、不联网（其中 6 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限、1 条 POSIX 进程组）：
+381 个用例，都不需要 API Key、不联网（其中 6 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限、1 条 POSIX 进程组）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、会话生命周期、取消、token 统计、系统提示词动态刷新 |
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
 | `test/tool-hooks.test.mjs` | 工具执行 Hook：三个事件的时机与顺序、前置 Hook 阻止执行、拿到的是副本、Hook 抛错不影响工具结果、九个内置工具全部经过、一次完整 Run 的 Transcript 不变 |
-| `test/tool-log.test.mjs` | 工具调用日志：成功与失败各一行、字段与顺序、超长截断、父目录自动创建、写失败只提醒一次、被拦下的调用不留记录 |
+| `test/tool-log.test.mjs` | 工具调用日志：成功与失败各一行（`shell` 非零退出算失败）、字段与顺序、超长截断、父目录自动创建、写失败只提醒一次、被拦下的调用不留记录 |
 | `test/workspace.test.mjs` | 工作区外读写（绝对路径、`../`、符号链接）、完整读取、截断、扫描预算、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、工作区外 shell、取消进程树和 Windows taskkill 错误/非零退出/卡住故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |
 | `test/model-errors.test.mjs` | 错误分类：配置 / 鉴权 / 404 / 网络 / 流式中断各归哪一类，哪些能重试、哪些一律禁止重放 |
