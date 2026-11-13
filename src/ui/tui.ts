@@ -62,8 +62,10 @@ const LOG_TOP = 4;
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
 
-/** Node readline 的 undo 栈最多 2048 项；redo 可承接同样数量，合计最多 4096 项。 */
-const READLINE_UNDO_REDO_HISTORY_CAPACITY = 4_096;
+/** 不依赖 readline 私有撤销栈；会话内保留的多行粘贴原文最多占 32 MiB（按 UTF-16 码元估算）。 */
+const MAX_PASTE_HISTORY_BYTES = 32 * 1024 * 1024;
+/** 防止大量极短粘贴造成 Map 元数据无限增长。 */
+const MAX_PASTE_HISTORY_ENTRIES = 256;
 
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
@@ -431,25 +433,9 @@ export class Tui {
   /** Ctrl+X 前缀的按下时间：超过两秒就不再认后面的 Ctrl+E。 */
   private ctrlXPendingAt = 0;
 
-  /** 每段多行粘贴各用一个占位提示，插入与普通文字共用 readline 的光标语义。 */
+  /** 每段多行粘贴用唯一占位；原文保留到 TUI 关闭，避免猜测 readline 私有历史何时淘汰。 */
   private readonly pastes = new Map<string, string>();
-
-  /** 被 readline 撤销 / 重做历史引用的提示；值是最近一次移除时的编辑序号。 */
-  private readonly undoablePastes = new Map<string, number>();
-
-  /** 被 readline kill ring 引用的提示；值是最近一次剪切时的 kill 序号。 */
-  private readonly yankablePastes = new Map<string, number>();
-
-  private editGeneration = 0;
-
-  private killRingGeneration = 0;
-
-  /** 上一次 readline keypress 处理后的编辑内容与光标，用来识别 kill 命令。 */
-  private lastEditorLine = "";
-  private lastEditorCursor = 0;
-
-  /** readline 的 kill ring 只在新内容不同于顶部时入栈。 */
-  private lastKillText?: string;
+  private pasteHistoryBytes = 0;
 
   /** 只增不减；即使旧提示已提交但仍在 kill ring，也不会复用它的身份。 */
   private nextPasteId = 1;
@@ -559,7 +545,6 @@ export class Tui {
     let pasteBuffer = "";
     let partial = "";
     let partialTimer: NodeJS.Timeout | undefined;
-    let pasteReadline: Interface | undefined;
     const pasteEmit = (event: string, ...args: unknown[]): boolean => {
       if (event === "data" && args[0] !== undefined) {
         if (partialTimer !== undefined) clearTimeout(partialTimer);
@@ -593,8 +578,21 @@ export class Tui {
               const base = this.pastePlaceholder(text);
               const id = this.nextPasteId++;
               const placeholder = `${base.slice(0, -1)} #${id}]`;
-              this.pastes.set(placeholder, text);
-              out += placeholder;
+              // 保留撤销 / 重做 / kill ring 所需的全部原文，但用会话级硬上限约束内存。
+              const retainedBytes = text.length * 2;
+              if (this.pastes.size >= MAX_PASTE_HISTORY_ENTRIES ||
+                  this.pasteHistoryBytes + retainedBytes > MAX_PASTE_HISTORY_BYTES) {
+                this.pushLog(this.uiText(
+                  "Paste not inserted: this session reached its multiline paste history limit (32 MiB or 256 pastes). Close and reopen the TUI to reset it.",
+                  "粘贴内容未插入：本次会话的多行粘贴历史已达到上限（32 MiB 或 256 段）。关闭并重新打开界面后可继续粘贴。",
+                ), "warning");
+                this.inputDirty = true;
+                if (this.layout) this.renderNow(true);
+              } else {
+                this.pastes.set(placeholder, text);
+                this.pasteHistoryBytes += retainedBytes;
+                out += placeholder;
+              }
             } else {
               out += text;
             }
@@ -626,19 +624,14 @@ export class Tui {
         }
         args[0] = out;
       }
-      const emitted = originalEmit(event, ...args);
-      // Readline has now consumed this whole data chunk, including any text after an Enter.
-      // Keep only paste bodies whose placeholders are still in the editable buffer.
-      if (event === "data" && pasteReadline !== undefined) this.prunePastes(pasteReadline.line);
-      return emitted;
+      return originalEmit(event, ...args);
     };
     pasteSource.emit = pasteEmit;
     this.restoreInput = () => {
       if (partialTimer !== undefined) clearTimeout(partialTimer);
       if (pasteSource.emit === pasteEmit) pasteSource.emit = savedEmit;
       this.pastes.clear();
-      this.undoablePastes.clear();
-      this.yankablePastes.clear();
+      this.pasteHistoryBytes = 0;
     };
 
     this.recomputeGeometry();
@@ -683,9 +676,7 @@ export class Tui {
       options.input.pipe(this.mouseInput);
     }
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
-    pasteReadline = this.rl;
-    this.lastEditorLine = this.rl.line;
-    this.lastEditorCursor = this.rl.cursor;
+    // 粘贴原文映射是会话级归档，readline 的 undo / redo / kill ring 可独立恢复占位符。
     // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
     (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
@@ -712,27 +703,6 @@ export class Tui {
     this.onKeypress = (_text, key) => {
       if (this.closed) return;
       const name = key?.name?.toLowerCase();
-      const previousLine = this.lastEditorLine;
-      const previousCursor = this.lastEditorCursor;
-      const currentLine = this.rl.line;
-      const currentCursor = this.rl.cursor;
-      this.trackEditorChange(previousLine, currentLine);
-
-      // readline 的 kill ring 跨 Enter 保留（最多 32 项），重复剪切顶部相同内容不会入栈。
-      const deletesLeft =
-        (key?.ctrl && !key?.shift && name === "u") ||
-        (key?.ctrl && key?.shift && name === "backspace");
-      const deletesRight =
-        (key?.ctrl && !key?.shift && name === "k") ||
-        (key?.ctrl && key?.shift && name === "delete");
-      if (deletesLeft || deletesRight) {
-        const killed = deletesLeft
-          ? previousLine.slice(0, previousCursor)
-          : previousLine.slice(previousCursor);
-        this.trackKillRingChange(previousLine, currentLine, killed);
-      }
-      this.lastEditorLine = currentLine;
-      this.lastEditorCursor = currentCursor;
 
       // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
       if (this.transcriptMode && name === "escape") {
@@ -1019,18 +989,12 @@ export class Tui {
 
   /** 显式恢复 readline 编辑缓存（不创建历史记录）。 */
   private setEditorLine(text: string, cursor = text.length): void {
-    const previousLine = this.rl.line;
     this.rl.write(null, { ctrl: true, name: "a" });
-    const killedLine = this.rl.line;
     this.rl.write(null, { ctrl: true, name: "k" });
-    this.trackKillRingChange(killedLine, this.rl.line, killedLine);
     this.rl.write(text);
     for (let i = 0; i < [...text.slice(cursor)].length; i++) {
       this.rl.write(null, { name: "left" });
     }
-    this.trackEditorChange(previousLine, this.rl.line);
-    this.lastEditorLine = this.rl.line;
-    this.lastEditorCursor = this.rl.cursor;
     this.inputDirty = true;
   }
 
@@ -1972,10 +1936,6 @@ export class Tui {
 
   /** 提交一行；占位提示换成多行粘贴的原文。 */
   private submitLine(rawSubmitted: string): void {
-    // readline 在提交一行时会清空 undo / redo 栈；同时同步输入快照，避免 Enter 后误记一次删除。
-    this.undoablePastes.clear();
-    this.lastEditorLine = this.rl.line;
-    this.lastEditorCursor = this.rl.cursor;
     const line = rawSubmitted.split(NEWLINE_MARK).join("\n");
     // Enter 提交当前高亮项：`/` 是整行替换并执行，`@` 只把路径补进输入框、不提交——
     // 用户通常还要接着写「这个文件里的 X 怎么改」。
@@ -2004,13 +1964,6 @@ export class Tui {
       const history = (this.rl as Interface & { history: string[] }).history;
       if (history[0] === rawSubmitted) history[0] = payload.split("\n").join(NEWLINE_MARK);
     }
-    // 同一 data 块可能还带着下一条粘贴消息，只移除本次实际消费的提示。
-    for (const placeholder of this.pastes.keys()) {
-      // readline 的 kill ring 跨 Enter 保留；已提交但仍可 Ctrl+Y 恢复的提示不能丢映射。
-      if (submitted.includes(placeholder) && !this.yankablePastes.has(placeholder)) {
-        this.pastes.delete(placeholder);
-      }
-    }
     // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
     if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
@@ -2019,49 +1972,6 @@ export class Tui {
       this.inputDirty = true;
     } else {
       resolve(payload);
-    }
-  }
-
-  /** 记录编辑前后变化；被删除的提示仍可能存在于 readline 的撤销 / 重做快照中。 */
-  private trackEditorChange(previousLine: string, currentLine: string): void {
-    if (previousLine === currentLine) return;
-    this.editGeneration++;
-    for (const placeholder of this.pastes.keys()) {
-      if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
-        this.undoablePastes.set(placeholder, this.editGeneration);
-      }
-    }
-  }
-
-  /** 记录 readline 新增的 kill ring 项；相同顶部内容会被 Node 去重，不推进淘汰序号。 */
-  private trackKillRingChange(previousLine: string, currentLine: string, killed: string): void {
-    if (previousLine === currentLine || killed === "" || killed === this.lastKillText) return;
-    this.lastKillText = killed;
-    this.killRingGeneration++;
-    for (const placeholder of this.pastes.keys()) {
-      if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
-        this.yankablePastes.set(placeholder, this.killRingGeneration);
-      }
-    }
-  }
-
-  /** 回收当前缓冲区与 readline 的 undo / redo 历史都不再引用的原文。 */
-  private prunePastes(currentLine: string): void {
-    for (const placeholder of this.pastes.keys()) {
-      if (currentLine.includes(placeholder)) {
-        this.undoablePastes.delete(placeholder);
-        continue;
-      }
-      const removedAt = this.undoablePastes.get(placeholder);
-      const canUndo = removedAt !== undefined &&
-        this.editGeneration - removedAt < READLINE_UNDO_REDO_HISTORY_CAPACITY;
-      const killedAt = this.yankablePastes.get(placeholder);
-      const canYank = killedAt !== undefined && this.killRingGeneration - killedAt < 32;
-      if (!canUndo && !canYank) {
-        this.pastes.delete(placeholder);
-        this.undoablePastes.delete(placeholder);
-        this.yankablePastes.delete(placeholder);
-      }
     }
   }
 
@@ -2118,9 +2028,8 @@ export class Tui {
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }
-        // 不清空旧映射：readline 的 undo / redo 与 kill ring 仍可能恢复旧占位符。
         // 每段粘贴都有唯一编号，编辑器正文里的普通提示样式文字不会与之冲突；
-        // 后续由 prunePastes 按 readline 历史有效期回收原文。
+        // 会话级归档继续保留旧映射，readline 的 undo / redo 与 kill ring 可恢复原占位符。
       } catch (error) {
         this.pushLog(this.uiText(
           `could not read the edited text: ${describeError(error)}`,
