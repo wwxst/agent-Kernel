@@ -444,8 +444,12 @@ export class Tui {
 
   private killRingGeneration = 0;
 
-  /** 上一次 readline keypress 处理后的编辑内容，用来识别 kill 命令。 */
+  /** 上一次 readline keypress 处理后的编辑内容与光标，用来识别 kill 命令。 */
   private lastEditorLine = "";
+  private lastEditorCursor = 0;
+
+  /** readline 的 kill ring 只在新内容不同于顶部时入栈。 */
+  private lastKillText?: string;
 
   /** 只增不减；即使旧提示已提交但仍在 kill ring，也不会复用它的身份。 */
   private nextPasteId = 1;
@@ -681,6 +685,7 @@ export class Tui {
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
     pasteReadline = this.rl;
     this.lastEditorLine = this.rl.line;
+    this.lastEditorCursor = this.rl.cursor;
     // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
     (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
@@ -708,15 +713,26 @@ export class Tui {
       if (this.closed) return;
       const name = key?.name?.toLowerCase();
       const previousLine = this.lastEditorLine;
+      const previousCursor = this.lastEditorCursor;
       const currentLine = this.rl.line;
+      const currentCursor = this.rl.cursor;
       this.trackEditorChange(previousLine, currentLine);
-      this.lastEditorLine = currentLine;
 
-      // readline 的 kill ring 跨 Enter 保留（最多 32 项），与提交时清空的 undo/redo 栈分开跟踪。
-      const isKillCommand =
-        (key?.ctrl && !key?.shift && (name === "u" || name === "k")) ||
-        (key?.ctrl && key?.shift && (name === "backspace" || name === "delete"));
-      if (isKillCommand) this.trackKillRingChange(previousLine, currentLine);
+      // readline 的 kill ring 跨 Enter 保留（最多 32 项），重复剪切顶部相同内容不会入栈。
+      const deletesLeft =
+        (key?.ctrl && !key?.shift && name === "u") ||
+        (key?.ctrl && key?.shift && name === "backspace");
+      const deletesRight =
+        (key?.ctrl && !key?.shift && name === "k") ||
+        (key?.ctrl && key?.shift && name === "delete");
+      if (deletesLeft || deletesRight) {
+        const killed = deletesLeft
+          ? previousLine.slice(0, previousCursor)
+          : previousLine.slice(previousCursor);
+        this.trackKillRingChange(previousLine, currentLine, killed);
+      }
+      this.lastEditorLine = currentLine;
+      this.lastEditorCursor = currentCursor;
 
       // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
       if (this.transcriptMode && name === "escape") {
@@ -1007,13 +1023,14 @@ export class Tui {
     this.rl.write(null, { ctrl: true, name: "a" });
     const killedLine = this.rl.line;
     this.rl.write(null, { ctrl: true, name: "k" });
-    this.trackKillRingChange(killedLine, this.rl.line);
+    this.trackKillRingChange(killedLine, this.rl.line, killedLine);
     this.rl.write(text);
     for (let i = 0; i < [...text.slice(cursor)].length; i++) {
       this.rl.write(null, { name: "left" });
     }
     this.trackEditorChange(previousLine, this.rl.line);
     this.lastEditorLine = this.rl.line;
+    this.lastEditorCursor = this.rl.cursor;
     this.inputDirty = true;
   }
 
@@ -1958,6 +1975,7 @@ export class Tui {
     // readline 在提交一行时会清空 undo / redo 栈；同时同步输入快照，避免 Enter 后误记一次删除。
     this.undoablePastes.clear();
     this.lastEditorLine = this.rl.line;
+    this.lastEditorCursor = this.rl.cursor;
     const line = rawSubmitted.split(NEWLINE_MARK).join("\n");
     // Enter 提交当前高亮项：`/` 是整行替换并执行，`@` 只把路径补进输入框、不提交——
     // 用户通常还要接着写「这个文件里的 X 怎么改」。
@@ -2015,9 +2033,10 @@ export class Tui {
     }
   }
 
-  /** 记录 readline 新增的 kill ring 项，使程序化编辑也保留可 Ctrl+Y 恢复的原文。 */
-  private trackKillRingChange(previousLine: string, currentLine: string): void {
-    if (previousLine === currentLine) return;
+  /** 记录 readline 新增的 kill ring 项；相同顶部内容会被 Node 去重，不推进淘汰序号。 */
+  private trackKillRingChange(previousLine: string, currentLine: string, killed: string): void {
+    if (previousLine === currentLine || killed === "" || killed === this.lastKillText) return;
+    this.lastKillText = killed;
     this.killRingGeneration++;
     for (const placeholder of this.pastes.keys()) {
       if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {

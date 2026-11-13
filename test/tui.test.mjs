@@ -2222,6 +2222,27 @@ test("TUI：提交其他任务后 Ctrl+Y 仍能恢复上一条被剪切的粘贴
   assert.equal(await next, "first\nsecond");
 });
 
+test("TUI：重复剪切相同内容不会提前淘汰仍可恢复的粘贴", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const first = ui.tui.readLine();
+  ui.input.write("\\x1b[200~first\\nsecond\\x1b[201~");
+  await tick();
+  ui.input.write("\\x15");
+  await tick();
+  ui.input.write("\\x19\\x15".repeat(32));
+  await tick();
+  assert.equal(ui.tui.pastes.size, 1, "重复 kill 不会让 Node 的 32 项 kill ring 提前淘汰原文");
+
+  ui.input.write("keep\\r");
+  assert.equal(await first, "keep");
+  const next = ui.tui.readLine();
+  ui.input.write("\\x19\\r");
+  assert.equal(await next, "first\\nsecond");
+});
+
 test("TUI：已提交的剪切占位不会被后续同长度粘贴复用", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
