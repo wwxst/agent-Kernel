@@ -806,7 +806,7 @@ test("CLI TodoWrite：模型拿到结构化计划工具，更新结果进入下�
       assert.equal(declared?.function.parameters.properties.todos.type, "array");
       const result = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.equal(result.tool_call_id, "plan-1");
-      assert.match(result.content, /Todo list \\(1\\/2 done\\)/);
+      assert.ok(result.content.startsWith("Todo list (1/2 done):"));
       assert.match(mock.requests[0].messages[0].content, /For multi-step tasks, call todo_write/);
     } finally {
       await mock.close();

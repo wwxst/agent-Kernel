@@ -260,7 +260,7 @@ test("注册：array 缺 items 或对象必填字段未声明时拒绝", () => {
   })]), /required parameter "cfg.missing" is not declared/);
   assert.throws(() => makeRegistry([schemaTool({
     type: "object", properties: { tags: { type: "array", items: { type: "null" } } },
-  })]), /parameter "tags\\[\\]" has unsupported type "null"/);
+  })]), /parameter "tags\[\]" has unsupported type "null"/);
 });
 
 test("execute：嵌套 array/object 必填及字段类型校验", async () => {
@@ -274,11 +274,11 @@ test("execute：嵌套 array/object 必填及字段类型校验", async () => {
     run: async (args) => { seen.push(args); return "ok"; },
   }]);
   assert.match(await registry.execute(call("batch", '{"items":{}}')), /argument "items" must be an array/);
-  assert.match(await registry.execute(call("batch", '{"items":[null]}')), /argument "items\\[0\\]" must be an object/);
+  assert.match(await registry.execute(call("batch", '{"items":[null]}')), /argument "items\[0\]" must be an object/);
   assert.match(await registry.execute(call("batch", '{"items":[{"label":"a"}]}')),
-    /missing required argument "items\\[0\\].status"/);
+    /missing required argument "items\[0\].status"/);
   assert.match(await registry.execute(call("batch", '{"items":[{"label":1,"status":"done"}]}')),
-    /argument "items\\[0\\].label" must be a string/);
+    /argument "items\[0\].label" must be a string/);
   assert.equal(seen.length, 0);
   assert.equal(await registry.execute(call("batch", '{"items":[{"label":"a","status":"done"}]}')), "ok");
   assert.equal(seen.length, 1);
