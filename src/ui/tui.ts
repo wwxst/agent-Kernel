@@ -62,6 +62,9 @@ const LOG_TOP = 4;
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
 
+/** readline 的 kill ring 最多保留 32 项；对应粘贴原文在可 yank 期间也必须保留。 */
+const READLINE_KILL_RING_CAPACITY = 32;
+
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
 
@@ -431,6 +434,14 @@ export class Tui {
   /** 每段多行粘贴各用一个占位提示，插入与普通文字共用 readline 的光标语义。 */
   private readonly pastes = new Map<string, string>();
 
+  /** 被 readline 剪切、仍可能通过 Ctrl+Y 恢复的提示；值是最近一次 kill 的序号。 */
+  private readonly recoverablePastes = new Map<string, number>();
+
+  private killRingGeneration = 0;
+
+  /** 上一次 readline keypress 处理后的编辑内容，用来识别 kill 命令。 */
+  private lastEditorLine = "";
+
   /** 只增不减，消费部分提示后也不会复用仍在编辑中的身份。 */
   private nextPasteId = 1;
 
@@ -617,6 +628,7 @@ export class Tui {
       if (partialTimer !== undefined) clearTimeout(partialTimer);
       if (pasteSource.emit === pasteEmit) pasteSource.emit = savedEmit;
       this.pastes.clear();
+      this.recoverablePastes.clear();
     };
 
     this.recomputeGeometry();
@@ -662,6 +674,7 @@ export class Tui {
     }
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
     pasteReadline = this.rl;
+    this.lastEditorLine = this.rl.line;
     // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
     (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
@@ -688,6 +701,20 @@ export class Tui {
     this.onKeypress = (_text, key) => {
       if (this.closed) return;
       const name = key?.name?.toLowerCase();
+      const previousLine = this.lastEditorLine;
+      const currentLine = this.rl.line;
+      const isKillCommand =
+        (key?.ctrl && !key?.shift && (name === "u" || name === "k")) ||
+        (key?.ctrl && key?.shift && (name === "backspace" || name === "delete"));
+      if (isKillCommand && previousLine !== currentLine) {
+        this.killRingGeneration++;
+        for (const placeholder of this.pastes.keys()) {
+          if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
+            this.recoverablePastes.set(placeholder, this.killRingGeneration);
+          }
+        }
+      }
+      this.lastEditorLine = currentLine;
 
       // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
       if (this.transcriptMode && name === "escape") {
@@ -980,6 +1007,7 @@ export class Tui {
     for (let i = 0; i < [...text.slice(cursor)].length; i++) {
       this.rl.write(null, { name: "left" });
     }
+    this.lastEditorLine = this.rl.line;
     this.inputDirty = true;
   }
 
@@ -1951,7 +1979,9 @@ export class Tui {
     }
     // 同一 data 块可能还带着下一条粘贴消息，只移除本次实际消费的提示。
     for (const placeholder of this.pastes.keys()) {
-      if (submitted.includes(placeholder)) this.pastes.delete(placeholder);
+      if (submitted.includes(placeholder) && !this.recoverablePastes.has(placeholder)) {
+        this.pastes.delete(placeholder);
+      }
     }
     // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
     if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
@@ -1964,10 +1994,16 @@ export class Tui {
     }
   }
 
-  /** 删除已从 readline 编辑缓冲区移除的提示，避免丢弃的大段粘贴原文长期占用内存。 */
+  /** 回收已删除的粘贴；kill ring 中仍可 Ctrl+Y 恢复的内容最多保留 32 次 kill。 */
   private prunePastes(currentLine: string): void {
     for (const placeholder of this.pastes.keys()) {
-      if (!currentLine.includes(placeholder)) this.pastes.delete(placeholder);
+      const killedAt = this.recoverablePastes.get(placeholder);
+      const canYank = killedAt !== undefined &&
+        this.killRingGeneration - killedAt < READLINE_KILL_RING_CAPACITY;
+      if (!currentLine.includes(placeholder) && !canYank) {
+        this.pastes.delete(placeholder);
+        this.recoverablePastes.delete(placeholder);
+      }
     }
   }
 
@@ -2024,7 +2060,7 @@ export class Tui {
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }
-        this.pastes.clear();
+        this.prunePastes(this.rl.line);
       } catch (error) {
         this.pushLog(this.uiText(
           `could not read the edited text: ${describeError(error)}`,

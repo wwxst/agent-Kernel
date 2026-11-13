@@ -2174,8 +2174,60 @@ test("TUI：提交后继续编辑下一条粘贴，新增提示不会覆盖已�
   assert.equal(await next, "third\nfourthfifth\nsixth");
 });
 
-test("TUI：删除多行粘贴占位后立即释放原文", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true });
+test("TUI：readline 剪切后 Ctrl+Y 仍能恢复多行粘贴原文", async (t) => {
+  const scenarios = [
+    { name: "Ctrl+U", cut: "\x15" },
+    { name: "Ctrl+K", cut: "\x01\x0b" },
+    { name: "部分 Ctrl+K", cut: `\x01${"\x06".repeat(8)}\x0b` },
+  ];
+
+  for (const scenario of scenarios) {
+    const ui = makeTui({ interactive: true, tty: true, language: "en" });
+    try {
+      ui.tui.start();
+      const pending = ui.tui.readLine();
+      ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+      await tick();
+      assert.equal(ui.tui.pastes.size, 1);
+
+      ui.input.write(scenario.cut);
+      await tick();
+      assert.equal(ui.tui.pastes.size, 1, `${scenario.name} 剪切后仍须保留可恢复的原文`);
+
+      ui.input.write("\x19");
+      await tick();
+      ui.input.write("\r");
+      assert.equal(await pending, "first\nsecond", scenario.name);
+    } finally {
+      ui.cleanup();
+    }
+  }
+});
+
+test("TUI：readline kill ring 淘汰剪切内容后释放粘贴原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x15");
+  await tick();
+  assert.equal(ui.tui.pastes.size, 1, "Ctrl+U 剪切内容仍可 Ctrl+Y 恢复");
+
+  for (let index = 0; index < 32; index++) {
+    ui.input.write(`discard-${index}\x15`);
+    await tick();
+  }
+  assert.equal(ui.tui.pastes.size, 0, "kill ring 淘汰旧占位后原文也必须释放");
+
+  ui.input.write("keep\r");
+  assert.equal(await pending, "keep");
+});
+
+test("TUI：普通删除多行粘贴占位后立即释放原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
   ui.tui.start();
   const pending = ui.tui.readLine();
@@ -2184,9 +2236,10 @@ test("TUI：删除多行粘贴占位后立即释放原文", async (t) => {
     ui.input.write(`\x1b[200~discard-${index}\nbody-${index}\x1b[201~`);
     await tick();
     assert.equal(ui.tui.pastes.size, 1, "当前编辑中的粘贴原文必须保留");
-    ui.input.write("\x15");
+    const placeholder = ui.tui.pastes.keys().next().value;
+    ui.input.write("\x7f".repeat(placeholder.length));
     await tick();
-    assert.equal(ui.tui.pastes.size, 0, "删除占位后必须释放对应原文");
+    assert.equal(ui.tui.pastes.size, 0, "Backspace 删除占位后必须释放对应原文");
   }
 
   ui.input.write("keep\r");
