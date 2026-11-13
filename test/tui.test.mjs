@@ -2270,9 +2270,11 @@ test("TUI：撤销与重做 2048 次后仍能恢复多行粘贴原文", async (t
   await tick();
   ui.input.write("\x7f");
   await tick();
+  ui.input.write("x");
+  await tick();
   ui.input.write("\x1f\x1e".repeat(2_048));
   await tick();
-  ui.input.write("\x1f\r");
+  ui.input.write("\x1f\x1f\r");
   assert.equal(await pending, "first\nsecond");
 });
 
