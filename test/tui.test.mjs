@@ -2252,7 +2252,7 @@ test("TUI：kill ring 淘汰后保留可撤销原文，历史淘汰后释放", a
   }
   assert.equal(ui.tui.pastes.size, 1, "kill ring 淘汰后，undo 栈仍可能恢复旧内容");
 
-  ui.input.write("x".repeat(2_048));
+  ui.input.write("x\x7f".repeat(1_024));
   await tick();
   assert.equal(ui.tui.pastes.size, 0, "readline undo 栈淘汰旧快照后必须释放原文");
 
@@ -2278,7 +2278,7 @@ test("TUI：普通删除多行粘贴占位后保留撤销原文并在历史淘�
     assert.equal(ui.tui.pastes.size, index + 1, "Backspace 删除后仍须支持 Ctrl+_ 撤销");
   }
 
-  ui.input.write("x".repeat(2_048));
+  ui.input.write("x\x7f".repeat(1_024));
   await tick();
   assert.equal(ui.tui.pastes.size, 0, "readline undo 栈淘汰快照后必须释放对应原文");
   ui.input.write("\x15");
