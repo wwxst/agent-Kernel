@@ -2204,6 +2204,24 @@ test("TUI：readline 剪切后 Ctrl+Y 仍能恢复多行粘贴原文", async (t)
   }
 });
 
+test("TUI：提交其他任务后 Ctrl+Y 仍能恢复上一条被剪切的粘贴原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x15");
+  await tick();
+  ui.input.write("keep\r");
+  assert.equal(await first, "keep");
+
+  const next = ui.tui.readLine();
+  ui.input.write("\x19\r");
+  assert.equal(await next, "first\nsecond");
+});
+
 test("TUI：撤销删除多行粘贴提示后仍能恢复原文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
