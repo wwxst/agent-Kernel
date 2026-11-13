@@ -482,6 +482,9 @@ export class Tui {
   /** 输入行被 readline 写过；下一帧必须强制清掉。 */
   private inputDirty = true;
 
+  /** 同一轮输入事件只安排一次输入区重绘，避免每个 keypress 都整帧刷新。 */
+  private inputChromeScheduled = false;
+
   private renderScheduled = false;
 
   private renderTimer?: NodeJS.Timeout;
@@ -628,7 +631,7 @@ export class Tui {
           "粘贴内容未插入：本次会话的多行粘贴历史已达到上限（32 MiB 或 256 段）。关闭并重新打开界面后可继续粘贴。",
         ), "warning");
         this.inputDirty = true;
-        if (this.layout) this.renderNow(true);
+        if (this.layout && !this.inputChromeScheduled) this.renderNow(true);
       }
       return emitted;
     };
@@ -2445,9 +2448,14 @@ export class Tui {
   }
 
   private scheduleInputChrome(): void {
-    if (!this.layout || !this.promptActive || this.closed) return;
+    if (!this.layout || !this.promptActive || this.closed || this.inputChromeScheduled) return;
+    this.inputChromeScheduled = true;
     setImmediate(() => {
-      if (!this.closed) this.renderNow();
+      try {
+        if (!this.closed) this.renderNow();
+      } finally {
+        this.inputChromeScheduled = false;
+      }
     });
   }
 
