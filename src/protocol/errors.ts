@@ -66,8 +66,8 @@ export class ModelHttpError extends Error {
 
 /** 网络连接失败；与用户取消和无效的 SSE 响应严格区分。 */
 export class ModelConnectionError extends Error {
-  constructor(message: string) {
-    super(message);
+  constructor(message: string, cause?: unknown) {
+    super(message, cause === undefined ? undefined : { cause });
     this.name = "ModelConnectionError";
   }
 }

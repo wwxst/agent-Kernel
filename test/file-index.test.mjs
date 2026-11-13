@@ -9,7 +9,8 @@
  *
  * 内容目录：
  *   - `withDir()`：临时目录 + 前后各清一次缓存，避免用例互相影响。
- *   - 三个用例：跳过 `node_modules` / `.git`；精确匹配与短路径优先；空片段按原顺序取前几个。
+ *   - 文件清单：跳过 `node_modules` / `.git`；缓存区分数量上限，返回副本。
+ *   - 过滤排序：精确匹配与短路径优先；空片段按原顺序取前几个。
  *
  * 模块关系：依赖 `src/ui/file-index.ts` 与 `node:test`，由 `npm test` 启动。
  */
@@ -41,6 +42,24 @@ test("文件索引：列出文件、跳过 node_modules 与 .git", async () => {
 
     const files = listWorkspaceFiles(root);
     assert.deepEqual(files, ["package.json", "src/a.ts"]);
+  });
+});
+
+test("文件索引：同一根目录使用不同上限时各自缓存，互不影响", async () => {
+  await withDir(async (root) => {
+    await writeFile(path.join(root, "a.ts"), "");
+    await writeFile(path.join(root, "b.ts"), "");
+    assert.deepEqual(listWorkspaceFiles(root, 1), ["a.ts"]);
+    assert.deepEqual(listWorkspaceFiles(root, 10), ["a.ts", "b.ts"]);
+    assert.deepEqual(listWorkspaceFiles(root, 0), []);
+  });
+});
+
+test("文件索引：修改返回数组不会污染后续补全缓存", async () => {
+  await withDir(async (root) => {
+    await writeFile(path.join(root, "a.ts"), "");
+    listWorkspaceFiles(root).push("injected.ts");
+    assert.deepEqual(listWorkspaceFiles(root), ["a.ts"]);
   });
 });
 

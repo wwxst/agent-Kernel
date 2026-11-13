@@ -16,6 +16,7 @@
  *     工具事件 `toolCall` / `toolResult` / `recordEditDiff` / `recordImagePreview`；
  *     输入 `readLine`；状态 `setStats` / `setThinking` / `setRetrying`；日志 `logLine` / `logError`。
  *   - `TuiOptions`：输出流、工作区路径、语言、配色、初始任务等构造参数。
+ *   - 多行粘贴归档：唯一占位符、会话级原文映射与 32 MiB / 256 段硬上限。
  *   - `Style` 与四套调色板（深色/浅色 × 全彩/基础），`Glyphs`（unicode / ascii 两套字符）。
  *   - 显示宽度工具：`displayWidth` / `wrapLine` / `clip` / `padRight` / `takeByWidth`，
  *     CJK 与 emoji 按 2 列算，否则中文回复会折行破帧。
@@ -38,6 +39,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
 import { escapeControlCharacters } from "./text.ts";
 import { describeError } from "../protocol/errors.ts";
 import type { AgentSessionStats, AgentStats } from "../core/agent.ts";
@@ -60,6 +62,11 @@ const LOG_TOP = 4;
 
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
+
+/** 不依赖 readline 私有撤销栈；会话内保留的多行粘贴原文最多占 32 MiB（按 UTF-16 码元估算）。 */
+const MAX_PASTE_HISTORY_BYTES = 32 * 1024 * 1024;
+/** 防止大量极短粘贴造成 Map 元数据无限增长。 */
+const MAX_PASTE_HISTORY_ENTRIES = 256;
 
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
@@ -427,10 +434,15 @@ export class Tui {
   /** Ctrl+X 前缀的按下时间：超过两秒就不再认后面的 Ctrl+E。 */
   private ctrlXPendingAt = 0;
 
-  /** 多行粘贴的原文：输入框只显示占位提示，提交时用原文。 */
-  private pasted: string | null = null;
+  /** 每段多行粘贴用唯一占位；原文保留到 TUI 关闭，避免猜测 readline 私有历史何时淘汰。 */
+  private readonly pastes = new Map<string, string>();
+  private pasteHistoryBytes = 0;
 
-  private pastedPlaceholder = "";
+  /** 只增不减；即使旧提示已提交但仍在 kill ring，也不会复用它的身份。 */
+  private nextPasteId = 1;
+
+  /** 关闭时恢复输入流，不能让已关闭的界面继续拦截后续消费者的数据。 */
+  private readonly restoreInput: () => void;
 
   /** 上一帧的换行后总行数；滚动时新输出只增加偏移，不把视口拉回底部。 */
   private lastTotalLines = 0;
@@ -469,6 +481,9 @@ export class Tui {
 
   /** 输入行被 readline 写过；下一帧必须强制清掉。 */
   private inputDirty = true;
+
+  /** 同一轮输入事件只安排一次输入区重绘，避免每个 keypress 都整帧刷新。 */
+  private inputChromeScheduled = false;
 
   private renderScheduled = false;
 
@@ -527,14 +542,32 @@ export class Tui {
     const pasteSource = options.input as NodeJS.ReadableStream & {
       emit: (event: string, ...args: unknown[]) => boolean;
     };
-    const originalEmit = pasteSource.emit.bind(pasteSource);
+    const savedEmit = pasteSource.emit;
+    const originalEmit = savedEmit.bind(pasteSource);
+    const inputDecoder = new StringDecoder("utf8");
     let pasting = false;
     let pasteBuffer = "";
-    pasteSource.emit = (event: string, ...args: unknown[]): boolean => {
+    let partial = "";
+    let partialTimer: NodeJS.Timeout | undefined;
+    const pasteEmit = (event: string, ...args: unknown[]): boolean => {
+      let pasteLimitWarning = false;
       if (event === "data" && args[0] !== undefined) {
+        if (partialTimer !== undefined) clearTimeout(partialTimer);
+        partialTimer = undefined;
+        let data = partial + (Buffer.isBuffer(args[0]) ? inputDecoder.write(args[0]) : String(args[0]));
+        partial = "";
+        // UTF-8 字符与粘贴标记都可能跨块；只暂存最多五个字符的标记前缀。
+        for (let length = Math.min(5, data.length); length > 0; length--) {
+          const suffix = data.slice(-length);
+          if ("\x1b[200~".startsWith(suffix) || "\x1b[201~".startsWith(suffix)) {
+            partial = suffix;
+            data = data.slice(0, -length);
+            break;
+          }
+        }
         // 必须按顺序处理：同一块数据里可能同时有开始和结束标记，
         // 先统一替换标记会把状态弄反（结束标记先把 pasting 置回 false）。
-        const parts = String(args[0]).split(/(\x1b\[20[01]~)/);
+        const parts = data.split(/(\x1b\[20[01]~)/);
         let out = "";
         for (const part of parts) {
           if (part === "\x1b[200~") {
@@ -544,13 +577,22 @@ export class Tui {
           }
           if (part === "\x1b[201~") {
             pasting = false;
-            const text = pasteBuffer;
+            const text = pasteBuffer.replace(/\r\n?/g, "\n");
             pasteBuffer = "";
             if (text.includes("\n")) {
-              this.pasted = text;
-              this.pastedPlaceholder = this.pastePlaceholder(text);
-              const placeholder = this.pastedPlaceholder;
-              setImmediate(() => this.setEditorLine(placeholder, placeholder.length));
+              const base = this.pastePlaceholder(text);
+              const id = this.nextPasteId++;
+              const placeholder = `${base.slice(0, -1)} #${id}]`;
+              // 保留撤销 / 重做 / kill ring 所需的全部原文，但用会话级硬上限约束内存。
+              const retainedBytes = text.length * 2;
+              if (this.pastes.size >= MAX_PASTE_HISTORY_ENTRIES ||
+                  this.pasteHistoryBytes + retainedBytes > MAX_PASTE_HISTORY_BYTES) {
+                pasteLimitWarning = true;
+              } else {
+                this.pastes.set(placeholder, text);
+                this.pasteHistoryBytes += retainedBytes;
+                out += placeholder;
+              }
             } else {
               out += text;
             }
@@ -558,6 +600,15 @@ export class Tui {
           }
           if (pasting) pasteBuffer += part;
           else out += part;
+        }
+        // 单独的 Esc 仍须交给键盘处理；粘贴中则保留残缺标记等下一块补齐。
+        if (partial !== "" && !pasting) {
+          partialTimer = setTimeout(() => {
+            const pending = partial;
+            partial = "";
+            partialTimer = undefined;
+            if (!this.closed) originalEmit("data", pending);
+          }, 80);
         }
         // 换行的三条来源，统一换成占位符（readline 见到它不会当成回车）：
         //   1. Shift+Enter 的 CSI-u 编码：ESC [ 13 ; 2 u
@@ -573,7 +624,23 @@ export class Tui {
         }
         args[0] = out;
       }
-      return originalEmit(event, ...args);
+      const emitted = originalEmit(event, ...args);
+      if (pasteLimitWarning) {
+        this.pushLog(this.uiText(
+          "Paste not inserted: this session reached its multiline paste history limit (32 MiB or 256 pastes). Close and reopen the TUI to reset it.",
+          "粘贴内容未插入：本次会话的多行粘贴历史已达到上限（32 MiB 或 256 段）。关闭并重新打开界面后可继续粘贴。",
+        ), "warning");
+        this.inputDirty = true;
+        if (this.layout && !this.inputChromeScheduled) this.renderNow(true);
+      }
+      return emitted;
+    };
+    pasteSource.emit = pasteEmit;
+    this.restoreInput = () => {
+      if (partialTimer !== undefined) clearTimeout(partialTimer);
+      if (pasteSource.emit === pasteEmit) pasteSource.emit = savedEmit;
+      this.pastes.clear();
+      this.pasteHistoryBytes = 0;
     };
 
     this.recomputeGeometry();
@@ -618,6 +685,7 @@ export class Tui {
       options.input.pipe(this.mouseInput);
     }
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
+    // 粘贴原文映射是会话级归档，readline 的 undo / redo / kill ring 可独立恢复占位符。
     // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
     (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
@@ -1761,7 +1829,9 @@ export class Tui {
       this.renderNow();
       this.moveToInput();
       this.rl.setPrompt("");
-      this.rl.prompt();
+      // A buffered next paste may already be in readline; prompt() resets its cursor to zero.
+      // Preserve the insertion point so later typing appends at the existing cursor.
+      this.rl.prompt(true);
       this.renderNow();
       return answer;
     }
@@ -1799,6 +1869,7 @@ export class Tui {
     }
 
     this.closed = true;
+    this.restoreInput();
     this.resizeAnchor = undefined;
     this.historyTrimmedNotice = false;
     this.controller.signal.removeEventListener("abort", this.onAbort);
@@ -1897,8 +1968,11 @@ export class Tui {
     this.slashDraft = "";
     this.slashDraftCursor = 0;
     // 占位提示对应一段多行粘贴：真正交给模型的是原文。
-    const payload = this.pasted !== null && submitted === this.pastedPlaceholder ? this.pasted : submitted;
-    if (payload === this.pasted) { this.pasted = null; this.pastedPlaceholder = ""; }
+    const payload = this.expandPastes(submitted);
+    if (payload !== submitted) {
+      const history = (this.rl as Interface & { history: string[] }).history;
+      if (history[0] === rawSubmitted) history[0] = payload.split("\n").join(NEWLINE_MARK);
+    }
     // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
     if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
@@ -1908,6 +1982,13 @@ export class Tui {
     } else {
       resolve(payload);
     }
+  }
+
+  /** 一次替换所有提示；回调返回的原文不再参与匹配，避免把粘贴正文里的提示文字也展开。 */
+  private expandPastes(text: string): string {
+    if (this.pastes.size === 0) return text;
+    const pattern = [...this.pastes.keys()].map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    return text.replace(new RegExp(pattern, "g"), (key) => this.pastes.get(key)!);
   }
 
   /**
@@ -1923,7 +2004,7 @@ export class Tui {
       (process.platform === "win32" ? "notepad" : "vi");
     const file = path.join(tmpdir(), `agent-prompt-${process.pid}.md`);
     try {
-      writeFileSync(file, this.rl.line.split(NEWLINE_MARK).join("\n"), "utf8");
+      writeFileSync(file, this.expandPastes(this.rl.line).split(NEWLINE_MARK).join("\n"), "utf8");
     } catch (error) {
       this.pushLog(this.uiText(
         `could not prepare the editor buffer: ${describeError(error)}`,
@@ -1956,6 +2037,8 @@ export class Tui {
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }
+        // 每段粘贴都有唯一编号，编辑器正文里的普通提示样式文字不会与之冲突；
+        // 会话级归档继续保留旧映射，readline 的 undo / redo 与 kill ring 可恢复原占位符。
       } catch (error) {
         this.pushLog(this.uiText(
           `could not read the edited text: ${describeError(error)}`,
@@ -2365,9 +2448,14 @@ export class Tui {
   }
 
   private scheduleInputChrome(): void {
-    if (!this.layout || !this.promptActive || this.closed) return;
+    if (!this.layout || !this.promptActive || this.closed || this.inputChromeScheduled) return;
+    this.inputChromeScheduled = true;
     setImmediate(() => {
-      if (!this.closed) this.renderNow();
+      try {
+        if (!this.closed) this.renderNow();
+      } finally {
+        this.inputChromeScheduled = false;
+      }
     });
   }
 
@@ -2460,7 +2548,13 @@ export class Tui {
 
   private trimLog(): void {
     const overflow = this.log.length - MAX_LOG_LINES;
-    if (overflow > 0) this.log.splice(0, overflow);
+    if (overflow <= 0) return;
+    // printedLines 数的是实际展示行；裁剪还可能把相邻空行变成被省略的首行，
+    // 因此按裁剪前后的展示长度重定位，不能只数被删条目自身的折行数。
+    const before = this.wrappedDisplayLines(true).length;
+    this.log.splice(0, overflow);
+    const removedLines = before - this.wrappedDisplayLines(true).length;
+    this.printedLines = Math.max(0, this.printedLines - removedLines);
   }
 
   private wrappedDisplayLines(flat = false, expandAll = false): LogLine[] {

@@ -16,7 +16,7 @@
  *   - 跑命令：exit code 与两路输出、8000 字符上限、多字节分片解码、超时与取消后整棵进程树被杀、
  *     Windows `taskkill` 的各种失败路径。
  *   - 后台任务：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、
- *     被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错。
+ *     被切断的多字节字符不变成替换字符、多 Workspace 日志隔离、`shell-kill` 后进程真的消失、未知编号报错。
  *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理。
  *
  * 模块关系：依赖 `src/tools/workspace.ts`、`test/support/harness.mjs` 与 `node:test`，
@@ -1136,6 +1136,23 @@ test("shell 后台启动失败：返回可恢复工具错误，不伪报 started
       /unknown background job "job-1" \(known: none\)/,
       "启动失败的任务不能登记成 running",
     );
+  });
+});
+
+test("shell 后台日志：同一进程的多个 Workspace 不覆盖彼此的输出", async () => {
+  await withWorkspace(async (dir) => {
+    const first = new Workspace({ root: dir });
+    const second = new Workspace({ root: dir });
+    try {
+      await first.run('node -e "console.log(\'alpha\')"', { background: true });
+      assert.equal(body(await first.readJobOutput("job-1", 5000)), "alpha\n");
+      await second.run('node -e "console.log(\'another-workspace\')"', { background: true });
+      assert.equal(body(await second.readJobOutput("job-1", 5000)), "another-workspace\n");
+      assert.equal(body(await first.readJobOutput("job-1", 0)), "(no new output)");
+    } finally {
+      await stopJob(first);
+      await stopJob(second);
+    }
   });
 });
 

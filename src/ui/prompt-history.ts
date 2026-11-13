@@ -9,14 +9,15 @@
  * 内容目录：
  *   - `MAX_HISTORY_ENTRIES`：只留最近 500 条，历史是给上下键用的，不是存档。
  *   - `historyPath()`：默认 `~/.agent-kernel/history.jsonl`，`AGENT_HISTORY_FILE` 可覆盖（测试用）。
- *   - `loadHistory()`：读历史，最新的排在后面（输入框要的是反过来的顺序，调用方自己反转）。
+ *   - `loadHistory()`：有界读取文件尾部，从后向前选取有效记录，返回时最新的排在后面。
  *   - `appendHistory()`：追加一条历史。
- *   - 内部：`MAX_ENTRY_CHARS` 单条 4000 字符上限、`HistoryRecord` 记录形状（时间、目录、文本）。
+ *   - 内部：`MAX_HISTORY_BYTES` 读取 8 MiB 上限、`MAX_ENTRY_CHARS` 单条 4000 字符上限、
+ *     `HistoryRecord` 记录形状（时间、目录、文本）。
  *
  * 模块关系：只依赖 `node:fs`、`node:os`、`node:path`。
  * 被 `ui/tui.ts` 调用；`test/prompt-history.test.mjs` 用环境变量指向临时文件来测。
  */
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -25,6 +26,9 @@ export const MAX_HISTORY_ENTRIES = 500;
 
 /** 单条上限：粘贴进来的长任务不该把历史文件撑爆。 */
 const MAX_ENTRY_CHARS = 4_000;
+
+/** 已知边界：只读最后 8 MiB；旧记录留在磁盘上，不为输入历史同步载入无限增长的文件。 */
+const MAX_HISTORY_BYTES = 8 * 1024 * 1024;
 
 interface HistoryRecord {
   ts: number;
@@ -45,14 +49,38 @@ export function historyPath(): string {
  * 坏行、非字符串、空文本全部跳过；文件不存在或读不了就返回空数组。
  */
 export function loadHistory(file = historyPath(), limit = MAX_HISTORY_ENTRIES): string[] {
+  if (limit <= 0) return [];
   let raw: string;
   try {
-    raw = readFileSync(file, "utf8");
+    const fd = openSync(file, "r");
+    try {
+      const size = fstatSync(fd).size;
+      const start = Math.max(0, size - MAX_HISTORY_BYTES);
+      const buffer = Buffer.alloc(Math.min(size, MAX_HISTORY_BYTES));
+      let offset = 0;
+      while (offset < buffer.length) {
+        const bytes = readSync(fd, buffer, offset, buffer.length - offset, start + offset);
+        if (bytes === 0) break;
+        offset += bytes;
+      }
+      raw = buffer.subarray(0, offset).toString("utf8");
+      // 切口可能在 UTF-8 字符或 JSON 中间，只解析换行之后的完整记录。
+      if (start > 0) {
+        const newline = raw.indexOf("\n");
+        raw = newline === -1 ? "" : raw.slice(newline + 1);
+      }
+    } finally {
+      closeSync(fd);
+    }
   } catch {
     return [];
   }
   const texts: string[] = [];
-  for (const line of raw.split("\n")) {
+  let end = raw.length;
+  while (end > 0 && texts.length < limit) {
+    const start = raw.lastIndexOf("\n", end - 1) + 1;
+    const line = raw.slice(start, end);
+    end = start - 1;
     if (line.trim() === "") continue;
     let record: unknown;
     try {
@@ -66,7 +94,7 @@ export function loadHistory(file = historyPath(), limit = MAX_HISTORY_ENTRIES): 
     if (typeof text !== "string" || text.trim() === "") continue;
     texts.push(text);
   }
-  return texts.slice(-limit);
+  return texts.reverse();
 }
 
 /** 界面函数 appendHistory（存一条历史）：追加一条。目录不存在就建；写失败不影响当前会话。 */

@@ -14,6 +14,7 @@
  *     `tool_calls` 互相矛盾、重复 id、`content` 类型错或缺失、`tool_calls` 结构不全、
  *     `reasoning_content` 不是字符串、`length` / `content_filter` / 缺 `finish_reason`。
  *   - 取消：信号一到立刻中断，不等 120 秒超时。
+ *   - 资源：JSON / SSE 字节上限、HTTP 详情有界、完成或坏 chunk 后主动关闭响应连接。
  *   - 流式：正文分片拼装、`onDelta` 逐段回调、`tool_calls` 按 index 合并、交错到达各归各的、
  *     `reasoning_content` 累积、截断与断流必须报错、坏 chunk 不静默跳过。
  *
@@ -23,7 +24,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { ChatResponseError } from "../src/protocol/errors.ts";
+import { ChatResponseError, ModelConnectionError, ModelHttpError } from "../src/protocol/errors.ts";
 import { Llm } from "../src/model/llm.ts";
 
 /** 起一个只会回固定 JSON 的假端点。 */
@@ -89,6 +90,134 @@ function streamDelta(delta, finishReason = null) {
 }
 
 const usageFrame = { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } };
+
+/** 保持响应连接打开，验证客户端会主动停止读取；清理不能依赖客户端超时。 */
+async function respondWhileOpen(write) {
+  let closed;
+  const disconnected = new Promise((resolve) => { closed = resolve; });
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.on("close", () => closed(true));
+      write(response);
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return {
+    url: `http://127.0.0.1:${server.address().port}/v1`,
+    disconnected,
+    close: async () => {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
+}
+
+test("流式：DONE 结束读取，不处理结束标记之后的坏数据", async () => {
+  const server = await respondWithStream([streamDelta({ content: "done" }, "stop"), "[DONE]", "{broken"]);
+  try {
+    assert.equal((await streamingClient(server.url).chat([], [])).message.content, "done");
+  } finally { await server.close(); }
+});
+
+test("流式：收到 DONE 后主动关闭仍保持打开的响应连接", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write(`data: ${JSON.stringify(streamDelta({ content: "done" }, "stop"))}\n\ndata: [DONE]\n\n`);
+  });
+  try {
+    const client = new Llm({ baseUrl: server.url, apiKey: "test", model: "mock", stream: true, timeoutMs: 1000 });
+    assert.equal((await client.chat([], [])).message.content, "done");
+    assert.equal(await server.disconnected, true);
+  } finally { await server.close(); }
+});
+
+test("流式：坏 chunk 报错后立即关闭响应连接", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.write("data: {broken\n\n");
+  });
+  let timer;
+  try {
+    await assert.rejects(() => streamingClient(server.url).chat([], []), /stream chunk is not JSON/);
+    const disconnected = await Promise.race([
+      server.disconnected,
+      new Promise((resolve) => { timer = setTimeout(() => resolve(false), 1000); }),
+    ]);
+    assert.equal(disconnected, true, "解析失败不能留下仍在接收数据的连接");
+  } finally { clearTimeout(timer); await server.close(); }
+});
+
+test("chat：HTTP 错误只读有界详情，不等服务端结束响应", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(401, { "content-type": "text/plain" });
+    response.write("x".repeat(2000));
+  });
+  try {
+    const client = new Llm({ baseUrl: server.url, apiKey: "test", model: "mock", timeoutMs: 1000 });
+    await assert.rejects(() => client.chat([], []), (error) =>
+      error instanceof ModelHttpError && error.status === 401 && error.message.endsWith("x".repeat(500)));
+  } finally { await server.close(); }
+});
+
+test("chat：读取 JSON 响应时连接中断归类为网络错误并保留底层原因", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.flushHeaders();
+    response.write('{"choices":[');
+    setTimeout(() => response.destroy(), 25);
+  });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), (error) => {
+      assert.ok(error instanceof ModelConnectionError);
+      assert.equal(error.cause?.code, "UND_ERR_SOCKET");
+      assert.match(error.message, /response body read failed/);
+      return true;
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test("chat：非 JSON 响应归类为响应错误", async () => {
+  const server = await respondWhileOpen((response) => { response.end("not JSON"); });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), ChatResponseError);
+  } finally { await server.close(); }
+});
+
+test("chat：无正文的 HTTP 错误仍保留 HTTP 状态码", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(304);
+    response.end();
+  });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), (error) =>
+      error instanceof ModelHttpError && error.status === 304 && error.message === "LLM HTTP 304: ");
+  } finally {
+    await server.close();
+  }
+});
+
+test("chat：超过 8 MiB 的 JSON 响应被拒绝", async () => {
+  const server = await respondWith({
+    choices: [{ message: { role: "assistant", content: "x".repeat(8_388_608) }, finish_reason: "stop" }],
+  });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), /response exceeds 8388608 bytes/);
+  } finally { await server.close(); }
+});
+
+test("流式：累计响应字节超限时拒绝，注释和未换行内容也计入上限", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(200, { "content-type": "text/event-stream" });
+    response.end(`data: ${JSON.stringify(streamDelta({ content: "done" }, "stop"))}\n\n:${"x".repeat(8_388_608)}`);
+  });
+  try {
+    await assert.rejects(() => streamingClient(server.url).chat([], []), (error) =>
+      error instanceof ChatResponseError && error.code === "invalid_response" && /response exceeds 8388608 bytes/.test(error.message));
+  } finally { await server.close(); }
+});
 
 /** 用一条 message（外加默认的 finish_reason）跑一次 chat。 */
 async function chatWith(message, finishReason = "stop") {

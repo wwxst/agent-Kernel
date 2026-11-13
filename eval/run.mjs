@@ -31,6 +31,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "../src/core/agent.ts";
+import { ModelConnectionError } from "../src/protocol/errors.ts";
 import { createEvalDiagnostics } from "./diagnostics.mjs";
 import { Llm } from "../src/model/llm.ts";
 import { ToolRegistry } from "../src/core/tool-registry.ts";
@@ -122,13 +123,16 @@ export async function runRound({ tasksDir, names, baseUrl, apiKey, model, jobs =
   process.on("unhandledRejection", onUnhandled);
   const startedAt = Date.now();
   try {
-    const results = await runPool(names, jobs, (name) =>
-      runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }),
-    );
-
-    // 让检查器里没 await 的 promise 浮出来：这段时间内的 rejection 都算本轮基础设施错误。
-    // 更晚才炸的 rejection 会走 Node 默认行为（非零退出），同样不会让评测静默通过。
-    await new Promise((resolve) => setTimeout(resolve, INFRA_SETTLE_MS));
+    let results;
+    try {
+      results = await runPool(names, jobs, (name) =>
+        runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }),
+      );
+    } finally {
+      // 池失败也先等已启动任务结束，再留一个窗口收集检查器没 await 的 promise。
+      // 更晚才炸的 rejection 仍走 Node 默认行为，不能静默通过。
+      await new Promise((resolve) => setTimeout(resolve, INFRA_SETTLE_MS));
+    }
 
     return { results, elapsed: (Date.now() - startedAt) / 1000, infra };
   } finally {
@@ -158,20 +162,28 @@ export function summarize({ results, elapsed, model, commit, infra }) {
   };
 }
 
-/** 简单的并发池：同一时刻最多 limit 个任务在跑，结果按原顺序返回。 */
+/** 首错后不再领取任务，已启动任务全部收尾后才传播首错；结果按原顺序返回。 */
 async function runPool(items, limit, worker) {
   const results = new Array(items.length);
   let cursor = 0;
+  let failed = false;
+  let failure;
 
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (cursor < items.length) {
+    while (!failed && cursor < items.length) {
       const index = cursor;
       cursor += 1;
-      results[index] = await worker(items[index]);
+      try {
+        results[index] = await worker(items[index]);
+      } catch (error) {
+        if (!failed) failure = error;
+        failed = true;
+      }
     }
   });
 
   await Promise.all(runners);
+  if (failed) throw failure;
   return results;
 }
 
@@ -180,74 +192,76 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }) 
   const taskDir = path.join(tasksDir, name);
   const prompt = (await readFile(path.join(taskDir, "task.md"), "utf8")).trim();
   const workdir = await mkdtemp(path.join(tmpdir(), `agent-eval-${name}-`));
-  await cp(path.join(taskDir, "files"), workdir, { recursive: true });
-
-  const llm = new Llm({ baseUrl, apiKey, model });
-  const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })));
-  const diagnostics = trace ? await createEvalDiagnostics({ llm, tools, workdir }) : undefined;
-  const agent = new Agent({
-    llm: diagnostics?.llm ?? llm,
-    tools,
-    systemPrompt: () => DEFAULT_SYSTEM_PROMPT,
-    ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
-    maxSteps: 30,
-    // 兜底：单个任务烧到 20 万 token 还没做完，多半是循环出了问题，不该继续付钱。
-    maxTotalTokens: 200_000,
-  });
-
-  const started = Date.now();
-  let error;
-  let failure;
   try {
-    await agent.run(prompt);
-  } catch (failureOfTask) {
-    error = failureOfTask;
-    failure = classifyRunFailure(failureOfTask);
-  }
+    await cp(path.join(taskDir, "files"), workdir, { recursive: true });
 
-  const traceRecord = diagnostics ? await diagnostics.finish() : undefined;
+    const llm = new Llm({ baseUrl, apiKey, model });
+    const tools = new ToolRegistry(createWorkspaceTools(new Workspace({ root: workdir })));
+    const diagnostics = trace ? await createEvalDiagnostics({ llm, tools, workdir }) : undefined;
+    const agent = new Agent({
+      llm: diagnostics?.llm ?? llm,
+      tools,
+      systemPrompt: () => DEFAULT_SYSTEM_PROMPT,
+      ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
+      maxSteps: 30,
+      // 兜底：单个任务烧到 20 万 token 还没做完，多半是循环出了问题，不该继续付钱。
+      maxTotalTokens: 200_000,
+    });
 
-  if (error === undefined) {
+    const started = Date.now();
+    let error;
+    let failure;
     try {
-      const check = (await import(pathToFileURL(path.join(taskDir, "check.mjs")).href)).default;
-      await check(workdir);
-    } catch (failureOfCheck) {
-      error = failureOfCheck;
-      failure = isExpectedFailure(failureOfCheck) ? "check" : "infra";
+      await agent.run(prompt);
+    } catch (failureOfTask) {
+      error = failureOfTask;
+      failure = classifyRunFailure(failureOfTask);
     }
+
+    const traceRecord = diagnostics ? await diagnostics.finish() : undefined;
+
+    if (error === undefined) {
+      try {
+        const check = (await import(pathToFileURL(path.join(taskDir, "check.mjs")).href)).default;
+        await check(workdir);
+      } catch (failureOfCheck) {
+        error = failureOfCheck;
+        failure = isExpectedFailure(failureOfCheck) ? "check" : "infra";
+      }
+    }
+
+    const seconds = (Date.now() - started) / 1000;
+    const stats = agent.stats;
+    const result = {
+      name,
+      ok: error === undefined,
+      failure,
+      requests: stats.requests,
+      toolCalls: stats.toolCalls,
+      tokens: {
+        prompt: stats.usage.promptTokens,
+        completion: stats.usage.completionTokens,
+        total: stats.usage.totalTokens,
+        unknownResponses: stats.usage.unknown,
+      },
+      seconds: Number(seconds.toFixed(1)),
+      error: error === undefined ? undefined : describe(error),
+      workdir: keep ? workdir : undefined,
+      ...(traceRecord === undefined ? {} : { trace: traceRecord }),
+    };
+
+    const mark = result.ok ? "PASS" : "FAIL";
+    const detail = result.ok ? "" : `  [${result.failure}] ${result.error.split("\n")[0]}`;
+    console.log(
+      `  ${mark}  ${name.padEnd(28)} ${String(result.requests).padStart(3)} req  ` +
+        `${String(result.toolCalls).padStart(3)} tool  ${String(result.seconds).padStart(6)}s  ` +
+        `${String(result.tokens.total).padStart(6)} tok${detail}`,
+    );
+
+    return result;
+  } finally {
+    if (!keep) await rm(workdir, { recursive: true, force: true });
   }
-
-  const seconds = (Date.now() - started) / 1000;
-  const stats = agent.stats;
-  const result = {
-    name,
-    ok: error === undefined,
-    failure,
-    requests: stats.requests,
-    toolCalls: stats.toolCalls,
-    tokens: {
-      prompt: stats.usage.promptTokens,
-      completion: stats.usage.completionTokens,
-      total: stats.usage.totalTokens,
-      unknownResponses: stats.usage.unknown,
-    },
-    seconds: Number(seconds.toFixed(1)),
-    error: error === undefined ? undefined : describe(error),
-    workdir: keep ? workdir : undefined,
-    ...(traceRecord === undefined ? {} : { trace: traceRecord }),
-  };
-
-  if (!keep) await rm(workdir, { recursive: true, force: true });
-
-  const mark = result.ok ? "PASS" : "FAIL";
-  const detail = result.ok ? "" : `  [${result.failure}] ${result.error.split("\n")[0]}`;
-  console.log(
-    `  ${mark}  ${name.padEnd(28)} ${String(result.requests).padStart(3)} req  ` +
-      `${String(result.toolCalls).padStart(3)} tool  ${String(result.seconds).padStart(6)}s  ` +
-      `${String(result.tokens.total).padStart(6)} tok${detail}`,
-  );
-
-  return result;
 }
 
 /**
@@ -257,6 +271,7 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace }) 
  * 归到 task —— 记录里保留了原始错误文本，复盘时能看出来。
  */
 function classifyRunFailure(error) {
+  if (error instanceof ModelConnectionError) return "environment";
   const code = error?.cause?.code ?? error?.code;
   if (
     ["ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code)

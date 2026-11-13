@@ -9,7 +9,7 @@
  *
  * 文件职责：负责登记形状、事件上下文、按登记顺序执行、把 Hook 自己的失败吞成计数。
  * 不负责工具查找与参数校验（那是 `core/tool-registry.ts`）、不负责定义具体 Hook
- * （生产代码目前一个都没登记，调用方自己传进来）、不负责展示（那是 `ui/`）。
+ * （由 `core/tool-log.ts` 等调用方提供）、不负责展示（那是 `ui/`）。
  *
  * 内容目录：
  *   - `ToolUseContext`：三个事件共用的上下文 —— 哪一次调用、什么参数。
@@ -148,15 +148,14 @@ export class ToolHooks {
    */
   async runPreToolUse(call: ToolCall, args: Record<string, unknown>): Promise<string | undefined> {
     for (const hook of this.preToolUse) {
-      let decision: unknown;
       try {
-        decision = await hook(cloneContext(call, args));
+        const decision: unknown = await hook(cloneContext(call, args));
+        const reason = readBlockReason(decision);
+        if (reason !== undefined) return reason;
       } catch {
         this.failures++;
         continue;
       }
-      const reason = readBlockReason(decision);
-      if (reason !== undefined) return reason;
     }
     return undefined;
   }

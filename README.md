@@ -38,7 +38,7 @@ agent "看看这个项目怎么跑"
 
 不捕获鼠标：滚轮、滚动条、选中复制、终端搜索全部保持原生行为；展开历史走 `Ctrl+T` + 键盘。若终端明确声明 `TERM=dumb`，交互式 TUI 会报错，请改用支持 ANSI 控制序列的终端。
 
-`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。配色方案另由 `AGENT_TUI_THEME=dark|light|ansi` 决定：`dark`（默认）按深色背景配色，`light` 换成浅底深字（浅色终端上 `info` 的近白灰等于没写字），`ansi` 强制只用终端自己的 16 色。两者正交——先选用哪套色，再选上不上色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。输入区支持多行：`Shift+Enter` 或 `Ctrl+J` 换行、`Enter` 提交（粘贴多行同样折叠成一条消息）。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。工作区根目录的 `AGENTS.md` 会在启动时读入系统提示（超过 32000 字符截断）；没有该文件就不注入。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具执行或模型请求。
+`AGENT_TUI_COLOR=mono`（默认）只保留用户任务条颜色；`full` 恢复状态与提示的层次配色。配色方案另由 `AGENT_TUI_THEME=dark|light|ansi` 决定：`dark`（默认）按深色背景配色，`light` 换成浅底深字（浅色终端上 `info` 的近白灰等于没写字），`ansi` 强制只用终端自己的 16 色。两者正交——先选用哪套色，再选上不上色。**非 TTY（管道、CI、e2e）仍输出普通文本**，供脚本处理，不是另一种可选择的交互 UI。输入区支持多行：`Shift+Enter` 或 `Ctrl+J` 换行、`Enter` 提交（粘贴多行同样折叠成一条消息）。本次 TUI 会话最多保留 32 MiB 或 256 段多行粘贴原文；达到任一上限时，新粘贴会被拒绝并提示，关闭并重新打开 TUI 后重置。运行中按 `PgUp` 暂停活动区刷新（可以自由往上翻历史），`PgDn` 或 `Esc` 恢复。工作区根目录的 `AGENTS.md` 会在启动时读入系统提示（超过 32000 字符截断）；没有该文件就不注入。字形默认自动探测（Windows Terminal / VS Code / WezTerm 用 `❯ ↳ ✓ └ ▸`，老 conhost 退回 ASCII 的 `> + - >`）；探测不准时用 `AGENT_TUI_GLYPHS=unicode|ascii` 强制指定。所有输出都只属于展示层，不修改 Agent Transcript、工具执行或模型请求。
 
 ### 快捷键
 
@@ -304,6 +304,8 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 - 会话命令：`/exit`、`/reset`、`/help`。`/reset` 换一个全新的 Agent，复用同一份配置与取消信号；没有权限命令，因为只有一种权限。
 
 流式正文只是临时展示。已确认的 `assistant.content` 才是最终权威消息：固定布局可以替换有偏差的草稿；CLI / 非 TTY 文本输出无法撤回已写入终端的字节，会追加明确的 `[stream corrected: confirmed message follows]` 更正提示。同一条 assistant 的多次工具调用只确认一次阶段说明，避免重复模型发言。
+
+资源边界：单次模型响应（JSON / SSE，按解压后的响应体计）最多读取 **8 MiB**，超限明确报错并关闭连接；HTTP 错误只读取前 500 字符详情，SSE 收到 `[DONE]` 就结束读取。输入历史只读取文件末尾最多 **8 MiB**，从中选取最近 500 条有效记录，切口处的残行跳过，磁盘上的旧记录保留。取舍见 [ADR-0022](./docs/adr/0022-bound-external-response-and-history-reads.md)。
 
 统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
 

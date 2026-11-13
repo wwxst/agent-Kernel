@@ -18,6 +18,7 @@
  *     真实提交的 Unified Diff、读图缩略图、失败不显示成成功。
  *   - 流式正文：草稿与确认正文不一致时显式更正、行式模式不能撤回只能标记未确认。
  *   - 输入：长输入滚动与光标、中文宽度换行、Tab、组合字符与 emoji、括号粘贴、
+ *     UTF-8 与粘贴标记分片、CR / LF 归一化、粘贴前后文和历史回填、会话粘贴归档上限、输入流恢复、
  *     `Ctrl+J` 与 `Shift+Enter` 换行、`@` 补全、`/` 命令菜单、`Ctrl+X Ctrl+E`、上下键翻历史。
  *   - 语言与权限：按任务与 locale 判断语言、只翻译界面不翻译模型正文、状态栏固定完全访问、
  *     `Shift+Tab` 不再是快捷键。
@@ -2073,6 +2074,317 @@ test("TUI 主视图：括号粘贴的多行文本是一条消息，不是多次�
   ui.input.write("\r");
 
   assert.equal(await pending, "第一行\n第二行\n第三行", "粘贴内容是一条消息，换行保留");
+});
+
+test("TUI：中文与 emoji 按字节分片输入仍保留完整正文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  for (const byte of Buffer.from("中文😀")) ui.input.write(Buffer.from([byte]));
+  ui.input.write("\r");
+  assert.equal(await pending, "中文😀");
+});
+
+for (const newline of ["\r", "\r\n", "\n"]) {
+  test(`TUI：括号粘贴的 ${JSON.stringify(newline)} 换行在确认前不提交`, async (t) => {
+    const ui = makeTui({ interactive: true, tty: true });
+    t.after(() => ui.cleanup());
+    ui.tui.start();
+    let submitted = false;
+    const pending = ui.tui.readLine().then((line) => { submitted = true; return line; });
+    ui.input.write(`\x1b[200~first${newline}second\x1b[201~`);
+    await tick();
+    assert.equal(submitted, false);
+    ui.input.write("\r");
+    assert.equal(await pending, "first\nsecond");
+  });
+}
+
+test("TUI：括号粘贴标记在每个位置拆包仍能提交，且同块 Enter 不丢失", async () => {
+  for (let split = 1; split < 6; split++) {
+    for (const boundary of ["start", "end"]) {
+      const ui = makeTui({ interactive: true, tty: true });
+      try {
+        ui.tui.start();
+        const pending = ui.tui.readLine();
+        const start = "\x1b[200~";
+        const end = "\x1b[201~";
+        if (boundary === "start") {
+          ui.input.write(start.slice(0, split));
+          await tick();
+          ui.input.write(`${start.slice(split)}first\nsecond${end}\r`);
+        } else {
+          ui.input.write(`${start}first\nsecond${end.slice(0, split)}`);
+          await tick();
+          ui.input.write(`${end.slice(split)}\r`);
+        }
+        // 有界等待只为让失败给出明确断言，而不是让整个测试文件悬挂。
+        const timer = setTimeout(() => ui.tui.close(), 1000);
+        try { assert.equal(await pending, "first\nsecond"); } finally { clearTimeout(timer); }
+      } finally { ui.cleanup(); }
+    }
+  }
+});
+
+test("TUI：多行粘贴保留光标两侧文字，多次粘贴分别还原原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("prefix  suffix");
+  for (let index = 0; index < 7; index++) ui.input.write("\x1b[D");
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x1b[200~third\nfourth\x1b[201~");
+  await tick();
+  ui.input.write("\r");
+  assert.equal(await pending, "prefix first\nsecondthird\nfourth suffix");
+});
+
+test("TUI：关闭后恢复原始输入流 emit，不残留粘贴拦截器", () => {
+  const input = new PassThrough();
+  const originalEmit = input.emit;
+  const ui = new Tui({ input, output: new PassThrough(), model: "mock", workspace: ".",
+    controller: new AbortController(), interactive: false });
+  ui.close();
+  assert.equal(input.emit, originalEmit);
+  input.end();
+});
+
+test("TUI：同一数据块的两条粘贴消息分别还原原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~\r\x1b[200~third\nfourth\x1b[201~\r");
+  assert.equal(await first, "first\nsecond");
+  assert.equal(await ui.tui.readLine(), "third\nfourth");
+});
+
+test("TUI：提交后继续编辑下一条粘贴，新增提示不会覆盖已有原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~\r\x1b[200~third\nfourth\x1b[201~");
+  assert.equal(await first, "first\nsecond");
+  const next = ui.tui.readLine();
+  ui.input.write("\x1b[200~fifth\nsixth\x1b[201~\r");
+  assert.equal(await next, "third\nfourthfifth\nsixth");
+});
+
+test("TUI：readline 剪切后 Ctrl+Y 仍能恢复多行粘贴原文", async (t) => {
+  const scenarios = [
+    { name: "Ctrl+U", cut: "\x15" },
+    { name: "Ctrl+K", cut: "\x01\x0b" },
+    { name: "部分 Ctrl+K", cut: `\x01${"\x06".repeat(8)}\x0b` },
+  ];
+
+  for (const scenario of scenarios) {
+    const ui = makeTui({ interactive: true, tty: true, language: "en" });
+    try {
+      ui.tui.start();
+      const pending = ui.tui.readLine();
+      ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+      await tick();
+
+      ui.input.write(scenario.cut);
+      await tick();
+
+      ui.input.write("\x19");
+      await tick();
+      ui.input.write("\r");
+      assert.equal(await pending, "first\nsecond", scenario.name);
+    } finally {
+      ui.cleanup();
+    }
+  }
+});
+
+test("TUI：提交其他任务后 Ctrl+Y 仍能恢复上一条被剪切的粘贴原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x15");
+  await tick();
+  ui.input.write("keep\r");
+  assert.equal(await first, "keep");
+
+  const next = ui.tui.readLine();
+  ui.input.write("\x19\r");
+  assert.equal(await next, "first\nsecond");
+});
+
+test("TUI：重复剪切相同内容 32 次后仍可跨任务恢复原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x15");
+  await tick();
+  ui.input.write("\x19\x15".repeat(32));
+  await tick();
+  ui.input.write("keep\r");
+  assert.equal(await first, "keep");
+
+  const next = ui.tui.readLine();
+  ui.input.write("\x19\r");
+  assert.equal(await next, "first\nsecond");
+});
+
+test("TUI：已提交的剪切占位不会被后续同长度粘贴复用", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x15");
+  await tick();
+  ui.input.write("\x19\r");
+  assert.equal(await first, "first\nsecond");
+
+  const second = ui.tui.readLine();
+  ui.input.write("\x1b[200~third\nfourth\x1b[201~");
+  await tick();
+  ui.input.write("\x19\r");
+  assert.equal(await second, "third\nfourthfirst\nsecond");
+});
+
+test("TUI：撤销与重做 2048 次后仍能恢复多行粘贴原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.write("\x7f");
+  await tick();
+  ui.input.write("x");
+  await tick();
+  ui.input.write("\x1f\x1e".repeat(2_048));
+  await tick();
+  ui.input.write("\x1f\x1f\r");
+  assert.equal(await pending, "first\nsecond");
+});
+
+test("TUI：多行粘贴历史达到会话上限后拒绝新内容并明确提示", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "zh" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+
+  ui.input.write("\x1b[200~a\nb\x1b[201~".repeat(256));
+  await tick();
+  ui.input.write("\x1b[200~rejected\npaste\x1b[201~");
+  await tick();
+  assert.ok(ui.text().includes("粘贴内容未插入"), "超过会话上限必须显示明确警告");
+
+  ui.input.write("\r");
+  const submitted = await pending;
+  assert.equal(submitted, "a\nb".repeat(256));
+});
+
+test("TUI：提交多行粘贴后，上键能恢复原文再次提交", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const first = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~\r");
+  assert.equal(await first, "first\nsecond");
+  const next = ui.tui.readLine();
+  ui.input.write("\x1b[A\r");
+  assert.equal(await next, "first\nsecond");
+});
+
+test("TUI：外部编辑器往返后连续撤销仍能恢复原始粘贴", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-undo-${process.pid}.mjs`);
+  await writeFile(script, "process.exitCode = 0;\n");
+  const previousEditor = process.env.EDITOR;
+  const previousVisual = process.env.VISUAL;
+  delete process.env.VISUAL;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previousEditor === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previousEditor;
+    if (previousVisual === undefined) delete process.env.VISUAL;
+    else process.env.VISUAL = previousVisual;
+    rmSync(script, { force: true });
+  });
+
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  ui.input.write("\x1f\x1f\r");
+  assert.equal(await pending, "first\nsecond");
+});
+
+test("TUI：外部编辑器接收粘贴原文，正文里的提示文字不会再次展开", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-paste-${process.pid}.mjs`);
+  await writeFile(script, "process.exitCode = 0;\n");
+  const previousEditor = process.env.EDITOR;
+  const previousVisual = process.env.VISUAL;
+  delete process.env.VISUAL;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previousEditor === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previousEditor;
+    if (previousVisual === undefined) delete process.env.VISUAL;
+    else process.env.VISUAL = previousVisual;
+    rmSync(script, { force: true });
+  });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("\x1b[200~[Pasted text +2 lines]\nraw\x1b[201~");
+  await tick();
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  ui.input.write("\r");
+  assert.equal(await pending, "[Pasted text +2 lines]\nraw");
+});
+
+test("TUI 主视图：超过日志保留上限后，新行仍持续进入 Shell 滚动历史", (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let index = 0; index < 2100; index++) ui.tui.logLine(`UNIQUE_LOG_${index}`);
+  const history = emulateScreen(ui.text(), 100_000).join("\n");
+  for (const index of [0, 1980, 2050, 2099]) {
+    assert.ok(new RegExp(`UNIQUE_LOG_${index}\\b`).test(history), `历史必须保留第 ${index} 行`);
+  }
+});
+
+test("TUI 主视图：日志裁剪时包含首尾空行，后续历史仍完整保留", (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  for (let index = 0; index < 1050; index++) {
+    ui.tui.logLine(`BLANK_LOG_${index}`);
+    ui.tui.logLine("");
+  }
+  const history = emulateScreen(ui.text(), 100_000).join("\n");
+  for (const index of [0, 980, 1020, 1049]) {
+    assert.ok(new RegExp(`BLANK_LOG_${index}\\b`).test(history), `历史必须保留第 ${index} 行`);
+  }
 });
 
 test("TUI：不支持括号粘贴的终端，裸换行当换行处理，回车才提交", async (t) => {
