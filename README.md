@@ -106,7 +106,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 
 ### 工具执行 Hook（v1）
 
-三个事件围着一次工具执行：`PreToolUse`（执行前）、`PostToolUse`（成功之后）、`PostToolUseFailure`（失败之后）。它们挂在**唯一的执行入口** `ToolRegistry.execute` 上，所以九个内置工具自动全部经过，不用逐个接线；`Agent` 主循环一行没改。
+三个事件围着一次工具执行：`PreToolUse`（执行前）、`PostToolUse`（成功之后）、`PostToolUseFailure`（失败之后）。它们挂在**唯一的执行入口** `ToolRegistry.execute` 上，所以所有注册工具自动全部经过，不用逐个接线；`Agent` 主循环一行没改。
 
 ```ts
 import { ToolHooks } from "./src/core/tool-hooks.ts";
@@ -352,7 +352,7 @@ npm run check       # typecheck + 全部测试
 | --- | --- |
 | `test/agent.test.mjs` | `Agent.run`：消息顺序、id 配对、两个预算、最后一步、会话生命周期、取消、token 统计、系统提示词动态刷新 |
 | `test/tool-registry.test.mjs` | `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、工具抛错 |
-| `test/tool-hooks.test.mjs` | 工具执行 Hook：三个事件的时机与顺序、前置 Hook 阻止执行、拿到的是副本、Hook 抛错不影响工具结果、九个内置工具全部经过、一次完整 Run 的 Transcript 不变 |
+| `test/tool-hooks.test.mjs` | 工具执行 Hook：三个事件的时机与顺序、前置 Hook 阻止执行、拿到的是副本、Hook 抛错不影响工具结果、九个工作区工具全部经过、一次完整 Run 的 Transcript 不变 |
 | `test/tool-log.test.mjs` | 工具调用日志：成功与失败各一行（`shell` 非零退出算失败）、字段与顺序、超长截断、父目录自动创建、写失败只提醒一次、被拦下的调用不留记录 |
 | `test/workspace.test.mjs` | 工作区外读写（绝对路径、`../`、符号链接）、完整读取、截断、扫描预算、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式、灾难性回溯超时、工作区外 shell、取消进程树和 Windows taskkill 错误/非零退出/卡住故障注入 |
 | `test/llm.test.mjs` | `Llm.chat`：合法响应归一化、非法形状必须报错、`finish_reason` 与 `tool_calls` 一致性、usage 保留、`max_tokens`、取消、SSE 流式拼装与坏 chunk |

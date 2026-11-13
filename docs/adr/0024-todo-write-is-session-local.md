@@ -1,4 +1,4 @@
-# ADR-0021：TodoWrite 是会话内计划，不是持久任务系统
+# ADR-0024：TodoWrite 是会话内计划，不是持久任务系统
 
 - 状态：已采纳（2026-11-13）
 - 影响范围：`src/tools/todo.ts`、`src/core/tool-registry.ts`、`src/cli.ts`、测试和文档
