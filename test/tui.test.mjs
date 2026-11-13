@@ -2355,12 +2355,12 @@ test("TUI：提交多行粘贴后，上键能恢复原文再次提交", async (t
 });
 
 test("TUI：外部编辑器往返后连续撤销仍能恢复原始粘贴", async (t) => {
-  const script = path.join(tmpdir(), \`agent-editor-undo-\${process.pid}.mjs\`);
+  const script = path.join(tmpdir(), `agent-editor-undo-${process.pid}.mjs`);
   await writeFile(script, "process.exitCode = 0;\n");
   const previousEditor = process.env.EDITOR;
   const previousVisual = process.env.VISUAL;
   delete process.env.VISUAL;
-  process.env.EDITOR = \`"\${process.execPath}" "\${script}"\`;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
   t.after(() => {
     if (previousEditor === undefined) delete process.env.EDITOR;
     else process.env.EDITOR = previousEditor;
