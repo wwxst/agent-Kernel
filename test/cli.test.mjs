@@ -16,6 +16,7 @@
  *   - TUI 组装：状态栏、运行记录、统计、会话命令、初始任务、语言切换、重试状态、无 TTY 行为。
  *   - 展示细节：阶段提示、台词不影响请求、精简/详细模式、控制字符只显示转义文本。
  *   - 项目指令：工作区有 `AGENTS.md` 时注入系统提示，没有就不注入。
+ *   - TodoWrite 会话：跨 Run 保留计划记录，/reset 清空旧会话并允许创建新计划。
  *
  * 模块关系：以子进程启动 `src/cli.ts`，依赖 `test/support/harness.mjs` 造消息与临时工作区，
  * 由 `npm test` 启动。
@@ -235,7 +236,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
-        ["read", "write", "edit", "glob", "grep", "ls", "shell", "shell-output", "shell-kill"],
+        ["read", "write", "edit", "glob", "grep", "ls", "shell", "shell-output", "shell-kill", "todo_write"],
       );
 
       // mock 不回 usage：成本摘要必须写 at least，不能把「已统计到 0」说成「只花了 0」。
@@ -783,6 +784,83 @@ test("CLI 读取以 exit 7 开头的文件仍显示成功，不把正文当成 S
       assert.equal(run.code, 0, run.stderr);
       assert.match(run.stdout, /↳ read ✓ exit 7/);
       assert.match(run.stdout, /✓ Completed/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TodoWrite 会话：TUI 连续两轮复用计划并保留前一轮工具结果", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("todo-first", "todo_write", { todos: [
+        { content: "inspect code", status: "in_progress" },
+        { content: "run tests", status: "pending" },
+      ] }),
+      finalReply("first plan recorded"),
+      callTool("todo-second", "todo_write", { todos: [
+        { content: "inspect code", status: "done" },
+        { content: "run tests", status: "in_progress" },
+      ] }),
+      finalReply("second plan recorded"),
+    ]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, WORKDIR: workdir },
+        { args: ["--tui"], input: "create plan\ncontinue plan\n/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 4);
+      const firstResult = mock.requests[1].messages.find((message) => message.tool_call_id === "todo-first");
+      assert.equal(firstResult?.content, "Todo list (0/2 done):\n1. [~] inspect code (in_progress)\n2. [ ] run tests (pending)");
+
+      // 第二个 Run 仍在同一会话，第一轮的调用和结果不能丢。
+      const secondRun = mock.requests[2].messages;
+      assert.deepEqual(secondRun.map((message) => message.role),
+        ["system", "user", "assistant", "tool", "assistant", "user"]);
+      assert.equal(secondRun.find((message) => message.tool_call_id === "todo-first")?.content, firstResult.content);
+      assert.equal(secondRun.at(-1)?.content, "continue plan");
+
+      const secondResult = mock.requests[3].messages.find((message) => message.tool_call_id === "todo-second");
+      assert.equal(secondResult?.content,
+        "Todo list (1/2 done):\n1. [x] inspect code (done)\n2. [~] run tests (in_progress)");
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("TodoWrite 会话：TUI 执行 /reset 后不继承旧计划记录，仍能使用新计划", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("todo-before-reset", "todo_write", { todos: [
+        { content: "old session plan", status: "in_progress" },
+      ] }),
+      finalReply("before reset complete"),
+      callTool("todo-after-reset", "todo_write", { todos: [
+        { content: "new session plan", status: "pending" },
+      ] }),
+      finalReply("after reset complete"),
+    ]);
+    try {
+      const run = await runCli(
+        { BASE_URL: mock.url, WORKDIR: workdir },
+        { args: ["--tui"], input: "before reset\n/reset\nafter reset\n/exit\n" },
+      );
+      assert.equal(run.code, 0, run.stderr);
+      assert.equal(mock.requests.length, 4);
+      assert.ok(run.stdout.includes("(session reset)"));
+
+      // /reset 重新构造 Agent + TodoManager；新请求只有 system 和当前用户输入。
+      const freshRequest = mock.requests[2];
+      assert.deepEqual(freshRequest.messages.map((message) => message.role), ["system", "user"]);
+      assert.equal(freshRequest.messages[1].content, "after reset");
+      assert.equal(JSON.stringify(freshRequest.messages).includes("old session plan"), false);
+      assert.ok(freshRequest.tools.some((tool) => tool.function?.name === "todo_write"));
+
+      const newResult = mock.requests[3].messages.find((message) => message.tool_call_id === "todo-after-reset");
+      assert.equal(newResult?.content, "Todo list (0/1 done):\n1. [ ] new session plan (pending)");
+      assert.equal(JSON.stringify(mock.requests[3].messages).includes("old session plan"), false);
     } finally {
       await mock.close();
     }

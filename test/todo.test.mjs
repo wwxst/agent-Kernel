@@ -8,6 +8,7 @@
  *   - 正常写入：计划能创建、更新和清空，返回可读的进度清单。
  *   - 错误写入：状态、并发活动任务、重复项、空内容、长度、控制字符和总数限制。
  *   - 说明书：工具名与嵌套 Schema 是模型可消费的形状。
+ *   - 会话生命周期：同一管理器跨工具调用接续计划，不同实例互不影响。
  *
  * 模块关系：只依赖 `src/tools/todo.ts` 与 Node 内置测试；由 `npm test` 启动。
  */
@@ -56,6 +57,32 @@ test("合法更新不持有调用者传入对象的引用", () => {
   input[0].content = "被外部改写";
   input.push(entry("额外任务", "done"));
   assert.equal(manager.render(), "Todo list (0/1 done):\n1. [ ] 原任务 (pending)");
+});
+
+test("同一个 TodoManager 跨工具实例共享计划，可以接续更新", async () => {
+  const manager = new TodoManager();
+  const firstRunTool = createTodoTool(manager);
+  await firstRunTool.run({ todos: [entry("检查代码", "in_progress"), entry("运行测试", "pending")] });
+  assert.equal(manager.render(),
+    "Todo list (0/2 done):\n1. [~] 检查代码 (in_progress)\n2. [ ] 运行测试 (pending)");
+
+  // 第二轮重新获取工具包装对象，仍然操作同一份会话计划。
+  const nextRunTool = createTodoTool(manager);
+  await nextRunTool.run({ todos: [entry("检查代码", "done"), entry("运行测试", "in_progress")] });
+  assert.equal(manager.render(),
+    "Todo list (1/2 done):\n1. [x] 检查代码 (done)\n2. [~] 运行测试 (in_progress)");
+});
+
+test("不同 TodoManager 会话彼此隔离，清空旧会话不影响新会话", () => {
+  const oldSession = new TodoManager();
+  const newSession = new TodoManager();
+  oldSession.update([entry("旧会话任务", "in_progress")]);
+  assert.equal(newSession.render(), "Todo list cleared (0 tasks).");
+
+  newSession.update([entry("新会话任务", "pending")]);
+  oldSession.update([]);
+  assert.equal(oldSession.render(), "Todo list cleared (0 tasks).");
+  assert.equal(newSession.render(), "Todo list (0/1 done):\n1. [ ] 新会话任务 (pending)");
 });
 
 test("tool 定义保留嵌套数组和对象的结构化 JSON Schema", () => {
