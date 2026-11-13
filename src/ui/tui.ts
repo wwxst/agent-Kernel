@@ -16,6 +16,7 @@
  *     工具事件 `toolCall` / `toolResult` / `recordEditDiff` / `recordImagePreview`；
  *     输入 `readLine`；状态 `setStats` / `setThinking` / `setRetrying`；日志 `logLine` / `logError`。
  *   - `TuiOptions`：输出流、工作区路径、语言、配色、初始任务等构造参数。
+ *   - 多行粘贴归档：唯一占位符、会话级原文映射与 32 MiB / 256 段硬上限。
  *   - `Style` 与四套调色板（深色/浅色 × 全彩/基础），`Glyphs`（unicode / ascii 两套字符）。
  *   - 显示宽度工具：`displayWidth` / `wrapLine` / `clip` / `padRight` / `takeByWidth`，
  *     CJK 与 emoji 按 2 列算，否则中文回复会折行破帧。
@@ -546,6 +547,7 @@ export class Tui {
     let partial = "";
     let partialTimer: NodeJS.Timeout | undefined;
     const pasteEmit = (event: string, ...args: unknown[]): boolean => {
+      let pasteLimitWarning = false;
       if (event === "data" && args[0] !== undefined) {
         if (partialTimer !== undefined) clearTimeout(partialTimer);
         partialTimer = undefined;
@@ -582,12 +584,7 @@ export class Tui {
               const retainedBytes = text.length * 2;
               if (this.pastes.size >= MAX_PASTE_HISTORY_ENTRIES ||
                   this.pasteHistoryBytes + retainedBytes > MAX_PASTE_HISTORY_BYTES) {
-                this.pushLog(this.uiText(
-                  "Paste not inserted: this session reached its multiline paste history limit (32 MiB or 256 pastes). Close and reopen the TUI to reset it.",
-                  "粘贴内容未插入：本次会话的多行粘贴历史已达到上限（32 MiB 或 256 段）。关闭并重新打开界面后可继续粘贴。",
-                ), "warning");
-                this.inputDirty = true;
-                if (this.layout) this.renderNow(true);
+                pasteLimitWarning = true;
               } else {
                 this.pastes.set(placeholder, text);
                 this.pasteHistoryBytes += retainedBytes;
@@ -624,7 +621,16 @@ export class Tui {
         }
         args[0] = out;
       }
-      return originalEmit(event, ...args);
+      const emitted = originalEmit(event, ...args);
+      if (pasteLimitWarning) {
+        this.pushLog(this.uiText(
+          "Paste not inserted: this session reached its multiline paste history limit (32 MiB or 256 pastes). Close and reopen the TUI to reset it.",
+          "粘贴内容未插入：本次会话的多行粘贴历史已达到上限（32 MiB 或 256 段）。关闭并重新打开界面后可继续粘贴。",
+        ), "warning");
+        this.inputDirty = true;
+        if (this.layout) this.renderNow(true);
+      }
+      return emitted;
     };
     pasteSource.emit = pasteEmit;
     this.restoreInput = () => {
