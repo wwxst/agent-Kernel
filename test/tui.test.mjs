@@ -2181,15 +2181,15 @@ test("TUI：删除多行粘贴占位后立即释放原文", async (t) => {
   const pending = ui.tui.readLine();
 
   for (let index = 0; index < 3; index++) {
-    ui.input.write(`\\x1b[200~discard-${index}\\nbody-${index}\\x1b[201~`);
+    ui.input.write(`\x1b[200~discard-${index}\nbody-${index}\x1b[201~`);
     await tick();
     assert.equal(ui.tui.pastes.size, 1, "当前编辑中的粘贴原文必须保留");
-    ui.input.write("\\x15");
+    ui.input.write("\x15");
     await tick();
     assert.equal(ui.tui.pastes.size, 0, "删除占位后必须释放对应原文");
   }
 
-  ui.input.write("keep\\r");
+  ui.input.write("keep\r");
   assert.equal(await pending, "keep");
 });
 
