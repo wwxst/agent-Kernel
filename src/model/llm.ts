@@ -123,21 +123,23 @@ export class Llm implements ChatClient {
     } catch (error) {
       // 真正的用户取消必须保留原有取消语义，不归类成普通连接失败。
       if (this.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
-      throw new ModelConnectionError(`LLM connection failed: ${describeError(error)}`);
+      throw new ModelConnectionError(`LLM connection failed: ${describeError(error)}`, transportCause(error));
     }
 
     if (!response.ok) {
       // 把响应体带上：400 通常就是因为消息顺序/配对错了，错误详情很有价值。
-      const detail = await readResponseText(response, 500);
+      const detail = await readResponseText(response, 500, this.signal);
       // 中文对照：模型接口返回 HTTP {状态码}：{响应体}
       throw new ModelHttpError(response.status, detail);
     }
 
     if (this.stream) return this.readStreamed(response, options.onDelta);
 
+    // 先完成网络读取，再单独解析 JSON；连接中断不能被误报成响应格式错误。
+    const responseText = await readResponseText(response, Infinity, this.signal);
     let usage: TokenUsage | undefined;
     try {
-      const payload: unknown = JSON.parse(await readResponseText(response));
+      const payload: unknown = JSON.parse(responseText);
       // 先读 usage：后面的 message 校验可能失败，但这次请求可能已经产生费用。
       // 顺序反过来，usage 就会随着「响应不合法」一起被丢掉，账上只能记成未知。
       usage = readUsage(payload);
@@ -249,14 +251,28 @@ async function* readResponseBytes(response: Response): AsyncGenerator<Uint8Array
 }
 
 /** 错误详情够用就停，不为取前 500 字符把整份错误页面读完。 */
-async function readResponseText(response: Response, maxChars = Infinity): Promise<string> {
+async function readResponseText(response: Response, maxChars = Infinity, signal?: AbortSignal): Promise<string> {
   const decoder = new TextDecoder();
   let text = "";
-  for await (const bytes of readResponseBytes(response)) {
-    text += decoder.decode(bytes, { stream: true });
-    if (text.length >= maxChars) break;
+  try {
+    for await (const bytes of readResponseBytes(response)) {
+      text += decoder.decode(bytes, { stream: true });
+      if (text.length >= maxChars) break;
+    }
+  } catch (error) {
+    if (error instanceof ChatResponseError || signal?.aborted ||
+        (error instanceof Error && error.name === "AbortError")) throw error;
+    throw new ModelConnectionError(
+      `LLM response body read failed: ${describeError(error)}`,
+      transportCause(error),
+    );
   }
   return (text + decoder.decode()).slice(0, maxChars);
+}
+
+/** undici 常把 socket 错误包在 TypeError.cause 中；向上保留最有用的底层网络码。 */
+function transportCause(error: unknown): unknown {
+  return error instanceof Error && error.cause !== undefined ? error.cause : error;
 }
 
 /**

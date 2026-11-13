@@ -62,8 +62,8 @@ const LOG_TOP = 4;
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
 
-/** readline 的 kill ring 最多保留 32 项；对应粘贴原文在可 yank 期间也必须保留。 */
-const READLINE_KILL_RING_CAPACITY = 32;
+/** Node 22.18+ readline 的撤销 / 重做栈最多保留 2048 个编辑快照。 */
+const READLINE_UNDO_STACK_CAPACITY = 2_048;
 
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
@@ -434,10 +434,10 @@ export class Tui {
   /** 每段多行粘贴各用一个占位提示，插入与普通文字共用 readline 的光标语义。 */
   private readonly pastes = new Map<string, string>();
 
-  /** 被 readline 剪切、仍可能通过 Ctrl+Y 恢复的提示；值是最近一次 kill 的序号。 */
-  private readonly recoverablePastes = new Map<string, number>();
+  /** 被 readline 撤销 / 重做历史引用的提示；值是最近一次移除时的编辑序号。 */
+  private readonly undoablePastes = new Map<string, number>();
 
-  private killRingGeneration = 0;
+  private editGeneration = 0;
 
   /** 上一次 readline keypress 处理后的编辑内容，用来识别 kill 命令。 */
   private lastEditorLine = "";
@@ -628,7 +628,7 @@ export class Tui {
       if (partialTimer !== undefined) clearTimeout(partialTimer);
       if (pasteSource.emit === pasteEmit) pasteSource.emit = savedEmit;
       this.pastes.clear();
-      this.recoverablePastes.clear();
+      this.undoablePastes.clear();
     };
 
     this.recomputeGeometry();
@@ -703,17 +703,7 @@ export class Tui {
       const name = key?.name?.toLowerCase();
       const previousLine = this.lastEditorLine;
       const currentLine = this.rl.line;
-      const isKillCommand =
-        (key?.ctrl && !key?.shift && (name === "u" || name === "k")) ||
-        (key?.ctrl && key?.shift && (name === "backspace" || name === "delete"));
-      if (isKillCommand && previousLine !== currentLine) {
-        this.killRingGeneration++;
-        for (const placeholder of this.pastes.keys()) {
-          if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
-            this.recoverablePastes.set(placeholder, this.killRingGeneration);
-          }
-        }
-      }
+      this.trackEditorChange(previousLine, currentLine);
       this.lastEditorLine = currentLine;
 
       // transcript 视图里 Esc 先退出视图；它不是取消任务，不该走取消链。
@@ -1001,12 +991,14 @@ export class Tui {
 
   /** 显式恢复 readline 编辑缓存（不创建历史记录）。 */
   private setEditorLine(text: string, cursor = text.length): void {
+    const previousLine = this.rl.line;
     this.rl.write(null, { ctrl: true, name: "a" });
     this.rl.write(null, { ctrl: true, name: "k" });
     this.rl.write(text);
     for (let i = 0; i < [...text.slice(cursor)].length; i++) {
       this.rl.write(null, { name: "left" });
     }
+    this.trackEditorChange(previousLine, this.rl.line);
     this.lastEditorLine = this.rl.line;
     this.inputDirty = true;
   }
@@ -1979,10 +1971,10 @@ export class Tui {
     }
     // 同一 data 块可能还带着下一条粘贴消息，只移除本次实际消费的提示。
     for (const placeholder of this.pastes.keys()) {
-      if (submitted.includes(placeholder) && !this.recoverablePastes.has(placeholder)) {
-        this.pastes.delete(placeholder);
-      }
+      if (submitted.includes(placeholder)) this.pastes.delete(placeholder);
     }
+    // readline 在提交一行时会清空 undo / redo 栈；此前已删除的提示不再可能被恢复。
+    this.undoablePastes.clear();
     // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
     if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
@@ -1994,15 +1986,30 @@ export class Tui {
     }
   }
 
-  /** 回收已删除的粘贴；kill ring 中仍可 Ctrl+Y 恢复的内容最多保留 32 次 kill。 */
+  /** 记录编辑前后变化；被删除的提示仍可能存在于 readline 的撤销 / 重做快照中。 */
+  private trackEditorChange(previousLine: string, currentLine: string): void {
+    if (previousLine === currentLine) return;
+    this.editGeneration++;
+    for (const placeholder of this.pastes.keys()) {
+      if (previousLine.includes(placeholder) && !currentLine.includes(placeholder)) {
+        this.undoablePastes.set(placeholder, this.editGeneration);
+      }
+    }
+  }
+
+  /** 回收当前缓冲区与 readline 最近 2048 个撤销 / 重做快照都不再引用的原文。 */
   private prunePastes(currentLine: string): void {
     for (const placeholder of this.pastes.keys()) {
-      const killedAt = this.recoverablePastes.get(placeholder);
-      const canYank = killedAt !== undefined &&
-        this.killRingGeneration - killedAt < READLINE_KILL_RING_CAPACITY;
-      if (!currentLine.includes(placeholder) && !canYank) {
+      if (currentLine.includes(placeholder)) {
+        this.undoablePastes.delete(placeholder);
+        continue;
+      }
+      const removedAt = this.undoablePastes.get(placeholder);
+      const canUndo = removedAt !== undefined &&
+        this.editGeneration - removedAt < READLINE_UNDO_STACK_CAPACITY;
+      if (!canUndo) {
         this.pastes.delete(placeholder);
-        this.recoverablePastes.delete(placeholder);
+        this.undoablePastes.delete(placeholder);
       }
     }
   }
@@ -2062,7 +2069,7 @@ export class Tui {
         }
         // 外部编辑器接管了整份草稿；返回文本中的占位样式字符串应按字面处理。
         this.pastes.clear();
-        this.recoverablePastes.clear();
+        this.undoablePastes.clear();
       } catch (error) {
         this.pushLog(this.uiText(
           `could not read the edited text: ${describeError(error)}`,

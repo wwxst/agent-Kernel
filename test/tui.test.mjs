@@ -2204,6 +2204,36 @@ test("TUI：readline 剪切后 Ctrl+Y 仍能恢复多行粘贴原文", async (t)
   }
 });
 
+test("TUI：撤销删除多行粘贴提示后仍能恢复原文", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+
+  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  await tick();
+  const placeholder = ui.tui.pastes.keys().next().value;
+  assert.ok(placeholder);
+
+  ui.input.write("\x7f");
+  await tick();
+  assert.equal(ui.tui.pastes.size, 1, "readline 的 undo 快照仍引用原文");
+
+  ui.input.write("\x1f");
+  await tick();
+  assert.ok(ui.tui.rl.line.includes(placeholder), "Ctrl+_ 必须恢复完整提示");
+
+  ui.input.write("\x1e");
+  await tick();
+  assert.ok(!ui.tui.rl.line.includes(placeholder), "Ctrl+^ 重做应再次删除提示");
+  assert.equal(ui.tui.pastes.size, 1, "重做后仍要保留可撤销的原文");
+
+  ui.input.write("\x1f");
+  await tick();
+  ui.input.write("\r");
+  assert.equal(await pending, "first\nsecond");
+});
+
 test("TUI：readline kill ring 淘汰剪切内容后释放粘贴原文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
@@ -2220,8 +2250,14 @@ test("TUI：readline kill ring 淘汰剪切内容后释放粘贴原文", async (
     ui.input.write(`discard-${index}\x15`);
     await tick();
   }
-  assert.equal(ui.tui.pastes.size, 0, "kill ring 淘汰旧占位后原文也必须释放");
+  assert.equal(ui.tui.pastes.size, 1, "kill ring 淘汰后，undo 栈仍可能恢复旧内容");
 
+  ui.input.write("x".repeat(2_048));
+  await tick();
+  assert.equal(ui.tui.pastes.size, 0, "readline undo 栈淘汰旧快照后必须释放原文");
+
+  ui.input.write("\x15");
+  await tick();
   ui.input.write("keep\r");
   assert.equal(await pending, "keep");
 });
@@ -2239,9 +2275,14 @@ test("TUI：普通删除多行粘贴占位后立即释放原文", async (t) => {
     const placeholder = ui.tui.pastes.keys().next().value;
     ui.input.write("\x7f".repeat(placeholder.length));
     await tick();
-    assert.equal(ui.tui.pastes.size, 0, "Backspace 删除占位后必须释放对应原文");
+    assert.equal(ui.tui.pastes.size, 1, "Backspace 删除后仍须支持 Ctrl+_ 撤销");
   }
 
+  ui.input.write("x".repeat(2_048));
+  await tick();
+  assert.equal(ui.tui.pastes.size, 0, "readline undo 栈淘汰快照后必须释放对应原文");
+  ui.input.write("\x15");
+  await tick();
   ui.input.write("keep\r");
   assert.equal(await pending, "keep");
 });

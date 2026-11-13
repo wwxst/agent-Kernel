@@ -24,7 +24,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { test } from "node:test";
-import { ChatResponseError, ModelHttpError } from "../src/protocol/errors.ts";
+import { ChatResponseError, ModelConnectionError, ModelHttpError } from "../src/protocol/errors.ts";
 import { Llm } from "../src/model/llm.ts";
 
 /** 起一个只会回固定 JSON 的假端点。 */
@@ -158,6 +158,25 @@ test("chat：HTTP 错误只读有界详情，不等服务端结束响应", async
     await assert.rejects(() => client.chat([], []), (error) =>
       error instanceof ModelHttpError && error.status === 401 && error.message.endsWith("x".repeat(500)));
   } finally { await server.close(); }
+});
+
+test("chat：读取 JSON 响应时连接中断归类为网络错误并保留底层原因", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.flushHeaders();
+    response.write('{"choices":[');
+    setTimeout(() => response.destroy(), 25);
+  });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), (error) => {
+      assert.ok(error instanceof ModelConnectionError);
+      assert.equal(error.cause?.code, "UND_ERR_SOCKET");
+      assert.match(error.message, /response body read failed/);
+      return true;
+    });
+  } finally {
+    await server.close();
+  }
 });
 
 test("chat：非 JSON 响应归类为响应错误", async () => {
