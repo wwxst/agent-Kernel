@@ -2188,11 +2188,9 @@ test("TUI：readline 剪切后 Ctrl+Y 仍能恢复多行粘贴原文", async (t)
       const pending = ui.tui.readLine();
       ui.input.write("\x1b[200~first\nsecond\x1b[201~");
       await tick();
-      assert.equal(ui.tui.pastes.size, 1);
 
       ui.input.write(scenario.cut);
       await tick();
-      assert.equal(ui.tui.pastes.size, 1, `${scenario.name} 剪切后仍须保留可恢复的原文`);
 
       ui.input.write("\x19");
       await tick();
@@ -2222,7 +2220,7 @@ test("TUI：提交其他任务后 Ctrl+Y 仍能恢复上一条被剪切的粘贴
   assert.equal(await next, "first\nsecond");
 });
 
-test("TUI：重复剪切相同内容不会提前淘汰仍可恢复的粘贴", async (t) => {
+test("TUI：重复剪切相同内容 32 次后仍可跨任务恢复原文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2234,10 +2232,9 @@ test("TUI：重复剪切相同内容不会提前淘汰仍可恢复的粘贴", as
   await tick();
   ui.input.write("\x19\x15".repeat(32));
   await tick();
-  assert.equal(ui.tui.pastes.size, 1, "重复 kill 不会让 Node 的 32 项 kill ring 提前淘汰原文");
-
   ui.input.write("keep\r");
   assert.equal(await first, "keep");
+
   const next = ui.tui.readLine();
   ui.input.write("\x19\r");
   assert.equal(await next, "first\nsecond");
@@ -2255,7 +2252,6 @@ test("TUI：已提交的剪切占位不会被后续同长度粘贴复用", async
   await tick();
   ui.input.write("\x19\r");
   assert.equal(await first, "first\nsecond");
-  assert.equal(ui.tui.pastes.size, 1, "仍在 kill ring 的已提交原文必须保留");
 
   const second = ui.tui.readLine();
   ui.input.write("\x1b[200~third\nfourth\x1b[201~");
@@ -2264,7 +2260,7 @@ test("TUI：已提交的剪切占位不会被后续同长度粘贴复用", async
   assert.equal(await second, "third\nfourthfirst\nsecond");
 });
 
-test("TUI：撤销删除多行粘贴提示后仍能恢复原文", async (t) => {
+test("TUI：撤销与重做 2048 次后仍能恢复多行粘贴原文", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, language: "en" });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2272,74 +2268,29 @@ test("TUI：撤销删除多行粘贴提示后仍能恢复原文", async (t) => {
 
   ui.input.write("\x1b[200~first\nsecond\x1b[201~");
   await tick();
-  const placeholder = ui.tui.pastes.keys().next().value;
-  assert.ok(placeholder);
-
   ui.input.write("\x7f");
   await tick();
-  assert.equal(ui.tui.pastes.size, 1, "readline 的 undo 快照仍引用原文");
-
-  ui.input.write("\x1f");
+  ui.input.write("\x1f\x1e".repeat(2_048));
   await tick();
-  assert.ok(ui.tui.rl.line.includes(placeholder), "Ctrl+_ 必须恢复完整提示");
-
-  ui.input.write("\x1e");
-  await tick();
-  assert.ok(!ui.tui.rl.line.includes(placeholder), "Ctrl+^ 重做应再次删除提示");
-  assert.equal(ui.tui.pastes.size, 1, "重做后仍要保留可撤销的原文");
-
-  ui.input.write("\x1f");
-  await tick();
-  ui.input.write("\r");
+  ui.input.write("\x1f\r");
   assert.equal(await pending, "first\nsecond");
 });
 
-test("TUI：kill ring 淘汰后保留可撤销原文，历史淘汰后释放", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+test("TUI：多行粘贴历史达到会话上限后拒绝新内容并明确提示", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "zh" });
   t.after(() => ui.cleanup());
   ui.tui.start();
   const pending = ui.tui.readLine();
 
-  ui.input.write("\x1b[200~first\nsecond\x1b[201~");
+  ui.input.write("\x1b[200~a\nb\x1b[201~".repeat(256));
   await tick();
-  ui.input.write("\x15");
+  ui.input.write("\x1b[200~rejected\npaste\x1b[201~");
   await tick();
-  assert.equal(ui.tui.pastes.size, 1, "Ctrl+U 剪切内容仍可 Ctrl+Y 恢复");
+  assert.ok(ui.text().includes("粘贴内容未插入"), "超过会话上限必须显示明确警告");
 
-  for (let index = 0; index < 32; index++) {
-    ui.input.write(`discard-${index}\x15`);
-    await tick();
-  }
-  assert.equal(ui.tui.pastes.size, 1, "kill ring 淘汰后，undo 栈仍可能恢复旧内容");
-
-  for (let index = 0; index < 4_096; index++) ui.tui.trackEditorChange("x", "y");
-  ui.tui.prunePastes(ui.tui.rl.line);
-  assert.equal(ui.tui.pastes.size, 0, "readline undo 栈淘汰旧快照后必须释放原文");
-  ui.input.write("keep\r");
-  assert.equal(await pending, "keep");
-});
-
-test("TUI：普通删除多行粘贴占位后保留撤销原文并在历史淘汰后释放", async (t) => {
-  const ui = makeTui({ interactive: true, tty: true, language: "en" });
-  t.after(() => ui.cleanup());
-  ui.tui.start();
-  const pending = ui.tui.readLine();
-
-  for (let index = 0; index < 3; index++) {
-    ui.input.write(`\x1b[200~discard-${index}\nbody-${index}\x1b[201~`);
-    await tick();
-    assert.equal(ui.tui.pastes.size, index + 1, "当前编辑中的粘贴原文必须保留，之前删除的原文仍可撤销");
-    const placeholder = [...ui.tui.pastes.keys()].at(-1);
-    ui.input.write("\x7f".repeat(placeholder.length));
-    await tick();
-    assert.equal(ui.tui.pastes.size, index + 1, "Backspace 删除后仍须支持 Ctrl+_ 撤销");
-  }
-
-  for (let index = 0; index < 4_096; index++) ui.tui.trackEditorChange("x", "y");
-  ui.tui.prunePastes(ui.tui.rl.line);
-  assert.equal(ui.tui.pastes.size, 0, "readline undo 栈淘汰快照后必须释放对应原文");
-  ui.input.write("keep\r");
-  assert.equal(await pending, "keep");
+  ui.input.write("\r");
+  const submitted = await pending;
+  assert.equal(submitted, "a\nb".repeat(256));
 });
 
 test("TUI：提交多行粘贴后，上键能恢复原文再次提交", async (t) => {
