@@ -45,6 +45,10 @@ _Avoid_: function, handler, plugin
 一次 Run 里提供给模型的全部 Tool，以及把每个 Tool call 执行成一条 Tool result 的那一步。
 _Avoid_: toolbelt, toolbox, tool set
 
+**Hook**:
+挂在工具执行上的生命周期回调，三个事件：`PreToolUse`（执行前，可返回 `{ block: 原因 }` 阻止这次调用）、`PostToolUse`（成功之后，能拿到结果原文）、`PostToolUseFailure`（失败之后，能拿到原始错误）。它们挂在唯一的执行入口 `ToolRegistry.execute` 上，所有 Tool 自动经过；同一事件按登记顺序串行执行，Hook 自己出错只记 `failureCount`，不改变工具结果，也不进入 Transcript（见 [ADR-0020](./docs/adr/0020-tool-hooks-live-in-the-registry.md)）。
+_Avoid_: middleware, plugin, interceptor（它们改写请求或接管执行；Hook 只能旁观与阻止）
+
 **Full access**:
 agent-Kernel 唯一的运行模式：工具与 **shell** 直接执行，没有审批、没有模式切换，也没有 **Workspace** 目录边界。它取消的是 agent-Kernel 自己施加的限制，不是提权——进程仍以启动它的操作系统账户运行。
 _Avoid_: sandbox, permission mode, admin mode（它不是提权）
@@ -112,6 +116,7 @@ _Avoid_: LLM, model, provider
 - 每个 **Tool call** 恰好由一条 **Tool result** **Message** 答复，两者靠 id 配对；没有执行的调用也留一条 `not run` 结果，配对不为预算或取消让路。
 - **Tool registry** 持有 N 个 **Tool**，这些 **Tool** 只作用于一个 **Workspace**。
 - 每个 **Tool call** 在参数校验通过后直接执行；普通失败折成 **ERROR text**，模型下一轮自己纠正。
+- 每个 **Tool call** 执行前后会经过登记过的 **Hook**：`PreToolUse` 能阻止它（被拦下的调用不执行，结果是一条带原因的 **ERROR text**），`PostToolUse` / `PostToolUseFailure` 只观察。**Hook** 不改变 **Tool result**，也不改变 **Transcript**。
 - **Full access** 不改变进程权限：**shell** 与文件工具都以启动者同权执行，可以离开 **Workspace**。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
