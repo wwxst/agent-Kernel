@@ -539,6 +539,7 @@ export class Tui {
     let pasteBuffer = "";
     let partial = "";
     let partialTimer: NodeJS.Timeout | undefined;
+    let pasteReadline: Interface | undefined;
     const pasteEmit = (event: string, ...args: unknown[]): boolean => {
       if (event === "data" && args[0] !== undefined) {
         if (partialTimer !== undefined) clearTimeout(partialTimer);
@@ -605,7 +606,11 @@ export class Tui {
         }
         args[0] = out;
       }
-      return originalEmit(event, ...args);
+      const emitted = originalEmit(event, ...args);
+      // Readline has now consumed this whole data chunk, including any text after an Enter.
+      // Keep only paste bodies whose placeholders are still in the editable buffer.
+      if (event === "data" && pasteReadline !== undefined) this.prunePastes(pasteReadline.line);
+      return emitted;
     };
     pasteSource.emit = pasteEmit;
     this.restoreInput = () => {
@@ -656,6 +661,7 @@ export class Tui {
       options.input.pipe(this.mouseInput);
     }
     this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
+    pasteReadline = this.rl;
     // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
     (this.rl as Interface & { history: string[] }).history = loadHistory().reverse();
@@ -1955,6 +1961,13 @@ export class Tui {
       this.inputDirty = true;
     } else {
       resolve(payload);
+    }
+  }
+
+  /** 删除已从 readline 编辑缓冲区移除的提示，避免丢弃的大段粘贴原文长期占用内存。 */
+  private prunePastes(currentLine: string): void {
+    for (const placeholder of this.pastes.keys()) {
+      if (!currentLine.includes(placeholder)) this.pastes.delete(placeholder);
     }
   }
 
