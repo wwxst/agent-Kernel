@@ -306,6 +306,30 @@ test("注册：required 必须声明在 properties 里，且是字符串数组",
   );
 });
 
+test("注册：对象 Schema 的 properties / required 形状不对时，报错带位置名", () => {
+  // 根对象与嵌套对象共用一套字段体检，但文案的称呼不同：根叫 parameters，嵌套叫 parameter "cfg"。
+  assert.throws(
+    () => makeRegistry([schemaTool({ type: "object", properties: "nope" })]),
+    /parameters\.properties must be an object/,
+  );
+  assert.throws(
+    () => makeRegistry([schemaTool({
+      type: "object", properties: { a: { type: "string" } }, required: ["a", 1],
+    })]),
+    /parameters\.required must contain only strings/,
+  );
+  assert.throws(
+    () => makeRegistry([schemaTool({ type: "object", properties: { cfg: { type: "object", properties: "nope" } } })]),
+    /parameter "cfg" properties must be an object/,
+  );
+  assert.throws(
+    () => makeRegistry([schemaTool({
+      type: "object", properties: { cfg: { type: "object", properties: {}, required: "a" } },
+    })]),
+    /parameter "cfg" required must be an array of strings/,
+  );
+});
+
 test("注册：每个参数都必须声明受支持的类型", () => {
   assert.throws(
     () => makeRegistry([schemaTool({ type: "object", properties: { a: {} } })]),

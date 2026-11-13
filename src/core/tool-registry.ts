@@ -15,7 +15,8 @@
  *   - `ToolRegistry.definitions`：发给模型的那一半，只有说明书，没有执行函数。
  *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
  *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
- *   - 内部：`assertSupportedSchema()` 注册时体检、`validateArguments()` 按 Schema 校验参数、
+ *   - 内部：`assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
+ *     共用的一套字段体检、`validateArguments()` 按 Schema 校验参数、
  *     `SUPPORTED_PARAMETER_TYPES` 校验器真正认识的那几种类型。
  *
  * 模块关系：依赖 `protocol/types.ts`（`Tool` / `ToolCall` / `ToolDefinition`）、
@@ -54,22 +55,47 @@ function assertPropertySchema(toolName: string, path: string, schema: unknown): 
     assertPropertySchema(toolName, `${path}[]`, schema.items);
   }
   if (schema.type === "object") {
-    const properties = schema.properties ?? {};
-    if (!isRecord(properties)) {
-      throw new Error(`tool "${toolName}": parameter "${path}" properties must be an object`);
+    assertObjectSchema(toolName, path, schema);
+  }
+}
+
+/**
+ * 对象 Schema 的体检：根对象（`parameters`）和嵌套对象共用这一套规则。
+ *
+ * 规则只有四条：`properties` 必须是对象、每个字段递归体检、`required` 必须是字符串数组、
+ * `required` 里的名字必须真的声明过。两处只有「怎么称呼这个位置」不同：根对象叫
+ * `parameters`、用点号接字段；嵌套对象叫 `parameter "cfg"`、用空格接字段。
+ * 这些字面量是既有输出，改了会动到注册期报错文案，别顺手统一。
+ *
+ * `path` 为空串表示根对象；否则是嵌套位置的路径（如 `cfg`、`items[]`）。
+ */
+function assertObjectSchema(toolName: string, path: string, schema: Record<string, unknown>): void {
+  const isRoot = path === "";
+  const label = isRoot ? "parameters" : `parameter "${path}"`;
+  const separator = isRoot ? "." : " ";
+  const declaredSuffix = isRoot ? " in parameters.properties" : "";
+  const childPath = (key: string) => (isRoot ? key : `${path}.${key}`);
+
+  const properties = schema.properties ?? {};
+  if (!isRecord(properties)) {
+    throw new Error(`tool "${toolName}": ${label}${separator}properties must be an object`);
+  }
+  for (const [key, child] of Object.entries(properties)) {
+    assertPropertySchema(toolName, childPath(key), child);
+  }
+
+  const required = schema.required;
+  if (required === undefined) return;
+  // 根对象把「不是数组」和「元素不是字符串」分成两句报；嵌套对象并成一句（既有行为）。
+  if (!Array.isArray(required) || (!isRoot && !required.every((key) => typeof key === "string"))) {
+    throw new Error(`tool "${toolName}": ${label}${separator}required must be an array of strings`);
+  }
+  for (const key of required) {
+    if (typeof key !== "string") {
+      throw new Error(`tool "${toolName}": ${label}${separator}required must contain only strings`);
     }
-    for (const [key, child] of Object.entries(properties)) {
-      assertPropertySchema(toolName, `${path}.${key}`, child);
-    }
-    if (schema.required !== undefined) {
-      if (!Array.isArray(schema.required) || !schema.required.every((key) => typeof key === "string")) {
-        throw new Error(`tool "${toolName}": parameter "${path}" required must be an array of strings`);
-      }
-      for (const key of schema.required) {
-        if (!Object.hasOwn(properties, key)) {
-          throw new Error(`tool "${toolName}": required parameter "${path}.${key}" is not declared`);
-        }
-      }
+    if (!Object.hasOwn(properties, key)) {
+      throw new Error(`tool "${toolName}": required parameter "${childPath(key)}" is not declared${declaredSuffix}`);
     }
   }
 }
@@ -82,31 +108,7 @@ function assertSupportedSchema(tool: Tool): void {
   if (schema.type !== "object") {
     throw new Error(`tool "${tool.name}": parameters.type must be "object"`);
   }
-
-  const properties = schema.properties ?? {};
-  if (!isRecord(properties)) {
-    throw new Error(`tool "${tool.name}": parameters.properties must be an object`);
-  }
-
-  for (const [key, property] of Object.entries(properties)) {
-    assertPropertySchema(tool.name, key, property);
-  }
-
-    const required = schema.required;
-  if (required === undefined) return;
-  if (!Array.isArray(required)) {
-    throw new Error(`tool "${tool.name}": parameters.required must be an array of strings`);
-  }
-  for (const key of required) {
-    if (typeof key !== "string") {
-      throw new Error(`tool "${tool.name}": parameters.required must contain only strings`);
-    }
-    if (!Object.hasOwn(properties, key)) {
-      throw new Error(
-        `tool "${tool.name}": required parameter "${key}" is not declared in parameters.properties`,
-      );
-    }
-  }
+  assertObjectSchema(tool.name, "", schema);
 }
 
 /**
