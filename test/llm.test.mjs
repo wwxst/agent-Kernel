@@ -167,6 +167,19 @@ test("chat：非 JSON 响应归类为响应错误", async () => {
   } finally { await server.close(); }
 });
 
+test("chat：无正文的 HTTP 错误仍保留 HTTP 状态码", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(304);
+    response.end();
+  });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), (error) =>
+      error instanceof ModelHttpError && error.status === 304 && error.message === "LLM HTTP 304: ");
+  } finally {
+    await server.close();
+  }
+});
+
 test("chat：超过 8 MiB 的 JSON 响应被拒绝", async () => {
   const server = await respondWith({
     choices: [{ message: { role: "assistant", content: "x".repeat(8_388_608) }, finish_reason: "stop" }],

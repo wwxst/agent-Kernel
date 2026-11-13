@@ -223,7 +223,8 @@ export class Llm implements ChatClient {
 
 /** JSON 与 SSE 在同一处限制真实读取量；迭代提前退出或解析抛错时也释放连接。 */
 async function* readResponseBytes(response: Response): AsyncGenerator<Uint8Array> {
-  if (response.body === null) throw invalid("response has no body");
+  // A null body is a valid empty HTTP response (for example, 304); callers decide whether it is acceptable.
+  if (response.body === null) return;
   const reader = response.body.getReader();
   let received = 0;
   try {

@@ -1799,7 +1799,9 @@ export class Tui {
       this.renderNow();
       this.moveToInput();
       this.rl.setPrompt("");
-      this.rl.prompt();
+      // A buffered next paste may already be in readline; prompt() resets its cursor to zero.
+      // Preserve the insertion point so later typing appends at the existing cursor.
+      this.rl.prompt(true);
       this.renderNow();
       return answer;
     }
