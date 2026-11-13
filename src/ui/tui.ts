@@ -62,8 +62,8 @@ const LOG_TOP = 4;
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
 
-/** Node 22.18+ readline 的撤销 / 重做栈最多保留 2048 个编辑快照。 */
-const READLINE_UNDO_STACK_CAPACITY = 2_048;
+/** Node readline 的 undo 栈最多 2048 项；redo 可承接同样数量，合计最多 4096 项。 */
+const READLINE_UNDO_REDO_HISTORY_CAPACITY = 4_096;
 
 /** 流式增量最多每 40ms 重绘一次，避免每个 token 都扫一整屏。 */
 const RENDER_INTERVAL_MS = 40;
@@ -1941,6 +1941,9 @@ export class Tui {
 
   /** 提交一行；占位提示换成多行粘贴的原文。 */
   private submitLine(rawSubmitted: string): void {
+    // readline 在提交一行时会清空 undo / redo 栈；同时同步输入快照，避免 Enter 后误记一次删除。
+    this.undoablePastes.clear();
+    this.lastEditorLine = this.rl.line;
     const line = rawSubmitted.split(NEWLINE_MARK).join("\n");
     // Enter 提交当前高亮项：`/` 是整行替换并执行，`@` 只把路径补进输入框、不提交——
     // 用户通常还要接着写「这个文件里的 X 怎么改」。
@@ -1973,8 +1976,6 @@ export class Tui {
     for (const placeholder of this.pastes.keys()) {
       if (submitted.includes(placeholder)) this.pastes.delete(placeholder);
     }
-    // readline 在提交一行时会清空 undo / redo 栈；此前已删除的提示不再可能被恢复。
-    this.undoablePastes.clear();
     // 只记任务正文：斜杠命令不进历史（按上键翻出一串 /help 没有意义）。
     if (!payload.startsWith("/")) appendHistory(payload, this.workspace);
     const resolve = this.waiting.shift();
@@ -1997,7 +1998,7 @@ export class Tui {
     }
   }
 
-  /** 回收当前缓冲区与 readline 最近 2048 个撤销 / 重做快照都不再引用的原文。 */
+  /** 回收当前缓冲区与 readline 的 undo / redo 历史都不再引用的原文。 */
   private prunePastes(currentLine: string): void {
     for (const placeholder of this.pastes.keys()) {
       if (currentLine.includes(placeholder)) {
@@ -2006,7 +2007,7 @@ export class Tui {
       }
       const removedAt = this.undoablePastes.get(placeholder);
       const canUndo = removedAt !== undefined &&
-        this.editGeneration - removedAt < READLINE_UNDO_STACK_CAPACITY;
+        this.editGeneration - removedAt < READLINE_UNDO_REDO_HISTORY_CAPACITY;
       if (!canUndo) {
         this.pastes.delete(placeholder);
         this.undoablePastes.delete(placeholder);
