@@ -43,8 +43,10 @@ export class TodoManager {
       if (content.length > MAX_CONTENT_CHARS) {
         throw new Error(`todos[${index}].content must be at most ${MAX_CONTENT_CHARS} characters`);
       }
-      if (/[\x00-\x1f\x7f]/u.test(content)) {
-        throw new Error(`todos[${index}].content must be a single line without control characters`);
+      // 「单行」= 渲染出来只有一行：C0/C1 控制字符（含 DEL、U+0085）和 Unicode 行/段分隔符
+      // （U+2028、U+2029）都会把一项任务拆成两行或改写终端，必须和 \n 一样拒绝。
+      if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(content)) {
+        throw new Error(`todos[${index}].content must be a single line without control characters or line separators`);
       }
       if (seen.has(content)) throw new Error(`duplicate todo: ${content}`);
       seen.add(content);
@@ -75,8 +77,9 @@ export class TodoManager {
 export function createTodoTool(manager: TodoManager): Tool {
   return {
     name: "todo_write",
-    // 写入当前任务计划的完整列表；用 pending、in_progress、done 表示进度。
-    // 最多 20 项，同一时刻只能有一项处于 in_progress。每次调用替换整个列表。
+    // 写入当前任务计划的完整列表，状态用 pending、in_progress 或 done 表示。
+    // 最多 20 项，同一时刻最多一项处于 in_progress。
+    // 每次调用都会替换整个列表。
     description: "Write the full task plan with pending, in_progress, or done statuses. " +
       "At most 20 tasks and at most one in_progress. Each call replaces the whole list.",
     parameters: {

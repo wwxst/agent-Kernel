@@ -32,7 +32,8 @@ test("写入计划和逐步更新：按完整清单替换，并准确计算完�
 test("错误更新原子拒绝：上一份有效计划保持不变", () => {
   const manager = new TodoManager();
   manager.update([entry("已验证", "done")]);
-  const expected = manager.render();
+  const expected = "Todo list (1/1 done):\n1. [x] 已验证 (done)";
+  assert.equal(manager.render(), expected);
   const bad = [
     null,
     {},
@@ -46,6 +47,19 @@ test("错误更新原子拒绝：上一份有效计划保持不变", () => {
   ];
   for (const invalid of bad) {
     assert.throws(() => manager.update(invalid), /todos|only one|duplicate/i);
+    assert.equal(manager.render(), expected);
+  }
+});
+
+test("单行约束覆盖 Unicode 行分隔符与 C1 控制字符", () => {
+  const manager = new TodoManager();
+  manager.update([entry("已验证", "done")]);
+  const expected = "Todo list (1/1 done):\n1. [x] 已验证 (done)";
+  // C0 之外，C1 控制字符（U+0085、U+009B）与 Unicode 行/段分隔符（U+2028、U+2029）
+  // 同样会把一项任务拆成两行，必须和 \n 一样被拒绝。
+  for (const codePoint of [0x85, 0x9b, 0x2028, 0x2029]) {
+    const content = `a${String.fromCodePoint(codePoint)}b`;
+    assert.throws(() => manager.update([entry(content, "pending")]), /single line/);
     assert.equal(manager.render(), expected);
   }
 });
