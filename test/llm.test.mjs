@@ -118,7 +118,7 @@ test("SSE：同一事件的多条 data 行按换行拼接后再解析", async ()
   const json = JSON.stringify(payload);
   const split = Math.floor(json.length / 2);
   const server = await respondWithStream([
-    `data: ${json.slice(0, split)}\ndata: ${json.slice(split)}`,
+    `${json.slice(0, split)}\ndata: ${json.slice(split)}`,
     "[DONE]",
   ]);
   try {
