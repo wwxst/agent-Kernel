@@ -184,8 +184,22 @@ function sameFileIdentity(left: Stats, right: Stats): boolean {
 
 /** 捕获父目录的真实路径与文件系统身份；提交前后复核，检测目录被替换/重定向。 */
 async function captureDirectoryIdentity(directory: string): Promise<DirectoryIdentity> {
-  const [canonical, info] = await Promise.all([realpath(directory), stat(directory)]);
+  // 调用方传入的是 resolveReal 得到的规范路径；若路径在解析后被换成链接，不能把新目标当成原目录。
+  const expected = path.normalize(directory);
+  const canonical = await realpath(directory);
+  if (!sameCanonicalPath(canonical, expected)) {
+    throw new Error("parent directory changed during file operation: " + directory);
+  }
+  const info = await stat(directory);
   if (!info.isDirectory()) throw new Error("parent path is not a directory");
+
+  // stat 期间也可能发生换向；再次核对路径与 inode，缩小捕获身份时的竞态窗口。
+  const verifiedCanonical = await realpath(directory);
+  const verified = await stat(directory);
+  if (!verified.isDirectory() || !sameCanonicalPath(verifiedCanonical, expected) ||
+      !sameFileIdentity(info, verified)) {
+    throw new Error("parent directory changed during file operation: " + directory);
+  }
   return { path: canonical, dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
 }
 

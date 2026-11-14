@@ -78,7 +78,7 @@ test("历史：上限为零时不返回旧记录", async () => {
 
 test("历史：超过磁盘上限时原子轮转，只保留最近有效记录", async () => {
   await withFile(async (file) => {
-    await writeFile(file, `${JSON.stringify({ text: "x".repeat(8_388_608) })}\\n${JSON.stringify({ ts: 1, cwd: "/w", text: "latest-before-rotate" })}\\n`, "utf8");
+    await writeFile(file, `${JSON.stringify({ text: "x".repeat(8_388_608) })}\n${JSON.stringify({ ts: 1, cwd: "/w", text: "latest-before-rotate" })}\n`, "utf8");
     assert.equal(appendHistory("latest-after-rotate", "/w", file), true);
     assert.deepEqual(loadHistory(file), ["latest-before-rotate", "latest-after-rotate"]);
     assert.ok((await stat(file)).size < 8_388_608, "轮转后的文件必须低于硬上限");

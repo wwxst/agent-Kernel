@@ -17,7 +17,7 @@
  *     Windows `taskkill` 的各种失败路径。
  *   - 后台任务：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、
  *     多字节分片、多 Workspace 日志隔离、取消等待与日志缺失显式失败、`shell-kill` 后进程真的消失、未知编号报错。
- *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理。
+ *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理；目录在身份捕获前被换向时拒绝写入。
  *
  * 模块关系：依赖 `src/tools/workspace.ts`、`test/support/harness.mjs` 与 `node:test`，
  * 由 `npm test` 启动；少数 Windows 专用用例在其他平台自动跳过。
@@ -305,6 +305,38 @@ test("write：提交前发现父目录被替换时拒绝写入新目标", {
     await assert.rejects(writing, /parent directory changed during file operation/);
     await assert.rejects(() => readFile(path.join(outside, "created.txt")), { code: "ENOENT" });
     await rm(moved, { recursive: true, force: true });
+  });
+});
+
+test("write：捕获父目录身份时拒绝已经换向的路径", {
+  skip: process.platform === "win32" && "directory symlink swap is not portable on Windows",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const parent = path.join(root, "target");
+    const moved = path.join(root, "target-original");
+    const outside = path.join(root, "outside");
+    await mkdir(parent);
+    await mkdir(outside);
+
+    const workspace = new Workspace({ root });
+    const resolveReal = workspace.resolveReal.bind(workspace);
+    let resolutions = 0;
+    workspace.resolveReal = async (...args) => {
+      const resolved = await resolveReal(...args);
+      resolutions++;
+      if (resolutions === 2) {
+        // 第二次 resolveReal 已返回原目录路径；在身份捕获前把该路径换成外部目录链接。
+        await rename(parent, moved);
+        await symlink(outside, parent, "dir");
+      }
+      return resolved;
+    };
+
+    await assert.rejects(
+      () => workspace.write("target/created.txt", "must stay out"),
+      /parent directory changed during file operation/,
+    );
+    assert.deepEqual(await readdir(outside), [], "外部目标目录不能收到写入或临时文件");
   });
 });
 

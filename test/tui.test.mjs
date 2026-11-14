@@ -2498,8 +2498,8 @@ test("TUI：ERROR: 开头的文件正文按成功结果展示", async () => {
   const read = { id: "literal-error-body", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "notes.txt" }) } };
   ui.tui.toolCall(read);
   ui.tui.toolResult(read, "ERROR: this is literal file content", false);
-  assert.match(ui.text(), /✓ Read/);
-  assert.doesNotMatch(ui.text(), /✗ Read/);
+  assert.match(ui.text(), /[✓+] Read/);
+  assert.doesNotMatch(ui.text(), /[✗x] Read/);
   ui.cleanup();
 });
 
