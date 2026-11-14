@@ -198,7 +198,7 @@ export function loadHistory(file = historyPath(), limit = MAX_HISTORY_ENTRIES): 
   } catch {
     return [];
   }
-  return parseRecords(raw).slice(-Math.floor(limit)).map((record) => record.text);
+  return parseRecords(raw).slice(-Math.min(MAX_HISTORY_ENTRIES, Math.floor(limit))).map((record) => record.text);
 }
 
 /**
