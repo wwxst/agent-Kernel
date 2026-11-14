@@ -210,17 +210,25 @@ export class Llm implements ChatClient {
       if (field === "data") eventData.push(value);
     };
 
+    const consumeBufferedLines = (final = false): void => {
+      while (!finished) {
+        const cr = buffer.indexOf("\r");
+        const lf = buffer.indexOf("\n");
+        const newline = cr === -1 ? lf : lf === -1 ? cr : Math.min(cr, lf);
+        if (newline === -1) return;
+        // CR 可能是 CRLF 的前半段；非 EOF 时先留在 buffer，等下一块确认。
+        if (!final && buffer[newline] === "\r" && newline === buffer.length - 1) return;
+        const width = buffer[newline] === "\r" && buffer[newline + 1] === "\n" ? 2 : 1;
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + width);
+        consumeLine(line);
+      }
+    };
+
     try {
       for await (const value of readResponseBytes(response)) {
         buffer += decoder.decode(value, { stream: true });
-        let newline = buffer.indexOf("\n");
-        while (newline !== -1) {
-          const line = buffer.slice(0, newline).replace(/\r$/, "");
-          buffer = buffer.slice(newline + 1);
-          consumeLine(line);
-          if (finished) break;
-          newline = buffer.indexOf("\n");
-        }
+        consumeBufferedLines();
         if (finished) break;
       }
     } catch (error) {
@@ -229,7 +237,8 @@ export class Llm implements ChatClient {
         error instanceof ChatResponseError ? error.code : "stream_incomplete");
     }
     buffer += decoder.decode();
-    if (!finished && buffer !== "") consumeLine(buffer.replace(/\r$/, ""));
+    if (!finished) consumeBufferedLines(true);
+    if (!finished && buffer !== "") consumeLine(buffer);
     if (!finished) dispatchEvent();
 
     try {
