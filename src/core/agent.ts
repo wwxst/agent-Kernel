@@ -164,7 +164,7 @@ export interface AgentOptions {
    */
   signal?: AbortSignal;
   /** 每次工具执行完的回调，用来打印进度；Agent 本身不直接 console.log。 */
-  onToolResult?: (call: ToolCall, result: string) => void;
+  onToolResult?: (call: ToolCall, result: string, isError: boolean) => void;
   /**
    * 每次工具**开始执行前**的回调。给 TUI 用：先把「要跑什么」写进运行记录，
    * 再等真实结果，而不是等工具跑完才一次性出现。
@@ -196,7 +196,7 @@ export class Agent {
   private readonly maxToolCalls: number;
   private readonly maxTotalTokens?: number;
   private readonly signal?: AbortSignal;
-  private readonly onToolResult?: (call: ToolCall, result: string) => void;
+  private readonly onToolResult?: (call: ToolCall, result: string, isError: boolean) => void;
   private readonly onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
   private readonly onRequestStart?: (step: number) => void;
   private readonly onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
@@ -549,8 +549,11 @@ export class Agent {
         // 同步回调若触发取消，也不能在同一个事件循环内继续启动工具。
         this.stopIfCancelled(calls.slice(index));
         let result: string;
+        let isError = false;
         try {
-          result = await this.tools.execute(call);
+          const outcome = await this.tools.executeWithStatus(call);
+          result = outcome.content;
+          isError = outcome.isError;
         } catch (error) {
           if (!(error instanceof ProcessCleanupError)) throw error;
           this.processCleanupUnverified = true;
@@ -558,7 +561,7 @@ export class Agent {
           this.runToolCalls++;
           this.sessionToolCalls++;
           this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
-          this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`);
+          this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`, true);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
           // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作。
           // 本批与后续所有 Run 的工具都被禁止，模型只负责根据错误收尾报告。
@@ -567,7 +570,7 @@ export class Agent {
         this.runToolCalls++;
         this.sessionToolCalls++;
         this.messages.push(createToolResult(call, result));
-        this.notifyObserver(this.onToolResult, structuredClone(call), result);
+        this.notifyObserver(this.onToolResult, structuredClone(call), result, isError);
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
