@@ -2506,7 +2506,7 @@ test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) 
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
-  const pending = ui.tui.readLine();
+  ui.tui.readLine();
   ui.input.write("keep this input");
   await tick();
   ui.input.emit("keypress", "", { name: "x", ctrl: true });

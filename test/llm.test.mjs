@@ -114,18 +114,20 @@ async function respondWhileOpen(write) {
 }
 
 test("SSE：同一事件的多条 data 行按换行拼接后再解析", async () => {
-  const payload = { choices: [{ index: 0, delta: { content: "multi" }, finish_reason: "stop" }] };
-  const json = JSON.stringify(payload);
-  const split = json.indexOf('"delta"');
-  const server = await respondWithStream([
-    `${json.slice(0, split)}\ndata: ${json.slice(split)}`,
-    "[DONE]",
-  ]);
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end('data: {"choices":[{"index":0,\ndata: "delta":{"content":"multi"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
-    const result = await streamingClient(server.url).chat([], []);
+    const result = await streamingClient(`http://127.0.0.1:${server.address().port}/v1`).chat([], []);
     assert.equal(result.message.content, "multi");
   } finally {
-    await server.close();
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
   }
 });
 
