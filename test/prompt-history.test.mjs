@@ -89,7 +89,7 @@ test("历史：超过磁盘上限时原子轮转，只保留最近有效记录",
 test("历史：能回收持有进程已退出的陈旧锁", async () => {
   await withFile(async (file) => {
     const lock = file + ".lock";
-    await writeFile(lock, JSON.stringify({ pid: 2_147_483_647, token: "stale" }), "utf8");
+    await writeFile(lock, JSON.stringify({ token: "stale" }), "utf8");
     const old = new Date(Date.now() - 60_000);
     await utimes(lock, old, old);
     assert.equal(appendHistory("recovered", "/w", file), true);
