@@ -75,6 +75,19 @@ function createToolResult(call: ToolCall, result: string): Message {
 function emptyUsage(): AgentUsage {
   return { promptTokens: 0, completionTokens: 0, totalTokens: 0, reported: 0, unknown: 0 };
 }
+const DEFAULT_MAX_TRANSCRIPT_CHARS = 120_000;
+const MAX_COMPACTION_SUMMARY_CHARS = 12_000;
+
+/** 保留头尾和明确的省略标记；不会把截断后的工具输出伪装成完整内容。 */
+function compactText(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const omitted = Math.max(0, text.length - limit);
+  const marker = "\\n… [context compacted: " + omitted + " chars omitted] …\\n";
+  const room = Math.max(0, limit - marker.length);
+  const head = Math.ceil(room * 0.75);
+  const tail = room - head;
+  return text.slice(0, head) + marker + (tail > 0 ? text.slice(-tail) : "");
+}
 
 /**
  * 一次任务里能观察到的用量。
@@ -179,6 +192,8 @@ export interface AgentOptions {
   onRequestStart?: (step: number) => void;
   /** 仅对确认可重试的请求报告真实进度，不代表一个新的 Agent Step。 */
   onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
+  /** Transcript 字符预算；超出时压缩旧轮次与旧工具输出，默认 120000 字符。 */
+  maxTranscriptChars?: number;
   /** 每个 Step 最多额外尝试多少次；默认零，保持原始核心行为。 */
   maxModelRetries?: number;
   /**
@@ -201,8 +216,13 @@ export class Agent {
   private readonly onRequestStart?: (step: number) => void;
   private readonly onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
   private readonly maxModelRetries: number;
+  private readonly maxTranscriptChars: number;
 
   private readonly onDelta?: (text: string) => void;
+
+  /** 被压缩的旧轮次摘要保存在唯一 system 消息里，不插入伪造的 tool / assistant 配对。 */
+  private compactedSummary = "";
+  private baseSystemPromptContent = "";
 
   /** 展示观察者失败的累计次数；不参与 Agent 执行、Transcript 或 token 统计。 */
   private observerFailures = 0;
@@ -259,10 +279,14 @@ export class Agent {
     this.onRequestStart = options.onRequestStart;
     this.onRetry = options.onRetry;
     this.maxModelRetries = options.maxModelRetries ?? 0;
+    this.maxTranscriptChars = Number.isFinite(options.maxTranscriptChars) && (options.maxTranscriptChars ?? 0) >= 1_024
+      ? Math.floor(options.maxTranscriptChars!)
+      : DEFAULT_MAX_TRANSCRIPT_CHARS;
     this.onDelta = options.onDelta;
 
-    // 系统提示词只放一条，之后每轮都跟着 messages 一起发出去；内容可由 provider 在请求前刷新。
-    this.messages.push({ role: "system", content: this.systemPrompt() });
+    // 系统提示词只放一条；压缩摘要作为它的附加上下文，不制造新的对话角色或消息配对。
+    this.baseSystemPromptContent = this.systemPrompt();
+    this.messages.push({ role: "system", content: this.composeSystemPrompt() });
   }
 
   /**
