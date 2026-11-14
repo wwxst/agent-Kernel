@@ -453,19 +453,25 @@ export class Workspace {
     this.stopIfCancelledBeforeWrite();
     await mkdir(path.dirname(file), { recursive: true });
     const target = await this.resolveReal(file, requested);
+    const parentIdentity = await captureDirectoryIdentity(path.dirname(target));
+    await assertDirectoryIdentity(parentIdentity, requested);
     this.stopIfCancelledBeforeWrite();
 
-    // 既有文件先检查可写权限，但不截断；Windows/Unix 的普通权限拒绝仍保持原语义。
+    // 既有文件先检查可写权限，但不截断；特殊文件使用非阻塞打开并明确拒绝。
     let original: Stats | undefined;
     try {
-      const existing = await open(target, constants.O_WRONLY | NO_FOLLOW_FILE);
+      const existing = await open(target, constants.O_WRONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
       try {
         original = await existing.stat();
+        if (!original.isFile()) throw new Error("target is not a regular file");
+        await assertOpenedFileStillNamed(target, original, requested);
+        await assertDirectoryIdentity(parentIdentity, requested);
       } finally {
         await existing.close();
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await assertDirectoryIdentity(parentIdentity, requested);
     }
     // 回显真实的旧文本必须发生在原子覆盖之前；读取不到时只放弃 UI Diff，不阻止 write。
     const withinPreviewLimit = Buffer.byteLength(content) <= MAX_EDIT_FILE_BYTES;
@@ -473,15 +479,21 @@ export class Workspace {
     if (this.onWriteCommitted !== undefined && original !== undefined &&
         original.size <= MAX_EDIT_FILE_BYTES && withinPreviewLimit) {
       try {
-        const handle = await open(target, constants.O_RDONLY | NO_FOLLOW_FILE);
+        const handle = await open(target, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
         try {
+          const opened = await handle.stat();
+          if (!opened.isFile()) throw new Error("target is not a regular file");
+          await assertOpenedFileStillNamed(target, opened, requested);
+          await assertDirectoryIdentity(parentIdentity, requested);
           const read = await readTextUpToHandle(handle, MAX_EDIT_FILE_BYTES,
             Buffer.alloc(MAX_EDIT_FILE_BYTES + 1), { preserveBom: true });
+          await assertOpenedFileStillNamed(target, opened, requested);
+          await assertDirectoryIdentity(parentIdentity, requested);
           if (!read.truncated) beforeForDiff = read.text;
         } finally { await handle.close(); }
       } catch { this.editObserverFailures++; }
     }
-    await this.replaceFileAtomically(target, requested, content, original);
+    await this.replaceFileAtomically(target, requested, content, original, parentIdentity);
     // 写入成功时始终通知展示层；快照过大/不可读取用 undefined 明确标示，
     // 而不是静默丢失 Diff。此回调仍为旁路，不影响真实写入结果。
     try {
