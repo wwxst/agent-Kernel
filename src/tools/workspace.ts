@@ -182,6 +182,13 @@ function sameFileIdentity(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs;
 }
 
+/** 路径在并发替换时可能暂时不存在或不再是目录/文件；统一转成身份变化错误。 */
+function isPathLookupFailure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
+}
+
 /** 捕获父目录的真实路径与文件系统身份；提交前后复核，检测目录被替换/重定向。 */
 async function captureDirectoryIdentity(directory: string): Promise<DirectoryIdentity> {
   // 调用方传入的是 resolveReal 得到的规范路径；若路径在解析后被换成链接，不能把新目标当成原目录。
@@ -204,7 +211,16 @@ async function captureDirectoryIdentity(directory: string): Promise<DirectoryIde
 }
 
 async function assertDirectoryIdentity(identity: DirectoryIdentity, requested: string): Promise<void> {
-  const [canonical, current] = await Promise.all([realpath(identity.path), stat(identity.path)]);
+  let canonical: string;
+  let current: Stats;
+  try {
+    [canonical, current] = await Promise.all([realpath(identity.path), stat(identity.path)]);
+  } catch (error) {
+    if (isPathLookupFailure(error)) {
+      throw new Error("parent directory changed during file operation: " + requested);
+    }
+    throw error;
+  }
   if (!current.isDirectory() || !sameCanonicalPath(canonical, identity.path) ||
       current.dev !== identity.dev || current.ino !== identity.ino || current.birthtimeMs !== identity.birthtimeMs) {
     throw new Error("parent directory changed during file operation: " + requested);
@@ -213,7 +229,16 @@ async function assertDirectoryIdentity(identity: DirectoryIdentity, requested: s
 
 /** 文件句柄打开后核对路径当前仍指向同一个 inode，防止复核前最后一段路径被替换。 */
 async function assertOpenedFileStillNamed(file: string, opened: Stats, requested: string): Promise<void> {
-  const [canonical, current] = await Promise.all([realpath(file), stat(file)]);
+  let canonical: string;
+  let current: Stats;
+  try {
+    [canonical, current] = await Promise.all([realpath(file), stat(file)]);
+  } catch (error) {
+    if (isPathLookupFailure(error)) {
+      throw new Error("file path changed during operation: " + requested);
+    }
+    throw error;
+  }
   if (!current.isFile() || !sameCanonicalPath(canonical, file) || !sameFileIdentity(current, opened)) {
     throw new Error("file path changed during operation: " + requested);
   }
