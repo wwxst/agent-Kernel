@@ -297,8 +297,135 @@ export class Agent {
    * 「一条 system + 一条 user + assistant/tool 配对」的 Transcript 形状。
    */
   private refreshSystemPrompt(): void {
-    // 构造函数保证 index 0 是唯一的 system 消息；这里只刷新内容，不追加、不重复校验。
-    this.messages[0].content = this.systemPrompt();
+    // 项目指令等动态内容每次请求前重新读取；压缩摘要始终追加在同一条 system 消息中。
+    this.baseSystemPromptContent = this.systemPrompt();
+    this.messages[0].content = this.composeSystemPrompt();
+  }
+
+  private composeSystemPrompt(): string {
+    if (this.compactedSummary === "") return this.baseSystemPromptContent;
+    return this.baseSystemPromptContent +
+      "\\n\\nConversation memory (older turns were compacted; this is a summary, not a verbatim transcript):\\n" +
+      this.compactedSummary;
+  }
+
+  private transcriptSize(): number {
+    return this.messages.reduce((total, message) => total + JSON.stringify(message).length, 0);
+  }
+
+  private appendCompactionSummary(summary: string): void {
+    if (summary.trim() === "") return;
+    const summaryLimit = Math.min(
+      MAX_COMPACTION_SUMMARY_CHARS,
+      Math.max(1_200, Math.floor(this.maxTranscriptChars * 0.15)),
+    );
+    const combined = this.compactedSummary === "" ? summary : this.compactedSummary + "\\n" + summary;
+    if (combined.length <= summaryLimit) {
+      this.compactedSummary = combined;
+    } else {
+      const tail = combined.slice(-summaryLimit);
+      const lineBreak = tail.indexOf("\\n");
+      this.compactedSummary = lineBreak === -1 ? tail : tail.slice(lineBreak + 1);
+    }
+    this.messages[0].content = this.composeSystemPrompt();
+  }
+
+  /** 只有完整的 assistant tool_calls + 按 id 配齐的 tool 消息才允许整轮移除。 */
+  private hasCompleteToolPairs(turn: readonly Message[]): boolean {
+    for (let index = 0; index < turn.length; index++) {
+      const message = turn[index]!;
+      if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+      for (const call of message.tool_calls) {
+        const result = turn[index + 1];
+        if (result?.role !== "tool" || result.tool_call_id !== call.id) return false;
+        index++;
+      }
+    }
+    return true;
+  }
+
+  /** 将旧轮次压成简短事实摘要；工具结果只留预览，最终答复优先保留。 */
+  private summarizeTurn(turn: readonly Message[]): string {
+    const user = turn.find((message) => message.role === "user");
+    const final = [...turn].reverse().find((message) =>
+      message.role === "assistant" && message.tool_calls === undefined);
+    const lines = ["Earlier user request: " + compactText(user?.content ?? "(empty)", 360)];
+    for (let index = 0; index < turn.length; index++) {
+      const message = turn[index]!;
+      if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+      for (const call of message.tool_calls) {
+        const result = turn[index + 1];
+        const preview = result?.role === "tool" && result.tool_call_id === call.id
+          ? result.content ?? ""
+          : "(result unavailable)";
+        lines.push(
+          "Tool " + call.function.name + " args=" + compactText(call.function.arguments, 100) +
+          " result=" + compactText(preview, 140),
+        );
+        index++;
+      }
+    }
+    if (final !== undefined) lines.push("Earlier assistant answer: " + compactText(final.content ?? "", 420));
+    return lines.join("\\n");
+  }
+
+  /**
+   * 控制长期会话增长：
+   * 1. 先整轮移除最旧且工具调用全部配对的历史，摘要放进 system；
+   * 2. 当前轮不删除用户任务或 tool_call，只压缩较旧的 tool 结果正文；
+   * 3. 必要时再缩短所有 tool 结果，但始终保留每个 tool_call_id 对应的结果消息。
+   *
+   * 用户原始任务、最新工具调用和消息顺序不被删除。单条超长用户输入本身可能超过预算，
+   * 不会为了满足字符数上限而静默改写用户指令。
+   */
+  private compactTranscript(): void {
+    if (this.transcriptSize() <= this.maxTranscriptChars) return;
+    const target = Math.floor(this.maxTranscriptChars * 0.85);
+    const turns: Message[][] = [];
+    for (const message of this.messages.slice(1)) {
+      if (message.role === "user" || turns.length === 0) turns.push([message]);
+      else turns[turns.length - 1]!.push(message);
+    }
+
+    while (turns.length > 1 && this.transcriptSize() > target) {
+      const oldest = turns[0]!;
+      if (!this.hasCompleteToolPairs(oldest)) break;
+      this.appendCompactionSummary(this.summarizeTurn(oldest));
+      this.messages.splice(1, oldest.length);
+      turns.shift();
+    }
+
+    const toolMessages = this.messages.filter((message) => message.role === "tool");
+    const olderToolMessages = toolMessages.slice(0, Math.max(0, toolMessages.length - 6));
+    for (const message of olderToolMessages) {
+      if (this.transcriptSize() <= target) break;
+      const original = message.content ?? "";
+      if (original.length <= 800) continue;
+      this.appendCompactionSummary("Older tool output preview: " + compactText(original, 180));
+      message.content = compactText(original, 800);
+    }
+
+    if (this.transcriptSize() > this.maxTranscriptChars) {
+      for (const message of toolMessages) {
+        if (this.transcriptSize() <= target) break;
+        const original = message.content ?? "";
+        if (original.length > 240) message.content = compactText(original, 240);
+      }
+    }
+
+    // 旧轮次最终答复可缩短，但最新答复与所有 tool-call 配对保持原样。
+    if (this.transcriptSize() > this.maxTranscriptChars) {
+      const finalMessages = this.messages.filter((message) =>
+        message.role === "assistant" && message.tool_calls === undefined);
+      for (const message of finalMessages.slice(0, -1)) {
+        if (this.transcriptSize() <= target) break;
+        if ((message.content ?? "").length > 900) {
+          this.appendCompactionSummary("Older assistant answer: " + compactText(message.content ?? "", 220));
+          message.content = compactText(message.content ?? "", 900);
+        }
+      }
+    }
+    this.messages[0].content = this.composeSystemPrompt();
   }
 
   /**
