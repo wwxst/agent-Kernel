@@ -143,8 +143,8 @@ export class ToolHooks {
    * 不收集「所有人的意见」再投票 —— 一个 Hook 说不行就够了，而多跑几个 Hook
    * 还会让「谁拦的」变得说不清。
    *
-   * Hook 抛错时按「这个 Hook 没意见」处理，也就是放行。这是刻意的：一个写坏了的日志 Hook
-   * 不该让所有工具都跑不了；它出错只说明它自己坏了，不说明这次调用有问题。
+   * 前置 Hook 是唯一能阻止工具执行的策略入口，因此它失败时必须 fail-closed：
+   * 不能把「安全检查器崩了」解释成「允许执行」。后置观察 Hook 仍然 fail-open。
    */
   async runPreToolUse(call: ToolCall, args: Record<string, unknown>): Promise<string | undefined> {
     for (const hook of this.preToolUse) {
@@ -154,7 +154,7 @@ export class ToolHooks {
         if (reason !== undefined) return reason;
       } catch {
         this.failures++;
-        continue;
+        return "pre-tool hook failed; execution blocked";
       }
     }
     return undefined;
