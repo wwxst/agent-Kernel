@@ -166,6 +166,43 @@ const MAX_JOB_WAIT_MS = 60_000;
  * 已知边界：恶意并发替换父目录仍需要 OS 级隔离或 dirfd/openat 系列 API 才能彻底封闭。
  */
 const NO_FOLLOW_FILE = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+interface DirectoryIdentity {
+  path: string;
+  dev: number;
+  ino: number;
+  birthtimeMs: number;
+}
+
+function sameCanonicalPath(left: string, right: string): boolean {
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function sameFileIdentity(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs;
+}
+
+/** 捕获父目录的真实路径与文件系统身份；提交前后复核，检测目录被替换/重定向。 */
+async function captureDirectoryIdentity(directory: string): Promise<DirectoryIdentity> {
+  const [canonical, info] = await Promise.all([realpath(directory), stat(directory)]);
+  if (!info.isDirectory()) throw new Error("parent path is not a directory");
+  return { path: canonical, dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
+}
+
+async function assertDirectoryIdentity(identity: DirectoryIdentity, requested: string): Promise<void> {
+  const [canonical, current] = await Promise.all([realpath(identity.path), stat(identity.path)]);
+  if (!current.isDirectory() || !sameCanonicalPath(canonical, identity.path) ||
+      current.dev !== identity.dev || current.ino !== identity.ino || current.birthtimeMs !== identity.birthtimeMs) {
+    throw new Error("parent directory changed during file operation: " + requested);
+  }
+}
+
+/** 文件句柄打开后核对路径当前仍指向同一个 inode，防止复核前最后一段路径被替换。 */
+async function assertOpenedFileStillNamed(file: string, opened: Stats, requested: string): Promise<void> {
+  const [canonical, current] = await Promise.all([realpath(file), stat(file)]);
+  if (!current.isFile() || !sameCanonicalPath(canonical, file) || !sameFileIdentity(current, opened)) {
+    throw new Error("file path changed during operation: " + requested);
+  }
+}
 
 export interface WorkspaceOptions {
   /**
