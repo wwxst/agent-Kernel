@@ -407,6 +407,24 @@ test("edit：CRLF 文件里用 LF 的片段也能命中，且不改变行尾风�
   });
 });
 
+test("read：FIFO 特殊文件不会阻塞读取，且明确拒绝非普通文件", {
+  skip: process.platform === "win32" && "mkfifo is not available on Windows",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const fifo = path.join(root, "pipe");
+    const created = spawnSync("mkfifo", [fifo]);
+    assert.equal(created.status, 0, created.stderr?.toString() ?? "mkfifo failed");
+    const workspace = new Workspace({ root });
+    await assert.rejects(
+      () => Promise.race([
+        workspace.read("pipe"),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("FIFO read blocked")), 500)),
+      ]),
+      /regular file/,
+    );
+  });
+});
+
 test("read 不存在的文件抛错（折成 ERROR 是 ToolRegistry 的事）", async () => {
   await withWorkspace(async (root) => {
     const workspace = new Workspace({ root });

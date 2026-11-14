@@ -2492,6 +2492,33 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
   assert.equal(await pending, "编辑后的内容");
 });
 
+test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-large-${process.pid}.mjs`);
+  await writeFile(script, "import { writeFileSync } from 'node:fs';\\nwriteFileSync(process.argv[2], 'x'.repeat(1048577));\\n", "utf8");
+  const previous = process.env.EDITOR;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previous === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previous;
+    rmSync(script, { force: true });
+  });
+
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("keep this input");
+  await tick();
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.match(inputLine(ui), /keep this input/);
+  assert.match(ui.text(), /exceeds 1048576 bytes/);
+  ui.input.write("\\r");
+  assert.equal(await pending, "keep this input");
+});
+
 test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次的任务", async (t) => {
   const file = process.env.AGENT_HISTORY_FILE;
   await writeFile(file, `${JSON.stringify({ ts: 1, cwd: "/w", text: "上一次的任务" })}\n`, "utf8");
