@@ -560,7 +560,7 @@ export class Workspace {
     if (pattern === "") throw new Error("pattern must not be empty");
     const search = await this.resolveGlobRoot(pattern, requested);
 
-    const matcher = globToRegExp(search.pattern);
+    const matchesPattern = createGlobMatcher(search.pattern);
     const rootReal = await this.realRoot();
     const outsideRoot = escapes(rootReal, search.base);
     const budget = { remaining: this.scanLimit };
@@ -568,7 +568,7 @@ export class Workspace {
     let hitLimit = false;
     for await (const file of walkFiles(search.base, budget)) {
       const relative = toPosix(path.relative(search.base, file));
-      if (!matcher.test(relative)) continue;
+      if (!matchesPattern(relative)) continue;
       // 第 MAX_RESULTS+1 条命中只用来判断「还有更多」，不塞进结果。
       if (matches.length === MAX_RESULTS) {
         hitLimit = true;
@@ -858,6 +858,7 @@ ${command}`;
 
     let text = "";
     for (;;) {
+      if (this.signal?.aborted) throw new Error("cancelled by signal");
       const size = await this.jobLogSize(job);
       if (size > job.cursor) {
         text = await this.readJobText(job, size);
@@ -948,13 +949,9 @@ ${command}`;
     throw new Error(`unknown background job "${jobId}" (known: ${known})`);
   }
 
-  /** 日志文件的当前字节数；文件被外部删掉时当作 0，不让读输出这件事整个失败。 */
+  /** 日志不可读必须传播错误，不能把输出丢失伪装成「没有新输出」。 */
   private async jobLogSize(job: BackgroundJob): Promise<number> {
-    try {
-      return (await stat(job.logPath)).size;
-    } catch {
-      return 0;
-    }
+    return (await stat(job.logPath)).size;
   }
 
   /** 状态行：模型先看这一行，再决定是继续等、去修，还是收工。 */
@@ -1427,39 +1424,58 @@ function assertValidPattern(source: string, flags: string): void {
 }
 
 /**
- * 把 glob 模式翻译成正则（给「自己走目录再匹配」用）。
+ * 把 glob 模式编译成有界的动态规划匹配器（遍历目录后只判断相对文件名）。
  *
  * 只认三种通配：`**` 跨目录、`*` 单层内任意、`?` 单个字符；
  * 其余字符一律按字面匹配 —— 特别是 `{ }` 和 `[ ]` 不再有特殊含义。
- * 这既是「模式语义可预测」的要求，也让扫描范围只由搜索根和模式本身决定。
+ * 每轮只记录「哪些文件名位置可达」，不枚举星号的分配组合，避免多段 * 的指数回溯。
+ * 已知边界：时间 O(模式长度 × 路径长度)，空间 O(路径长度)；? 沿用单个 UTF-16 单元的语义。
  */
-function globToRegExp(pattern: string): RegExp {
-  let source = "";
+function createGlobMatcher(pattern: string): (candidate: string) => boolean {
+  const tokens: string[] = [];
   for (let index = 0; index < pattern.length; index++) {
-    const char = pattern[index];
-
+    const char = pattern[index]!;
     if (char === "*" && pattern[index + 1] === "*") {
-      // `**/` = 任意层目录（可以零层）；裸 `**` = 任意字符。
       if (pattern[index + 2] === "/") {
-        source += "(?:.*/)?";
+        tokens.push("**/");
         index += 2;
       } else {
-        source += ".*";
+        tokens.push("**");
         index += 1;
       }
-      continue;
+    } else {
+      tokens.push(char);
     }
-    if (char === "*") {
-      source += "[^/]*";
-      continue;
-    }
-    if (char === "?") {
-      source += "[^/]";
-      continue;
-    }
-    source += char.replace(/[.+^${}()|[\]\\]/g, "\\$&");
   }
-  return new RegExp(`^${source}$`);
+
+  return (candidate) => {
+    let reachable = new Uint8Array(candidate.length + 1);
+    reachable[0] = 1;
+    for (const token of tokens) {
+      const next = new Uint8Array(candidate.length + 1);
+      if (token === "*" || token === "**") {
+        next[0] = reachable[0]!;
+        for (let end = 1; end <= candidate.length; end++) {
+          next[end] = reachable[end] || ((token === "**" || candidate[end - 1] !== "/") ? next[end - 1]! : 0);
+        }
+      } else if (token === "**/") {
+        // 可以不消费目录；消费时只能停在 / 后，因此 a/**/b 也能匹配 a/b。
+        let prefixReachable = 0;
+        for (let end = 0; end <= candidate.length; end++) {
+          next[end] = reachable[end] || (end > 0 && candidate[end - 1] === "/" ? prefixReachable : 0);
+          prefixReachable ||= reachable[end]!;
+        }
+      } else {
+        for (let end = 1; end <= candidate.length; end++) {
+          if (token === "?" ? candidate[end - 1] !== "/" : candidate[end - 1] === token) {
+            next[end] = reachable[end - 1]!;
+          }
+        }
+      }
+      reachable = next;
+    }
+    return reachable[candidate.length] === 1;
+  };
 }
 
 /**

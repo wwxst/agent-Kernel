@@ -11,18 +11,19 @@
  *     符号链接换向不碰外部文件、`edit` 唯一命中 / 多处拒绝 / 空片段拒绝 / CRLF 兼容。
  *   - 读与列：超长截断并说明、正好等于上限不算截断、半个 UTF-8 字符不出现、
  *     空目录显式提示、条目超限先排序再截断。
- *   - 搜索：`glob` 的模式与搜索根、`grep` 的正则 / `fixed` / flags / 超长行 / 超大文件跳过 /
+ *   - 搜索：`glob` 的模式、搜索根与重复通配符有界匹配；`grep` 的正则 / `fixed` / flags / 超长行 / 超大文件跳过 /
  *     扫描预算用尽 / 灾难性回溯被超时打断 / 取消打断匹配线程 / 跳过 `node_modules` 与 `.git`。
  *   - 跑命令：exit code 与两路输出、8000 字符上限、多字节分片解码、超时与取消后整棵进程树被杀、
  *     Windows `taskkill` 的各种失败路径。
  *   - 后台任务：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、
- *     被切断的多字节字符不变成替换字符、多 Workspace 日志隔离、`shell-kill` 后进程真的消失、未知编号报错。
+ *     多字节分片、多 Workspace 日志隔离、取消等待与日志缺失显式失败、`shell-kill` 后进程真的消失、未知编号报错。
  *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理。
  *
  * 模块关系：依赖 `src/tools/workspace.ts`、`test/support/harness.mjs` 与 `node:test`，
  * 由 `npm test` 启动；少数 Windows 专用用例在其他平台自动跳过。
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
@@ -545,6 +546,20 @@ test("glob：没有命中时给出明确提示", async () => {
     await workspace.write("a.ts", "");
 
     assert.equal(await workspace.glob("**/*.rs"), "(no matches)");
+  });
+});
+
+test("glob：重复通配符的失败匹配有界返回，不在主线程指数回溯", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, `${"a".repeat(80)}.txt`), "");
+    const workspaceUrl = new URL("../src/tools/workspace.ts", import.meta.url).href;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e",
+      `import { Workspace } from ${JSON.stringify(workspaceUrl)};
+       console.log(await new Workspace({ root: process.argv[1] }).glob('*a'.repeat(30) + 'b'));`,
+      root], { encoding: "utf8", timeout: 3_000 });
+    assert.equal(result.error, undefined, "合法 glob 的匹配不能耗尽整个子进程时限");
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), "(no matches)");
   });
 });
 
@@ -1253,6 +1268,46 @@ test("shell-output：未知任务编号报错，并列出已知编号", async ()
     const pid = Number(/pid (\d+)/.exec(await workspace.readJobOutput("job-1", 0))?.[1]);
     try {
       await assert.rejects(() => workspace.readJobOutput("job-9"), /unknown background job "job-9" \(known: job-1\)/);
+    } finally {
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：等待新输出期间取消，及时拒绝而不等完整预算", async () => {
+  await withWorkspace(async (root) => {
+    const controller = new AbortController();
+    const workspace = new Workspace({ root, signal: controller.signal });
+    const started = await workspace.run('node -e "setTimeout(()=>{},30000)"', { background: true });
+    const pid = Number(/pid (\d+)/.exec(started)?.[1]);
+    const timer = setTimeout(() => controller.abort(), 20);
+    try {
+      await assert.rejects(() => workspace.readJobOutput("job-1", 400), /cancelled by signal/);
+    } finally {
+      clearTimeout(timer);
+      await stopJob(workspace, pid);
+    }
+  });
+});
+
+test("shell-output：日志丢失时明确报错，不能伪装没有新输出", async () => {
+  await withWorkspace(async (root) => {
+    const logRoot = path.join(tmpdir(), "agent-kernel-jobs");
+    const before = new Set(await readdir(logRoot).catch((error) => {
+      if (error.code === "ENOENT") return [];
+      throw error;
+    }));
+    const workspace = new Workspace({ root });
+    const started = await workspace.run('node -e "console.log(\'done\')"', { background: true });
+    const pid = Number(/pid (\d+)/.exec(started)?.[1]);
+    try {
+      await workspace.readJobOutput("job-1", 5000);
+      assert.equal(await waitGone(pid), true);
+      const candidates = (await readdir(logRoot)).filter((name) =>
+        name.startsWith(`${process.pid}-job-1-`) && !before.has(name));
+      assert.equal(candidates.length, 1, "只删除本用例新产生的真实日志");
+      await unlink(path.join(logRoot, candidates[0]));
+      await assert.rejects(() => workspace.readJobOutput("job-1"), /ENOENT/);
     } finally {
       await stopJob(workspace, pid);
     }

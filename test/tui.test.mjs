@@ -29,8 +29,9 @@
  * 已知边界：真实终端里的行为留给手动验收 —— 没在真终端里跑过，就不假装验过。
  */
 import assert from "node:assert/strict";
-import { rmSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import fs, { readFileSync, rmSync } from "node:fs";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
@@ -58,7 +59,7 @@ function settledResize() {
  * 换行与滚动。这不是通用终端模拟器，只还原主视图（追加 + 活动区）和 transcript
  * （整屏网格）实际会发出的那几条指令。
  */
-function emulateScreen(output, rows = 24) {
+function emulateScreen(output, rows = 24, includeCursor = false) {
   const lines = [""];
   let row = 0;
   let col = 0;
@@ -125,7 +126,8 @@ function emulateScreen(output, rows = 24) {
       }
     }
   }
-  return lines.map((line) => line.trimEnd());
+  const screen = lines.map((line) => line.trimEnd());
+  return includeCursor ? { lines: screen, row, col } : screen;
 }
 
 /** 取当前画面第 row 行（1 起）；主视图的历史是追加的，行号按屏幕从上往下数。 */
@@ -2530,5 +2532,238 @@ test("TUI 主视图：长流式正文的可变区域有界，确认后完整进�
   const confirmed = ui.text().slice(beforeConfirm);
   assert.match(confirmed, /STREAM_LINE_1/, "确认后完整正文的开头进入历史");
   assert.match(confirmed, /STREAM_LINE_25/, "确认后完整正文的结尾仍可见");
+});
+
+test("TUI transcript：完成后的工具仍可用 Ctrl+G 打开真实参数与结果", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  const call = { id: "completed-detail", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "COMPLETED_RAW_RESULT");
+  ui.tui.confirmAssistant("done", true);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  ui.input.emit("keypress", "", { name: "t", ctrl: true });
+  const before = ui.text().length;
+  ui.input.emit("keypress", "", { name: "g", ctrl: true });
+  await tick();
+  assert.match(ui.text().slice(before), /Arguments \(excerpt\):/);
+  assert.match(ui.text().slice(before), /COMPLETED_RAW_RESULT/);
+});
+
+test("TUI 主视图：真实 Run 的读取截断提示一直可见", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  const call = { id: "flat-truncated", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "body\n… [truncated 400 chars]\n… [stopped after 32768 bytes]");
+  assert.match(screenRows(ui).join("\n"), /truncated 400 chars/);
+  assert.match(screenRows(ui).join("\n"), /stopped after 32768 bytes/);
+});
+
+test("TUI 主视图：任务结束时无结果的工具明确显示状态未知", (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.toolCall({ id: "flat-unfinished", type: "function", function: { name: "shell", arguments: '{"command":"npm test"}' } });
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: true, cancelled: true });
+  assert.match(screenRows(ui).join("\n"), /npm test.*no tool result received/);
+});
+
+test("TUI 输入：长行滚动后光标紧跟可见正文末尾", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, columns: 34 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+  ui.input.write("abcdefghijklmnopqrstuvwxyz0123456789");
+  await tick();
+  const screen = emulateScreen(ui.text(), 24, true);
+  assert.equal(screen.col, screen.lines[screen.row].length, "光标必须落在可见输入末尾，不能落到框外");
+});
+
+test("TUI 输入：多行内容中移回第一行后光标和后续重绘仍留在第一行", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 30 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("first\nsecond");
+  ui.input.write("\x01");
+  await tick();
+  let screen = emulateScreen(ui.text(), 30, true);
+  assert.match(screen.lines[screen.row], /^[>❯] first/);
+  assert.equal(screen.col, 2);
+  ui.tui.logLine("NEW_OUTPUT");
+  await tick();
+  screen = emulateScreen(ui.text(), 30, true);
+  assert.match(screen.lines[screen.row], /^[>❯] first/);
+  ui.input.write("X\r");
+  assert.equal(await pending, "Xfirst\nsecond");
+});
+
+test("TUI 输入：暂停刷新时仍显示正在编辑的文字", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+  ui.input.emit("keypress", "", { name: "pageup" });
+  ui.input.write("VISIBLE_WHILE_PAUSED");
+  await tick();
+  assert.match(inputLine(ui), /VISIBLE_WHILE_PAUSED/);
+});
+
+test("TUI transcript：历史阶段说明可见，折叠只影响详情视图且退出不重打主视图", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, rows: 40 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.beginTurn("inspect");
+  ui.tui.confirmAssistant("HISTORICAL_STAGE_NARRATION");
+  const call = { id: "completed-collapse", type: "function", function: { name: "read", arguments: '{"path":"a.txt"}' } };
+  ui.tui.toolCall(call);
+  ui.tui.toolResult(call, "body");
+  ui.tui.confirmAssistant("FINAL_REPLY", true);
+  ui.tui.finishTurn({ requests: 1, toolCalls: 1, usage, tokenBudget: { exceeded: false } }, session, { failed: false });
+  const main = screenRows(ui).join("\n");
+  ui.input.emit("keypress", "", { name: "t", ctrl: true });
+  assert.match(screenRows(ui).join("\n"), /HISTORICAL_STAGE_NARRATION/);
+  ui.input.emit("keypress", "", { name: "o", ctrl: true });
+  assert.doesNotMatch(screenRows(ui).join("\n"), /Received 1 line/);
+  ui.input.emit("keypress", "", { name: "o", ctrl: true });
+  assert.match(screenRows(ui).join("\n"), /Received 1 line/);
+  const beforeExit = ui.text().length;
+  ui.input.emit("keypress", "", { name: "escape" });
+  assert.doesNotMatch(ui.text().slice(beforeExit), /HISTORICAL_STAGE_NARRATION/);
+  // 模拟器不实现备用屏保存，直接检查退出后最新一帧的内容边界。
+  assert.ok(main.includes("FINAL_REPLY"));
+});
+
+test("TUI 文件补全：上下键选择候选，Tab 保留前文并补入所选路径", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-completion-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "a-first.ts"), "");
+  await writeFile(path.join(root, "b-second.ts"), "");
+  const ui = makeTui({ interactive: true, tty: true, workspace: root });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("please @");
+  await tick();
+  ui.input.write("\x1b[B\t");
+  await tick();
+  assert.match(inputLine(ui), /please @b-second\.ts/);
+  ui.input.write("\r");
+  assert.equal(await pending, "please @b-second.ts");
+});
+
+test("TUI 外部编辑器：临时目录含空格时完整传递路径，不覆盖已有同名文件", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent editor space "));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const script = path.join(root, "editor.mjs");
+  await writeFile(script, "import { writeFileSync } from 'node:fs';\nif (process.argv.length !== 3) process.exitCode = 4; else writeFileSync(process.argv[2], 'EDITED_WITH_SPACES');\n");
+  const legacy = path.join(root, `agent-prompt-${process.pid}.md`);
+  await writeFile(legacy, "UNRELATED_TEMP_FILE");
+  const saved = Object.fromEntries(["TEMP", "TMP", "TMPDIR", "EDITOR", "VISUAL"].map((key) => [key, process.env[key]]));
+  for (const key of ["TEMP", "TMP", "TMPDIR"]) process.env[key] = root;
+  delete process.env.VISUAL;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("original");
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  assert.match(inputLine(ui), /EDITED_WITH_SPACES/);
+  assert.equal(readFileSync(legacy, "utf8"), "UNRELATED_TEMP_FILE");
+  ui.input.write("\r");
+  assert.equal(await pending, "EDITED_WITH_SPACES");
+});
+
+test("TUI 粘贴：未闭合的超大粘贴及时拒绝，结束标记后仍可输入", async (t) => {
+  const ui = makeTui({ interactive: true, tty: true, language: "en" });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  const pending = ui.tui.readLine();
+  ui.input.write("\x1b[200~first\n");
+  const block = "x".repeat(1024 * 1024);
+  for (let index = 0; index < 17; index++) ui.input.write(block);
+  await tick();
+  assert.ok(ui.text().includes("Paste not inserted"), "不用等到结束标记才检查容量");
+  assert.match(ui.text(), /this paste exceeds the single-paste limit \(32 MiB\)/);
+  assert.doesNotMatch(ui.text(), /Close and reopen|session reached its multiline paste history limit/,
+    "单段超限不代表会话归档已满，不应要求重开界面");
+  ui.input.write("\x1b[201~kept\r");
+  assert.equal(await pending, "kept", "超大粘贴整体拒绝，不能截成半条消息或吞掉后续输入");
+  const next = ui.tui.readLine();
+  ui.input.write("\x1b[200~small\npaste\x1b[201~\r");
+  assert.equal(await next, "small\npaste", "单段超限后仍能接受小段多行粘贴，无需重开界面");
+});
+
+test("TUI 文件补全：候选文件名里的方向控制字符不能直接进入终端", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-completion-control-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "unsafe\u202e.ts"), "");
+  const ui = makeTui({ interactive: true, tty: true, workspace: root });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+  ui.input.write("@");
+  await tick();
+  assert.doesNotMatch(ui.text(), /\u202e/);
+  assert.match(ui.text(), /unsafe\\u202e\.ts/);
+});
+
+test("TUI 文件补全：选中的长文件名也必须限制在终端宽度内", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-completion-width-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(path.join(root, "a".repeat(100) + ".ts"), "");
+  const ui = makeTui({ interactive: true, tty: true, workspace: root, columns: 34 });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+  ui.input.write("@");
+  await tick();
+  const row = rowWith(ui, /@aaaa/);
+  assert.ok(row.includes("@aaaa"));
+  assert.ok(row.length <= 32, "高亮候选不能绕过裁剪后撑破活动区");
+});
+
+test("TUI 外部编辑器：准备文件写入失败后清理已创建的空目录并报告失败", async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-editor-write-failure-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  // 人为加长临时根路径，让测试在 Linux/macOS/Windows 都能覆盖「路径挤掉真正错误」的情况。
+  const tempRoot = await mkdtemp(path.join(root, "deeply-nested-temporary-root-".repeat(2)));
+  const saved = Object.fromEntries(["TEMP", "TMP", "TMPDIR"].map((key) => [key, process.env[key]]));
+  for (const key of Object.keys(saved)) process.env[key] = tempRoot;
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+  const originalWrite = fs.writeFileSync;
+  try {
+    // 文件系统是外部边界：在真实 mkdtemp 成功后注入磁盘写入失败，不替换 Tui 自己的方法。
+    fs.writeFileSync = () => { throw new Error("injected disk full"); };
+    syncBuiltinESMExports();
+    ui.input.emit("keypress", "", { name: "x", ctrl: true });
+    ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  } finally {
+    fs.writeFileSync = originalWrite;
+    syncBuiltinESMExports();
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
+  assert.match(ui.text(), /could not prepare the editor buffer/);
+  assert.ok(ui.text().includes("injected disk full"));
+  assert.deepEqual(await readdir(tempRoot), [], "写入失败后不能遗留空的编辑器临时目录");
 });
 

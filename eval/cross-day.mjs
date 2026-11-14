@@ -311,7 +311,7 @@ async function main() {
     console.log("date: " + options.date + " · model: " + model + " · tasks: " + taskNames.length + " · jobs: " + JOBS);
     console.log("running " + ROUNDS + " sequential rounds; no retries, no task or checker changes");
 
-    // Import only after checkout: this resolves eval/run.mjs from the pinned baseline commit.
+    // 切换提交后才导入，确保 eval/run.mjs 来自固定的基线版本。
     const baselineModule = await import(pathToFileURL(path.join(evalDir, "run.mjs")).href + "?baseline=" + Date.now());
 
     let runnerFailed = false;
@@ -362,7 +362,7 @@ async function main() {
         JSON.stringify(record, null, 2),
         "utf8",
       );
-      // A rejected round may have left workers in flight; do not start another round.
+      // 被拒绝的轮次可能仍有任务未收尾，不能继续启动下一轮。
       if (runnerFailed || interrupted) break;
     }
 

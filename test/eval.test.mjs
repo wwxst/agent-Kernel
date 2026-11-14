@@ -7,15 +7,17 @@
  *
  * 内容目录：
  *   - `runFixture()`：用子进程跑 `test/support/eval-floating-check.mjs`，读它最后一行 JSON。
- *   - `withRoundFixture()`：临时任务与假 HTTP 端点，验证并发首错收尾、网络分类、夹具复制失败清理。
+ *   - `withRoundFixture()`：临时任务与假 HTTP 端点，验证并发校验、首错收尾、网络分类和夹具清理。
+ *   - 入口别名：通过符号链接启动脚本，确保真实路径判断不会漏掉 CLI 执行。
+ *   - `withSummaryFixture()`：隔离的汇总输入，验证轮数及完整任务集合校验。
  *   - 异步错误：没有泄漏时整轮通过；有泄漏时任务虽过、整轮仍判失败。
  *
  * 模块关系：依赖 `eval/run.mjs`、`test/support/eval-floating-check.mjs`（夹具）与 Node 内置模块，
  * 由 `npm test` 启动，不调用真实模型。
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { spawn, spawnSync } from "node:child_process";
+import { copyFile, cp, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -66,6 +68,127 @@ test("评测：并发任务报错后停止领取，等待已经启动的任务�
     const count = endpoint.requests();
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(endpoint.requests(), count, "轮次退出后不能再产生模型请求");
+  });
+});
+
+test("评测：非法并发数在启动任务前拒绝，不能留下未执行的稀疏结果", async () => {
+  await withRoundFixture(async (options, endpoint) => {
+    for (const jobs of [0, -1, 0.5, NaN, Infinity]) {
+      await assert.rejects(() => runRound({ ...options, names: ["first"], jobs }), /jobs must be a positive safe integer/);
+    }
+    assert.equal(endpoint.requests(), 0);
+  });
+});
+
+test("评测入口：通过符号链接路径启动仍执行 CLI", {
+  skip: process.platform === "win32",
+}, async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-eval-entrypoint-"));
+  try {
+    const alias = path.join(root, "run.mjs");
+    await symlink(path.join(projectRoot, "eval", "run.mjs"), alias);
+    const result = spawnSync(process.execPath, [alias], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      timeout: 5_000,
+      env: { ...process.env, API_KEY: "", OPENAI_API_KEY: "" },
+    });
+
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stderr, /missing API_KEY/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("评测：成绩文件保存失败必须非零退出", async () => {
+  await withRoundFixture(async (options) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agent-report-test-"));
+    try {
+      await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
+      await mkdir(path.join(root, "eval"));
+      for (const file of ["run.mjs", "selfcheck.mjs", "diagnostics.mjs"]) {
+        await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
+      }
+      await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
+      // 只在临时副本制造 ENOTDIR，不触碰仓库原有成绩。
+      await writeFile(path.join(root, "eval", "results"), "blocking file");
+      const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
+        env: { ...process.env, BASE_URL: options.baseUrl, API_KEY: "test", MODEL: "mock" },
+        stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
+      });
+      child.stdout.resume();
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      const code = await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+      assert.match(stderr, /could not write results/);
+      assert.equal(code, 1, "任务全过也不能把成绩保存失败伪装成成功退出");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+/** 汇总脚本在独立目录里读虚构记录，不碰用户原有的 eval/results。 */
+async function withSummaryFixture(run) {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-summary-test-"));
+  try {
+    const script = path.join(root, "summary.mjs");
+    await copyFile(path.join(projectRoot, "eval", "summary.mjs"), script);
+    await mkdir(path.join(root, "tasks", "first"), { recursive: true });
+    await mkdir(path.join(root, "tasks", "second"));
+    await mkdir(path.join(root, "results"));
+    await writeFile(path.join(root, "results", "1.json"), JSON.stringify({
+      total: 2, passed: 2, infraErrors: [],
+      results: [{ name: "first", requests: 1, seconds: 1, ok: true }],
+    }));
+    await run(script, path.join(root, "results", "1.json"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+test("评测汇总：非法轮数明确拒绝", async () => {
+  await withSummaryFixture(async (script) => {
+    for (const count of ["0", "-1", "0.5", "NaN", "Infinity"]) {
+      const result = spawnSync(process.execPath, [script, count], { encoding: "utf8", timeout: 5000 });
+      assert.equal(result.status, 1, `非法轮数 ${count} 必须非零退出`);
+      assert.match(result.stderr, /round count must be a positive safe integer/);
+    }
+  });
+});
+
+test("评测汇总：缺少任务结果的记录不能算完整轮次", async () => {
+  await withSummaryFixture(async (script) => {
+    const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /还没有完整跑过全部 2 个任务的记录/);
+    assert.doesNotMatch(result.stdout, /100%|2\/2/);
+  });
+});
+
+test("评测汇总：任务集合和通过数必须自洽，合法完整轮次仍计入", async () => {
+  await withSummaryFixture(async (script, recordFile) => {
+    const first = { name: "first", requests: 1, seconds: 1, ok: true };
+    const second = { name: "second", requests: 1, seconds: 1, ok: false };
+    for (const record of [
+      { total: 2, passed: 2, results: [first, first] },
+      { total: 2, passed: 2, results: [first, second] },
+      { total: 2, passed: 1, results: [first, null] },
+    ]) {
+      await writeFile(recordFile, JSON.stringify(record));
+      const result = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 5000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /还没有完整跑过全部 2 个任务的记录/);
+    }
+    await writeFile(recordFile, JSON.stringify({ total: 2, passed: 1, results: [first, second] }));
+    const result = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /合计：1\/2 个任务（50.0%）/);
   });
 });
 

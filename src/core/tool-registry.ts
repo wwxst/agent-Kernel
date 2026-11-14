@@ -12,7 +12,7 @@
  *
  * 内容目录：
  *   - `ToolRegistry`：注册表本体，构造时挡掉重名与不支持的 Schema。
- *   - `ToolRegistry.definitions`：发给模型的那一半，只有说明书，没有执行函数。
+ *   - `ToolRegistry.definitions`：发给模型的说明书副本，没有执行函数，也不能改写注册后的校验规则。
  *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
  *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
  *   - 内部：`assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
@@ -179,7 +179,8 @@ export class ToolRegistry {
 
   /** 工具箱成员 definitions（工具说明书）：发给模型的那一半，只有说明书，没有执行函数。 */
   get definitions(): ToolDefinition[] {
-    return this.tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
+    // Schema 也要复制：浅拷贝会让调用方通过说明书删掉 required 或改掉嵌套类型，绕过注册时校验。
+    return this.tools.map(({ name, description, parameters }) => ({ name, description, parameters: structuredClone(parameters) }));
   }
 
   /**

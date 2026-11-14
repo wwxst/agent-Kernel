@@ -10,7 +10,7 @@
  *
  * 内容目录（顶层脚本，没有函数，从上到下一条线）：
  *   - 读任务数与 `results/*.json`；一份记录都没有就提示先跑评测。
- *   - 过滤：任务数对不上（`--only` 跑出来的）、`infraErrors` 非空（整轮不可信）都不计入。
+ *   - 过滤：任务集合或通过数对不上、`infraErrors` 非空（整轮不可信）都不计入。
  *   - 打印：逐轮成绩 → 按轮中位数 → 合计通过量 → token 中位数 → 不是每轮都通过的任务。
  *   - 两个口径都打：中位数只描述典型轮次，合计才是总通过量，别把前者当成整体成功率。
  *
@@ -26,7 +26,10 @@ const tasksDir = path.join(here, "tasks");
 const resultsDir = path.join(here, "results");
 
 const wanted = Number(process.argv[2] ?? 3);
-const taskCount = (await readdir(tasksDir)).length;
+if (!Number.isSafeInteger(wanted) || wanted <= 0) throw new Error("round count must be a positive safe integer");
+const taskNames = new Set((await readdir(tasksDir, { withFileTypes: true }))
+  .filter((entry) => entry.isDirectory()).map((entry) => entry.name));
+const taskCount = taskNames.size;
 
 let files;
 try {
@@ -40,8 +43,14 @@ const runs = [];
 let invalidRounds = 0;
 for (const file of files) {
   const record = JSON.parse(await readFile(path.join(resultsDir, file), "utf8"));
-  // 只统计完整跑：任务数对得上，说明不是 --only 过滤出来的。
+  // 汇总头的 total 不能证明执行完整；结果必须恰好覆盖每个当前任务一次，且计数自洽。
+  if (record === null || typeof record !== "object") continue;
   if (record.total !== taskCount) continue;
+  if (!Array.isArray(record.results) || record.results.length !== taskCount ||
+      !record.results.every((task) => task !== null && typeof task === "object" &&
+        taskNames.has(task.name) && typeof task.ok === "boolean") ||
+      new Set(record.results.map((task) => task.name)).size !== taskCount ||
+      record.passed !== record.results.filter((task) => task.ok).length) continue;
   // infraErrors 非空 = 这一轮不可信（后台 rejection 等）：即使任务全过也不能算有效样本，
   // 否则会把 100% 通过率写进中位数、把异常成本混进汇总。
   if ((record.infraErrors ?? []).length > 0) {

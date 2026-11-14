@@ -75,6 +75,7 @@ test("成功：Pre 在工具执行前、Post 在之后，各触发一次并拿�
 
 test("失败：Pre 之后触发 PostToolUseFailure，拿到的是原始错误对象", async () => {
   const events = [];
+  let failureContext;
   const registry = new ToolRegistry([failingTool()], new ToolHooks({
     preToolUse: [() => {
       events.push("pre");
@@ -84,9 +85,7 @@ test("失败：Pre 之后触发 PostToolUseFailure，拿到的是原始错误对
     }],
     postToolUseFailure: [(context) => {
       events.push("failure");
-      assert.ok(context.error instanceof Error);
-      assert.equal(context.error.message, "disk on fire");
-      assert.equal(context.call.function.name, "boom");
+      failureContext = context;
     }],
   }));
 
@@ -94,6 +93,10 @@ test("失败：Pre 之后触发 PostToolUseFailure，拿到的是原始错误对
 
   assert.equal(result, "ERROR: disk on fire");
   assert.deepEqual(events, ["pre", "failure"], "失败时不该触发 PostToolUse");
+  // Hook 的异常会被有意隔离；断言放在回调外，否则上下文错了也可能被当作 Hook 故障吞掉。
+  assert.ok(failureContext.error instanceof Error);
+  assert.equal(failureContext.error.message, "disk on fire");
+  assert.equal(failureContext.call.function.name, "boom");
 });
 
 test("多个 Hook 按登记顺序执行：先登记的先跑", async () => {

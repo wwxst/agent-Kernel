@@ -7,7 +7,7 @@
  *
  * 内容目录：
  *   - `call()`：造一次工具调用；`recordingTool()`：记录收到的参数的假工具。
- *   - `definitions`：只投影说明书字段，`run` 不外泄。
+ *   - `definitions`：只投影说明书字段，`run` 不外泄；修改说明书不能绕过参数校验。
  *   - `execute` 正常路径：命中就执行、参数齐全才真的执行、空 `arguments` 当空对象。
  *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填（只认对象自身字段）、类型不对、
  *     工具抛任何东西，一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
@@ -50,6 +50,21 @@ test("definitions：只投影说明书字段，run 不外泄", () => {
 
   assert.deepEqual(Object.keys(definition).sort(), ["description", "name", "parameters"]);
   assert.equal(definition.name, "echo");
+});
+
+test("definitions：修改嵌套 Schema 不影响后续说明书与参数校验", async () => {
+  const registry = makeRegistry([echoTool()]);
+  const [definition] = registry.definitions;
+  definition.parameters.required.length = 0;
+  definition.parameters.properties.value.type = "object";
+
+  assert.deepEqual(registry.definitions[0].parameters, {
+    type: "object", properties: { value: { type: "string" } }, required: ["value"],
+  });
+  assert.equal(await registry.execute(call("echo", "{}")),
+    'ERROR: invalid arguments: missing required argument "value"');
+  assert.equal(await registry.execute(call("echo", '{"value":{}}')),
+    'ERROR: invalid arguments: argument "value" must be a string');
 });
 
 test("execute：命中工具就执行它", async () => {
