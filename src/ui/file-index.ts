@@ -88,7 +88,7 @@ export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): str
       // Keep the historical lexical ordering before applying the global file limit.
       entries.sort((left, right) => left.name.localeCompare(right.name));
       for (const entry of entries) {
-        if (files.length >= boundedLimit || scanned >= MAX_SCANNED_ENTRIES) return;
+        if (files.length >= boundedLimit) return;
         const child = relative === "" ? entry.name : path.posix.join(relative, entry.name);
         if (entry.isDirectory()) {
           if (!SKIP_DIRS.has(entry.name)) walk(child, depth + 1);
