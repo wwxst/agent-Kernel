@@ -52,6 +52,21 @@ test("definitions：只投影说明书字段，run 不外泄", () => {
   assert.equal(definition.name, "echo");
 });
 
+test("注册：外部修改原始 Tool Schema 不改变注册后的校验规则", async () => {
+  const tool = {
+    name: "guarded",
+    description: "Guarded tool.",
+    parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+    run: async () => "ran",
+  };
+  const registry = new ToolRegistry([tool]);
+  tool.parameters.required.length = 0;
+  tool.parameters.properties.value.type = "number";
+  assert.deepEqual(registry.definitions[0].parameters.required, ["value"]);
+  assert.match(await registry.execute(call("guarded", {})), /missing required argument "value"/);
+  assert.equal(await registry.execute(call("guarded", { value: "ok" })), "ran");
+});
+
 test("definitions：修改嵌套 Schema 不影响后续说明书与参数校验", async () => {
   const registry = makeRegistry([echoTool()]);
   const [definition] = registry.definitions;
