@@ -409,18 +409,19 @@ export class Workspace {
     this.stopIfCancelledBeforeWrite();
     await assertDirectoryIdentity(parent, requested);
     const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW_FILE, original?.mode ?? 0o666);
-    let temporaryIdentity: Stats;
+    let temporaryIdentity: Stats | undefined;
+    let handleClosed = false;
     try {
       temporaryIdentity = await handle.stat();
       if (!temporaryIdentity.isFile()) throw new Error("temporary target is not a regular file");
+      // 临时文件刚创建就复核父目录；若路径在 open 前被换向，不向新目录写入内容。
+      await assertDirectoryIdentity(parent, requested);
       await handle.writeFile(content, "utf8");
       if (original !== undefined) await handle.chmod(original.mode & 0o7777);
       await handle.sync();
-    } finally {
       await handle.close();
-    }
+      handleClosed = true;
 
-    try {
       // 写入期间父目录可能被改名、换成 junction/symlink，或被另一个文件系统对象替换。
       await assertDirectoryIdentity(parent, requested);
       const current = await this.resolveReal(target, requested);
@@ -449,11 +450,21 @@ export class Workspace {
         throw new Error(`file target changed during commit: ${requested}`);
       }
     } finally {
-      // 父目录身份不再匹配时绝不按旧路径 unlink，避免清理动作误删新目录中的同名文件。
+      if (!handleClosed) {
+        try { await handle.close(); } catch { /* preserve the original write/commit error */ }
+      }
+      // 父目录身份不再匹配时，只能在路径仍指向自己创建的 inode 时清理临时文件。
       try {
         await assertDirectoryIdentity(parent, requested);
         await unlink(temporary);
-      } catch { /* 已 rename、目录变化或清理失败：不触碰身份不明的路径。 */ }
+      } catch {
+        if (temporaryIdentity !== undefined) {
+          try {
+            const currentTemporary = await lstat(temporary);
+            if (sameFileIdentity(currentTemporary, temporaryIdentity)) await unlink(temporary);
+          } catch { /* moved directory, already renamed, or cleanup unavailable */ }
+        }
+      }
     }
   }
   /** 工作区方法 write（写文件）：新建一个文件，或者整个覆盖；父目录自动补齐，写入失败时保留原有内容。 */
