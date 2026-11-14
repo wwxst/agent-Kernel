@@ -187,7 +187,7 @@ export class Llm implements ChatClient {
       try {
         chunk = JSON.parse(data);
       } catch {
-        throw new ChatResponseError("LLM response is invalid: stream event data is not JSON", usage);
+        throw new ChatResponseError("LLM response is invalid: stream chunk is not JSON", usage);
       }
       try {
         usage = readUsage(chunk) ?? usage;

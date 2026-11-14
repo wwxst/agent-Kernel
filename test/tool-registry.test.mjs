@@ -59,7 +59,7 @@ test("注册：外部修改原始 Tool Schema 不改变注册后的校验规则"
     parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
     run: async () => "ran",
   };
-  const registry = new ToolRegistry([tool]);
+  const registry = makeRegistry([tool]);
   tool.parameters.required.length = 0;
   tool.parameters.properties.value.type = "number";
   assert.deepEqual(registry.definitions[0].parameters.required, ["value"]);

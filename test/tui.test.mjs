@@ -2494,7 +2494,7 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
 
 test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) => {
   const script = path.join(tmpdir(), `agent-editor-large-${process.pid}.mjs`);
-  await writeFile(script, "import { writeFileSync } from 'node:fs';\\nwriteFileSync(process.argv[2], 'x'.repeat(1048577));\\n", "utf8");
+  await writeFile(script, "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], 'x'.repeat(1048577));\n", "utf8");
   const previous = process.env.EDITOR;
   process.env.EDITOR = `"${process.execPath}" "${script}"`;
   t.after(() => {
