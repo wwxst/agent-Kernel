@@ -24,7 +24,7 @@
  * 由 `cli.ts` 装配、`core/agent.ts` 每轮调用；`test/support/harness.mjs` 也用它搭测试夹具。
  */
 import { describeError, ProcessCleanupError } from "../protocol/errors.ts";
-import type { Tool, ToolCall, ToolDefinition } from "../protocol/types.ts";
+import type { Tool, ToolCall, ToolDefinition, ToolExecutionResult } from "../protocol/types.ts";
 import { ToolHooks } from "./tool-hooks.ts";
 
 /** 校验器真正支持的类型；注册时就把超出范围的 Schema 挡掉。 */
@@ -196,58 +196,54 @@ export class ToolRegistry {
    * 这里是**唯一**的执行入口，所以 Hook 也只需要挂在这里：所有工具自动经过它，
    * 不用逐个工具接线（见 `docs/adr/0020-tool-hooks-live-in-the-registry.md`）。
    */
+  /** 兼容旧调用方的文本接口；Agent 使用 executeWithStatus 保留明确的错误状态。 */
   async execute(call: ToolCall): Promise<string> {
+    return (await this.executeWithStatus(call)).content;
+  }
+
+  /** 执行工具并返回宿主侧状态；isError 不进入发给模型的 Message。 */
+  async executeWithStatus(call: ToolCall): Promise<ToolExecutionResult> {
+    const failed = (content: string): ToolExecutionResult => ({ content, isError: true });
     const name = call.function.name;
     const tool = this.tools.find((candidate) => candidate.name === name);
     if (!tool) {
-      // 模型会「幻觉」出不存在的工具名，这不是异常，是正常要处理的分支。
       const available = this.tools.map((candidate) => candidate.name).join(", ");
-      // 中文对照：ERROR: 没有这个工具 "{名字}"（可用的有：{列表}）
-      return `ERROR: unknown tool "${name}" (available: ${available})`;
+      return failed(`ERROR: unknown tool "${name}" (available: ${available})`);
     }
 
     let args: Record<string, unknown>;
     try {
-      // arguments 可能为空串（无参工具），也可能被模型写坏 —— 两种都要兜住。
       const parsed: unknown = JSON.parse(call.function.arguments || "{}");
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        // 中文对照：ERROR: 参数必须是一个 JSON 对象，实际拿到的是 {值}
-        return `ERROR: arguments must be a JSON object, got ${JSON.stringify(parsed)}`;
+        return failed(`ERROR: arguments must be a JSON object, got ${JSON.stringify(parsed)}`);
       }
       args = parsed as Record<string, unknown>;
     } catch (error) {
-      // 中文对照：ERROR: 参数不是合法 JSON：{原因}
-      return `ERROR: invalid JSON arguments: ${describeError(error)}`;
+      return failed(`ERROR: invalid JSON arguments: ${describeError(error)}`);
     }
 
-    // 结构不对就到此为止：让模型自己补参数，别让它「带着空值」去改文件。
     const problem = validateArguments(tool, args);
-    if (problem !== undefined) {
-      // 中文对照：ERROR: 参数不合法：{原因}
-      return `ERROR: invalid arguments: ${problem}`;
-    }
+    if (problem !== undefined) return failed(`ERROR: invalid arguments: ${problem}`);
 
-    // 参数过关之后才轮到 Hook：它看到的一定是「真实存在、参数合法」的调用，
-    // 也就没有机会把未知工具或缺参数洗成一次执行 —— Hook 不能绕过已有的执行约束。
     const blocked = await this.hooks.runPreToolUse(call, args);
-    if (blocked !== undefined) {
-      // 中文对照：ERROR: 工具 "{名字}" 被 Hook 拦下：{原因}
-      return `ERROR: tool "${name}" blocked by hook: ${blocked}`;
-    }
+    if (blocked !== undefined) return failed(`ERROR: tool "${name}" blocked by hook: ${blocked}`);
 
     try {
-      const result = await tool.run(args);
-      // 先定结果，再通知 Hook：结果已经是不可变的字符串，Hook 只看得见、改不着。
-      await this.hooks.runPostToolUse(call, args, result);
+      const raw = await tool.run(args);
+      let result: ToolExecutionResult;
+      if (typeof raw === "string") result = { content: raw, isError: false };
+      else if (isRecord(raw) && typeof raw.content === "string" && typeof raw.isError === "boolean") {
+        result = { content: raw.content, isError: raw.isError };
+      } else {
+        throw new Error("tool returned an invalid execution result");
+      }
+      await this.hooks.runPostToolUse(call, args, result.content);
       return result;
     } catch (error) {
-      // 同样先折文本再通知：失败事件拿到原始错误，但回灌给模型的那句话已经定下来了。
-      // 中文对照：ERROR: {原因}
-      const text = `ERROR: ${describeError(error)}`;
+      const content = `ERROR: ${describeError(error)}`;
       await this.hooks.runPostToolUseFailure(call, args, error);
-      // 进程树尚可能在运行：这是不可恢复的宿主故障，不能当作普通工具错误继续执行。
       if (error instanceof ProcessCleanupError) throw error;
-      return text;
+      return failed(content);
     }
   }
 }

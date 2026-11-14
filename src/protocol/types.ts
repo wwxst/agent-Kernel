@@ -72,6 +72,15 @@ export interface Message {
 }
 
 /**
+ * 工具执行的宿主侧状态。content 会回灌给模型；isError 只供 Agent / UI 判断状态，
+ * 绝不序列化进协议 Message，避免把文件正文中的 "ERROR:" 当成失败信号。
+ */
+export interface ToolExecutionResult {
+  content: string;
+  isError: boolean;
+}
+
+/**
  * 一个工具的完整定义（function calling 里的那份函数定义）。
  *
  * description 和 parameters（JSON Schema）是写给模型看的「说明书」：
@@ -82,7 +91,7 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
-  run(args: Record<string, unknown>): Promise<string>;
+  run(args: Record<string, unknown>): Promise<string | ToolExecutionResult>;
 }
 
 /**
