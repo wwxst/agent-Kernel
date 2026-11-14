@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -274,6 +274,37 @@ test("write 后 read 能拿回原文，父目录自动创建", async () => {
 
     assert.equal(await workspace.write("nested/dir/hello.txt", "hello\n"), "wrote 6 chars to nested/dir/hello.txt");
     assert.equal(await workspace.read("nested/dir/hello.txt"), "hello\n");
+  });
+});
+
+test("write：提交前发现父目录被替换时拒绝写入新目标", {
+  skip: process.platform === "win32" && "directory symlink swap is not portable on Windows",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const parent = path.join(root, "target");
+    const moved = path.join(root, "target-original");
+    const outside = path.join(root, "outside");
+    await mkdir(parent);
+    await mkdir(outside);
+    const workspace = new Workspace({ root });
+    const writing = workspace.write("target/created.txt", "x".repeat(64 * 1024 * 1024));
+
+    let temporarySeen = false;
+    for (let attempt = 0; attempt < 5_000; attempt++) {
+      const entries = await readdir(parent);
+      if (entries.some((name) => name.startsWith(".agent-kernel-") && name.endsWith(".tmp"))) {
+        temporarySeen = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(temporarySeen, true, "test must swap the directory while the temp file is being written");
+
+    await rename(parent, moved);
+    await symlink(outside, parent, "dir");
+    await assert.rejects(writing, /parent directory changed during file operation/);
+    await assert.rejects(() => readFile(path.join(outside, "created.txt")), { code: "ENOENT" });
+    await rm(moved, { recursive: true, force: true });
   });
 });
 
