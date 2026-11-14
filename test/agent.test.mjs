@@ -640,6 +640,54 @@ test("最后一步：模型仍要工具时不执行无法验证的副作用", as
   assert.equal(chat.requests.length, 1);
 });
 
+test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", async () => {
+  const largeTool = {
+    ...echoTool(),
+    run: async () => "tool-output-" + "x".repeat(6_000),
+  };
+  const chat = createScriptedChat([
+    callTool("compact-1", "echo", { value: "first" }),
+    finalReply("first answer"),
+    finalReply("second answer " + "s".repeat(1_200)),
+    finalReply("third answer " + "t".repeat(1_200)),
+    finalReply("fourth answer " + "f".repeat(1_200)),
+  ]);
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([largeTool]),
+    maxTranscriptChars: 3_000,
+  });
+
+  await agent.run("first task with important context");
+  const afterToolRequest = chat.requests[1].messages;
+  const assistantIndex = afterToolRequest.findIndex((message) =>
+    message.role === "assistant" && message.tool_calls?.some((call) => call.id === "compact-1"));
+  assert.ok(assistantIndex >= 0, "assistant tool_call must remain in the next request");
+  const toolResult = afterToolRequest[assistantIndex + 1];
+  assert.equal(toolResult.role, "tool");
+  assert.equal(toolResult.tool_call_id, "compact-1");
+  assert.match(toolResult.content, /context compacted/);
+  assert.ok(toolResult.content.length < 1_000, "large tool output should be bounded");
+
+  await agent.run("second task");
+  await agent.run("third task");
+  await agent.run("fourth task");
+
+  const transcript = agent.transcript;
+  assert.match(transcript[0].content, /Conversation memory/);
+  assert.ok(transcript.length < 10, "old completed turns should not accumulate indefinitely");
+  for (let index = 1; index < transcript.length; index++) {
+    const message = transcript[index];
+    if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+    for (const call of message.tool_calls) {
+      const result = transcript[index + 1];
+      assert.equal(result?.role, "tool");
+      assert.equal(result?.tool_call_id, call.id, "compaction must never orphan a tool result");
+      index++;
+    }
+  }
+});
+
 test("会话：第二个 Run 继承 transcript，stats 只描述本次 Run", async () => {
   const chat = createScriptedChat([finalReply("first"), finalReply("second")]);
   const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
