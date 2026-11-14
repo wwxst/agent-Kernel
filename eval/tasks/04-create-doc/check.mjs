@@ -6,18 +6,23 @@ export default async function check(root) {
   let usage;
   try {
     usage = await readFile(path.join(root, "docs", "usage.md"), "utf8");
-  } catch {
-    // 任务要求新建这个文件：文件不存在是「还没做」，用断言表达。
-    // 直接让 ENOENT 漏出去，会让 selfcheck 把它当成检查器的基础设施错误。
-    assert.fail("docs/usage.md 不存在");
+  } catch (error) {
+    if (error?.code === "ENOENT") assert.fail("docs/usage.md 不存在");
+    throw error;
   }
-  assert.match(usage, /^# 用法/, "docs/usage.md 的第一行必须是 # 用法");
+  assert.equal(usage.split(/\r?\n/, 1)[0], "# 用法", "docs/usage.md 的第一行必须是 # 用法");
 
-  // `npm test` / `npm run test` / 表格里单独的 `test` 都算列出来了。
-  for (const script of ["test", "lint"]) {
-    assert.match(usage, new RegExp("npm (run )?" + script + "|`" + script + "`"), `文档里缺少 ${script} 脚本`);
+  const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  const scripts = pkg.scripts ?? {};
+  const rows = [...usage.matchAll(/^\|\s*`([^\`]+)`\s*\|\s*([^|]+)\|\s*$/gm)];
+  const documented = new Map(rows.map(([, command, description]) => [command.trim(), description.trim()]));
+  for (const [name, command] of Object.entries(scripts)) {
+    assert.ok(documented.has(name), `文档表格缺少 npm script: ${name}`);
+    assert.ok(documented.get(name).length > 0, `npm script ${name} 缺少说明`);
+    assert.ok(documented.get(name).includes(command), `npm script ${name} 的命令与 package.json 不一致`);
   }
+  assert.equal(documented.size, Object.keys(scripts).length, "文档表格包含不存在或重复的 npm script");
 
   const readme = await readFile(path.join(root, "README.md"), "utf8");
-  assert.match(readme, /docs\/usage\.md/, "README 末尾没有指向用法文档的链接");
+  assert.match(readme.trimEnd(), /\[[^\]]+\]\(docs\/usage\.md\)\s*$/, "README 末尾必须有指向 docs/usage.md 的链接");
 }
