@@ -517,12 +517,17 @@ export class Workspace {
       throw new Error("old_string must not be empty");
     }
 
-    const handle = await open(file, constants.O_RDWR | NO_FOLLOW_FILE);
+    const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+    await assertDirectoryIdentity(parentIdentity, requested);
+    const handle = await open(file, constants.O_RDWR | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
     let before: string;
     let after: string;
     let original: Stats;
     try {
       original = await handle.stat();
+      if (!original.isFile()) throw new Error("target is not a regular file");
+      await assertOpenedFileStillNamed(file, original, requested);
+      await assertDirectoryIdentity(parentIdentity, requested);
       const read = await readTextUpToHandle(
         handle,
         MAX_EDIT_FILE_BYTES,
@@ -530,6 +535,8 @@ export class Workspace {
         { preserveBom: true },
       );
       before = read.text;
+      await assertOpenedFileStillNamed(file, original, requested);
+      await assertDirectoryIdentity(parentIdentity, requested);
       if (read.truncated) {
         throw new Error(`file is larger than ${MAX_EDIT_FILE_BYTES} bytes; edit it through shell instead`);
       }
@@ -553,7 +560,7 @@ export class Workspace {
       await handle.close();
     }
 
-    await this.replaceFileAtomically(file, requested, after, original);
+    await this.replaceFileAtomically(file, requested, after, original, parentIdentity);
     // 只有写入成功提交才通知 UI。观察者错误不回滚真实 edit，也不改工具返回。
     try { this.onEditCommitted?.(requested, before, after); } catch { this.editObserverFailures++; }
     // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
