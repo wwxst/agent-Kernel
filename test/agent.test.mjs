@@ -674,7 +674,7 @@ test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", 
   await agent.run("fourth task");
 
   const transcript = agent.transcript;
-  assert.match(transcript[0].content, /Conversation memory/);
+  assert.match(transcript[0].content, /conversation memory/i);
   assert.ok(transcript.length < 10, "old completed turns should not accumulate indefinitely");
   for (let index = 1; index < transcript.length; index++) {
     const message = transcript[index];

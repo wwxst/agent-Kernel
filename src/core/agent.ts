@@ -332,16 +332,20 @@ export class Agent {
 
   /** 只有完整的 assistant tool_calls + 按 id 配齐的 tool 消息才允许整轮移除。 */
   private hasCompleteToolPairs(turn: readonly Message[]): boolean {
+    const expected = new Set<string>();
     for (let index = 0; index < turn.length; index++) {
       const message = turn[index]!;
       if (message.role !== "assistant" || message.tool_calls === undefined) continue;
       for (const call of message.tool_calls) {
         const result = turn[index + 1];
-        if (result?.role !== "tool" || result.tool_call_id !== call.id) return false;
+        if (expected.has(call.id) || result?.role !== "tool" || result.tool_call_id !== call.id) return false;
+        expected.add(call.id);
         index++;
       }
     }
-    return true;
+    const actual = turn.filter((message) => message.role === "tool");
+    return actual.length === expected.size && actual.every((message) =>
+      typeof message.tool_call_id === "string" && expected.has(message.tool_call_id));
   }
 
   /** 将旧轮次压成简短事实摘要；工具结果只留预览，最终答复优先保留。 */
