@@ -1317,7 +1317,7 @@ export class Tui {
 
   private activityFailureLine(item: ActivityTool, language: UiLanguage): LogLine | undefined {
     if (item.result === undefined) return undefined;
-    const summary = summarizeToolResult(item.call, item.result);
+    const summary = summarizeToolResult(item.call, item.result, item.resultIsError === true);
     if (!summary.failed) return undefined;
     const event = activityEventName(item.call, language);
     const mark = summary.notRun ? this.glyphs.notRun : this.glyphs.error;
@@ -2724,7 +2724,7 @@ export class Tui {
         if (group.fallbackOverview && group.tools.length > 0 && !group.finished) {
           const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
           children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
-            current.call, current.result, group.language,
+            current.call, current.result, group.language, false, current.resultIsError === true,
           )}`),
             tone: "info" });
         }
@@ -3325,7 +3325,7 @@ function oneLine(text: string): string {
 
 /** 工具事实兜底：只说明“正在/已做什么”，不猜测原因、发现或下一步计划。 */
 function toolProgressOverview(
-  call: ToolCall, result: string | undefined, language: UiLanguage, finished = false,
+  call: ToolCall, result: string | undefined, language: UiLanguage, finished = false, isError = false,
 ): string {
   const zh = language === "zh";
   let args: unknown;
@@ -3349,7 +3349,7 @@ function toolProgressOverview(
       : `Handling file ${name === "write" ? "write" : "edit"} request${target}.`;
   }
   const status = result === undefined ? "running" : (() => {
-    const summary = summarizeToolResult(call, result);
+    const summary = summarizeToolResult(call, result, isError);
     return summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
   })();
   if (status === "not-run") return zh ? `未执行${target || ` ${name}`}。`
