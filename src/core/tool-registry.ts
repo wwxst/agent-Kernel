@@ -237,7 +237,11 @@ export class ToolRegistry {
       } else {
         throw new Error("tool returned an invalid execution result");
       }
-      await this.hooks.runPostToolUse(call, args, result.content);
+      if (result.isError) {
+        await this.hooks.runPostToolUseFailure(call, args, new Error(result.content));
+      } else {
+        await this.hooks.runPostToolUse(call, args, result.content);
+      }
       return result;
     } catch (error) {
       const content = `ERROR: ${describeError(error)}`;
