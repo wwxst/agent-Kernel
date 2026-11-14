@@ -319,6 +319,12 @@ test("write：捕获父目录身份时拒绝已经换向的路径", {
     await mkdir(outside);
 
     const workspace = new Workspace({ root });
+    const replaceFileAtomically = workspace.replaceFileAtomically.bind(workspace);
+    let replaceReached = false;
+    workspace.replaceFileAtomically = async (...args) => {
+      replaceReached = true;
+      return replaceFileAtomically(...args);
+    };
     const resolveReal = workspace.resolveReal.bind(workspace);
     let resolutions = 0;
     workspace.resolveReal = async (...args) => {
@@ -336,6 +342,7 @@ test("write：捕获父目录身份时拒绝已经换向的路径", {
       () => workspace.write("target/created.txt", "must stay out"),
       /parent directory changed during file operation/,
     );
+    assert.equal(replaceReached, false, "must reject during identity capture, before creating a temporary file");
     assert.deepEqual(await readdir(outside), [], "外部目标目录不能收到写入或临时文件");
   });
 });
