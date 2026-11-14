@@ -393,41 +393,60 @@ export class Workspace {
     requested: string,
     content: string,
     original?: Stats,
+    parentIdentity?: DirectoryIdentity,
   ): Promise<void> {
+    const parent = parentIdentity ?? await captureDirectoryIdentity(path.dirname(target));
     const temporary = path.join(path.dirname(target), `.agent-kernel-${randomUUID()}.tmp`);
     this.stopIfCancelledBeforeWrite();
-    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, original?.mode ?? 0o666);
+    await assertDirectoryIdentity(parent, requested);
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW_FILE, original?.mode ?? 0o666);
+    let temporaryIdentity: Stats;
     try {
-      try {
-        await handle.writeFile(content, "utf8");
-        if (original !== undefined) await handle.chmod(original.mode & 0o7777);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
+      temporaryIdentity = await handle.stat();
+      if (!temporaryIdentity.isFile()) throw new Error("temporary target is not a regular file");
+      await handle.writeFile(content, "utf8");
+      if (original !== undefined) await handle.chmod(original.mode & 0o7777);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
 
-      // 临时写入可能经过多轮异步 I/O；在提交点前再次复查路径、并发修改和取消。
+    try {
+      // 写入期间父目录可能被改名、换成 junction/symlink，或被另一个文件系统对象替换。
+      await assertDirectoryIdentity(parent, requested);
       const current = await this.resolveReal(target, requested);
-      if (current !== target) throw new Error(`file target changed before commit: ${requested}`);
+      if (!sameCanonicalPath(current, target)) throw new Error(`file target changed before commit: ${requested}`);
       if (original !== undefined) {
         const latest = await lstat(target);
-        if (!latest.isFile() || latest.dev !== original.dev || latest.ino !== original.ino ||
+        if (!latest.isFile() || !sameFileIdentity(latest, original) ||
             latest.size !== original.size || latest.mtimeMs !== original.mtimeMs) {
           throw new Error(`file changed before commit: ${requested}`);
         }
+      } else {
+        try {
+          await lstat(target);
+          throw new Error(`file was created concurrently before commit: ${requested}`);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
       }
+      await assertDirectoryIdentity(parent, requested);
       this.stopIfCancelledBeforeWrite();
       await rename(temporary, target);
-    } finally {
-      // 出错时只清理自己的临时文件，绝不能回滚删除原文件。
-      try {
-        await unlink(temporary);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // 事后再复核一次：若提交窗口里父目录被替换，至少明确报错，不把结果谎报为成功。
+      await assertDirectoryIdentity(parent, requested);
+      const committed = await lstat(target);
+      if (!committed.isFile() || !sameFileIdentity(committed, temporaryIdentity)) {
+        throw new Error(`file target changed during commit: ${requested}`);
       }
+    } finally {
+      // 父目录身份不再匹配时绝不按旧路径 unlink，避免清理动作误删新目录中的同名文件。
+      try {
+        await assertDirectoryIdentity(parent, requested);
+        await unlink(temporary);
+      } catch { /* 已 rename、目录变化或清理失败：不触碰身份不明的路径。 */ }
     }
   }
-
   /** 工作区方法 write（写文件）：新建一个文件，或者整个覆盖；父目录自动补齐，写入失败时保留原有内容。 */
   async write(requested: string, content: string): Promise<string> {
     const file = await this.resolveReal(this.resolve(requested), requested);
