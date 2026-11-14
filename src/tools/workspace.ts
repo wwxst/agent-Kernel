@@ -1245,11 +1245,18 @@ async function readTextUpTo(
   buffer: Buffer,
   options: { preserveBom?: boolean } = {},
 ): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
+  const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+  await assertDirectoryIdentity(parentIdentity, file);
   const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
   try {
     const stats = await handle.stat();
     if (!stats.isFile()) throw new Error("target is not a regular file");
-    return await readTextUpToHandle(handle, limit, buffer, options);
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parentIdentity, file);
+    const result = await readTextUpToHandle(handle, limit, buffer, options);
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parentIdentity, file);
+    return result;
   } finally {
     await handle.close();
   }
