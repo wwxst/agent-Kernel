@@ -8,6 +8,7 @@
  * 内容目录：
  *   - `runFixture()`：用子进程跑 `test/support/eval-floating-check.mjs`，读它最后一行 JSON。
  *   - `withRoundFixture()`：临时任务与假 HTTP 端点，验证并发校验、首错收尾、网络分类和夹具清理。
+ *   - 入口别名：通过符号链接启动脚本，确保真实路径判断不会漏掉 CLI 执行。
  *   - `withSummaryFixture()`：隔离的汇总输入，验证轮数及完整任务集合校验。
  *   - 异步错误：没有泄漏时整轮通过；有泄漏时任务虽过、整轮仍判失败。
  *
@@ -16,7 +17,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFile, cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -77,6 +78,28 @@ test("评测：非法并发数在启动任务前拒绝，不能留下未执行�
     }
     assert.equal(endpoint.requests(), 0);
   });
+});
+
+test("评测入口：通过符号链接路径启动仍执行 CLI", {
+  skip: process.platform === "win32",
+}, async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-eval-entrypoint-"));
+  try {
+    const alias = path.join(root, "run.mjs");
+    await symlink(path.join(projectRoot, "eval", "run.mjs"), alias);
+    const result = spawnSync(process.execPath, [alias], {
+      cwd: projectRoot,
+      encoding: "utf8",
+      timeout: 5_000,
+      env: { ...process.env, API_KEY: "", OPENAI_API_KEY: "" },
+    });
+
+    assert.equal(result.error, undefined, result.error?.message);
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stderr, /missing API_KEY/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("评测：成绩文件保存失败必须非零退出", async () => {

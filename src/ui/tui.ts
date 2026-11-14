@@ -2046,14 +2046,14 @@ export class Tui {
       if (directory !== undefined) {
         try { rmdirSync(directory); } catch (cleanupError) {
           this.pushLog(this.uiText(
-            `could not remove the editor directory ${directory}: ${describeError(cleanupError)}`,
-            `无法清理编辑器目录（${directory}）：${describeError(cleanupError)}`,
+            `could not remove the editor directory: ${describeError(cleanupError)} (${directory})`,
+            `无法清理编辑器目录：${describeError(cleanupError)}（${directory}）`,
           ), "warning");
         }
       }
       this.pushLog(this.uiText(
-        `could not prepare the editor buffer${directory === undefined ? "" : ` in ${directory}`}: ${describeError(error)}`,
-        `无法准备编辑器缓冲区${directory === undefined ? "" : `（${directory}）`}：${describeError(error)}`,
+        `could not prepare the editor buffer: ${describeError(error)}`,
+        `无法准备编辑器缓冲区：${describeError(error)}`,
       ), "error");
       this.renderNow(true);
       return;
@@ -2100,8 +2100,8 @@ export class Tui {
       rmdirSync(directory);
     } catch (error) {
       this.pushLog(this.uiText(
-        `could not remove the editor buffer in ${directory}: ${describeError(error)}`,
-        `无法清理编辑器缓冲区（${directory}）：${describeError(error)}`,
+        `could not remove the editor buffer: ${describeError(error)} (${directory})`,
+        `无法清理编辑器缓冲区：${describeError(error)}（${directory}）`,
       ), "warning");
     }
     this.renderNow(true);

@@ -2740,8 +2740,10 @@ test("TUI 文件补全：选中的长文件名也必须限制在终端宽度内"
 test("TUI 外部编辑器：准备文件写入失败后清理已创建的空目录并报告失败", async (t) => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-editor-write-failure-"));
   t.after(() => rm(root, { recursive: true, force: true }));
+  // 人为加长临时根路径，让测试在 Linux/macOS/Windows 都能覆盖「路径挤掉真正错误」的情况。
+  const tempRoot = await mkdtemp(path.join(root, "deeply-nested-temporary-root-".repeat(2)));
   const saved = Object.fromEntries(["TEMP", "TMP", "TMPDIR"].map((key) => [key, process.env[key]]));
-  for (const key of Object.keys(saved)) process.env[key] = root;
+  for (const key of Object.keys(saved)) process.env[key] = tempRoot;
   const ui = makeTui({ interactive: true, tty: true });
   t.after(() => ui.cleanup());
   ui.tui.start();
@@ -2762,6 +2764,6 @@ test("TUI 外部编辑器：准备文件写入失败后清理已创建的空目�
   }
   assert.match(ui.text(), /could not prepare the editor buffer/);
   assert.ok(ui.text().includes("injected disk full"));
-  assert.deepEqual(await readdir(root), [], "写入失败后不能遗留空的编辑器临时目录");
+  assert.deepEqual(await readdir(tempRoot), [], "写入失败后不能遗留空的编辑器临时目录");
 });
 

@@ -25,6 +25,7 @@
  * 以及同目录的 `diagnostics.mjs`、`selfcheck.mjs`。被 `test/support/eval-floating-check.mjs` 引用。
  */
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -47,8 +48,18 @@ const resultsDir = path.join(here, "results");
 /** 未处理的 rejection 最多等这么久再结算；检查器里的后台任务通常在这之前就会炸。 */
 const INFRA_SETTLE_MS = 20;
 
+/** 直接运行检测比较真实路径，避免 macOS 的 /var 与 /private/var 等符号链接别名造成漏判。 */
+function sameFilePath(left, right) {
+  try {
+    return realpathSync.native(left) === realpathSync.native(right);
+  } catch {
+    // 文件已被移走等异常情况下保留原来的词法比较；正常启动时两个路径都应存在。
+    return path.resolve(left) === path.resolve(right);
+  }
+}
+
 const invokedDirectly =
-  process.argv[1] !== undefined && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+  process.argv[1] !== undefined && sameFilePath(process.argv[1], fileURLToPath(import.meta.url));
 
 if (invokedDirectly) {
   await cli();
