@@ -113,6 +113,22 @@ async function respondWhileOpen(write) {
   };
 }
 
+test("SSE：同一事件的多条 data 行按换行拼接后再解析", async () => {
+  const payload = { choices: [{ index: 0, delta: { content: "multi" }, finish_reason: "stop" }] };
+  const json = JSON.stringify(payload);
+  const split = Math.floor(json.length / 2);
+  const server = await respondWithStream([
+    `data: ${json.slice(0, split)}\ndata: ${json.slice(split)}`,
+    "[DONE]",
+  ]);
+  try {
+    const result = await streamingClient(server.url).chat([], []);
+    assert.equal(result.message.content, "multi");
+  } finally {
+    await server.close();
+  }
+});
+
 test("流式：DONE 结束读取，不处理结束标记之后的坏数据", async () => {
   const server = await respondWithStream([streamDelta({ content: "done" }, "stop"), "[DONE]", "{broken"]);
   try {
