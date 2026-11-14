@@ -9,8 +9,8 @@
  *   - `call()`：造一次工具调用；`recordingTool()`：记录收到的参数的假工具。
  *   - `definitions`：只投影说明书字段，`run` 不外泄。
  *   - `execute` 正常路径：命中就执行、参数齐全才真的执行、空 `arguments` 当空对象。
- *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填、类型不对、工具抛任何东西，
- *     一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
+ *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填（只认对象自身字段）、类型不对、
+ *     工具抛任何东西，一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
  *   - 注册体检：重名、`array` / `object` 参数、非法 schema、`required` 未声明、缺类型。
  *
  * 模块关系：依赖 `src/protocol/errors.ts`、`test/support/harness.mjs` 与 `node:test`，
@@ -195,6 +195,53 @@ test("execute：参数齐全才真的执行", async () => {
 
   assert.equal(result, "ok");
   assert.deepEqual(received, [{ path: "a.txt", content: "" }], "空串是合法内容，缺字段不是");
+});
+
+test("execute：required 只接受对象自身字段，不接受原型链继承", async () => {
+  for (const key of ["constructor", "toString"]) {
+    const rootSeen = [];
+    const rootRegistry = makeRegistry([{
+      name: "root", description: "root required field",
+      parameters: { type: "object", properties: { [key]: { type: "string" } }, required: [key] },
+      run: async (args) => { rootSeen.push(args); return "ok"; },
+    }]);
+
+    assert.equal(
+      await rootRegistry.execute(call("root", "{}")),
+      "ERROR: invalid arguments: missing required argument \"" + key + "\"",
+    );
+    assert.deepEqual(rootSeen, [], "缺少自有字段时不能执行根对象工具");
+    assert.equal(await rootRegistry.execute(call("root", JSON.stringify({ [key]: "present" }))), "ok");
+    assert.equal(rootSeen.length, 1);
+
+    const nestedSeen = [];
+    const nestedRegistry = makeRegistry([{
+      name: "nested", description: "nested required field",
+      parameters: {
+        type: "object",
+        properties: {
+          cfg: {
+            type: "object",
+            properties: { [key]: { type: "string" } },
+            required: [key],
+          },
+        },
+        required: ["cfg"],
+      },
+      run: async (args) => { nestedSeen.push(args); return "ok"; },
+    }]);
+
+    assert.equal(
+      await nestedRegistry.execute(call("nested", "{\"cfg\":{}}")),
+      "ERROR: invalid arguments: missing required argument \"cfg." + key + "\"",
+    );
+    assert.deepEqual(nestedSeen, [], "缺少嵌套自有字段时不能执行工具");
+    assert.equal(
+      await nestedRegistry.execute(call("nested", JSON.stringify({ cfg: { [key]: "present" } }))),
+      "ok",
+    );
+    assert.equal(nestedSeen.length, 1);
+  }
 });
 
 test("execute：空错误消息也不能变成空的 ERROR", async () => {

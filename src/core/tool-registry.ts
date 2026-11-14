@@ -140,7 +140,7 @@ function validateValue(schema: Record<string, unknown>, value: unknown, path: st
   const properties = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
   const required = (schema.required ?? []) as string[];
   for (const key of required) {
-    if (value[key] === undefined) return `missing required argument "${path === "" ? key : `${path}.${key}`}"`;
+    if (!Object.hasOwn(value, key)) return `missing required argument "${path === "" ? key : `${path}.${key}`}"`;
   }
   for (const [key, child] of Object.entries(value)) {
     if (!Object.hasOwn(properties, key)) continue;

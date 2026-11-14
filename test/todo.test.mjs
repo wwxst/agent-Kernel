@@ -55,13 +55,20 @@ test("单行约束覆盖 Unicode 行分隔符与 C1 控制字符", () => {
   const manager = new TodoManager();
   manager.update([entry("已验证", "done")]);
   const expected = "Todo list (1/1 done):\n1. [x] 已验证 (done)";
-  // C0 之外，C1 控制字符（U+0085、U+009B）与 Unicode 行/段分隔符（U+2028、U+2029）
-  // 同样会把一项任务拆成两行，必须和 \n 一样被拒绝。
-  for (const codePoint of [0x85, 0x9b, 0x2028, 0x2029]) {
-    const content = `a${String.fromCodePoint(codePoint)}b`;
-    assert.throws(() => manager.update([entry(content, "pending")]), /single line/);
-    assert.equal(manager.render(), expected);
+  // 换行/C1 控制字符/Unicode 行分隔符无论在开头、中间还是末尾都必须拒绝；
+  // 特别覆盖 trim() 原本会吞掉的首尾换行与 U+2028/U+2029。
+  for (const codePoint of [0x0a, 0x85, 0x9b, 0x2028, 0x2029]) {
+    const separator = String.fromCodePoint(codePoint);
+    for (const content of [separator + "a", "a" + separator, "a" + separator + "b"]) {
+      assert.throws(() => manager.update([entry(content, "pending")]), /single line/);
+      assert.equal(manager.render(), expected);
+    }
   }
+  // 普通首尾空格仍按既有约定清理，不影响正常输入。
+  assert.equal(
+    manager.update([entry("  正常任务  ", "pending")]),
+    "Todo list (0/1 done):\n1. [ ] 正常任务 (pending)",
+  );
 });
 
 test("合法更新不持有调用者传入对象的引用", () => {

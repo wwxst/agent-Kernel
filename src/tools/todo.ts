@@ -38,15 +38,15 @@ export class TodoManager {
       }
       const item = raw as Record<string, unknown>;
       if (typeof item.content !== "string") throw new Error(`todos[${index}].content must be a string`);
-      const content = item.content.trim();
-      if (content === "") throw new Error(`todos[${index}].content must not be blank`);
-      if (content.length > MAX_CONTENT_CHARS) {
-        throw new Error(`todos[${index}].content must be at most ${MAX_CONTENT_CHARS} characters`);
+      // 检查原始文本，再清理普通首尾空白；不能让 trim() 吞掉换行或 Unicode 行分隔符。
+      // C0/C1 控制字符（含 DEL、U+0085）和 Unicode 行/段分隔符（U+2028、U+2029）一律拒绝。
+      if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(item.content)) {
+        throw new Error("todos[" + index + "].content must be a single line without control characters or line separators");
       }
-      // 「单行」= 渲染出来只有一行：C0/C1 控制字符（含 DEL、U+0085）和 Unicode 行/段分隔符
-      // （U+2028、U+2029）都会把一项任务拆成两行或改写终端，必须和 \n 一样拒绝。
-      if (/[\p{Cc}\p{Zl}\p{Zp}]/u.test(content)) {
-        throw new Error(`todos[${index}].content must be a single line without control characters or line separators`);
+      const content = item.content.trim();
+      if (content === "") throw new Error("todos[" + index + "].content must not be blank");
+      if (content.length > MAX_CONTENT_CHARS) {
+        throw new Error("todos[" + index + "].content must be at most " + MAX_CONTENT_CHARS + " characters");
       }
       if (seen.has(content)) throw new Error(`duplicate todo: ${content}`);
       seen.add(content);
