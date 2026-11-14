@@ -14,7 +14,7 @@
  * 模块关系：依赖 `src/ui/prompt-history.ts` 与 `node:test`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -76,6 +76,36 @@ test("历史：上限为零时不返回旧记录", async () => {
   });
 });
 
+test("历史：超过磁盘上限时原子轮转，只保留最近有效记录", async () => {
+  await withFile(async (file) => {
+    await writeFile(file, `${JSON.stringify({ text: "x".repeat(8_388_608) })}\\n${JSON.stringify({ ts: 1, cwd: "/w", text: "latest-before-rotate" })}\\n`, "utf8");
+    assert.equal(appendHistory("latest-after-rotate", "/w", file), true);
+    assert.deepEqual(loadHistory(file), ["latest-before-rotate", "latest-after-rotate"]);
+    assert.ok((await stat(file)).size < 8_388_608, "轮转后的文件必须低于硬上限");
+    await assert.rejects(() => stat(file + ".lock"), { code: "ENOENT" }, "追加结束后锁文件必须释放");
+  });
+});
+
+test("历史：能回收持有进程已退出的陈旧锁", async () => {
+  await withFile(async (file) => {
+    const lock = file + ".lock";
+    await writeFile(lock, JSON.stringify({ pid: 2_147_483_647, token: "stale" }), "utf8");
+    const old = new Date(Date.now() - 60_000);
+    await utimes(lock, old, old);
+    assert.equal(appendHistory("recovered", "/w", file), true);
+    assert.deepEqual(loadHistory(file), ["recovered"]);
+  });
+});
+
+test("历史：活跃进程持锁时追加有界等待并安全放弃", async () => {
+  await withFile(async (file) => {
+    await writeFile(file + ".lock", JSON.stringify({ pid: process.pid, token: "active" }), "utf8");
+    const started = Date.now();
+    assert.equal(appendHistory("must-not-race", "/w", file), false);
+    assert.ok(Date.now() - started < 2_000, "不能无限等待另一个进程的锁");
+    assert.deepEqual(loadHistory(file), []);
+  });
+});
 test("历史：只读取最后 8 MiB，丢弃边界处残行并保留最新完整记录", async () => {
   await withFile(async (file) => {
     await writeFile(file, `${JSON.stringify({ text: "x".repeat(8_388_608) })}\n{"text":"latest"}\n{broken`);
