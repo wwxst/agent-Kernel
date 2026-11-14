@@ -210,12 +210,29 @@ test("onToolResult 对每条工具结果各回调一次", async () => {
   const agent = new Agent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
-    onToolResult: (call, result) => seen.push([call.id, result]),
+    onToolResult: (call, result, isError) => seen.push([call.id, result, isError]),
   });
 
   await agent.run("do it");
 
-  assert.deepEqual(seen, [["c1", "echo a"]]);
+  assert.deepEqual(seen, [["c1", "echo a", false]]);
+});
+
+test("onToolResult：ERROR: 文件正文不会被误报为工具失败", async () => {
+  const seen = [];
+  const tool = {
+    name: "read", description: "Read file text.", parameters: { type: "object", properties: {} },
+    run: async () => "ERROR: this line is part of the file",
+  };
+  const chat = createScriptedChat([callTool("read-1", "read", {}), finalReply("done")]);
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([tool]),
+    onToolResult: (_call, result, isError) => seen.push({ result, isError }),
+  });
+  await agent.run("read it");
+  assert.deepEqual(seen, [{ result: "ERROR: this line is part of the file", isError: false }]);
+  assert.equal(chat.requests[1].messages[3].content, "ERROR: this line is part of the file");
 });
 
 test("onToolCall 在工具真正执行前回调，顺序是 call → run → result", async () => {

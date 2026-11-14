@@ -82,6 +82,16 @@ test("definitions：修改嵌套 Schema 不影响后续说明书与参数校验"
     'ERROR: invalid arguments: argument "value" must be a string');
 });
 
+test("executeWithStatus：文件正文以 ERROR: 开头仍是成功结果", async () => {
+  const registry = makeRegistry([{
+    name: "read", description: "Read text.", parameters: { type: "object", properties: {} },
+    run: async () => "ERROR: this is literal file content",
+  }]);
+  const outcome = await registry.executeWithStatus(call("read"));
+  assert.deepEqual(outcome, { content: "ERROR: this is literal file content", isError: false });
+  assert.equal((await registry.executeWithStatus(call("missing"))).isError, true);
+});
+
 test("execute：命中工具就执行它", async () => {
   const registry = makeRegistry([echoTool()]);
 

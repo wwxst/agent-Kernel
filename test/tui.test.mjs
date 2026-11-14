@@ -1051,9 +1051,9 @@ test("TUI：失败和未执行工具显示不同符号，原因在下一行", as
 
   ui.tui.start();
   ui.tui.toolCall(failed);
-  ui.tui.toolResult(failed, "ERROR: File not found: src/missing.ts");
+  ui.tui.toolResult(failed, "ERROR: File not found: src/missing.ts", true);
   ui.tui.toolCall(notRun);
-  ui.tui.toolResult(notRun, "ERROR: not run: task cancelled");
+  ui.tui.toolResult(notRun, "ERROR: not run: task cancelled", true);
   await tick();
 
   const text = ui.text();
@@ -1270,7 +1270,7 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，只翻�
 
   const call = { id: "localized-error", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
   ui.tui.toolCall(call);
-  ui.tui.toolResult(call, "ERROR: file not found: missing.txt");
+  ui.tui.toolResult(call, "ERROR: file not found: missing.txt", true);
   assert.match(ui.text(), /file not found: missing\.txt/, "工具错误必须原样保留");
 
   assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
@@ -1787,7 +1787,7 @@ test("TUI 过程概述：工具失败不显示为操作已成功", async (t) => 
   ui.tui.assistantDelta("检查失败，改为只检查文件。");
   const read = { id: "overview-fail-read", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
   ui.tui.toolCall(read);
-  ui.tui.toolResult(read, "ERROR: file not found");
+  ui.tui.toolResult(read, "ERROR: file not found", true);
   screen = await detailText(ui);
   assert.match(screen, /检查失败，改为只检查文件。/);
   assert.doesNotMatch(screen, /已读取文件 missing\.txt。/, "模型已说明的新阶段也不应由工具伪造成功进度");
@@ -2490,6 +2490,17 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
   assert.match(inputLine(ui), /编辑后的内容/, "编辑器保存后内容回到输入框");
   ui.input.write("\r");
   assert.equal(await pending, "编辑后的内容");
+});
+
+test("TUI：ERROR: 开头的文件正文按成功结果展示", async () => {
+  const ui = makeTui({ interactive: true, tty: true });
+  ui.tui.start();
+  const read = call("read", { path: "notes.txt" });
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "ERROR: this is literal file content", false);
+  assert.match(ui.text(), /✓ Read/);
+  assert.doesNotMatch(ui.text(), /✗ Read/);
+  ui.cleanup();
 });
 
 test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) => {
