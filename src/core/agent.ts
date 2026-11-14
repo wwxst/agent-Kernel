@@ -344,8 +344,9 @@ export class Agent {
       }
     }
     const actual = turn.filter((message) => message.role === "tool");
-    return actual.length === expected.size && actual.every((message) =>
-      typeof message.tool_call_id === "string" && expected.has(message.tool_call_id));
+    const actualIds = new Set(actual.map((message) => message.tool_call_id));
+    return actual.length === expected.size && actualIds.size === expected.size &&
+      actual.every((message) => typeof message.tool_call_id === "string" && expected.has(message.tool_call_id));
   }
 
   /** 将旧轮次压成简短事实摘要；工具结果只留预览，最终答复优先保留。 */
