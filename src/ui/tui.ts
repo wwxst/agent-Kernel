@@ -35,7 +35,7 @@ import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
 import { appendHistory, loadHistory } from "./prompt-history.ts";
 import type { Interface, Key } from "node:readline";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, readSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
@@ -62,6 +62,26 @@ const LOG_TOP = 4;
 
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
+const MAX_EDITOR_BYTES = 1_048_576;
+
+/** Read editor output through a bounded regular-file handle. */
+function readEditorFile(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("editor output is not a regular file");
+    const buffer = Buffer.alloc(MAX_EDITOR_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const count = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    if (offset > MAX_EDITOR_BYTES) throw new Error(`editor output exceeds ${MAX_EDITOR_BYTES} bytes`);
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
 
 /** 不依赖 readline 私有撤销栈；会话内保留的多行粘贴原文最多占 32 MiB（按 UTF-16 码元估算）。 */
 const MAX_PASTE_HISTORY_BYTES = 32 * 1024 * 1024;
@@ -2081,7 +2101,7 @@ export class Tui {
       ), "warning");
     } else {
       try {
-        const edited = readFileSync(file, "utf8").replace(/\r\n/g, "\n").replace(/\n+$/, "");
+        const edited = readEditorFile(file).replace(/\r\n/g, "\n").replace(/\n+$/, "");
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }

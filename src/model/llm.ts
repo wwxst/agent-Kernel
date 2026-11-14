@@ -174,20 +174,20 @@ export class Llm implements ChatClient {
     const decoder = new TextDecoder();
     const assembly = new StreamAssembly();
     let buffer = "";
+    let eventData: string[] = [];
     let usage: TokenUsage | undefined;
     let finished = false;
 
-    const consume = (line: string): void => {
-      if (!line.startsWith("data:")) return;
-      const data = line.slice("data:".length).trim();
+    const dispatchEvent = (): void => {
+      if (eventData.length === 0) return;
+      const data = eventData.join("\n");
+      eventData = [];
       if (data === "[DONE]") { finished = true; return; }
-      if (data === "") return;
       let chunk: unknown;
       try {
         chunk = JSON.parse(data);
       } catch {
-        // 已经收到的 usage 要带上：流读到一半失败，这次请求同样可能计费。
-        throw new ChatResponseError("LLM response is invalid: stream chunk is not JSON", usage);
+        throw new ChatResponseError("LLM response is invalid: stream event data is not JSON", usage);
       }
       try {
         usage = readUsage(chunk) ?? usage;
@@ -197,6 +197,19 @@ export class Llm implements ChatClient {
       }
     };
 
+    const consumeLine = (line: string): void => {
+      if (line === "") {
+        dispatchEvent();
+        return;
+      }
+      if (line.startsWith(":")) return;
+      const separator = line.indexOf(":");
+      const field = separator === -1 ? line : line.slice(0, separator);
+      let value = separator === -1 ? "" : line.slice(separator + 1);
+      if (value.startsWith(" ")) value = value.slice(1);
+      if (field === "data") eventData.push(value);
+    };
+
     try {
       for await (const value of readResponseBytes(response)) {
         buffer += decoder.decode(value, { stream: true });
@@ -204,7 +217,7 @@ export class Llm implements ChatClient {
         while (newline !== -1) {
           const line = buffer.slice(0, newline).replace(/\r$/, "");
           buffer = buffer.slice(newline + 1);
-          consume(line);
+          consumeLine(line);
           if (finished) break;
           newline = buffer.indexOf("\n");
         }
@@ -215,9 +228,9 @@ export class Llm implements ChatClient {
       throw new ChatResponseError(describeError(error), usage,
         error instanceof ChatResponseError ? error.code : "stream_incomplete");
     }
-    // 最后一帧可能没有换行符收尾。
     buffer += decoder.decode();
-    if (!finished && buffer.trim() !== "") consume(buffer.trim());
+    if (!finished && buffer !== "") consumeLine(buffer.replace(/\r$/, ""));
+    if (!finished) dispatchEvent();
 
     try {
       return { message: assembly.toMessage(), usage };

@@ -17,7 +17,7 @@
  * 模块关系：只依赖 `node:fs` 与 `node:path`。
  * 被 `ui/tui.ts` 的 `@` 补全调用；`test/file-index.test.mjs` 覆盖过滤与缓存行为。
  */
-import { readdirSync } from "node:fs";
+import { opendirSync } from "node:fs";
 import path from "node:path";
 
 /** 遍历时直接跳过的目录：它们只会把候选列表淹掉。 */
@@ -37,6 +37,9 @@ export const MAX_INDEXED_FILES = 2_000;
 
 /** 缓存有效期：用户可能在会话中途新建文件，但不必每次按键都重扫磁盘。 */
 const CACHE_TTL_MS = 5_000;
+const MAX_SCANNED_ENTRIES = 20_000;
+const MAX_DIRECTORY_DEPTH = 32;
+const MAX_CACHE_ENTRIES = 64;
 
 interface CacheEntry {
   at: number;
@@ -47,36 +50,58 @@ const cache = new Map<string, CacheEntry>();
 
 /** 界面函数 listWorkspaceFiles（列文件清单）：递归列出工作区里的文件（相对路径），有数量上限，跳过常见的大目录。 */
 export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): string[] {
-  const key = JSON.stringify([root, limit]);
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  const boundedLimit = Math.min(MAX_INDEXED_FILES, Math.floor(limit));
+  const key = JSON.stringify([path.resolve(root), boundedLimit]);
   const cached = cache.get(key);
   const now = Date.now();
-  if (cached !== undefined && now - cached.at < CACHE_TTL_MS) return cached.files.slice();
+  if (cached !== undefined && now - cached.at < CACHE_TTL_MS) {
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached.files.slice();
+  }
 
   const files: string[] = [];
-  const walk = (relative: string): void => {
-    if (files.length >= limit) return;
-    let entries;
+  let scanned = 0;
+  const walk = (relative: string, depth: number): void => {
+    if (files.length >= boundedLimit || scanned >= MAX_SCANNED_ENTRIES || depth > MAX_DIRECTORY_DEPTH) return;
+    let directory;
     try {
-      entries = readdirSync(path.join(root, relative), { withFileTypes: true });
+      directory = opendirSync(path.join(root, relative));
     } catch {
-      // 读不到（权限、刚被删）就当这层没有文件：补全不能因为一个目录失败而整体失效。
       return;
     }
-    for (const entry of entries) {
-      if (files.length >= limit) return;
-      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
-      if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue;
-        walk(child);
-        continue;
+    try {
+      for (;;) {
+        if (files.length >= boundedLimit || scanned >= MAX_SCANNED_ENTRIES) return;
+        let entry;
+        try {
+          entry = directory.readSync();
+        } catch {
+          return;
+        }
+        if (entry === null) return;
+        scanned++;
+        const child = relative === "" ? entry.name : path.posix.join(relative, entry.name);
+        if (entry.isDirectory()) {
+          if (!SKIP_DIRS.has(entry.name)) walk(child, depth + 1);
+        } else if (entry.isFile()) {
+          files.push(child);
+        }
       }
-      if (entry.isFile()) files.push(child);
+    } finally {
+      try { directory.closeSync(); } catch { /* preserve the original scan result */ }
     }
   };
-  walk("");
+  walk("", 0);
 
   files.sort();
   cache.set(key, { at: now, files });
+  while (cache.size > MAX_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
   return files.slice();
 }
 
