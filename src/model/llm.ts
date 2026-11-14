@@ -128,7 +128,14 @@ export class Llm implements ChatClient {
 
     if (!response.ok) {
       // 把响应体带上：400 通常就是因为消息顺序/配对错了，错误详情很有价值。
-      const detail = await readResponseText(response, 500, this.signal);
+      let detail: string;
+      try {
+        detail = await readResponseText(response, 500, this.signal);
+      } catch (error) {
+        if (this.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+        // 状态码已经确认，错误页自身损坏不能把 401/403 变成可重试的网络失败。
+        detail = describeError(error);
+      }
       // 中文对照：模型接口返回 HTTP {状态码}：{响应体}
       throw new ModelHttpError(response.status, detail);
     }
@@ -302,12 +309,16 @@ class StreamAssembly {
 
     if (first.finish_reason !== undefined && first.finish_reason !== null) {
       if (typeof first.finish_reason !== "string") throw invalid("stream finish_reason must be a string");
+      if (this.finishReason !== undefined && this.finishReason !== first.finish_reason) {
+        throw invalid("stream finish_reason changed mid-stream");
+      }
       this.finishReason = first.finish_reason;
     }
 
     const delta = first.delta;
     if (delta === undefined || delta === null) return;
     if (!isRecord(delta)) throw invalid("stream delta must be an object");
+    if (delta.role !== undefined && delta.role !== "assistant") throw invalid('stream delta.role must be "assistant"');
 
     if (delta.content !== undefined && delta.content !== null) {
       if (typeof delta.content !== "string") throw invalid("stream delta.content must be a string");

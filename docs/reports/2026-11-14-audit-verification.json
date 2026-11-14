@@ -1,0 +1,62 @@
+{
+  "date": "2026-11-14",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "node": "v24.13.1"
+  },
+  "baseline": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "typecheck": "passed",
+    "tests": 433,
+    "passed": 427,
+    "failed": 0,
+    "skipped": 6
+  },
+  "final": {
+    "command": "npm run check",
+    "exitCode": 0,
+    "typecheck": "passed",
+    "tests": 465,
+    "passed": 459,
+    "failed": 0,
+    "skipped": 6,
+    "durationMs": 15880.892
+  },
+  "evaluationSelfcheck": {
+    "command": "npm run eval:check",
+    "exitCode": 0,
+    "tasks": 20,
+    "passed": 20,
+    "modelRequests": 0
+  },
+  "realModelSmoke": {
+    "model": "hy3 (configured endpoint)",
+    "command": "npm run agent -- --cwd <new temporary workspace> <read/edit task>",
+    "exitCode": 0,
+    "requests": 3,
+    "toolCalls": 2,
+    "tokens": 5787,
+    "promptTokens": 5648,
+    "completionTokens": 139,
+    "fileBefore": "before\n",
+    "fileAfter": "after\n",
+    "elapsedSeconds": 6
+  },
+  "newTests": 32,
+  "inventoryFiles": 96,
+  "inventoryBlobCheck": "passed",
+  "diffCheck": "passed",
+  "notValidated": [
+    "Linux/macOS runtime",
+    "Node 22.18 runtime",
+    "native interactive terminal and IME",
+    "full paid 20-task model evaluation",
+    "cross-day checkout/archive experiment"
+  ],
+  "retainedConfirmedDefects": [
+    "five evaluation checker acceptance gaps (existing task version retained)",
+    "upstream wizard dotenv single-quote round trip"
+  ]
+}

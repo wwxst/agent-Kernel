@@ -47,7 +47,6 @@ function samplePixel(row: Buffer, x: number, colorType: number, palette: Buffer,
   } else if (colorType === 3) {
     const index = row[x] ?? 0;
     const at = index * 3;
-    if (at + 2 >= palette.length) return 255;
     luminance = Math.round((palette[at]! * 299 + palette[at + 1]! * 587 + palette[at + 2]! * 114) / 1000);
     alpha = transparency[index] ?? 255;
   } else {
@@ -220,6 +219,8 @@ function decodePng(bytes: Buffer): ImagePreview | undefined {
     }
     const targetY = Math.min(targetHeight - 1, Math.floor(y * targetHeight / height));
     for (let x = 0; x < width; x++) {
+      // PLTE 可以少于位深允许的颜色数；越界索引是损坏数据，不能补成白色像素。
+      if (colorType === 3 && current[x]! * 3 + 2 >= palette.length) return undefined;
       const targetX = Math.min(targetWidth - 1, Math.floor(x * targetWidth / width));
       samples[targetY]![targetX]! += samplePixel(current, x, colorType, palette, transparency);
       counts[targetY]![targetX]!++;

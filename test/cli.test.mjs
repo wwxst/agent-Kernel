@@ -35,7 +35,8 @@ const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = path.join(projectRoot, "src", "cli.ts");
 
 /** 启动 mock 服务，按脚本回放模型的响应；请求次数超出脚本时重复最后一条。 */
-async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [], httpStatus = 200 } = {}) {
+async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [], httpStatus = 200,
+  httpErrorMessage = "mock provider rejected request" } = {}) {
   const requests = [];
   let turn = 0;
 
@@ -50,7 +51,7 @@ async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [
       const status = Array.isArray(httpStatus) ? httpStatus[Math.min(currentTurn, httpStatus.length - 1)] : httpStatus;
       if (status !== 200) {
         response.writeHead(status, { "content-type": "application/json" });
-        response.end(JSON.stringify({ error: { message: "mock provider rejected request" } }));
+        response.end(JSON.stringify({ error: { message: httpErrorMessage } }));
         return;
       }
 
@@ -986,6 +987,22 @@ test("CLI 模型正文与工具结果里的 ESC、bidi 字符只显示转义文�
   });
 });
 
+test("CLI 模型 HTTP 错误详情里的控制字符、bidi 字符只显示转义文本", async () => {
+  await withWorkspace(async (workdir) => {
+    // JSON.stringify 会转义 C0，所以用 U+009B（C1 CSI）与 bidi 验证原始 HTTP 文本路径。
+    const unsafe = "denied" + String.fromCharCode(0x009b) + "2J" + String.fromCharCode(0x202e) + "spoofed";
+    const mock = await startMock([finalReply("ignored")], { httpStatus: 401, httpErrorMessage: unsafe });
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 1);
+      assert.match(run.stderr, /HTTP 401/);
+      assert.doesNotMatch(run.stderr, /[\u009b\u202e]/);
+      assert.match(run.stderr, /\\u009b/);
+      assert.match(run.stderr, /\\u202e/);
+    } finally { await mock.close(); }
+  });
+});
+
 test("CLI 配置：未知语气和显示模式明确报错", async () => {
   const voice = await runCli({ AGENT_VOICE: "unknown" });
   assert.equal(voice.code, 1);
@@ -1058,5 +1075,22 @@ test("项目指令：工作区的 AGENTS.md 注入系统提示，没有该文件
     } finally {
       await mock.close();
     }
+  });
+});
+
+test("项目指令：工具更新 AGENTS.md 后，下一次模型请求立即看到新规范", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "AGENTS.md"), "OLD_PROJECT_RULE");
+    const mock = await startMock([
+      callTool("update-rules", "write", { path: "AGENTS.md", content: "NEW_PROJECT_RULE" }),
+      finalReply("rules updated"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(mock.requests[0].messages[0].content, /OLD_PROJECT_RULE/);
+      assert.match(mock.requests[1].messages[0].content, /NEW_PROJECT_RULE/);
+      assert.doesNotMatch(mock.requests[1].messages[0].content, /OLD_PROJECT_RULE/);
+    } finally { await mock.close(); }
   });
 });

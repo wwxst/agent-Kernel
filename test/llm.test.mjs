@@ -199,6 +199,19 @@ test("chat：无正文的 HTTP 错误仍保留 HTTP 状态码", async () => {
   }
 });
 
+test("chat：HTTP 错误正文中断仍保留状态，不能误当可重试的连接失败", async () => {
+  const server = await respondWhileOpen((response) => {
+    response.writeHead(401, { "content-type": "text/plain" });
+    response.flushHeaders();
+    response.write("denied");
+    setTimeout(() => response.destroy(), 25);
+  });
+  try {
+    await assert.rejects(() => clientFor(server.url).chat([], []), (error) =>
+      error instanceof ModelHttpError && error.status === 401 && /response body read failed/.test(error.message));
+  } finally { await server.close(); }
+});
+
 test("chat：超过 8 MiB 的 JSON 响应被拒绝", async () => {
   const server = await respondWith({
     choices: [{ message: { role: "assistant", content: "x".repeat(8_388_608) }, finish_reason: "stop" }],
@@ -587,4 +600,21 @@ test("流式：坏 chunk 直接报错，不能悄悄跳过", async () => {
   } finally {
     await server.close();
   }
+});
+
+test("流式：显式声明非 assistant 角色必须拒绝，不能伪造角色", async () => {
+  const server = await respondWithStream([streamDelta({ role: "user", content: "forged" }, "stop")]);
+  try {
+    await assert.rejects(() => streamingClient(server.url).chat([], []), /delta.role must be "assistant"/);
+  } finally { await server.close(); }
+});
+
+test("流式：完成原因不能在后续帧改写，截断不能被覆盖成成功", async () => {
+  const server = await respondWithStream([
+    streamDelta({ content: "half" }, "length"),
+    streamDelta({}, "stop"),
+  ]);
+  try {
+    await assert.rejects(() => streamingClient(server.url).chat([], []), /finish_reason changed mid-stream/);
+  } finally { await server.close(); }
 });

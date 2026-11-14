@@ -1,0 +1,2723 @@
+{
+  "baseline": "bacb4a498f45e76d79b7f04bee347d446723b746",
+  "scoringDimensions": {
+    "C": 30,
+    "R": 25,
+    "S": 15,
+    "P": 10,
+    "M": 20
+  },
+  "stats": {
+    "all": {
+      "files": 96,
+      "before": 98.24,
+      "after": 99.58
+    },
+    "code": {
+      "files": 92,
+      "before": 98.18,
+      "after": 99.57
+    },
+    "firstParty": {
+      "files": 47,
+      "before": 96.96,
+      "after": 99.66
+    },
+    "runtime": {
+      "files": 21,
+      "before": 95.62,
+      "after": 99.57
+    },
+    "baselineCodeLines": 20303
+  },
+  "files": [
+    {
+      "path": ".agents/skills/diagnosing-bugs/scripts/hitl-loop.template.sh",
+      "kind": "upstream-template",
+      "baselineLines": 44,
+      "finalLines": 44,
+      "baselineBlob": "243198464a8401a7ba1d63b3708fa43c3d067665",
+      "finalBlob": "243198464a8401a7ba1d63b3708fa43c3d067665",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": ".agents/skills/wizard/template.sh",
+      "kind": "upstream-template",
+      "baselineLines": 223,
+      "finalLines": 223,
+      "baselineBlob": "081ed3da860729c5e6fb1e7126c86b07b0ed56f0",
+      "finalBlob": "081ed3da860729c5e6fb1e7126c86b07b0ed56f0",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "上游 dotenv 单引号往返缺陷；按规范不就地修改",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": ".env.example",
+      "kind": "configuration",
+      "baselineLines": 37,
+      "finalLines": 37,
+      "baselineBlob": "e151ac6e10b743c3c83f4edd245a93f764b60c46",
+      "finalBlob": "e5c72fe38478f41dd367cc24d2527444b9254a32",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        18
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "M2",
+      "totalBefore": 98,
+      "totalAfter": 100
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "kind": "configuration",
+      "baselineLines": 87,
+      "finalLines": 87,
+      "baselineBlob": "73e80fedc6f60cb509c47af36cb21a3b097bdd7f",
+      "finalBlob": "73e80fedc6f60cb509c47af36cb21a3b097bdd7f",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "bin/agent.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 32,
+      "finalLines": 32,
+      "baselineBlob": "06ee58888ad87314f5f1a89d2de1a398e664d091",
+      "finalBlob": "06ee58888ad87314f5f1a89d2de1a398e664d091",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/cross-day.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 404,
+      "finalLines": 404,
+      "baselineBlob": "a411567aeb7fea3e2bfee25b86e961834926934b",
+      "finalBlob": "93ccf8a1873b28e8bd78d9813516a580ea6b04cd",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        19
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "M1",
+      "totalBefore": 99,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/diagnostics.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 351,
+      "finalLines": 371,
+      "baselineBlob": "04fe0071a7d44f4446028e033117714951acce86",
+      "finalBlob": "fad9f77892e397cd3cac4f7420416cd76c00a56b",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        11,
+        9,
+        19
+      ],
+      "after": [
+        30,
+        25,
+        13,
+        9,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "D1/D2/M1；D-R1 前后保留",
+      "totalBefore": 90,
+      "totalAfter": 97
+    },
+    {
+      "path": "eval/run.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 346,
+      "finalLines": 352,
+      "baselineBlob": "0c0b850bb2dc7686ca931ccdd664c9d57438424d",
+      "finalBlob": "00b28d9fe5e84ffbcf8c0868ae02b398c3eea923",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        28,
+        20,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "E1/E2",
+      "totalBefore": 93,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/selfcheck.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 124,
+      "finalLines": 124,
+      "baselineBlob": "556cd9f3a84ed2a4f3807c330a98218a133efde5",
+      "finalBlob": "556cd9f3a84ed2a4f3807c330a98218a133efde5",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/summary.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 128,
+      "finalLines": 137,
+      "baselineBlob": "4946bfa267c8fc8917904cec3e363fdfdff00c44",
+      "finalBlob": "1b5030f62a8ad182a4684ede94b73a7c63b7e8b5",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        25,
+        22,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "E3/E4/E5",
+      "totalBefore": 92,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/01-add-health-route/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 12,
+      "finalLines": 12,
+      "baselineBlob": "575f69e6be84f3ea137dd5926ec8c0388dea9436",
+      "finalBlob": "575f69e6be84f3ea137dd5926ec8c0388dea9436",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/01-add-health-route/files/server.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 6,
+      "finalLines": 6,
+      "baselineBlob": "c4c68d2620e16f3340e2e3f458bf456ce972f490",
+      "finalBlob": "c4c68d2620e16f3340e2e3f458bf456ce972f490",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/02-fix-failing-test/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 16,
+      "finalLines": 16,
+      "baselineBlob": "8b1aecdb784a8b27c26616222d869f094e22c6ad",
+      "finalBlob": "8b1aecdb784a8b27c26616222d869f094e22c6ad",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "已确认漏检，保留现有评测题版本；见反例表",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "eval/tasks/02-fix-failing-test/files/sum.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 8,
+      "finalLines": 8,
+      "baselineBlob": "8bc719c7e808733c796d0b4344c8a6392643bddc",
+      "finalBlob": "8bc719c7e808733c796d0b4344c8a6392643bddc",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/02-fix-failing-test/files/sum.test.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 15,
+      "finalLines": 15,
+      "baselineBlob": "254afedf84372a086a7e59a215f91337e51b4f93",
+      "finalBlob": "254afedf84372a086a7e59a215f91337e51b4f93",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/03-rename-function/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 18,
+      "finalLines": 18,
+      "baselineBlob": "0dc7695dba6f8e30713e1e97bd5c6cfb0ff02428",
+      "finalBlob": "0dc7695dba6f8e30713e1e97bd5c6cfb0ff02428",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/03-rename-function/files/api.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 3,
+      "finalLines": 3,
+      "baselineBlob": "565b533004e5622cf74d868b5815c653e5755264",
+      "finalBlob": "565b533004e5622cf74d868b5815c653e5755264",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/03-rename-function/files/page.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 6,
+      "finalLines": 6,
+      "baselineBlob": "62b7fc7edae9980e790d13bb03f746519cb28302",
+      "finalBlob": "62b7fc7edae9980e790d13bb03f746519cb28302",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/04-create-doc/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 23,
+      "finalLines": 23,
+      "baselineBlob": "91466a937b7d81a40094b75ce813d7072538f130",
+      "finalBlob": "91466a937b7d81a40094b75ce813d7072538f130",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "已确认漏检，保留现有评测题版本；见反例表",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "eval/tasks/05-extract-constant/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 15,
+      "finalLines": 15,
+      "baselineBlob": "b3254d424a0992c644a6f097b430f0ba3d6107dd",
+      "finalBlob": "b3254d424a0992c644a6f097b430f0ba3d6107dd",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/05-extract-constant/files/calc.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 14,
+      "finalLines": 14,
+      "baselineBlob": "5ed822e88f305f27102863b00e029985a2907a43",
+      "finalBlob": "5ed822e88f305f27102863b00e029985a2907a43",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/06-guard-missing-file/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 21,
+      "finalLines": 21,
+      "baselineBlob": "98310b9412661d37b3b1dd9aaced259fa3063636",
+      "finalBlob": "98310b9412661d37b3b1dd9aaced259fa3063636",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "已确认漏检，保留现有评测题版本；见反例表",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "eval/tasks/06-guard-missing-file/files/load.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 6,
+      "finalLines": 6,
+      "baselineBlob": "d68d86a52a046d4ebe59996a9d93b6b3e9fc6816",
+      "finalBlob": "d68d86a52a046d4ebe59996a9d93b6b3e9fc6816",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/07-add-quiet-flag/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 17,
+      "finalLines": 17,
+      "baselineBlob": "33b3568b6cff28c2b4148dbb9dca8715d096ce43",
+      "finalBlob": "33b3568b6cff28c2b4148dbb9dca8715d096ce43",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "已确认漏检，保留现有评测题版本；见反例表",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "eval/tasks/07-add-quiet-flag/files/cli.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 5,
+      "finalLines": 5,
+      "baselineBlob": "c2cde0322eefb635ebac9ceaa34c4f63d55fdafa",
+      "finalBlob": "c2cde0322eefb635ebac9ceaa34c4f63d55fdafa",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/08-extract-duplication/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 22,
+      "finalLines": 22,
+      "baselineBlob": "89821c62c4e7a37da6d61b1e1a81c30c483f9a40",
+      "finalBlob": "89821c62c4e7a37da6d61b1e1a81c30c483f9a40",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/08-extract-duplication/files/validate.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 13,
+      "finalLines": 13,
+      "baselineBlob": "785ec14a425abe2fec103fd6df93d71da1cfb21f",
+      "finalBlob": "785ec14a425abe2fec103fd6df93d71da1cfb21f",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/09-update-readme/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 22,
+      "finalLines": 22,
+      "baselineBlob": "8bd30a62478fee0ceff225a7aafb5ce32bcdafc1",
+      "finalBlob": "8bd30a62478fee0ceff225a7aafb5ce32bcdafc1",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/10-delete-dead-code/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 17,
+      "finalLines": 17,
+      "baselineBlob": "eab213b3b185b3bbf266364b00b408584cbb24d1",
+      "finalBlob": "eab213b3b185b3bbf266364b00b408584cbb24d1",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/10-delete-dead-code/files/app.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 5,
+      "finalLines": 5,
+      "baselineBlob": "16e4dd4c1d523a5d190b8c76d3c23c4d0deb8c47",
+      "finalBlob": "16e4dd4c1d523a5d190b8c76d3c23c4d0deb8c47",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/10-delete-dead-code/files/format.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 4,
+      "finalLines": 4,
+      "baselineBlob": "caaba839836368771d49dfabe3e629c3fe8a888d",
+      "finalBlob": "caaba839836368771d49dfabe3e629c3fe8a888d",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/10-delete-dead-code/files/legacy.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 4,
+      "finalLines": 4,
+      "baselineBlob": "4648900ac22f7fdac8f62c734f39c7b0b994d4dc",
+      "finalBlob": "4648900ac22f7fdac8f62c734f39c7b0b994d4dc",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/11-fix-slice-boundary/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 12,
+      "finalLines": 12,
+      "baselineBlob": "117ca8b358c2ad91d79c4aec05a4ed6f6f1a5ead",
+      "finalBlob": "117ca8b358c2ad91d79c4aec05a4ed6f6f1a5ead",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/11-fix-slice-boundary/files/list.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 4,
+      "finalLines": 4,
+      "baselineBlob": "adeca355b5f46f2bcaec75ddc14d40b7f0da9c83",
+      "finalBlob": "adeca355b5f46f2bcaec75ddc14d40b7f0da9c83",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/12-add-input-validation/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 19,
+      "finalLines": 19,
+      "baselineBlob": "0066ecc17937d5106504c305e3fe49ba567732c5",
+      "finalBlob": "0066ecc17937d5106504c305e3fe49ba567732c5",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/12-add-input-validation/files/user.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 5,
+      "finalLines": 5,
+      "baselineBlob": "9f65818c2f483ba969edcd5f412b756835bca06d",
+      "finalBlob": "9f65818c2f483ba969edcd5f412b756835bca06d",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/13-callback-to-promise/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 33,
+      "finalLines": 33,
+      "baselineBlob": "c13a9297f4602f01f758354a8e23ef6c37d4c642",
+      "finalBlob": "c13a9297f4602f01f758354a8e23ef6c37d4c642",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/13-callback-to-promise/files/app.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 10,
+      "finalLines": 10,
+      "baselineBlob": "adfef4604e4cc956b9c30f1f5deef8f3b6f4e3e4",
+      "finalBlob": "adfef4604e4cc956b9c30f1f5deef8f3b6f4e3e4",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/13-callback-to-promise/files/config.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 8,
+      "finalLines": 8,
+      "baselineBlob": "ce76cff347c3e7bafc0c446f9bc704a1d5eaa7e5",
+      "finalBlob": "ce76cff347c3e7bafc0c446f9bc704a1d5eaa7e5",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/14-fix-sort-order/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 13,
+      "finalLines": 13,
+      "baselineBlob": "3fd1a8d9f35e67d7a0291a68fd63b2fa0b835f59",
+      "finalBlob": "3fd1a8d9f35e67d7a0291a68fd63b2fa0b835f59",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/14-fix-sort-order/files/rank.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 4,
+      "finalLines": 4,
+      "baselineBlob": "ce35f24125533635b110296a1da8449324049509",
+      "finalBlob": "ce35f24125533635b110296a1da8449324049509",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/15-merge-defaults/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 20,
+      "finalLines": 20,
+      "baselineBlob": "663d3ff40dec449d3d34776602df2977668d758f",
+      "finalBlob": "663d3ff40dec449d3d34776602df2977668d758f",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/15-merge-defaults/files/config.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 5,
+      "finalLines": 5,
+      "baselineBlob": "805739d12002d5ce91654e66d4324677f8d29bfd",
+      "finalBlob": "805739d12002d5ce91654e66d4324677f8d29bfd",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/16-handle-bad-json/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 20,
+      "finalLines": 20,
+      "baselineBlob": "3294ec1128ddd22d22cb262f645b394991fd4f1e",
+      "finalBlob": "3294ec1128ddd22d22cb262f645b394991fd4f1e",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/16-handle-bad-json/files/handler.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 5,
+      "finalLines": 5,
+      "baselineBlob": "1ef9db1a14595045a66d56d90c50bc3789e1d852",
+      "finalBlob": "1ef9db1a14595045a66d56d90c50bc3789e1d852",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/17-write-missing-test/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 32,
+      "finalLines": 32,
+      "baselineBlob": "1adb56d1b985a33ae882ec01f286229fa428e892",
+      "finalBlob": "1adb56d1b985a33ae882ec01f286229fa428e892",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        26,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "已确认漏检，保留现有评测题版本；见反例表",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "eval/tasks/17-write-missing-test/files/slug.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 8,
+      "finalLines": 8,
+      "baselineBlob": "9e868fcdb5975150383e185c13086ce3e29bb5db",
+      "finalBlob": "9e868fcdb5975150383e185c13086ce3e29bb5db",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/18-remove-debug-logs/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 15,
+      "finalLines": 15,
+      "baselineBlob": "865bc394365f6b5c1f39c02686320dd47a0cf14e",
+      "finalBlob": "865bc394365f6b5c1f39c02686320dd47a0cf14e",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/18-remove-debug-logs/files/app.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 10,
+      "finalLines": 10,
+      "baselineBlob": "be1cf5c4664e76a1aaaba6a4952f1262fdcf4121",
+      "finalBlob": "be1cf5c4664e76a1aaaba6a4952f1262fdcf4121",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/19-banned-admin-bug/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 20,
+      "finalLines": 20,
+      "baselineBlob": "a4206672c3099f8468577bfc68007d72884ebf41",
+      "finalBlob": "a4206672c3099f8468577bfc68007d72884ebf41",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/19-banned-admin-bug/files/access.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 15,
+      "finalLines": 15,
+      "baselineBlob": "4b620929f7b01a24809f9bef074f92be0a51bcc5",
+      "finalBlob": "4b620929f7b01a24809f9bef074f92be0a51bcc5",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/20-fix-email-regex/check.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 14,
+      "finalLines": 14,
+      "baselineBlob": "ab4311e3a3f6b2ee1f89da03b1c0d12147534542",
+      "finalBlob": "ab4311e3a3f6b2ee1f89da03b1c0d12147534542",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "eval/tasks/20-fix-email-regex/files/validate.mjs",
+      "kind": "evaluation-fixture",
+      "baselineLines": 4,
+      "finalLines": 4,
+      "baselineBlob": "1c787d6d575e847a476ba3649fc593fb285eff7b",
+      "finalBlob": "1c787d6d575e847a476ba3649fc593fb285eff7b",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "package.json",
+      "kind": "configuration",
+      "baselineLines": 28,
+      "finalLines": 28,
+      "baselineBlob": "54e31de93e8dabd05ccfcdecb46196ad072adbc7",
+      "finalBlob": "54e31de93e8dabd05ccfcdecb46196ad072adbc7",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/cli.ts",
+      "kind": "first-party-code",
+      "baselineLines": 668,
+      "finalLines": 669,
+      "baselineBlob": "80c147b0bcfa4357cd9daead66d80af3ae329670",
+      "finalBlob": "89b5ebd38bb3faff90e75cae4e4046d047d882dd",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        25,
+        11,
+        10,
+        19
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 91,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/core/agent.ts",
+      "kind": "first-party-code",
+      "baselineLines": 583,
+      "finalLines": 583,
+      "baselineBlob": "b753dbbec99c11b4b500e13cd3b5e4c9a7527e0f",
+      "finalBlob": "b753dbbec99c11b4b500e13cd3b5e4c9a7527e0f",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/core/tool-hooks.ts",
+      "kind": "first-party-code",
+      "baselineLines": 185,
+      "finalLines": 185,
+      "baselineBlob": "4c4096be7e4de7fe3daf5f15c3b6a2236abba0c1",
+      "finalBlob": "4c4096be7e4de7fe3daf5f15c3b6a2236abba0c1",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/core/tool-log.ts",
+      "kind": "first-party-code",
+      "baselineLines": 103,
+      "finalLines": 103,
+      "baselineBlob": "0ebd7f56c5ead174be7171259d4a014ebfd4aa13",
+      "finalBlob": "0ebd7f56c5ead174be7171259d4a014ebfd4aa13",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/core/tool-registry.ts",
+      "kind": "first-party-code",
+      "baselineLines": 248,
+      "finalLines": 249,
+      "baselineBlob": "273b7a2d90e3e4fb41db91348a9a0836ad7f2531",
+      "finalBlob": "a9145780ec5ec885145a399bf67e6259632a6432",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        22,
+        13,
+        10,
+        19
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 90,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/core/tool-result-status.ts",
+      "kind": "first-party-code",
+      "baselineLines": 33,
+      "finalLines": 33,
+      "baselineBlob": "efa5c0ec72be4a00b7f3fa31e047ae3219644796",
+      "finalBlob": "efa5c0ec72be4a00b7f3fa31e047ae3219644796",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/model/llm.ts",
+      "kind": "first-party-code",
+      "baselineLines": 531,
+      "finalLines": 542,
+      "baselineBlob": "49843d102846eb28ede21d5db565582b77bc0f17",
+      "finalBlob": "4e893b88fbfcbd55b42a392caf9bca39597f956a",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        25,
+        22,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        24,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 92,
+      "totalAfter": 99
+    },
+    {
+      "path": "src/model/project-instructions.ts",
+      "kind": "first-party-code",
+      "baselineLines": 69,
+      "finalLines": 93,
+      "baselineBlob": "4544ce18ebaaadab4a15a969e3fa82d1f73cb914",
+      "finalBlob": "66b41a94371ee99d93bbb6980e72b252acc164dc",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        24,
+        10,
+        8,
+        19
+      ],
+      "after": [
+        30,
+        24,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 91,
+      "totalAfter": 99
+    },
+    {
+      "path": "src/protocol/errors.ts",
+      "kind": "first-party-code",
+      "baselineLines": 180,
+      "finalLines": 180,
+      "baselineBlob": "1386d4b0ecc81f60970bceb4f83276c59373db97",
+      "finalBlob": "1386d4b0ecc81f60970bceb4f83276c59373db97",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/protocol/types.ts",
+      "kind": "first-party-code",
+      "baselineLines": 141,
+      "finalLines": 141,
+      "baselineBlob": "9769d5a13202a63ab0df59f9c15a714983aaa5e9",
+      "finalBlob": "9769d5a13202a63ab0df59f9c15a714983aaa5e9",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/tools/grep-worker.ts",
+      "kind": "first-party-code",
+      "baselineLines": 64,
+      "finalLines": 64,
+      "baselineBlob": "1cb658ff630f710bff478d5f8a77af2580d96659",
+      "finalBlob": "1cb658ff630f710bff478d5f8a77af2580d96659",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/tools/todo.ts",
+      "kind": "first-party-code",
+      "baselineLines": 117,
+      "finalLines": 117,
+      "baselineBlob": "f281e17c6c6a0e37c2a7ee9c328d30959b288643",
+      "finalBlob": "f281e17c6c6a0e37c2a7ee9c328d30959b288643",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/tools/workspace.ts",
+      "kind": "first-party-code",
+      "baselineLines": 1749,
+      "finalLines": 1765,
+      "baselineBlob": "f3fffcc04d9b864d1e1f8e3ad84f05551e743129",
+      "finalBlob": "b86bce9395633dd5dcc68255de95e376aa3f699d",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        14,
+        10,
+        5,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "W1/W2/W3",
+      "totalBefore": 79,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/ui/cli-presenter.ts",
+      "kind": "first-party-code",
+      "baselineLines": 280,
+      "finalLines": 280,
+      "baselineBlob": "b2dbff89d80be79f25eaa08bc13d066d4ad310f6",
+      "finalBlob": "b2dbff89d80be79f25eaa08bc13d066d4ad310f6",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/ui/file-index.ts",
+      "kind": "first-party-code",
+      "baselineLines": 107,
+      "finalLines": 107,
+      "baselineBlob": "c192e5b8b20608806d9fe2a30988ad88b035ecfc",
+      "finalBlob": "c192e5b8b20608806d9fe2a30988ad88b035ecfc",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        23,
+        15,
+        8,
+        20
+      ],
+      "after": [
+        30,
+        23,
+        15,
+        8,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "src/ui/prompt-history.ts",
+      "kind": "first-party-code",
+      "baselineLines": 116,
+      "finalLines": 116,
+      "baselineBlob": "bcc067b8e3ce7fcd85ee35e2b61ba6b84a48ab01",
+      "finalBlob": "bcc067b8e3ce7fcd85ee35e2b61ba6b84a48ab01",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/ui/text.ts",
+      "kind": "first-party-code",
+      "baselineLines": 28,
+      "finalLines": 28,
+      "baselineBlob": "4f06326fc45a739689178b7e52bafaa0e402e8f7",
+      "finalBlob": "efe5f7ecfa676eaa78fb7483ace095c8b390738f",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        12,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 97,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/ui/tui-image.ts",
+      "kind": "first-party-code",
+      "baselineLines": 254,
+      "finalLines": 255,
+      "baselineBlob": "66bda352f17eedfee2921e269c912d3c94ff0677",
+      "finalBlob": "32824cd79bf3618d1ea6bf421a15009b635316bc",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        28,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 98,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/ui/tui-mood.ts",
+      "kind": "first-party-code",
+      "baselineLines": 208,
+      "finalLines": 208,
+      "baselineBlob": "916c0d0c48b8f1f38f438f08d1aa11a8d57828b6",
+      "finalBlob": "916c0d0c48b8f1f38f438f08d1aa11a8d57828b6",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "src/ui/tui.ts",
+      "kind": "first-party-code",
+      "baselineLines": 3598,
+      "finalLines": 3678,
+      "baselineBlob": "aafbb2be105eb0ea5e1795aea71e3948b400c3b2",
+      "finalBlob": "6974ae25ab613105b3495beefd8b18d589d49d59",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        16,
+        20,
+        10,
+        8,
+        20
+      ],
+      "after": [
+        30,
+        23,
+        15,
+        9,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 74,
+      "totalAfter": 97
+    },
+    {
+      "path": "test/agent.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 899,
+      "finalLines": 899,
+      "baselineBlob": "a30f05ed9506ec2e38a7aea7fc34ac96e6420c8d",
+      "finalBlob": "a30f05ed9506ec2e38a7aea7fc34ac96e6420c8d",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/cli-presenter.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 45,
+      "finalLines": 62,
+      "baselineBlob": "ec605b41729de2fa007f1e6c240f1da23cadb620",
+      "finalBlob": "019d5b87fae7d27a6e08d8fef8506e27372df92e",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/cli-pty.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 172,
+      "finalLines": 172,
+      "baselineBlob": "3f2beea0ce3c8e33337a48490d244a3c44f75bbe",
+      "finalBlob": "3f2beea0ce3c8e33337a48490d244a3c44f75bbe",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/cli.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 1062,
+      "finalLines": 1096,
+      "baselineBlob": "c75adc6720341737916f33d446a48927c7d0bd69",
+      "finalBlob": "f66810b5154c4ef8215e74bc29448793813e229d",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        23,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 98,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/eval-diagnostics.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 181,
+      "finalLines": 215,
+      "baselineBlob": "010a876cbf7753b8220af39f96ec3de457c79d8e",
+      "finalBlob": "af1db1a24e829bb335ed525ca26dfeec66597bf4",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        24,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "D1 的具体回归缺口",
+      "totalBefore": 99,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/eval.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 138,
+      "finalLines": 238,
+      "baselineBlob": "f871fdce6a6bc0812822f0132d947f16a6a4d8b4",
+      "finalBlob": "f896f1fad45b81092414897791a7fe99a61a8654",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        21,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "E1/E2/E3/E4 的具体回归缺口",
+      "totalBefore": 96,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/file-index.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 74,
+      "finalLines": 74,
+      "baselineBlob": "cbf3cbc6e5cff8b1be6f9dd977ecff014ba63a6c",
+      "finalBlob": "cbf3cbc6e5cff8b1be6f9dd977ecff014ba63a6c",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/llm.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 590,
+      "finalLines": 620,
+      "baselineBlob": "1ffda35a1387e8e9e2ab1c73b1800c956d819ebd",
+      "finalBlob": "fa15fc18ac1a4d6c1a6606017282f82f246f0a29",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        22,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 97,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/model-errors.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 67,
+      "finalLines": 67,
+      "baselineBlob": "302af6467ee919c0c015738511ca6538b1ce6b02",
+      "finalBlob": "302af6467ee919c0c015738511ca6538b1ce6b02",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/project-instructions.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 76,
+      "finalLines": 87,
+      "baselineBlob": "a63f599b54bec68e92cfc8a4a4db522a23c6cb6b",
+      "finalBlob": "1cdd0bce5c223a7228830f3f821bffc74fcdc7a3",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        24,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-model-cli.md",
+      "basis": "见 model-cli 报告对应文件与问题编号",
+      "totalBefore": 99,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/prompt-history.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 84,
+      "finalLines": 84,
+      "baselineBlob": "6d734513f75c6ff57c9bd879b384a09eb24c1817",
+      "finalBlob": "6d734513f75c6ff57c9bd879b384a09eb24c1817",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/selfcheck.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 116,
+      "finalLines": 116,
+      "baselineBlob": "4ea5aa0cc05a93a52cc1d0a0e044c787c04eea91",
+      "finalBlob": "4ea5aa0cc05a93a52cc1d0a0e044c787c04eea91",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/support/eval-floating-check.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 76,
+      "finalLines": 76,
+      "baselineBlob": "aa51a484c8cf87a7220fc46d355423aa3a1074b3",
+      "finalBlob": "aa51a484c8cf87a7220fc46d355423aa3a1074b3",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/support/harness.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 87,
+      "finalLines": 87,
+      "baselineBlob": "e660cf39c0d9f12058f774b99ce89a8ed47354f7",
+      "finalBlob": "e660cf39c0d9f12058f774b99ce89a8ed47354f7",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/todo.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 117,
+      "finalLines": 117,
+      "baselineBlob": "da2624545e16a8bc381c7f5006e0e23c5afc6d77",
+      "finalBlob": "da2624545e16a8bc381c7f5006e0e23c5afc6d77",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/tool-hooks.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 385,
+      "finalLines": 388,
+      "baselineBlob": "4e5e7208e00a6a264f408db577b1bfb5f8dc695b",
+      "finalBlob": "03bc7d006416d6bd227f5ced5ced5cf2a96a9286",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        26,
+        23,
+        15,
+        10,
+        19
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 93,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/tool-log.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 174,
+      "finalLines": 174,
+      "baselineBlob": "d4f98799c4002684ce228a655429b8f87f34ec07",
+      "finalBlob": "d4f98799c4002684ce228a655429b8f87f34ec07",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/tool-registry.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 410,
+      "finalLines": 425,
+      "baselineBlob": "a84185fc56dfa6326356f03ae69f942dacf9040b",
+      "finalBlob": "8caebf75eb5f1556e7017db97fc7f28ab0ecd6ed",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-core.md",
+      "basis": "见 core 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/tui-image.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 220,
+      "finalLines": 233,
+      "baselineBlob": "aa87887e319501cd0cb26b1463bc50c40dadbafe",
+      "finalBlob": "9d98ca0326f8d11bea431471de7b092df0a4179e",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 100,
+      "totalAfter": 100
+    },
+    {
+      "path": "test/tui.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 2534,
+      "finalLines": 2767,
+      "baselineBlob": "86bf8a594898b8aa6b36319817b2b23c14a6fb9c",
+      "finalBlob": "e10694f39f5b5cb8a641016cf8d5a1a37cb2e57e",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        28,
+        25,
+        15,
+        10,
+        18
+      ],
+      "after": [
+        28,
+        25,
+        15,
+        10,
+        18
+      ],
+      "report": "docs/reports/2026-11-14-audit-ui.md",
+      "basis": "见 ui 报告对应文件与问题编号",
+      "totalBefore": 96,
+      "totalAfter": 96
+    },
+    {
+      "path": "test/workspace.test.mjs",
+      "kind": "first-party-code",
+      "baselineLines": 1334,
+      "finalLines": 1389,
+      "baselineBlob": "0f5b68b8f9742e2ead0ea251c225cf0ff3ef0da7",
+      "finalBlob": "237a3557aa88fb10379448135871a9cd410d2ac3",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        22,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "W1/W2/W3 的具体回归缺口",
+      "totalBefore": 97,
+      "totalAfter": 100
+    },
+    {
+      "path": "tsconfig.json",
+      "kind": "configuration",
+      "baselineLines": 16,
+      "finalLines": 16,
+      "baselineBlob": "82d4f5deffc4e78ec5b0896335d9c424a0e34e1b",
+      "finalBlob": "82d4f5deffc4e78ec5b0896335d9c424a0e34e1b",
+      "staticReview": "complete",
+      "changedHunksReread": true,
+      "before": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "after": [
+        30,
+        25,
+        15,
+        10,
+        20
+      ],
+      "report": "docs/reports/2026-11-14-audit-workspace-eval.md",
+      "basis": "本次完整阅读未发现额外可扣分项",
+      "totalBefore": 100,
+      "totalAfter": 100
+    }
+  ]
+}

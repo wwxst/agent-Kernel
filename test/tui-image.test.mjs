@@ -218,3 +218,16 @@ test("获准执行的 Workspace.read 才传送真实 PNG 字节给 TUI 观察者
   assert.ok(read[0].actual.equals(bytes));
   assert.equal(previewImage(read[0].actual)?.rows.length > 0, true);
 });
+
+test("PNG 调色板：像素索引超出实际 PLTE 时拒绝，不伪造白色像素", () => {
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(1, 0);
+  ihdr.writeUInt32BE(1, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 3;
+  const image = (index) => Buffer.concat([signature, chunk("IHDR", ihdr),
+    chunk("PLTE", Buffer.from([0, 0, 0])), chunk("IDAT", deflateSync(Buffer.from([0, index]))),
+    chunk("IEND", Buffer.alloc(0))]);
+  assert.deepEqual(previewImage(image(0))?.rows, [" "], "合法索引仍生成真实黑色像素");
+  assert.equal(previewImage(image(1)), undefined);
+});

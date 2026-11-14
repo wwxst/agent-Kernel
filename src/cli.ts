@@ -29,6 +29,7 @@ import * as path from "node:path";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "./core/agent.ts";
 import type { AgentStats } from "./core/agent.ts";
 import { RunPresenter } from "./ui/cli-presenter.ts";
+import { escapeControlCharacters } from "./ui/text.ts";
 import type { AgentView, AgentVoice } from "./ui/cli-presenter.ts";
 import { ModelConfigError, ModelHttpError, describeError, modelFailure } from "./protocol/errors.ts";
 import { Llm } from "./model/llm.ts";
@@ -158,7 +159,7 @@ interface CliArgs {
   error?: string;
 }
 
-/** 只判断「是不是一个已存在的目录」：路径越界由 Workspace 负责，这里只管启动参数写没写对。 */
+/** 只判断「是不是一个已存在的目录」：完全访问不设路径边界，这里只管启动参数写没写对。 */
 function isDirectory(candidate: string): boolean {
   try {
     return statSync(candidate).isDirectory();
@@ -332,10 +333,6 @@ function createAgent(
 
   const callbacks = options.callbacks;
 
-  // 项目指令：仓库里的 AGENTS.md 注入系统提示（Claude Code 读 CLAUDE.md、Codex 读 AGENTS.md 的同类机制）。
-  // 启动时读一次；文件不存在就是「没有项目规范」，不是错误。
-  const projectInstructions = readProjectInstructions(config.root);
-
   return new Agent({
     llm: new Llm({
       baseUrl: config.baseUrl,
@@ -348,7 +345,11 @@ function createAgent(
     }),
     tools,
     // 函数在每次请求前求值：项目指令变化后，下一次请求立即看到新内容。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
+    systemPrompt: () => {
+      // AGENTS.md 可能被本轮工具或用户修改；每次请求重新读取，不能闭包缓存旧正文。
+      const projectInstructions = readProjectInstructions(config.root);
+      return `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
+    },
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
@@ -634,7 +635,7 @@ const tuiMode = cli.tui || (cli.task === "" && process.stdin.isTTY === true);
 
 if (cli.error !== undefined) {
   // 中文对照：[agent] 致命错误：{原因}
-  console.error(`[agent] fatal: ${cli.error}`);
+  console.error(escapeControlCharacters(`[agent] fatal: ${cli.error}`));
   console.log(usage);
   process.exitCode = 1;
 } else if (cli.help) {
@@ -660,7 +661,7 @@ if (cli.error !== undefined) {
     // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。
     const cancelled = controller.signal.aborted;
     // 中文对照：[agent] 已取消：{原因} ／ [agent] 致命错误：{原因}
-    console.error(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeError(error) : describeForUser(error)}`);
+    console.error(escapeControlCharacters(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeError(error) : describeForUser(error)}`));
     // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
     // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
     process.exitCode = cancelled ? 130 : 1;

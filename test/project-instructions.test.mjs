@@ -8,7 +8,7 @@
  *
  * 内容目录：
  *   - `withDir()`：临时目录，跑完删掉。
- *   - 五个用例：文件不存在；空白文件；读到正文并保留原样；超长截断并标注；同名目录不抛错。
+ *   - 读取边界：文件不存在；空白文件；正文保留；字符/字节截断标注；同名目录不抛错。
  *
  * 模块关系：依赖 `src/model/project-instructions.ts` 与 `node:test`，由 `npm test` 启动。
  */
@@ -72,5 +72,16 @@ test("项目指令：AGENTS.md 是目录时不抛错，当作没有", async () =
   await withDir(async (root) => {
     await mkdir(path.join(root, PROJECT_INSTRUCTIONS_FILE));
     assert.equal(readProjectInstructions(root), undefined);
+  });
+});
+
+test("项目指令：8 MiB 读取窗口外的正文不读取，空白前缀也明确报告截断", async () => {
+  await withDir(async (root) => {
+    await writeFile(path.join(root, PROJECT_INSTRUCTIONS_FILE), " ".repeat(8_388_608) + "OUTSIDE_READ_WINDOW");
+    const instructions = readProjectInstructions(root);
+    assert.ok(instructions !== undefined);
+    assert.equal(instructions.truncated, true);
+    assert.match(instructions.text, /truncated/);
+    assert.doesNotMatch(instructions.text, /OUTSIDE_READ_WINDOW/);
   });
 });

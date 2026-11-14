@@ -8,7 +8,8 @@
  * 内容目录：
  *   - 用例一：跑一轮真实 `Agent`，断言 usage、工具结果、逐工具的文件变化都被记下。
  *   - 用例二：像密钥的参数要变成 `[REDACTED]`，超长字符串只留摘要。
- *   - 用例三：`eval/cross-day.mjs --help` 不该切提交、也不该联系模型。
+ *   - 快照边界：特殊文件名不能改写字典原型，大文件降级为元数据并报告覆盖不足。
+ *   - 跨天入口：`eval/cross-day.mjs --help` 不该切提交、也不该联系模型。
  *
  * 模块关系：依赖 `src/core/agent.ts`、`eval/diagnostics.mjs`、`test/support/harness.mjs`，
  * 由 `npm test` 启动。
@@ -162,6 +163,39 @@ test("诊断：脱敏像密钥的参数，并摘要超长字符串", async () =>
     assert.equal(args.content.chars, 700);
     assert.equal(args.content.sha256.length, 64);
     assert.equal(JSON.stringify(trace).includes(secret), false);
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test("诊断：__proto__ 文件名的新增和修改均被如实记录", async () => {
+  const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
+  try {
+    const tools = makeRegistry([]);
+    const diagnostics = await createEvalDiagnostics({ llm: { chat: async () => ({}) }, tools, workdir });
+    await writeFile(path.join(workdir, "__proto__"), "hello");
+    assert.deepEqual((await diagnostics.finish()).fileChanges,
+      [{ path: "__proto__", change: "added", afterBytes: 5 }]);
+    const second = await createEvalDiagnostics({ llm: { chat: async () => ({}) }, tools, workdir });
+    await writeFile(path.join(workdir, "__proto__"), "changed");
+    assert.deepEqual((await second.finish()).fileChanges,
+      [{ path: "__proto__", change: "modified", beforeBytes: 5, afterBytes: 7 }]);
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test("诊断：超大文件只用元数据降级，小文件仍完整哈希并报告覆盖不足", async () => {
+  const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
+  try {
+    await writeFile(path.join(workdir, "large.txt"), Buffer.alloc(1_000_001, 65));
+    await writeFile(path.join(workdir, "small.txt"), "hello");
+    const diagnostics = await createEvalDiagnostics({ llm: { chat: async () => ({}) }, tools: makeRegistry([]), workdir });
+    const trace = await diagnostics.finish();
+    assert.equal(trace.snapshotCoverage.initial.complete, false);
+    assert.equal(trace.snapshotCoverage.initial.hashedBytes, 5);
+    assert.equal(trace.snapshotCoverage.final.hashedBytes, 5);
+    assert.deepEqual(trace.fileChanges, []);
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }

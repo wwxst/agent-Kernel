@@ -16,7 +16,7 @@
  *     工具事件 `toolCall` / `toolResult` / `recordEditDiff` / `recordImagePreview`；
  *     输入 `readLine`；状态 `setStats` / `setThinking` / `setRetrying`；日志 `logLine` / `logError`。
  *   - `TuiOptions`：输出流、工作区路径、语言、配色、初始任务等构造参数。
- *   - 多行粘贴归档：唯一占位符、会话级原文映射与 32 MiB / 256 段硬上限。
+ *   - 多行粘贴归档：唯一占位符、会话级原文映射与 32 MiB / 256 段硬上限；进行中的单段粘贴也限制为 32 MiB。
  *   - `Style` 与四套调色板（深色/浅色 × 全彩/基础），`Glyphs`（unicode / ascii 两套字符）。
  *   - 显示宽度工具：`displayWidth` / `wrapLine` / `clip` / `padRight` / `takeByWidth`，
  *     CJK 与 emoji 按 2 列算，否则中文回复会折行破帧。
@@ -35,7 +35,7 @@ import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
 import { appendHistory, loadHistory } from "./prompt-history.ts";
 import type { Interface, Key } from "node:readline";
 import { spawnSync } from "node:child_process";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
@@ -312,6 +312,10 @@ export class Tui {
   /** 全屏 transcript 视图：临时进备用屏回看/展开历史，退出后主屏原样还回来。 */
   private transcriptMode = false;
 
+  /** 详情视图的折叠状态独立保存，不能改动已经打印进主屏历史的展示形状。 */
+  private readonly transcriptTurns = new WeakMap<TurnActivity, boolean>();
+  private readonly transcriptGroups = new WeakMap<ActivityGroup, boolean>();
+
   /** 主视图里已经打印进 scrollback 的行数；打印过的行不再重绘。 */
   private printedLines = 0;
 
@@ -462,7 +466,7 @@ export class Tui {
   /** 正在等待输入；readline 保留编辑缓存，TUI 独立绘制，不触碰输入法状态。 */
   private promptActive = false;
 
-  /** 横向滚动输入框，不让 readline 自动折行覆盖边框与状态栏。 */
+  /** 光标所在段的可见起点（整条编辑缓存里的字符偏移），让光标定位与横向裁剪共用边界。 */
   private inputOffset = 0;
 
   /** Slash 菜单只在编辑命令前缀时显示；Esc 关闭后直到文本改变前保持关闭。 */
@@ -547,10 +551,11 @@ export class Tui {
     const inputDecoder = new StringDecoder("utf8");
     let pasting = false;
     let pasteBuffer = "";
+    let pasteDiscarded = false;
     let partial = "";
     let partialTimer: NodeJS.Timeout | undefined;
     const pasteEmit = (event: string, ...args: unknown[]): boolean => {
-      let pasteLimitWarning = false;
+      let pasteLimitWarning: "single-paste" | "session-history" | undefined;
       if (event === "data" && args[0] !== undefined) {
         if (partialTimer !== undefined) clearTimeout(partialTimer);
         partialTimer = undefined;
@@ -573,10 +578,15 @@ export class Tui {
           if (part === "\x1b[200~") {
             pasting = true;
             pasteBuffer = "";
+            pasteDiscarded = false;
             continue;
           }
           if (part === "\x1b[201~") {
             pasting = false;
+            if (pasteDiscarded) {
+              pasteDiscarded = false;
+              continue;
+            }
             const text = pasteBuffer.replace(/\r\n?/g, "\n");
             pasteBuffer = "";
             if (text.includes("\n")) {
@@ -587,7 +597,7 @@ export class Tui {
               const retainedBytes = text.length * 2;
               if (this.pastes.size >= MAX_PASTE_HISTORY_ENTRIES ||
                   this.pasteHistoryBytes + retainedBytes > MAX_PASTE_HISTORY_BYTES) {
-                pasteLimitWarning = true;
+                pasteLimitWarning = "session-history";
               } else {
                 this.pastes.set(placeholder, text);
                 this.pasteHistoryBytes += retainedBytes;
@@ -598,8 +608,14 @@ export class Tui {
             }
             continue;
           }
-          if (pasting) pasteBuffer += part;
-          else out += part;
+          if (pasting) {
+            // 结束标记可能一直不来；进行中的原文也受单段 32 MiB 上限约束，超限后丢弃直到结束标记。
+            if (!pasteDiscarded && (pasteBuffer.length + part.length) * 2 > MAX_PASTE_HISTORY_BYTES) {
+              pasteBuffer = "";
+              pasteDiscarded = true;
+              pasteLimitWarning = "single-paste";
+            } else if (!pasteDiscarded) pasteBuffer += part;
+          } else out += part;
         }
         // 单独的 Esc 仍须交给键盘处理；粘贴中则保留残缺标记等下一块补齐。
         if (partial !== "" && !pasting) {
@@ -625,8 +641,11 @@ export class Tui {
         args[0] = out;
       }
       const emitted = originalEmit(event, ...args);
-      if (pasteLimitWarning) {
-        this.pushLog(this.uiText(
+      if (pasteLimitWarning !== undefined) {
+        this.pushLog(pasteLimitWarning === "single-paste" ? this.uiText(
+          "Paste not inserted: this paste exceeds the single-paste limit (32 MiB). Try a smaller paste.",
+          "粘贴内容未插入：这一段超过单次粘贴上限（32 MiB）。可继续粘贴较小的内容。",
+        ) : this.uiText(
           "Paste not inserted: this session reached its multiline paste history limit (32 MiB or 256 pastes). Close and reopen the TUI to reset it.",
           "粘贴内容未插入：本次会话的多行粘贴历史已达到上限（32 MiB 或 256 段）。关闭并重新打开界面后可继续粘贴。",
         ), "warning");
@@ -746,12 +765,13 @@ export class Tui {
         if (turns.length > 0) {
           this.turnFocus = this.turnFocus <= 0 ? turns.length - 1 : this.turnFocus - 1;
           const target = turns[this.turnFocus]!;
-          if (this.isPrintedTurn(target)) {
+          if (!this.transcriptMode && this.isPrintedTurn(target)) {
             this.historyHint();
             return;
           }
           this.captureHistoryAnchor();
-          target.expanded = !target.expanded;
+          if (this.transcriptMode) this.transcriptTurns.set(target, !(this.transcriptTurns.get(target) ?? true));
+          else target.expanded = !target.expanded;
           this.renderNow();
         }
         return;
@@ -766,14 +786,19 @@ export class Tui {
         if (tools.length > 0) {
           this.toolFocus = this.toolFocus <= 0 ? tools.length - 1 : this.toolFocus - 1;
           const chosen = tools[this.toolFocus]!;
-          if (chosen.turn !== undefined && this.isPrintedTurn(chosen.turn)) {
+          if (!this.transcriptMode && chosen.turn !== undefined && this.isPrintedTurn(chosen.turn)) {
             this.historyHint();
             return;
           }
           this.captureHistoryAnchor();
           chosen.tool.detailsExpanded = !chosen.tool.detailsExpanded;
-          chosen.group.expanded = true;
-          if (chosen.turn !== undefined) chosen.turn.expanded = true;
+          if (this.transcriptMode) {
+            this.transcriptGroups.set(chosen.group, true);
+            if (chosen.turn !== undefined) this.transcriptTurns.set(chosen.turn, true);
+          } else {
+            chosen.group.expanded = true;
+            if (chosen.turn !== undefined) chosen.turn.expanded = true;
+          }
           this.renderNow();
         }
         return;
@@ -788,13 +813,18 @@ export class Tui {
           this.activityFocus = this.activityFocus <= 0 ? groups.length - 1 : this.activityFocus - 1;
           const group = groups[this.activityFocus]!;
           const owner = this.log.find((line) => line.kind === "activity" && line.activity === group)?.turn;
-          if (owner !== undefined && this.isPrintedTurn(owner)) {
+          if (!this.transcriptMode && owner !== undefined && this.isPrintedTurn(owner)) {
             this.historyHint();
             return;
           }
           this.captureHistoryAnchor();
-          group.expanded = !group.expanded;
-          if (owner !== undefined) owner.expanded = true;
+          if (this.transcriptMode) {
+            this.transcriptGroups.set(group, !(this.transcriptGroups.get(group) ?? true));
+            if (owner !== undefined) this.transcriptTurns.set(owner, true);
+          } else {
+            group.expanded = !group.expanded;
+            if (owner !== undefined) owner.expanded = true;
+          }
           this.renderNow();
         }
         return;
@@ -802,7 +832,7 @@ export class Tui {
 
       if (this.layout && this.promptActive && this.promptText === COMMAND_PROMPT) {
         // 方向键已被 readline 预处理；这里恢复菜单打开前的文本，防止载入输入历史。
-        const items = this.slashMenuCandidates(this.slashDraft);
+        const items = this.completionCandidates(this.slashDraft);
         const active = !this.slashDismissed && items.length > 0;
         if (active && (name === "up" || name === "down")) {
           this.slashSelected = (this.slashSelected + (name === "down" ? 1 : -1) + items.length) % items.length;
@@ -812,9 +842,11 @@ export class Tui {
         }
         if (active && name === "tab" && !key?.shift) {
           const chosen = items[Math.min(this.slashSelected, items.length - 1)]!;
-          this.setEditorLine(chosen.command);
-          this.slashDraft = chosen.command;
-          this.slashDraftCursor = chosen.command.length;
+          const completed = chosen.command.startsWith("@")
+            ? this.slashDraft.replace(/@[^\s@]*$/, chosen.command) : chosen.command;
+          this.setEditorLine(completed);
+          this.slashDraft = completed;
+          this.slashDraftCursor = completed.length;
           this.slashDismissed = true;
           this.renderNow();
           return;
@@ -1010,8 +1042,9 @@ export class Tui {
   /** 候选菜单的显示宽度按终端字符列计算，选中项使用强调色。 */
   private slashMenuLine(item: MenuItem, selected: boolean, width: number): string {
     const prefix = selected ? this.glyphs.user : " ";
-    const nameWidth = Math.min(18, Math.max(12, width - 1));
-    const name = padRight(` ${item.command}`, nameWidth);
+    const nameWidth = Math.min(18, Math.max(0, width - displayWidth(prefix)));
+    // 文件名来自磁盘，不能绕过终端文本转义；候选行中的换行也必须显示为字面量。
+    const name = padRight(clip(` ${singleLine(item.command)}`, nameWidth), nameWidth);
     const description = this.uiLanguage === "zh" ? item.zh : item.en;
     const available = Math.max(0, width - displayWidth(prefix) - displayWidth(name));
     const plain = prefix + name + takeByWidth(description, available);
@@ -2002,13 +2035,25 @@ export class Tui {
     if (this.editorRunning) return;
     const command = (process.env.VISUAL ?? "").trim() || (process.env.EDITOR ?? "").trim() ||
       (process.platform === "win32" ? "notepad" : "vi");
-    const file = path.join(tmpdir(), `agent-prompt-${process.pid}.md`);
+    let directory: string | undefined;
+    let file: string;
     try {
-      writeFileSync(file, this.expandPastes(this.rl.line).split(NEWLINE_MARK).join("\n"), "utf8");
+      // 独立临时目录避免覆盖同名文件或跟随预先放置的符号链接。
+      directory = mkdtempSync(path.join(tmpdir(), "agent-prompt-"));
+      file = path.join(directory, "prompt.md");
+      writeFileSync(file, this.expandPastes(this.rl.line).split(NEWLINE_MARK).join("\n"), { encoding: "utf8", mode: 0o600 });
     } catch (error) {
+      if (directory !== undefined) {
+        try { rmdirSync(directory); } catch (cleanupError) {
+          this.pushLog(this.uiText(
+            `could not remove the editor directory ${directory}: ${describeError(cleanupError)}`,
+            `无法清理编辑器目录（${directory}）：${describeError(cleanupError)}`,
+          ), "warning");
+        }
+      }
       this.pushLog(this.uiText(
-        `could not prepare the editor buffer: ${describeError(error)}`,
-        `无法准备编辑器缓冲区：${describeError(error)}`,
+        `could not prepare the editor buffer${directory === undefined ? "" : ` in ${directory}`}: ${describeError(error)}`,
+        `无法准备编辑器缓冲区${directory === undefined ? "" : `（${directory}）`}：${describeError(error)}`,
       ), "error");
       this.renderNow(true);
       return;
@@ -2017,7 +2062,10 @@ export class Tui {
     this.editorRunning = true;
     // 让出终端：显示光标、清掉底部活动区，编辑器自己会占满屏幕。
     this.output.write("\x1b[?25h");
-    const result = spawnSync(command, [file], { stdio: "inherit", shell: true });
+    // 编辑器命令仍按用户的 Shell 配置解释；文件路径通过独立环境变量传入，空格和元字符不再变成命令语法。
+    const fileArgument = process.platform === "win32" ? ' "%AGENT_EDITOR_FILE%"' : ' "$AGENT_EDITOR_FILE"';
+    const result = spawnSync(command + fileArgument, { stdio: "inherit", shell: true,
+      env: { ...process.env, AGENT_EDITOR_FILE: file } });
     this.editorRunning = false;
     this.output.write("\x1b[?25l");
 
@@ -2049,8 +2097,12 @@ export class Tui {
 
     try {
       rmSync(file, { force: true });
-    } catch {
-      // 临时文件删不掉不影响输入内容，下一次会覆盖同名文件。
+      rmdirSync(directory);
+    } catch (error) {
+      this.pushLog(this.uiText(
+        `could not remove the editor buffer in ${directory}: ${describeError(error)}`,
+        `无法清理编辑器缓冲区（${directory}）：${describeError(error)}`,
+      ), "warning");
     }
     this.renderNow(true);
   }
@@ -2291,8 +2343,9 @@ export class Tui {
     // 少算就会上移不足，旧内容清不掉，新内容叠上去——屏幕上表现为同一句话重复几十遍。
     const tailRows = visibleTail.reduce(
       (rows, line) => rows + Math.max(1, Math.ceil(displayWidth(line.text) / width)), 0);
-    // 光标停在最后一行输入上：它上面还有 (输入行数 - 1) 行输入内容。
-    const rowsAboveInput = tailRows + 1 + Math.max(0, this.inputLines(width).length - 1);
+    // 光标可以在任意输入段：回退锚点按它所在的段计算，不能假定它总在最后一行。
+    const cursorSegment = this.rl.line.slice(0, this.rl.cursor).split(NEWLINE_MARK).length - 1;
+    const rowsAboveInput = tailRows + 1 + cursorSegment;
 
     let frame = "\x1b[?2026h";
     if (this.lastRowsAboveInput > 0) frame += `\x1b[${this.lastRowsAboveInput}A`;
@@ -2317,7 +2370,8 @@ export class Tui {
     frame += this.footerLine(width);
 
     // 光标从状态行回到输入行：下边框 + 菜单 + 状态行都在它下面。
-    frame += `\x1b[${1 + menuRows + 1}A\r${this.inputColumnSequence()}\x1b[?25h`;
+    const rowsBelowCursor = inputRows.length - 1 - cursorSegment;
+    frame += `\x1b[${2 + menuRows + rowsBelowCursor}A\r${this.inputColumnSequence()}\x1b[?25h`;
     frame += "\x1b[?2026l";
 
     this.lastRowsAboveInput = rowsAboveInput;
@@ -2328,7 +2382,8 @@ export class Tui {
 
   /** 主视图的输入光标：相对活动区，按 prompt 宽度和已输入内容算列偏移。 */
   private inputColumnSequence(): string {
-    const plainPrompt = this.promptText === COMMAND_PROMPT
+    const firstSegment = !this.rl.line.slice(0, this.rl.cursor).includes(NEWLINE_MARK);
+    const plainPrompt = !firstSegment ? "  " : this.promptText === COMMAND_PROMPT
       ? `${this.glyphs.user} `
       : singleLine(this.promptText);
     const before = escapeControlCharacters(this.rl.line.slice(this.inputOffset, this.rl.cursor));
@@ -2421,26 +2476,38 @@ export class Tui {
       let shown = segment;
       if (index === cursorSegment) {
         // 光标前面的内容超出宽度就左移起点，直到光标能落在框内。
-        let start = 0;
-        while (displayWidth(escapeControlCharacters(shown.slice(start, cursorInSegment))) >= room) start++;
+        let start = cursorInSegment;
+        let used = 0;
+        // 从光标向左量一遍，避免长输入反复扫描全部前缀变成平方开销。
+        const before = [...segment.slice(0, cursorInSegment)];
+        for (let at = before.length - 1; at >= 0; at--) {
+          const char = before[at]!;
+          const size = displayWidth(escapeControlCharacters(char));
+          if (used + size >= room) break;
+          used += size;
+          start -= char.length;
+        }
+        this.inputOffset = beforeCursor.length - cursorInSegment + start;
         shown = shown.slice(start);
       }
       return this.style.inputPrompt(prefix) + padRight(takeByWidth(escapeControlCharacters(shown), room), room);
     });
   }
 
-  /** 单行版本：整屏网格只有一行输入位，取最后一行（光标所在行）。 */
+  /** 单行版本：整屏网格只有一行输入位，展示光标当前所在的段。 */
   private inputLine(width: number): string {
     const rows = this.inputLines(width);
-    return rows[rows.length - 1]!;
+    const cursorSegment = this.rl.line.slice(0, this.rl.cursor).split(NEWLINE_MARK).length - 1;
+    return rows[cursorSegment]!;
   }
 
   /** 不用 ESC 7/8（conhost 上不一定可靠），按 prompt 宽度和已输入内容算回光标列。 */
   private inputCursorSequence(): string {
-    const plainPrompt = this.promptText === COMMAND_PROMPT
+    const firstSegment = !this.rl.line.slice(0, this.rl.cursor).includes(NEWLINE_MARK);
+    const plainPrompt = !firstSegment ? "  " : this.promptText === COMMAND_PROMPT
       ? `${this.glyphs.user} `
       : singleLine(this.promptText);
-    // 多行输入时光标在最后一行：列偏移只算最后一个换行之后的部分。
+    // 整屏视图只显示当前段；列偏移与输入裁剪使用同一个可见起点。
     const beforeCursor = this.rl.line.slice(this.inputOffset, this.rl.cursor);
     const before = escapeControlCharacters(beforeCursor.slice(beforeCursor.lastIndexOf(NEWLINE_MARK) + 1));
     const column = Math.min(this.columns, 1 + displayWidth(plainPrompt) + displayWidth(before));
@@ -2452,7 +2519,7 @@ export class Tui {
     this.inputChromeScheduled = true;
     setImmediate(() => {
       try {
-        if (!this.closed) this.renderNow();
+        if (!this.closed) this.renderNow(true);
       } finally {
         this.inputChromeScheduled = false;
       }
@@ -2557,8 +2624,10 @@ export class Tui {
     this.printedLines = Math.max(0, this.printedLines - removedLines);
   }
 
-  private wrappedDisplayLines(flat = false, expandAll = false): LogLine[] {
+  private wrappedDisplayLines(flat = false, expandAll = !flat && this.transcriptMode): LogLine[] {
     const logical: LogLine[] = [];
+    const turnExpanded = (turn: TurnActivity): boolean =>
+      expandAll ? this.transcriptTurns.get(turn) ?? true : turn.expanded;
     const pendingLines = new Set(this.pendingTools.values());
     // 一个持久 ID 可以展开成多条逻辑行；偏移累计的是本次展示内容，不是换行后的行号。
     const append = (entry: LogLine, children: LogLine[]): void => {
@@ -2571,8 +2640,9 @@ export class Tui {
     for (const line of this.log) {
       if (line.kind === "turn-status" && line.turn !== undefined) {
         // 展开中的标题下保留旧布局的节奏；折叠后只占一行。
-        const status = { ...this.turnStatusLine(line.turn, flat), kind: "turn-status" as const, turn: line.turn };
-        append(line, line.turn.expanded
+        const expanded = turnExpanded(line.turn);
+        const status = { ...this.turnStatusLine({ ...line.turn, expanded }, flat), kind: "turn-status" as const, turn: line.turn };
+        append(line, expanded
           ? [status, { text: this.glyphs.divider.repeat(this.contentWidth()), tone: "muted" }]
           : [status]);
         continue;
@@ -2580,7 +2650,7 @@ export class Tui {
       // 完成后只隐藏「详情层」，不折叠用户提问、最终正式回复、活动摘要和轮次外的错误。
       // 摘要里有「哪个命令失败、为什么失败」，是安全信息，折叠时也必须看得见。
       // 空白行不算「过程」：它是上下行之间的呼吸，折叠时也要留着（连续空行稍后压成一行）。
-      if (line.turn !== undefined && !line.turn.expanded &&
+      if (line.turn !== undefined && !turnExpanded(line.turn) &&
           line.kind !== "final-reply" && line.kind !== "activity" && line.text !== "") continue;
       if (line.kind === "activity" && line.activity !== undefined) {
         // 活动组之间空一行：三段「列出 / 读取 / 编辑」连在一起会糊成一片。
@@ -2589,7 +2659,8 @@ export class Tui {
         }
         const group = line.activity;
         // 轮次折叠时活动组也只显示摘要与失败行：详情属于「下面几层」。
-        const detailsOpen = expandAll || (group.expanded && line.turn?.expanded !== false);
+        const detailsOpen = (expandAll ? this.transcriptGroups.get(group) ?? true : group.expanded) &&
+          (line.turn === undefined || turnExpanded(line.turn));
         if (flat) {
           // 主视图拍平：一个工具一行（动词 + 目标），没有第三层、没有展开箭头。
           const flatChildren: LogLine[] = [];
@@ -2601,12 +2672,21 @@ export class Tui {
               flatChildren.push(failure);
               continue;
             }
+            if (group.finished && item.result === undefined) {
+              flatChildren.push(this.activityUnfinishedLine(item, group.language));
+              continue;
+            }
             // 还没返回的工具用运行符号 + 明确文案：扁平不等于看不出在跑。
             // 这一轮已经结束的话就不是「在跑」，而是「没有结果」，不能继续显示运行中。
             const pending = item.result === undefined && !group.finished;
             flatChildren.push(this.makeLogLine(
               `  ${pending ? this.glyphs.running : this.glyphs === UNICODE_GLYPHS ? "↳" : "+"} ${formatToolEvent(item.call, group.language)}${
                 pending ? ` · ${this.uiText("Running...", "运行中...")}` : ""}`, "muted"));
+            // 截断属于结果完整性信息；主视图收起正文时也必须保留这些真实尾注。
+            if (item.result !== undefined && item.call.function.name === "read") {
+              flatChildren.push(...toolResultLines(item.call, item.result, this.glyphs, group.language).slice(2)
+                .map((warning) => this.makeLogLine(warning.text, warning.tone)));
+            }
           }
           if (flatChildren.length === 0) {
             flatChildren.push(this.makeLogLine(

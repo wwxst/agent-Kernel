@@ -9,7 +9,7 @@
  * 不负责判分（`run.mjs`）、不负责改主程序行为 —— 包装后行为与原对象一致。
  *
  * 内容目录：
- *   - `createEvalDiagnostics()`：唯一导出，返回包好的 `llm` / `tools` 与读取记录的入口。
+ *   - `createEvalDiagnostics()`：唯一导出，包装 `llm` 和既有工具，返回客户端、结果回调与读取记录入口。
  *   - 内部：`snapshotFiles()` 拍文件快照、`diffSnapshots()` 对比前后、`sanitizeValue()` /
  *     `sanitizeArguments()` 抹掉密钥、`safeJsonLength()` 只算长度不存全文。
  *   - 上限常量：文件数、条目数、单文件与总计哈希字节；`SKIP_DIRECTORIES` 跳过 `.git` / `node_modules`。
@@ -18,7 +18,7 @@
  * 被 `run.mjs` 使用，`test/eval-diagnostics.test.mjs` 覆盖记录与脱敏行为。
  */
 import { createHash } from "node:crypto";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { ChatResponseError, describeError } from "../src/protocol/errors.ts";
 
@@ -81,7 +81,8 @@ function sanitizeArguments(raw) {
 }
 
 async function snapshotFiles(root) {
-  const files = {};
+  // 文件名可以是 __proto__；无原型字典不会把它误当成对象的原型设置器。
+  const files = Object.create(null);
   const warnings = [];
   let visitedFiles = 0;
   let visitedEntries = 0;
@@ -130,18 +131,37 @@ async function snapshotFiles(root) {
       if (!entry.isFile()) continue;
 
       try {
-        const info = await lstat(absolute);
+        const handle = await open(absolute, "r");
+        let info;
         let fingerprint;
         let fingerprintKind;
-        if (info.size <= MAX_HASH_BYTES_PER_FILE && hashedBytes + info.size <= MAX_TOTAL_HASH_BYTES) {
-          const bytes = await readFile(absolute);
-          fingerprint = hash(bytes);
-          fingerprintKind = "sha256";
-          hashedBytes += bytes.length;
-        } else {
-          fingerprint = "metadata:" + info.size + ":" + info.mtimeMs;
-          fingerprintKind = "metadata";
-          complete = false;
+        try {
+          info = await handle.stat();
+          if (!info.isFile()) throw new Error("file type changed before snapshot");
+          // stat 只决定读多少，不承诺文件不再增长；实际读取必须在句柄上有界。
+          if (info.size <= MAX_HASH_BYTES_PER_FILE && hashedBytes + info.size <= MAX_TOTAL_HASH_BYTES) {
+            const buffer = Buffer.alloc(info.size + 1);
+            let bytesRead = 0;
+            while (bytesRead < buffer.length) {
+              const read = await handle.read(buffer, bytesRead, buffer.length - bytesRead, bytesRead);
+              if (read.bytesRead === 0) break;
+              bytesRead += read.bytesRead;
+            }
+            if (bytesRead === info.size) {
+              fingerprint = hash(buffer.subarray(0, bytesRead));
+              fingerprintKind = "sha256";
+              hashedBytes += bytesRead;
+            } else {
+              warnings.push("file changed during snapshot: " + relative);
+            }
+          }
+          if (fingerprint === undefined) {
+            fingerprint = "metadata:" + info.size + ":" + info.mtimeMs;
+            fingerprintKind = "metadata";
+            complete = false;
+          }
+        } finally {
+          await handle.close();
         }
         files[relative] = {
           kind: "file",
@@ -195,8 +215,8 @@ function diffSnapshots(before, after) {
 }
 
 /**
- * Wrap an existing Llm and ToolRegistry for one eval task.
- * The wrappers never change returned model/tool values; diagnostic failures are recorded and ignored.
+ * 包装一次评测任务使用的 Llm 与 ToolRegistry。
+ * 包装器保留原始模型/工具返回值；诊断失败单独记账，不改变任务结果。
  */
 export async function createEvalDiagnostics({ llm, tools, workdir }) {
   const startedAt = performance.now();
@@ -218,7 +238,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
     try {
       trace.diagnosticsErrors.push(describeError(error).slice(0, 500));
     } catch {
-      // Diagnostics must never alter task behavior.
+      // 诊断记账自身失败也不能改变任务行为。
     }
   };
 
