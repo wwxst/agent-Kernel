@@ -361,9 +361,15 @@ export class Workspace {
     // 已知边界：预览仅为本地终端展示，模型仍收到原有文字工具结果。
     if (this.onImageRead !== undefined && /\.(png|jpe?g|gif|webp)$/i.test(requested)) {
       try {
-        const image = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE);
+        const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+        await assertDirectoryIdentity(parentIdentity, requested);
+        const image = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
         try {
-          const size = (await image.stat()).size;
+          const opened = await image.stat();
+          if (!opened.isFile()) throw new Error("image target is not a regular file");
+          await assertOpenedFileStillNamed(file, opened, requested);
+          await assertDirectoryIdentity(parentIdentity, requested);
+          const size = opened.size;
           if (size >= 12 && size <= 4_000_000) {
             const data = Buffer.alloc(size);
             let offset = 0;
@@ -372,6 +378,8 @@ export class Workspace {
               if (bytesRead === 0) break;
               offset += bytesRead;
             }
+            await assertOpenedFileStillNamed(file, opened, requested);
+            await assertDirectoryIdentity(parentIdentity, requested);
             if (offset === size) this.onImageRead(requested, data);
           }
         } finally { await image.close(); }
