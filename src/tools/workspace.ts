@@ -161,9 +161,10 @@ const JOB_POLL_MS = 50;
 const MAX_JOB_WAIT_MS = 60_000;
 
 /**
- * POSIX 的 O_NOFOLLOW 防止校验后最后一段路径被换成符号链接。
- * Windows 不支持此 open 标志，因此依赖真实路径与再次校验。
- * 已知边界：恶意并发替换父目录仍需要 OS 级隔离或 dirfd/openat 系列 API 才能彻底封闭。
+ * POSIX 的 O_NOFOLLOW 防止最后一段路径被换成符号链接；Windows 不支持时依赖真实路径复核。
+ * 文件句柄与父目录都要在打开前后比较 canonical path / dev / ino / birthtime。
+ * 已知边界：Node 跨平台 API 没有 openat/renameat，检查与系统调用之间仍有极窄竞态窗口；
+ * 需要绝对消除时必须使用 OS 原生 dirfd/openat2 或外部隔离，不能靠路径字符串伪装成原子操作。
  */
 const NO_FOLLOW_FILE = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
 interface DirectoryIdentity {
@@ -392,9 +393,9 @@ export class Workspace {
 
   /**
    * 临时文件写完并 fsync 后才 rename：写入中断不能先把旧文件 truncate(0)。
-   * 保存原权限并在提交前检查目标身份，尽量拒绝同一文件被外部进程修改后覆盖。
-   * 已知边界：父目录并发替换仍有 TOCTOU；rename 覆盖会更换 inode / hardlink，
-   * Windows ACL / 持有句柄的语义也可能不同。这不是沙箱或完整事务。
+   * 保存原权限；提交前后复核父目录身份、目标身份与新文件 inode，拒绝检测到的并发替换。
+   * 已知边界：portable Node 没有 dirfd 相对 rename，复核与 rename 之间仍有系统调用竞态；
+   * rename 覆盖会更换 inode / hardlink，Windows ACL / 持有句柄语义也可能不同。这不是沙箱。
    */
   private async replaceFileAtomically(
     target: string,
@@ -515,8 +516,8 @@ export class Workspace {
    * 工作区方法 edit（改文件）：把文件里唯一出现的那段原文换成新内容。
    *
    * 用同目录临时文件替换：写到一半崩了也不会留下半截文件；保留 BOM / CRLF 和旧文件权限。
-   * 编辑仍先用单一文件句柄读取、校验并记录身份；然后关闭句柄，便于 Windows rename。
-   * 已知边界：提交前身份复查减少并发覆盖，但不能消除复查与 rename 之间的竞态。
+   * 编辑先用单一文件句柄读取，复核父目录和目标身份；关闭后再以原子替换提交。
+   * Node 没有跨平台 dirfd/renameat，复核和 rename 之间仍保留极窄竞态窗口。
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
     const file = await this.resolveReal(this.resolve(requested), requested);
@@ -1609,9 +1610,12 @@ async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGene
         yield full;
       }
     }
-    await assertDirectoryIdentity(identity, dir);
   } finally {
-    await closeDir(handle);
+    try {
+      await assertDirectoryIdentity(identity, dir);
+    } finally {
+      await closeDir(handle);
+    }
   }
 }
 
