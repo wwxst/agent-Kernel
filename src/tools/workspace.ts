@@ -161,11 +161,88 @@ const JOB_POLL_MS = 50;
 const MAX_JOB_WAIT_MS = 60_000;
 
 /**
- * POSIX 的 O_NOFOLLOW 防止校验后最后一段路径被换成符号链接。
- * Windows 不支持此 open 标志，因此依赖真实路径与再次校验。
- * 已知边界：恶意并发替换父目录仍需要 OS 级隔离或 dirfd/openat 系列 API 才能彻底封闭。
+ * POSIX 的 O_NOFOLLOW 防止最后一段路径被换成符号链接；Windows 不支持时依赖真实路径复核。
+ * 文件句柄与父目录都要在打开前后比较 canonical path / dev / ino / birthtime。
+ * 已知边界：Node 跨平台 API 没有 openat/renameat，检查与系统调用之间仍有极窄竞态窗口；
+ * 需要绝对消除时必须使用 OS 原生 dirfd/openat2 或外部隔离，不能靠路径字符串伪装成原子操作。
  */
 const NO_FOLLOW_FILE = process.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+interface DirectoryIdentity {
+  path: string;
+  dev: number;
+  ino: number;
+  birthtimeMs: number;
+}
+
+function sameCanonicalPath(left: string, right: string): boolean {
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function sameFileIdentity(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino && left.birthtimeMs === right.birthtimeMs;
+}
+
+/** 路径在并发替换时可能暂时不存在或不再是目录/文件；统一转成身份变化错误。 */
+function isPathLookupFailure(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP";
+}
+
+/** 捕获父目录的真实路径与文件系统身份；提交前后复核，检测目录被替换/重定向。 */
+async function captureDirectoryIdentity(directory: string): Promise<DirectoryIdentity> {
+  // 调用方传入的是 resolveReal 得到的规范路径；若路径在解析后被换成链接，不能把新目标当成原目录。
+  const expected = path.normalize(directory);
+  const canonical = await realpath(directory);
+  if (!sameCanonicalPath(canonical, expected)) {
+    throw new Error("parent directory changed during file operation: " + directory);
+  }
+  const info = await stat(directory);
+  if (!info.isDirectory()) throw new Error("parent path is not a directory");
+
+  // stat 期间也可能发生换向；再次核对路径与 inode，缩小捕获身份时的竞态窗口。
+  const verifiedCanonical = await realpath(directory);
+  const verified = await stat(directory);
+  if (!verified.isDirectory() || !sameCanonicalPath(verifiedCanonical, expected) ||
+      !sameFileIdentity(info, verified)) {
+    throw new Error("parent directory changed during file operation: " + directory);
+  }
+  return { path: canonical, dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
+}
+
+async function assertDirectoryIdentity(identity: DirectoryIdentity, requested: string): Promise<void> {
+  let canonical: string;
+  let current: Stats;
+  try {
+    [canonical, current] = await Promise.all([realpath(identity.path), stat(identity.path)]);
+  } catch (error) {
+    if (isPathLookupFailure(error)) {
+      throw new Error("parent directory changed during file operation: " + requested);
+    }
+    throw error;
+  }
+  if (!current.isDirectory() || !sameCanonicalPath(canonical, identity.path) ||
+      current.dev !== identity.dev || current.ino !== identity.ino || current.birthtimeMs !== identity.birthtimeMs) {
+    throw new Error("parent directory changed during file operation: " + requested);
+  }
+}
+
+/** 文件句柄打开后核对路径当前仍指向同一个 inode，防止复核前最后一段路径被替换。 */
+async function assertOpenedFileStillNamed(file: string, opened: Stats, requested: string): Promise<void> {
+  let canonical: string;
+  let current: Stats;
+  try {
+    [canonical, current] = await Promise.all([realpath(file), stat(file)]);
+  } catch (error) {
+    if (isPathLookupFailure(error)) {
+      throw new Error("file path changed during operation: " + requested);
+    }
+    throw error;
+  }
+  if (!current.isFile() || !sameCanonicalPath(canonical, file) || !sameFileIdentity(current, opened)) {
+    throw new Error("file path changed during operation: " + requested);
+  }
+}
 
 export interface WorkspaceOptions {
   /**
@@ -324,9 +401,15 @@ export class Workspace {
     // 已知边界：预览仅为本地终端展示，模型仍收到原有文字工具结果。
     if (this.onImageRead !== undefined && /\.(png|jpe?g|gif|webp)$/i.test(requested)) {
       try {
-        const image = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE);
+        const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+        await assertDirectoryIdentity(parentIdentity, requested);
+        const image = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
         try {
-          const size = (await image.stat()).size;
+          const opened = await image.stat();
+          if (!opened.isFile()) throw new Error("image target is not a regular file");
+          await assertOpenedFileStillNamed(file, opened, requested);
+          await assertDirectoryIdentity(parentIdentity, requested);
+          const size = opened.size;
           if (size >= 12 && size <= 4_000_000) {
             const data = Buffer.alloc(size);
             let offset = 0;
@@ -335,6 +418,8 @@ export class Workspace {
               if (bytesRead === 0) break;
               offset += bytesRead;
             }
+            await assertOpenedFileStillNamed(file, opened, requested);
+            await assertDirectoryIdentity(parentIdentity, requested);
             if (offset === size) this.onImageRead(requested, data);
           }
         } finally { await image.close(); }
@@ -347,69 +432,105 @@ export class Workspace {
 
   /**
    * 临时文件写完并 fsync 后才 rename：写入中断不能先把旧文件 truncate(0)。
-   * 保存原权限并在提交前检查目标身份，尽量拒绝同一文件被外部进程修改后覆盖。
-   * 已知边界：父目录并发替换仍有 TOCTOU；rename 覆盖会更换 inode / hardlink，
-   * Windows ACL / 持有句柄的语义也可能不同。这不是沙箱或完整事务。
+   * 保存原权限；提交前后复核父目录身份、目标身份与新文件 inode，拒绝检测到的并发替换。
+   * 已知边界：portable Node 没有 dirfd 相对 rename，复核与 rename 之间仍有系统调用竞态；
+   * rename 覆盖会更换 inode / hardlink，Windows ACL / 持有句柄语义也可能不同。这不是沙箱。
    */
   private async replaceFileAtomically(
     target: string,
     requested: string,
     content: string,
     original?: Stats,
+    parentIdentity?: DirectoryIdentity,
   ): Promise<void> {
+    const parent = parentIdentity ?? await captureDirectoryIdentity(path.dirname(target));
     const temporary = path.join(path.dirname(target), `.agent-kernel-${randomUUID()}.tmp`);
     this.stopIfCancelledBeforeWrite();
-    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, original?.mode ?? 0o666);
+    await assertDirectoryIdentity(parent, requested);
+    const handle = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | NO_FOLLOW_FILE, original?.mode ?? 0o666);
+    let temporaryIdentity: Stats | undefined;
+    let handleClosed = false;
     try {
-      try {
-        await handle.writeFile(content, "utf8");
-        if (original !== undefined) await handle.chmod(original.mode & 0o7777);
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
+      temporaryIdentity = await handle.stat();
+      if (!temporaryIdentity.isFile()) throw new Error("temporary target is not a regular file");
+      // 临时文件刚创建就复核父目录；若路径在 open 前被换向，不向新目录写入内容。
+      await assertDirectoryIdentity(parent, requested);
+      await handle.writeFile(content, "utf8");
+      if (original !== undefined) await handle.chmod(original.mode & 0o7777);
+      await handle.sync();
+      await handle.close();
+      handleClosed = true;
 
-      // 临时写入可能经过多轮异步 I/O；在提交点前再次复查路径、并发修改和取消。
+      // 写入期间父目录可能被改名、换成 junction/symlink，或被另一个文件系统对象替换。
+      await assertDirectoryIdentity(parent, requested);
       const current = await this.resolveReal(target, requested);
-      if (current !== target) throw new Error(`file target changed before commit: ${requested}`);
+      if (!sameCanonicalPath(current, target)) throw new Error(`file target changed before commit: ${requested}`);
       if (original !== undefined) {
         const latest = await lstat(target);
-        if (!latest.isFile() || latest.dev !== original.dev || latest.ino !== original.ino ||
+        if (!latest.isFile() || !sameFileIdentity(latest, original) ||
             latest.size !== original.size || latest.mtimeMs !== original.mtimeMs) {
           throw new Error(`file changed before commit: ${requested}`);
         }
+      } else {
+        try {
+          await lstat(target);
+          throw new Error(`file was created concurrently before commit: ${requested}`);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
       }
+      await assertDirectoryIdentity(parent, requested);
       this.stopIfCancelledBeforeWrite();
       await rename(temporary, target);
+      // 事后再复核一次：若提交窗口里父目录被替换，至少明确报错，不把结果谎报为成功。
+      await assertDirectoryIdentity(parent, requested);
+      const committed = await lstat(target);
+      if (!committed.isFile() || !sameFileIdentity(committed, temporaryIdentity)) {
+        throw new Error(`file target changed during commit: ${requested}`);
+      }
     } finally {
-      // 出错时只清理自己的临时文件，绝不能回滚删除原文件。
+      if (!handleClosed) {
+        try { await handle.close(); } catch { /* preserve the original write/commit error */ }
+      }
+      // 父目录身份不再匹配时，只能在路径仍指向自己创建的 inode 时清理临时文件。
       try {
+        await assertDirectoryIdentity(parent, requested);
         await unlink(temporary);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      } catch {
+        if (temporaryIdentity !== undefined) {
+          try {
+            const currentTemporary = await lstat(temporary);
+            if (sameFileIdentity(currentTemporary, temporaryIdentity)) await unlink(temporary);
+          } catch { /* moved directory, already renamed, or cleanup unavailable */ }
+        }
       }
     }
   }
-
   /** 工作区方法 write（写文件）：新建一个文件，或者整个覆盖；父目录自动补齐，写入失败时保留原有内容。 */
   async write(requested: string, content: string): Promise<string> {
     const file = await this.resolveReal(this.resolve(requested), requested);
     this.stopIfCancelledBeforeWrite();
     await mkdir(path.dirname(file), { recursive: true });
     const target = await this.resolveReal(file, requested);
+    const parentIdentity = await captureDirectoryIdentity(path.dirname(target));
+    await assertDirectoryIdentity(parentIdentity, requested);
     this.stopIfCancelledBeforeWrite();
 
-    // 既有文件先检查可写权限，但不截断；Windows/Unix 的普通权限拒绝仍保持原语义。
+    // 既有文件先检查可写权限，但不截断；特殊文件使用非阻塞打开并明确拒绝。
     let original: Stats | undefined;
     try {
-      const existing = await open(target, constants.O_WRONLY | NO_FOLLOW_FILE);
+      const existing = await open(target, constants.O_WRONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
       try {
         original = await existing.stat();
+        if (!original.isFile()) throw new Error("target is not a regular file");
+        await assertOpenedFileStillNamed(target, original, requested);
+        await assertDirectoryIdentity(parentIdentity, requested);
       } finally {
         await existing.close();
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await assertDirectoryIdentity(parentIdentity, requested);
     }
     // 回显真实的旧文本必须发生在原子覆盖之前；读取不到时只放弃 UI Diff，不阻止 write。
     const withinPreviewLimit = Buffer.byteLength(content) <= MAX_EDIT_FILE_BYTES;
@@ -417,15 +538,21 @@ export class Workspace {
     if (this.onWriteCommitted !== undefined && original !== undefined &&
         original.size <= MAX_EDIT_FILE_BYTES && withinPreviewLimit) {
       try {
-        const handle = await open(target, constants.O_RDONLY | NO_FOLLOW_FILE);
+        const handle = await open(target, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
         try {
+          const opened = await handle.stat();
+          if (!opened.isFile()) throw new Error("target is not a regular file");
+          await assertOpenedFileStillNamed(target, opened, requested);
+          await assertDirectoryIdentity(parentIdentity, requested);
           const read = await readTextUpToHandle(handle, MAX_EDIT_FILE_BYTES,
             Buffer.alloc(MAX_EDIT_FILE_BYTES + 1), { preserveBom: true });
+          await assertOpenedFileStillNamed(target, opened, requested);
+          await assertDirectoryIdentity(parentIdentity, requested);
           if (!read.truncated) beforeForDiff = read.text;
         } finally { await handle.close(); }
       } catch { this.editObserverFailures++; }
     }
-    await this.replaceFileAtomically(target, requested, content, original);
+    await this.replaceFileAtomically(target, requested, content, original, parentIdentity);
     // 写入成功时始终通知展示层；快照过大/不可读取用 undefined 明确标示，
     // 而不是静默丢失 Diff。此回调仍为旁路，不影响真实写入结果。
     try {
@@ -439,8 +566,8 @@ export class Workspace {
    * 工作区方法 edit（改文件）：把文件里唯一出现的那段原文换成新内容。
    *
    * 用同目录临时文件替换：写到一半崩了也不会留下半截文件；保留 BOM / CRLF 和旧文件权限。
-   * 编辑仍先用单一文件句柄读取、校验并记录身份；然后关闭句柄，便于 Windows rename。
-   * 已知边界：提交前身份复查减少并发覆盖，但不能消除复查与 rename 之间的竞态。
+   * 编辑先用单一文件句柄读取，复核父目录和目标身份；关闭后再以原子替换提交。
+   * Node 没有跨平台 dirfd/renameat，复核和 rename 之间仍保留极窄竞态窗口。
    */
   async edit(requested: string, oldString: string, newString: string): Promise<string> {
     const file = await this.resolveReal(this.resolve(requested), requested);
@@ -449,12 +576,17 @@ export class Workspace {
       throw new Error("old_string must not be empty");
     }
 
-    const handle = await open(file, constants.O_RDWR | NO_FOLLOW_FILE);
+    const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+    await assertDirectoryIdentity(parentIdentity, requested);
+    const handle = await open(file, constants.O_RDWR | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
     let before: string;
     let after: string;
     let original: Stats;
     try {
       original = await handle.stat();
+      if (!original.isFile()) throw new Error("target is not a regular file");
+      await assertOpenedFileStillNamed(file, original, requested);
+      await assertDirectoryIdentity(parentIdentity, requested);
       const read = await readTextUpToHandle(
         handle,
         MAX_EDIT_FILE_BYTES,
@@ -462,6 +594,8 @@ export class Workspace {
         { preserveBom: true },
       );
       before = read.text;
+      await assertOpenedFileStillNamed(file, original, requested);
+      await assertDirectoryIdentity(parentIdentity, requested);
       if (read.truncated) {
         throw new Error(`file is larger than ${MAX_EDIT_FILE_BYTES} bytes; edit it through shell instead`);
       }
@@ -485,7 +619,7 @@ export class Workspace {
       await handle.close();
     }
 
-    await this.replaceFileAtomically(file, requested, after, original);
+    await this.replaceFileAtomically(file, requested, after, original, parentIdentity);
     // 只有写入成功提交才通知 UI。观察者错误不回滚真实 edit，也不改工具返回。
     try { this.onEditCommitted?.(requested, before, after); } catch { this.editObserverFailures++; }
     // 中文对照：已编辑 {文件}（字符数从 {旧} 变成 {新}）。
@@ -504,11 +638,14 @@ export class Workspace {
   async list(requested: string): Promise<string> {
     const dir = await this.resolveReal(this.resolve(requested), requested);
 
+    const directoryIdentity = await captureDirectoryIdentity(dir);
+    await assertDirectoryIdentity(directoryIdentity, requested);
     const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
     let scanned = 0;
     let scanStopped = false;
     const handle = await opendir(dir);
     try {
+      await assertDirectoryIdentity(directoryIdentity, requested);
       for await (const entry of handle) {
         if (scanned >= this.scanLimit) {
           scanStopped = true;
@@ -521,6 +658,7 @@ export class Workspace {
       // 提前 break 时 for await 不保证已经关掉句柄；重复关闭由 closeDir 容忍。
       await closeDir(handle);
     }
+    await assertDirectoryIdentity(directoryIdentity, requested);
 
     // 先稳定排序，再截断：目录枚举顺序由文件系统决定，直接切前 500 条
     // 会让同一次 ls 在不同机器上给出不同的集合。目录排在文件前面，组内按名字排。
@@ -537,6 +675,7 @@ export class Workspace {
       }),
     );
 
+    await assertDirectoryIdentity(directoryIdentity, requested);
     const hidden = entries.length - MAX_LIST_ENTRIES;
     const tails =
       (hidden > 0 ? `\n… (${scanStopped ? "at least " : ""}${hidden} more entries not listed)` : "") +
@@ -1170,9 +1309,18 @@ async function readTextUpTo(
   buffer: Buffer,
   options: { preserveBom?: boolean } = {},
 ): Promise<{ text: string; truncated: boolean; bytesRead: number }> {
-  const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE);
+  const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+  await assertDirectoryIdentity(parentIdentity, file);
+  const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
   try {
-    return await readTextUpToHandle(handle, limit, buffer, options);
+    const stats = await handle.stat();
+    if (!stats.isFile()) throw new Error("target is not a regular file");
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parentIdentity, file);
+    const result = await readTextUpToHandle(handle, limit, buffer, options);
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parentIdentity, file);
+    return result;
   } finally {
     await handle.close();
   }
@@ -1494,9 +1642,12 @@ function createGlobMatcher(pattern: string): (candidate: string) => boolean {
 async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGenerator<string> {
   if (budget.remaining <= 0) return;
 
-  // 子目录递归时父目录还开着：深度通常只有个位数，换来的是一路都不需要先列目录。
+  // 每层目录在打开前后复核 canonical path 与 inode；路径被替换时停止扫描而不是悄悄走到新位置。
+  const identity = await captureDirectoryIdentity(dir);
+  await assertDirectoryIdentity(identity, dir);
   const handle = await opendir(dir);
   try {
+    await assertDirectoryIdentity(identity, dir);
     for await (const entry of handle) {
       if (budget.remaining <= 0) return;
       budget.remaining--;
@@ -1510,7 +1661,11 @@ async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGene
       }
     }
   } finally {
-    await closeDir(handle);
+    try {
+      await assertDirectoryIdentity(identity, dir);
+    } finally {
+      await closeDir(handle);
+    }
   }
 }
 

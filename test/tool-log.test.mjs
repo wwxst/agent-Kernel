@@ -141,6 +141,26 @@ test("日志写不进去：工具结果不变，只往 stderr 提醒一次", asy
   });
 });
 
+test("日志：凭据字段与 Bearer token 脱敏，但工具返回原文不变", async () => {
+  await withWorkspace(async (dir) => {
+    const file = path.join(dir, "calls.jsonl");
+    const tool = {
+      name: "echo-secret",
+      description: "Echo secret-bearing args.",
+      parameters: { type: "object", properties: { api_key: { type: "string" }, password: { type: "string" } } },
+      run: async () => "Bearer abc.def.ghi",
+    };
+    const registry = new ToolRegistry([tool], logHooks(file));
+    assert.equal(await registry.execute(call("echo-secret", {
+      api_key: "top-secret", password: "hidden",
+    })), "Bearer abc.def.ghi");
+    const [record] = await readLog(file);
+    const serialized = JSON.stringify(record);
+    assert.doesNotMatch(serialized, /top-secret|hidden|abc\\.def\\.ghi/);
+    assert.match(serialized, /REDACTED/);
+  });
+});
+
 test("shell 非零退出记为失败：和 CLI / TUI 用同一套判断", async () => {
   await withWorkspace(async (dir) => {
     const file = path.join(dir, "calls.jsonl");

@@ -8,23 +8,19 @@
  * 不负责改文本、不负责上色、不负责决定怎么展示 —— 那是 CLI 与 TUI 各自的事。
  *
  * 内容目录：
- *   - `isToolResultFailure()`：唯一导出，只看第一行非空内容。
- *   - 判定口径：普通工具看 `ERROR:` 前缀；`shell` 另看退出码（非 0 或 `null`）、超时、被取消。
- *     只有 `shell` 走特殊判断：命令有自己的退出状态；而普通文件内容里恰好写着「退出码 7」，
- *     不能当成失败。
+ *   - `isToolResultFailure()`：唯一导出，优先读取 ToolRegistry 传来的宿主侧 isError 状态。
+ *   - 只有 `shell` 额外看退出码（非 0 或 `null`）、超时、被取消；不猜测普通工具正文的前缀。
  *
  * 模块关系：依赖 `protocol/types.ts` 的 `ToolCall`（需要工具名）。
  * 被 `ui/cli-presenter.ts` 与 `ui/tui.ts` 调用；`core/agent.ts` 不参与判断。
  */
 import type { ToolCall } from "../protocol/types.ts";
 
-/** 返回工具调用是否失败；普通工具的 ERROR: 与 Shell 的退出状态遵循同一事实口径。 */
-export function isToolResultFailure(call: ToolCall, result: string): boolean {
-  const first = result.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
-  if (first.startsWith("ERROR:")) return true;
+/** 失败状态来自 ToolRegistry；Shell 额外依据真实退出码判断非零退出。 */
+export function isToolResultFailure(call: ToolCall, result: string, isError = false): boolean {
+  if (isError) return true;
   if (call.function.name !== "shell") return false;
-
-  // exit 0 才是成功；null / 非零退出码，以及超时和取消，都必须给出失败标记。
+  const first = result.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
   return (
     (/^exit (?:-?\d+|null)$/.test(first) && first !== "exit 0") ||
     /^timeout after \d+ms$/.test(first) ||

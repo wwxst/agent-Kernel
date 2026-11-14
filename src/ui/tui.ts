@@ -35,7 +35,7 @@ import { listWorkspaceFiles, matchFiles } from "./file-index.ts";
 import { appendHistory, loadHistory } from "./prompt-history.ts";
 import type { Interface, Key } from "node:readline";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, readSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Transform, Writable } from "node:stream";
@@ -62,6 +62,26 @@ const LOG_TOP = 4;
 
 /** 日志最多保留多少条逻辑行；视口只显示最后 N 行，旧记录丢弃。 */
 const MAX_LOG_LINES = 2_000;
+const MAX_EDITOR_BYTES = 1_048_576;
+
+/** Read editor output through a bounded regular-file handle. */
+function readEditorFile(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    if (!fstatSync(fd).isFile()) throw new Error("editor output is not a regular file");
+    const buffer = Buffer.alloc(MAX_EDITOR_BYTES + 1);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const count = readSync(fd, buffer, offset, buffer.length - offset, offset);
+      if (count === 0) break;
+      offset += count;
+    }
+    if (offset > MAX_EDITOR_BYTES) throw new Error(`editor output exceeds ${MAX_EDITOR_BYTES} bytes`);
+    return buffer.subarray(0, offset).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
 
 /** 不依赖 readline 私有撤销栈；会话内保留的多行粘贴原文最多占 32 MiB（按 UTF-16 码元估算）。 */
 const MAX_PASTE_HISTORY_BYTES = 32 * 1024 * 1024;
@@ -151,6 +171,8 @@ interface ActivityTool {
   startedAt: number;
   endedAt?: number;
   result?: string;
+  /** ToolRegistry 提供的宿主侧失败状态；不从结果正文猜测。 */
+  resultIsError?: boolean;
   /** 第四层只改变真实工具输入/返回的显示，不改变 Tool result。 */
   detailsExpanded?: boolean;
   /** 来自 Workspace 成功提交前后的真实全文，只保留有界统一补丁，不复制原文件。 */
@@ -1282,7 +1304,7 @@ export class Tui {
   private activitySummary(group: ActivityGroup): string {
     const words: string[] = [];
     for (const item of group.tools) {
-      const summary = item.result === undefined ? undefined : summarizeToolResult(item.call, item.result);
+      const summary = item.result === undefined ? undefined : summarizeToolResult(item.call, item.result, item.resultIsError === true);
       const verb = group.finished && item.result === undefined
         ? group.language === "zh" ? "有操作未返回结果" : "Some operations had no result"
         : activityVerb(item.call, group.language, summary);
@@ -1295,7 +1317,7 @@ export class Tui {
 
   private activityFailureLine(item: ActivityTool, language: UiLanguage): LogLine | undefined {
     if (item.result === undefined) return undefined;
-    const summary = summarizeToolResult(item.call, item.result);
+    const summary = summarizeToolResult(item.call, item.result, item.resultIsError === true);
     if (!summary.failed) return undefined;
     const event = activityEventName(item.call, language);
     const mark = summary.notRun ? this.glyphs.notRun : this.glyphs.error;
@@ -1316,7 +1338,7 @@ export class Tui {
     const ended = item.result !== undefined;
     const failure = ended ? this.activityFailureLine(item, group.language) : undefined;
     const unfinished = !ended && group.finished ? this.activityUnfinishedLine(item, group.language) : undefined;
-    const result = ended ? toolResultLines(item.call, item.result!, this.glyphs, group.language) : [];
+    const result = ended ? toolResultLines(item.call, item.result!, this.glyphs, group.language, item.resultIsError === true) : [];
     const title = failure ?? unfinished ?? (!ended
       ? this.makeLogLine(`    ${this.glyphs.running} ${formatToolEvent(item.call, group.language)}`, "muted")
       : this.makeLogLine(result[0]!.text.replace(/^  /, "    ") +
@@ -1712,13 +1734,14 @@ export class Tui {
   }
 
   /** 界面方法 toolResult（工具结果）：成功、失败都落一行；失败原因直接来自工具返回值。 */
-  toolResult(call: ToolCall, result: string): void {
+  toolResult(call: ToolCall, result: string, isError = false): void {
     this.runToolResults++;
     this.setThinking(false);
     this.finishAssistant();
     const activeTool = this.activityPending.get(call.id);
     if (activeTool !== undefined) {
       activeTool.result = result;
+      activeTool.resultIsError = isError;
       activeTool.endedAt = Date.now();
       this.activityPending.delete(call.id);
       this.setActivityState(this.activityPending.size > 0 ? "running" : "working");
@@ -1730,7 +1753,7 @@ export class Tui {
     if (this.ownedScreen && activeTool === undefined) {
       const pending = this.pendingTools.get(call.id);
       this.pendingTools.delete(call.id);
-      const lines = toolResultLines(call, result, this.glyphs, this.uiLanguage)
+      const lines = toolResultLines(call, result, this.glyphs, this.uiLanguage, isError)
         .map((line) => ({ ...line, ...this.makeLogLine(line.text, line.tone) }));
       const index = pending === undefined ? -1 : this.log.indexOf(pending);
       for (const [position, line] of lines.entries()) {
@@ -1746,7 +1769,7 @@ export class Tui {
       }
     }
 
-    this.writeRaw(`  ${escapeControlCharacters(formatToolResult(call, result, this.uiLanguage))}${this.newline()}`);
+    this.writeRaw(`  ${escapeControlCharacters(formatToolResult(call, result, this.uiLanguage, isError))}${this.newline()}`);
   }
 
   /** 界面方法 finishTurn（一轮结束）：更新统计；固定布局重画页脚，其余布局打一行统计。 */
@@ -2081,7 +2104,7 @@ export class Tui {
       ), "warning");
     } else {
       try {
-        const edited = readFileSync(file, "utf8").replace(/\r\n/g, "\n").replace(/\n+$/, "");
+        const edited = readEditorFile(file).replace(/\r\n/g, "\n").replace(/\n+$/, "");
         if (edited !== this.rl.line.split(NEWLINE_MARK).join("\n")) {
           this.setEditorLine(edited.split("\n").join(NEWLINE_MARK), edited.length);
         }
@@ -2684,7 +2707,7 @@ export class Tui {
                 pending ? ` · ${this.uiText("Running...", "运行中...")}` : ""}`, "muted"));
             // 截断属于结果完整性信息；主视图收起正文时也必须保留这些真实尾注。
             if (item.result !== undefined && item.call.function.name === "read") {
-              flatChildren.push(...toolResultLines(item.call, item.result, this.glyphs, group.language).slice(2)
+              flatChildren.push(...toolResultLines(item.call, item.result, this.glyphs, group.language, item.resultIsError === true).slice(2)
                 .map((warning) => this.makeLogLine(warning.text, warning.tone)));
             }
           }
@@ -2701,7 +2724,7 @@ export class Tui {
         if (group.fallbackOverview && group.tools.length > 0 && !group.finished) {
           const current = [...group.tools].reverse().find((tool) => tool.result === undefined) ?? group.tools.at(-1)!;
           children.push({ text: escapeControlCharacters(`  ${this.glyphs.running} ${toolProgressOverview(
-            current.call, current.result, group.language,
+            current.call, current.result, group.language, false, current.resultIsError === true,
           )}`),
             tone: "info" });
         }
@@ -3302,7 +3325,7 @@ function oneLine(text: string): string {
 
 /** 工具事实兜底：只说明“正在/已做什么”，不猜测原因、发现或下一步计划。 */
 function toolProgressOverview(
-  call: ToolCall, result: string | undefined, language: UiLanguage, finished = false,
+  call: ToolCall, result: string | undefined, language: UiLanguage, finished = false, isError = false,
 ): string {
   const zh = language === "zh";
   let args: unknown;
@@ -3326,7 +3349,7 @@ function toolProgressOverview(
       : `Handling file ${name === "write" ? "write" : "edit"} request${target}.`;
   }
   const status = result === undefined ? "running" : (() => {
-    const summary = summarizeToolResult(call, result);
+    const summary = summarizeToolResult(call, result, isError);
     return summary.notRun ? "not-run" : summary.failed ? "failed" : "done";
   })();
   if (status === "not-run") return zh ? `未执行${target || ` ${name}`}。`
@@ -3561,17 +3584,16 @@ interface ToolResultSummary {
 }
 
 /** 把工具结果折成第一行摘要；固定布局和行式聊天共用同一套失败/拒绝判定。 */
-function summarizeToolResult(call: ToolCall, result: string): ToolResultSummary {
+function summarizeToolResult(call: ToolCall, result: string, isError = false): ToolResultSummary {
   const lines = result
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line !== "");
   const first = lines[0] ?? "(no output)";
-  const notRun = first.startsWith("ERROR: not run:");
-  const error = first.startsWith("ERROR:");
-  // CLI 与 TUI 共用一次事实判断；未执行保留自己的展示标记。
-  const failed = isToolResultFailure(call, result);
-  const body = error ? first.slice("ERROR:".length).trim() : first;
+  const notRun = isError && first.startsWith("ERROR: not run:");
+  // 文件正文可以合法地以 "ERROR:" 开头；只有宿主状态才决定是否失败。
+  const failed = isToolResultFailure(call, result, isError);
+  const body = isError && first.startsWith("ERROR:") ? first.slice("ERROR:".length).trim() : first;
   const more = lines.length > 1 ? " …" : "";
   return { failed, notRun, body, more };
 }
@@ -3623,8 +3645,8 @@ function formatToolEvent(call: ToolCall, language: UiLanguage = "en"): string {
 }
 
 /** 固定布局里的工具结果：失败/拒绝/未执行用不同符号，第一行原因放在下一行。 */
-function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, language: UiLanguage = "en"): LogLine[] {
-  const summary = summarizeToolResult(call, result);
+function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, language: UiLanguage = "en", isError = false): LogLine[] {
+  const summary = summarizeToolResult(call, result, isError);
   const event = formatToolEvent(call, language);
   if (!summary.failed) {
     const resultLines = result === "" ? [] : splitDisplayLines(result);
@@ -3664,8 +3686,8 @@ function toolResultLines(call: ToolCall, result: string, glyphs: Glyphs, languag
 /**
  * 行式聊天/非 TTY 的工具结果：沿用 v0.1 的标记，避免 e2e 断言和管道输出被 UI 改动影响。
  */
-function formatToolResult(call: ToolCall, result: string, language: UiLanguage = "en"): string {
-  const summary = summarizeToolResult(call, result);
+function formatToolResult(call: ToolCall, result: string, language: UiLanguage = "en", isError = false): string {
+  const summary = summarizeToolResult(call, result, isError);
   const label = language === "zh"
     ? summary.notRun ? "未运行" : summary.failed ? "失败" : "成功"
     : summary.notRun ? "not run" : summary.failed ? "failed" : "ok";

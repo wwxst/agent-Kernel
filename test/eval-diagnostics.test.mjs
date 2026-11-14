@@ -8,6 +8,7 @@
  * 内容目录：
  *   - 用例一：跑一轮真实 `Agent`，断言 usage、工具结果、逐工具的文件变化都被记下。
  *   - 用例二：像密钥的参数要变成 `[REDACTED]`，超长字符串只留摘要。
+ *   - 用例三：正文 `ERROR:` 与宿主侧 `isError` 分开记录，避免诊断误判。
  *   - 快照边界：特殊文件名不能改写字典原型，大文件降级为元数据并报告覆盖不足。
  *   - 跨天入口：`eval/cross-day.mjs --help` 不该切提交、也不该联系模型。
  *
@@ -112,6 +113,56 @@ test("诊断：记录每次请求的 usage、工具结果和逐工具的文件�
     assert.deepEqual(trace.fileChanges, [{ path: "note.txt", change: "added", afterBytes: 5 }]);
     assert.equal(trace.snapshotCoverage.initial.complete, true);
     assert.equal(trace.snapshotCoverage.final.complete, true);
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test("诊断：ERROR 正文与宿主侧错误状态独立记录", async () => {
+  const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
+  let request = 0;
+  const llm = {
+    async chat() {
+      request++;
+      if (request === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              { id: "literal_error", type: "function", function: { name: "read_literal", arguments: "{}" } },
+              { id: "actual_error", type: "function", function: { name: "fail_tool", arguments: "{}" } },
+            ],
+          },
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+  };
+  const tools = makeRegistry([
+    {
+      name: "read_literal",
+      description: "Return file content that happens to begin with ERROR.",
+      parameters: { type: "object", properties: {} },
+      run: async () => "ERROR: this is literal file content",
+    },
+    {
+      name: "fail_tool",
+      description: "Return an explicit host-side tool failure.",
+      parameters: { type: "object", properties: {} },
+      run: async () => ({ content: "ERROR: genuine tool failure", isError: true }),
+    },
+  ]);
+
+  try {
+    const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });
+    const agent = new Agent({ llm: diagnostics.llm, tools, onToolResult: diagnostics.onToolResult });
+    await agent.run("read a file and run a failing tool");
+    const trace = await diagnostics.finish();
+
+    assert.deepEqual(trace.toolCalls.map((tool) => tool.resultKind), ["text", "error"]);
+    assert.equal(trace.toolCalls[0].resultPreview, undefined);
+    assert.equal(trace.toolCalls[1].resultPreview, "ERROR: genuine tool failure");
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }

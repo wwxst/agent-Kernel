@@ -17,7 +17,7 @@
  *     Windows `taskkill` 的各种失败路径。
  *   - 后台任务：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、
  *     多字节分片、多 Workspace 日志隔离、取消等待与日志缺失显式失败、`shell-kill` 后进程真的消失、未知编号报错。
- *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理。
+ *   - 边界：工作区外读写与 `shell`、`..` 开头的文件名合法、Windows 反斜杠按分隔符处理；目录在身份捕获前被换向时拒绝写入。
  *
  * 模块关系：依赖 `src/tools/workspace.ts`、`test/support/harness.mjs` 与 `node:test`，
  * 由 `npm test` 启动；少数 Windows 专用用例在其他平台自动跳过。
@@ -26,7 +26,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -277,6 +277,76 @@ test("write 后 read 能拿回原文，父目录自动创建", async () => {
   });
 });
 
+test("write：提交前发现父目录被替换时拒绝写入新目标", {
+  skip: process.platform === "win32" && "directory symlink swap is not portable on Windows",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const parent = path.join(root, "target");
+    const moved = path.join(root, "target-original");
+    const outside = path.join(root, "outside");
+    await mkdir(parent);
+    await mkdir(outside);
+    const workspace = new Workspace({ root });
+    const writing = workspace.write("target/created.txt", "x".repeat(64 * 1024 * 1024));
+
+    let temporarySeen = false;
+    for (let attempt = 0; attempt < 5_000; attempt++) {
+      const entries = await readdir(parent);
+      if (entries.some((name) => name.startsWith(".agent-kernel-") && name.endsWith(".tmp"))) {
+        temporarySeen = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    assert.equal(temporarySeen, true, "test must swap the directory while the temp file is being written");
+
+    await rename(parent, moved);
+    await symlink(outside, parent, "dir");
+    await assert.rejects(writing, /parent directory changed during file operation/);
+    await assert.rejects(() => readFile(path.join(outside, "created.txt")), { code: "ENOENT" });
+    await rm(moved, { recursive: true, force: true });
+  });
+});
+
+test("write：捕获父目录身份时拒绝已经换向的路径", {
+  skip: process.platform === "win32" && "directory symlink swap is not portable on Windows",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const parent = path.join(root, "target");
+    const moved = path.join(root, "target-original");
+    const outside = path.join(root, "outside");
+    await mkdir(parent);
+    await mkdir(outside);
+
+    const workspace = new Workspace({ root });
+    const replaceFileAtomically = workspace.replaceFileAtomically.bind(workspace);
+    let replaceReached = false;
+    workspace.replaceFileAtomically = async (...args) => {
+      replaceReached = true;
+      return replaceFileAtomically(...args);
+    };
+    const resolveReal = workspace.resolveReal.bind(workspace);
+    let resolutions = 0;
+    workspace.resolveReal = async (...args) => {
+      const resolved = await resolveReal(...args);
+      resolutions++;
+      if (resolutions === 2) {
+        // 第二次 resolveReal 已返回原目录路径；在身份捕获前把该路径换成外部目录链接。
+        await rename(parent, moved);
+        await symlink(outside, parent, "dir");
+      }
+      return resolved;
+    };
+
+    await assert.rejects(
+      () => workspace.write("target/created.txt", "must stay out"),
+      /parent directory changed during file operation/,
+    );
+    assert.equal(replaceReached, false, "must reject during identity capture, before creating a temporary file");
+    assert.deepEqual(await readdir(outside), [], "外部目标目录不能收到写入或临时文件");
+  });
+});
+
 test("取消时 write 尚在校验路径：不创建文件也不提交内容", async () => {
   await withWorkspace(async (root) => {
     const controller = new AbortController();
@@ -404,6 +474,24 @@ test("edit：CRLF 文件里用 LF 的片段也能命中，且不改变行尾风�
     await workspace.edit("crlf.txt", "one\ntwo", "uno\ndos");
 
     assert.equal(await workspace.read("crlf.txt"), "uno\r\ndos\r\n");
+  });
+});
+
+test("read：FIFO 特殊文件不会阻塞读取，且明确拒绝非普通文件", {
+  skip: process.platform === "win32" && "mkfifo is not available on Windows",
+}, async () => {
+  await withWorkspace(async (root) => {
+    const fifo = path.join(root, "pipe");
+    const created = spawnSync("mkfifo", [fifo]);
+    assert.equal(created.status, 0, created.stderr?.toString() ?? "mkfifo failed");
+    const workspace = new Workspace({ root });
+    await assert.rejects(
+      () => Promise.race([
+        workspace.read("pipe"),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("FIFO read blocked")), 500)),
+      ]),
+      /regular file/,
+    );
   });
 });
 

@@ -47,6 +47,23 @@ interface ToolLogRecord {
   detail: string;
 }
 
+/** Redact credential-like fields in local diagnostics without changing tool output. */
+function redact(value: unknown, key = "", depth = 0): unknown {
+  if (/(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization|cookie)/i.test(key)) {
+    return "[REDACTED]";
+  }
+  if (typeof value === "string") {
+    return value.replace(/(Bearer\\s+)[A-Za-z0-9._~+\\/-]+=*/gi, "$1[REDACTED]");
+  }
+  if (depth >= 8) return "[MAX_DEPTH]";
+  if (Array.isArray(value)) return value.slice(0, 100).map((item) => redact(item, "", depth + 1));
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).slice(0, 100).map(([childKey, child]) =>
+      [childKey, redact(child, childKey, depth + 1)]));
+  }
+  return value;
+}
+
 /** 超长就截断并写明截掉多少：静默截断会让人以为「日志里就这么多」。 */
 function clip(text: string): string {
   if (text.length <= MAX_LOG_FIELD_CHARS) return text;
@@ -79,8 +96,8 @@ export function createToolLogHooks(file: string): ToolHooksOptions {
       tool: context.call.function.name,
       id: context.call.id,
       ok,
-      args: clip(JSON.stringify(context.args)),
-      detail: clip(detail),
+      args: clip(JSON.stringify(redact(context.args))),
+      detail: clip(typeof redact(detail) === "string" ? redact(detail) as string : JSON.stringify(redact(detail))),
     };
     try {
       mkdirSync(path.dirname(file), { recursive: true });

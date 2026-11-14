@@ -284,7 +284,7 @@ const TUI_PROGRESS_GUIDANCE = [
 interface AgentCallbacks {
   onRequestStart?: (step: number) => void;
   onToolCall?: (call: ToolCall, confirmedContent: string | null) => void;
-  onToolResult?: (call: ToolCall, result: string) => void;
+  onToolResult?: (call: ToolCall, result: string, isError: boolean) => void;
   onDelta?: (text: string) => void;
   onRetry?: (error: unknown, attempt: number, maxRetries: number) => void;
 }
@@ -363,7 +363,7 @@ function createAgent(
       activePresenter?.confirmAssistant(content);
       activePresenter?.toolStart(call);
     }),
-    onToolResult: callbacks?.onToolResult ?? ((call, result) => activePresenter?.toolResult(call, result)),
+    onToolResult: callbacks?.onToolResult ?? ((call, result, isError) => activePresenter?.toolResult(call, result, isError)),
     // CLI 显示在 RunPresenter；TUI 使用自己提供的流式回调。
     onDelta: callbacks?.onDelta ?? ((text) => activePresenter?.delta(text)),
   });
@@ -490,11 +490,11 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       tui.toolCall(call);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
-    onToolResult: (call, result) => {
+    onToolResult: (call, result, isError) => {
       if (call.id === pendingEditId) pendingEditId = undefined;
       if (call.id === pendingWriteId) pendingWriteId = undefined;
       if (call.id === pendingImageId) pendingImageId = undefined;
-      tui.toolResult(call, result);
+      tui.toolResult(call, result, isError);
       if (current !== undefined) tui.setStats(current.sessionStats);
     },
     onDelta: (text) => tui.assistantDelta(text),
