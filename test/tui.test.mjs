@@ -2495,7 +2495,7 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
 test("TUI：ERROR: 开头的文件正文按成功结果展示", async () => {
   const ui = makeTui({ interactive: true, tty: true });
   ui.tui.start();
-  const read = call("read", { path: "notes.txt" });
+  const read = { id: "literal-error-body", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "notes.txt" }) } };
   ui.tui.toolCall(read);
   ui.tui.toolResult(read, "ERROR: this is literal file content", false);
   assert.match(ui.text(), /✓ Read/);
