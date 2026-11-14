@@ -41,6 +41,9 @@ _Avoid_: function call, action, command
 模型可以点名调用的一项能力，由 name、description、JSON Schema 三件套描述，外加宿主侧的 run。名字用 agent 生态的通用叫法（`read`、`write`、`edit`、`glob`、`grep`、`ls`、`shell`），见 [ADR-0005](./docs/adr/0005-name-tools-after-the-ecosystem.md)。
 _Avoid_: function, handler, plugin
 
+**TodoWrite**:
+模型调用 `todo_write` 保存当前会话的任务清单及状态：`pending` / `in_progress` / `done`。不做实际执行、不判断目标是否达成，也不持久化（后续 Task System 负责持久化）。
+
 **Tool registry**:
 一次 Run 里提供给模型的全部 Tool，以及把每个 Tool call 执行成一条 Tool result 的那一步。
 _Avoid_: toolbelt, toolbox, tool set

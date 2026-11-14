@@ -6,7 +6,7 @@
  * 所以内核与界面都不需要知道「自己是被谁启动的」。
  *
  * 文件职责：负责组装与收尾 —— 解析参数与环境变量、创建 `Workspace` / `ToolRegistry` /
- * `Llm` / `Agent` / `Tui`、装观察回调、把致命错误变成一句人话加非零退出码。
+ * `Llm` / `Agent` / `Tui` 与 `TodoManager`、装观察回调、把致命错误变成一句人话加非零退出码。
  * 不负责循环逻辑、不负责工具实现、不负责渲染细节。完整的参数与环境变量表在 `README.md`，这里不重复。
  *
  * 内容目录：
@@ -21,7 +21,7 @@
  *   - 文件末尾：顶层入口 —— 决定进 TUI 还是单次任务，接 SIGINT / SIGTERM，设置退出码。
  *
  * 模块关系：依赖 `core/`（`Agent`、`ToolRegistry`）、`tools/`（`Workspace`、`createWorkspaceTools`）、
- * `model/`（`Llm`、项目指令）、`ui/`（`Tui`、`RunPresenter`）、`protocol/`。
+ * `model/`（`Llm`、项目指令）、`tools/todo.ts`（任务计划）、`ui/`（`Tui`、`RunPresenter`）、`protocol/`。
  * 由 `bin/agent.mjs`（`npm link` 后的全局命令）与 `test/cli.test.mjs` 启动。
  */
 import { statSync } from "node:fs";
@@ -38,6 +38,7 @@ import { createToolLogHooks } from "./core/tool-log.ts";
 import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./ui/tui.ts";
 import type { ToolCall } from "./protocol/types.ts";
 import { Workspace, createWorkspaceTools } from "./tools/workspace.ts";
+import { TodoManager, createTodoTool, TODO_PLANNING_GUIDANCE } from "./tools/todo.ts";
 import { projectInstructionsPrompt, readProjectInstructions } from "./model/project-instructions.ts";
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
@@ -306,14 +307,15 @@ function createAgent(
     onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
   // 工具调用日志：设了 AGENT_TOOL_LOG 才登记 Hook，不设就完全没变化（空执行器）。
-  // 它挂在唯一的执行入口上，所以九个工具自动全部记到，不用逐个接线。
+  // 它挂在唯一的执行入口上，所以所有内置工具自动全部记到，不用逐个接线。
   const toolLogPath = process.env.AGENT_TOOL_LOG?.trim() ?? "";
   const hooks = toolLogPath === "" ? undefined : new ToolHooks(createToolLogHooks(toolLogPath));
 
+  const workspace = new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
+    onEditCommitted: options.onEditCommitted, onWriteCommitted: options.onWriteCommitted,
+    onImageRead: options.onImageRead });
   const tools = new ToolRegistry(
-    createWorkspaceTools(new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
-      onEditCommitted: options.onEditCommitted, onWriteCommitted: options.onWriteCommitted,
-      onImageRead: options.onImageRead })),
+    [...createWorkspaceTools(workspace), createTodoTool(new TodoManager())],
     hooks,
   );
 
@@ -346,7 +348,7 @@ function createAgent(
     }),
     tools,
     // 函数在每次请求前求值：项目指令变化后，下一次请求立即看到新内容。
-    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
+    systemPrompt: () => `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`,
     maxSteps: config.maxSteps,
     maxToolCalls: config.maxToolCalls,
     maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
