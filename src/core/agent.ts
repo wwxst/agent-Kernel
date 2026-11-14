@@ -82,7 +82,7 @@ const MAX_COMPACTION_SUMMARY_CHARS = 12_000;
 function compactText(text: string, limit: number): string {
   if (text.length <= limit) return text;
   const omitted = Math.max(0, text.length - limit);
-  const marker = "\\n… [context compacted: " + omitted + " chars omitted] …\\n";
+  const marker = "\n… [context compacted: " + omitted + " chars omitted] …\n";
   const room = Math.max(0, limit - marker.length);
   const head = Math.ceil(room * 0.75);
   const tail = room - head;
@@ -305,7 +305,7 @@ export class Agent {
   private composeSystemPrompt(): string {
     if (this.compactedSummary === "") return this.baseSystemPromptContent;
     return this.baseSystemPromptContent +
-      "\\n\\nConversation memory (older turns were compacted; this is a summary, not a verbatim transcript):\\n" +
+      "\n\nConversation memory (older turns were compacted; this is a summary, not a verbatim transcript):\n" +
       this.compactedSummary;
   }
 
@@ -319,12 +319,12 @@ export class Agent {
       MAX_COMPACTION_SUMMARY_CHARS,
       Math.max(1_200, Math.floor(this.maxTranscriptChars * 0.15)),
     );
-    const combined = this.compactedSummary === "" ? summary : this.compactedSummary + "\\n" + summary;
+    const combined = this.compactedSummary === "" ? summary : this.compactedSummary + "\n" + summary;
     if (combined.length <= summaryLimit) {
       this.compactedSummary = combined;
     } else {
       const tail = combined.slice(-summaryLimit);
-      const lineBreak = tail.indexOf("\\n");
+      const lineBreak = tail.indexOf("\n");
       this.compactedSummary = lineBreak === -1 ? tail : tail.slice(lineBreak + 1);
     }
     this.messages[0].content = this.composeSystemPrompt();
@@ -366,7 +366,7 @@ export class Agent {
       }
     }
     if (final !== undefined) lines.push("Earlier assistant answer: " + compactText(final.content ?? "", 420));
-    return lines.join("\\n");
+    return lines.join("\n");
   }
 
   /**
@@ -580,6 +580,7 @@ export class Agent {
     }
     this.running = true;
     this.beginRun();
+    this.compactTranscript();
     try {
       return await this.runLoop(task);
     } finally {
@@ -602,6 +603,7 @@ export class Agent {
 
     // 1) 用户消息先入栈；之后每次请求模型，都带着从 system 到此刻的完整历史。
     this.messages.push({ role: "user", content: task });
+    this.compactTranscript();
 
     for (let step = 1; step <= this.maxSteps; step++) {
       // 2) 问模型：把历史 + 工具清单交给它，由它决定「直接回答」还是「调工具」。
@@ -654,6 +656,7 @@ export class Agent {
         if ((message.content ?? "").trim() === "") {
           throw new Error("model returned an empty final answer");
         }
+        this.compactTranscript();
         return structuredClone(message);
       }
 
@@ -661,6 +664,7 @@ export class Agent {
       // 即使模型仍返回工具调用，也只补 not-run 结果，绝不再启动副作用。
       if (this.processCleanupUnverified) {
         this.skipCalls(calls, "process tree cleanup unverified; tool execution remains disabled for this Agent session");
+        this.compactTranscript();
         continue;
       }
 
@@ -723,6 +727,8 @@ export class Agent {
         this.messages.push(createToolResult(call, result));
         this.notifyObserver(this.onToolResult, structuredClone(call), result, isError);
       }
+
+      this.compactTranscript();
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
     }
