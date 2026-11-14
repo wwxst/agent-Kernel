@@ -327,7 +327,7 @@ test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳�
   ui.input.emit("keypress", "", { name: "pageup" });
   const before = lastRow(ui.text(), 4).match(/STABLE_\d{3}/)?.[0];
   assert.ok(before, "向上翻页后必须有可见历史锚点");
-  ui.input.write("\r");
+  ui.input.write("\x0f");
   await tick();
   assert.match(lastRow(ui.text(), 4), new RegExp(before), "收起较早活动后仍看同一段历史");
   ui.input.write("\x0f");
@@ -2494,7 +2494,7 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
 
 test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) => {
   const script = path.join(tmpdir(), `agent-editor-large-${process.pid}.mjs`);
-  await writeFile(script, "import { writeFileSync } from 'node:fs';\\nwriteFileSync(process.argv[2], 'x'.repeat(1048577));\\n", "utf8");
+  await writeFile(script, "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], 'x'.repeat(1048577));\n", "utf8");
   const previous = process.env.EDITOR;
   process.env.EDITOR = `"${process.execPath}" "${script}"`;
   t.after(() => {
