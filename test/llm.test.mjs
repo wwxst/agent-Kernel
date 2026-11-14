@@ -116,7 +116,7 @@ async function respondWhileOpen(write) {
 test("SSE：同一事件的多条 data 行按换行拼接后再解析", async () => {
   const payload = { choices: [{ index: 0, delta: { content: "multi" }, finish_reason: "stop" }] };
   const json = JSON.stringify(payload);
-  const split = Math.floor(json.length / 2);
+  const split = json.indexOf('"delta"');
   const server = await respondWithStream([
     `${json.slice(0, split)}\ndata: ${json.slice(split)}`,
     "[DONE]",
