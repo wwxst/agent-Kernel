@@ -579,11 +579,14 @@ export class Workspace {
   async list(requested: string): Promise<string> {
     const dir = await this.resolveReal(this.resolve(requested), requested);
 
+    const directoryIdentity = await captureDirectoryIdentity(dir);
+    await assertDirectoryIdentity(directoryIdentity, requested);
     const entries: Array<{ name: string; isFile: boolean; isDirectory: boolean }> = [];
     let scanned = 0;
     let scanStopped = false;
     const handle = await opendir(dir);
     try {
+      await assertDirectoryIdentity(directoryIdentity, requested);
       for await (const entry of handle) {
         if (scanned >= this.scanLimit) {
           scanStopped = true;
@@ -596,6 +599,7 @@ export class Workspace {
       // 提前 break 时 for await 不保证已经关掉句柄；重复关闭由 closeDir 容忍。
       await closeDir(handle);
     }
+    await assertDirectoryIdentity(directoryIdentity, requested);
 
     // 先稳定排序，再截断：目录枚举顺序由文件系统决定，直接切前 500 条
     // 会让同一次 ls 在不同机器上给出不同的集合。目录排在文件前面，组内按名字排。
@@ -612,6 +616,7 @@ export class Workspace {
       }),
     );
 
+    await assertDirectoryIdentity(directoryIdentity, requested);
     const hidden = entries.length - MAX_LIST_ENTRIES;
     const tails =
       (hidden > 0 ? `\n… (${scanStopped ? "at least " : ""}${hidden} more entries not listed)` : "") +
@@ -1578,9 +1583,12 @@ function createGlobMatcher(pattern: string): (candidate: string) => boolean {
 async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGenerator<string> {
   if (budget.remaining <= 0) return;
 
-  // 子目录递归时父目录还开着：深度通常只有个位数，换来的是一路都不需要先列目录。
+  // 每层目录在打开前后复核 canonical path 与 inode；路径被替换时停止扫描而不是悄悄走到新位置。
+  const identity = await captureDirectoryIdentity(dir);
+  await assertDirectoryIdentity(identity, dir);
   const handle = await opendir(dir);
   try {
+    await assertDirectoryIdentity(identity, dir);
     for await (const entry of handle) {
       if (budget.remaining <= 0) return;
       budget.remaining--;
@@ -1593,6 +1601,7 @@ async function* walkFiles(dir: string, budget: { remaining: number }): AsyncGene
         yield full;
       }
     }
+    await assertDirectoryIdentity(identity, dir);
   } finally {
     await closeDir(handle);
   }
