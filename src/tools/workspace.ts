@@ -52,14 +52,8 @@ const MAX_OUTPUT_CHARS = 8_000;
  */
 const MAX_READ_BYTES = 32_768;
 
-/**
- * 带 `offset` 读文件时，最多往后扫多少字节去找那一行。
- *
- * 行号必须从文件头顺序数（文本文件没有行索引），所以「读第 5 万行」意味着先扫过前面所有字节。
- * 8 MB 足够覆盖几万行源码；再大就明确报告「扫到上限仍未到达」，而不是把一个 200 MB 的日志
- * 整个读进内存。这条上限和 `MAX_READ_BYTES` 是两件事：后者管「返回多少」，这里管「为了定位扫多少」。
- */
-const MAX_READ_SCAN_BYTES = 8_000_000;
+/** 行号扫描只限制单次耗时，不按文件大小设死线；超时返回字节续读位置。 */
+const MAX_READ_SCAN_MS = 30_000;
 
 /** 按行读窗口时每次读多少字节。太小则系统调用次数暴涨，太大则单次分配浪费。 */
 const READ_CHUNK_BYTES = 65_536;
@@ -314,6 +308,10 @@ export interface ReadOptions {
   offset?: number;
   /** 最多返回多少行；不传表示一直读到文件末尾或输出上限。 */
   limit?: number;
+  /** 从第几个字节开始读，0 起，不能落在 UTF-8 字符内部。 */
+  offsetBytes?: number;
+  /** 最多请求多少字节；单次实际最多 32 KB。 */
+  limitBytes?: number;
 }
 
 /**
@@ -467,57 +465,65 @@ export class Workspace {
     }
 
     // 不带窗口参数：保持原来的「从头读一屏」，连截断文案都不变。
-    if (options.offset === undefined && options.limit === undefined) {
+    if (options.offset === undefined && options.limit === undefined &&
+        options.offsetBytes === undefined && options.limitBytes === undefined) {
       const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
       return this.clip(text, truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "");
     }
 
-    const startLine = options.offset ?? 1;
-    assertPositiveLine(startLine, "offset");
+    const hasLineWindow = options.offset !== undefined || options.limit !== undefined;
+    const hasByteWindow = options.offsetBytes !== undefined || options.limitBytes !== undefined;
+    if (hasLineWindow && hasByteWindow) {
+      throw new Error("offset/limit cannot be combined with offsetBytes/limitBytes");
+    }
+    if (options.offset !== undefined) assertPositiveLine(options.offset, "offset");
     if (options.limit !== undefined) assertPositiveLine(options.limit, "limit");
-    // 字符预算要在这里就交给窗口：等 `clip()` 事后截断，`lastLine` 就会多算几行，
-    // 下一段的 offset 直接跳过那些模型没看到的行。
-    const slice = await readLineWindow(
-      file,
-      startLine,
-      options.limit,
-      MAX_OUTPUT_CHARS - MAX_READ_TAIL_CHARS,
-      this.signal,
-    );
+    if (options.offsetBytes !== undefined &&
+        (!Number.isSafeInteger(options.offsetBytes) || options.offsetBytes < 0)) {
+      throw new Error("offsetBytes must be a non-negative safe integer");
+    }
+    if (options.limitBytes !== undefined &&
+        (!Number.isSafeInteger(options.limitBytes) || options.limitBytes <= 0)) {
+      throw new Error("limitBytes must be a positive safe integer");
+    }
+    const charBudget = MAX_OUTPUT_CHARS - MAX_READ_TAIL_CHARS;
+    if (hasByteWindow) {
+      const start = options.offsetBytes ?? 0;
+      const page = await readByteWindow(file, start, options.limitBytes ?? MAX_READ_BYTES, charBudget, this.signal);
+      if (page.text === "" && !page.hasMore) {
+        return "(no text to read at offsetBytes " + start + ") The file has " + page.size + " byte(s).";
+      }
+      const notes: string[] = [];
+      if (page.clamped) notes.push("limitBytes clamped to " + MAX_READ_BYTES);
+      if (page.hasMore) notes.push("more bytes follow, continue with offsetBytes=" + page.nextByteOffset);
+      return this.clip(page.text, notes.length > 0 ? "\n… [" + notes.join("; ") + "]" : "");
+    }
+
+    // 保留原有 read(path) 默认行为，仅显式请求行号或字节窗口时启用新分页。
+    const startLine = options.offset ?? 1;
+    const slice = await readLineWindow(file, startLine, options.limit, charBudget, this.signal);
+    if (slice.scanTimedOut) {
+      if (slice.nextByteOffset === undefined) throw new Error("scan timed out without a byte cursor");
+      return "(offset " + startLine + " not reached within " + MAX_READ_SCAN_MS +
+        " ms; scanned through line " + (slice.scannedThroughLine ?? 0) +
+        "; continue with offsetBytes=" + slice.nextByteOffset + ")";
+    }
     if (slice.partialLine) {
-      // 目标行比扫描上限还长：给前缀，并说清「这一行没读完、后面还有」。
-      // 不给下一段的 offset —— 那一行的剩余部分和后面的行都还在 8 MB 之外，指了也读不到。
-      return this.clip(
-        slice.text,
-        `\n… [line ${slice.firstLine} did not end within ${MAX_READ_SCAN_BYTES} bytes; ` +
-          `only its first ${slice.text.length} characters are shown and the rest of this line was skipped]`,
-      );
+      if (slice.nextByteOffset === undefined) throw new Error("partial line without a byte cursor");
+      return this.clip(slice.text,
+        "\n… [line " + slice.firstLine + " continues; continue with offsetBytes=" + slice.nextByteOffset + "]");
     }
     if (slice.lastLine < slice.firstLine) {
-      // 扫到上限还没走到目标行：必须说「没走到」，不能说「没有内容」——
-      // 后者会让模型以为文件到这就结束了，于是放弃或去改别的文件。
-      if (slice.scanStopped) {
-        return `(offset ${startLine} was not reached) … [stopped after scanning ${MAX_READ_SCAN_BYTES} bytes without reaching it]`;
-      }
-      // 空文件，或 offset 越过了文件末尾：说清「这里没有内容」，不要回一段空白让模型猜。
-      const total = slice.totalLines === undefined ? "" : ` The file has ${slice.totalLines} line(s).`;
-      return `(no lines to read at offset ${startLine})${total}`;
+      const count = slice.totalLines === undefined ? "" : " The file has " + slice.totalLines + " line(s).";
+      return "(no lines to read at offset " + startLine + ")" + count;
     }
-    // 还有后续行时必须说清怎么继续读；否则模型会以为这就是文件末尾。
-    // 总行数只有读到 EOF 才知道；为了省钱不去多扫一遍，所以两种说法分开写。
     const more = slice.hasMore
-      ? (slice.totalLines === undefined
-        ? `\n… [lines ${slice.firstLine}-${slice.lastLine}; more lines follow, continue with offset=${slice.lastLine + 1}]`
-        : `\n… [lines ${slice.firstLine}-${slice.lastLine} of ${slice.totalLines}; continue with offset=${slice.lastLine + 1}]`)
+      ? "\n… [lines " + slice.firstLine + "-" + slice.lastLine +
+        "; more lines follow, continue with offset=" + (slice.lastLine + 1) + "]"
       : "";
-    // 扫到上限而停：后面确实还有内容没读。`more` 已经给了 offset 时不重复，
-    // 但窗口没满时它不会出现 —— 那种情况（超长行还没结束）同样要说清下一步从哪读，
-    // 否则模型只知道「还有」，不知道「怎么拿」。
-    const stopped = slice.scanStopped
-      ? `\n… [stopped after scanning ${MAX_READ_SCAN_BYTES} bytes; later lines were not read` +
-        `${slice.hasMore ? "" : `, continue with offset=${slice.lastLine + 1}`}]`
-      : "";
-    return this.clip(slice.text, more + stopped);
+    return this.clip(slice.text, more);
+
+
   }
 
   /**
@@ -1471,25 +1477,161 @@ function assertPositiveLine(value: number, name: string): void {
 }
 
 /**
- * 按行读文件的一个窗口：从 `offset` 行（1 起）开始，最多 `limit` 行、最多 `charBudget` 个字符。
- *
- * 为什么分块读，而不是「整个读进来再切」：一个 200 MB 的日志，`offset=100000` 也只需要
- * 前面几 MB 的行号，没必要把整个文件塞进内存。所以只保留「当前还没结束的那一行」和
- * 目标窗口里的行，扫到窗口末尾就停。
- *
- * **为什么窗口还要按字符收口**：如果只按行数收，100 行可能是两万字，回头 `clip()` 一截，
- * 模型实际只看到前 40 行，而下一段的 `offset` 却按第 101 行算 —— 中间 60 行就永远读不到了。
- * 所以字符预算必须在这里生效：`lastLine` 只数「真的要交出去的行」，下一段的 offset 才对得上。
- * 唯一例外是单行本身就超过预算 —— 那时至少交出这一行（被 `clip` 截断并标明），
- * 下一段从它的下一行开始，仍然不漏行。
- *
- * 行尾原样保留（`\r` 不剥）：模型常把读到的片段直接拿去 `edit` 做精确替换，
- * 少一个 `\r` 就匹配不上 CRLF 文件。
- *
- * 已知边界：行号必须从文件头顺序数（文本文件没有行索引），所以目标行很靠后时会先扫过
- * 前面所有字节；扫到 `MAX_READ_SCAN_BYTES` 还没到就明确报告，不猜内容。**如果目标行本身
- * 就比扫描上限还长**，那是「到了但没读完」：交出有界前缀、标记这一行不完整，不谎称没这一行。
- * 文件在读取过程中被改写时，行号以读到的内容为准 —— 这不是快照隔离。
+ * 返回一个 UTF-8 安全前缀的字节长度。
+ * 不解码整个文件，只处理当前的有界缓冲；末尾不完整的码点留给下次读取。
+ */
+function completeUtf8PrefixLength(bytes: Buffer, end = bytes.length): number {
+  if (end <= 0) return 0;
+  let start = end - 1;
+  while (start > 0 && (bytes[start]! & 0xc0) === 0x80) start--;
+  const first = bytes[start]!;
+  const width = first >= 0xc2 && first <= 0xdf ? 2 :
+    first >= 0xe0 && first <= 0xef ? 3 :
+    first >= 0xf0 && first <= 0xf4 ? 4 : 1;
+  return end - start < width ? start : end;
+}
+
+/** 按 UTF-16 代码单元计数，但返回的是原始 UTF-8 字节数；不切坏汉字或 emoji。 */
+function utf8BytesForChars(bytes: Buffer, maxChars: number): number {
+  let used = 0;
+  let chars = 0;
+  while (used < bytes.length) {
+    const first = bytes[used]!;
+    let width = first >= 0xc2 && first <= 0xdf ? 2 :
+      first >= 0xe0 && first <= 0xef ? 3 :
+      first >= 0xf0 && first <= 0xf4 ? 4 : 1;
+    if (used + width > bytes.length) break;
+    for (let i = 1; i < width; i++) {
+      if ((bytes[used + i]! & 0xc0) !== 0x80) { width = 1; break; }
+    }
+    const cost = width === 4 ? 2 : 1;
+    if (chars + cost > maxChars) break;
+    chars += cost;
+    used += width;
+  }
+  return used;
+}
+
+/**
+ * 从文件开头数换行来定位指定行。行号模式只按固定块扫描，绝不收集跳过的行。
+ * 30 秒只是单次定位的时间保护，不是文件尺寸上限；超时可切到字节游标继续读。
+ */
+async function locateLine(
+  handle: FileHandle,
+  size: number,
+  targetLine: number,
+  signal?: AbortSignal,
+): Promise<{ byteOffset?: number; totalLines?: number; timedOut?: boolean; cursor?: number; scannedLines?: number }> {
+  if (targetLine === 1) return { byteOffset: 0 };
+  const chunk = Buffer.alloc(READ_CHUNK_BYTES);
+  const startTime = Date.now();
+  let line = 1;
+  let position = 0;
+  let lastByte = -1;
+  while (position < size) {
+    if (signal?.aborted) throw new Error("cancelled while locating the file line");
+    const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, size - position), position);
+    if (bytesRead === 0) throw new Error("file changed while locating the file line");
+    lastByte = chunk[bytesRead - 1]!;
+    let from = 0;
+    for (;;) {
+      const index = chunk.indexOf(0x0a, from);
+      if (index < 0 || index >= bytesRead) break;
+      line++;
+      if (line === targetLine) return { byteOffset: position + index + 1 };
+      from = index + 1;
+    }
+    if (Date.now() - startTime >= MAX_READ_SCAN_MS && position + bytesRead < size) {
+      return {
+        timedOut: true,
+        cursor: position + completeUtf8PrefixLength(chunk, bytesRead),
+        scannedLines: line - 1,
+      };
+    }
+    position += bytesRead;
+  }
+  return { totalLines: size === 0 ? 0 : lastByte === 0x0a ? line - 1 : line };
+}
+
+/**
+ * 只读取有限字节。打开后继续核对文件句柄、文件路径和父目录身份，
+ * 防止安全检查和实际读文件走到不同目标。
+ */
+async function readWindowBytes(
+  file: string,
+  offsetBytes: number,
+  requestedBytes: number,
+  signal?: AbortSignal,
+): Promise<{ bytes: Buffer; size: number; safeBytes: number }> {
+  const parent = await captureDirectoryIdentity(path.dirname(file));
+  await assertDirectoryIdentity(parent, file);
+  const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) throw new Error("target is not a regular file");
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parent, file);
+    if (offsetBytes > stats.size) {
+      throw new Error("offsetBytes " + offsetBytes + " is beyond end of file (" + stats.size + " bytes)");
+    }
+    if (offsetBytes > 0 && offsetBytes < stats.size) {
+      const probe = Buffer.alloc(1);
+      const check = await handle.read(probe, 0, 1, offsetBytes);
+      if (check.bytesRead === 0) throw new Error("file changed while checking the byte offset");
+      if ((probe[0]! & 0xc0) === 0x80) {
+        throw new Error("offsetBytes splits a UTF-8 character; use the returned offsetBytes");
+      }
+    }
+    const count = Math.min(requestedBytes, stats.size - offsetBytes);
+    const bytes = Buffer.alloc(count);
+    let read = 0;
+    while (read < count) {
+      if (signal?.aborted) throw new Error("cancelled while reading the byte window");
+      const result = await handle.read(bytes, read, count - read, offsetBytes + read);
+      if (result.bytesRead === 0) throw new Error("file changed while reading the byte window");
+      read += result.bytesRead;
+    }
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parent, file);
+    const safeBytes = offsetBytes + count === stats.size ? count : completeUtf8PrefixLength(bytes);
+    return { bytes, size: stats.size, safeBytes };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * 字节窗口可以从超长单行中间继续；文件再大，每次也只分配 32 KB 的缓冲。
+ * 续读游标按实际交出去的字节计算，不按截断前的字符数猜测。
+ */
+async function readByteWindow(
+  file: string,
+  offsetBytes: number,
+  limitBytes: number,
+  charBudget: number,
+  signal?: AbortSignal,
+): Promise<{ text: string; nextByteOffset: number; hasMore: boolean; size: number; clamped: boolean }> {
+  const clamped = limitBytes > MAX_READ_BYTES;
+  const page = await readWindowBytes(file, offsetBytes, Math.min(limitBytes, MAX_READ_BYTES), signal);
+  const bom = offsetBytes === 0 && page.safeBytes >= 3 &&
+    page.bytes[0] === 0xef && page.bytes[1] === 0xbb && page.bytes[2] === 0xbf ? 3 : 0;
+  const payload = page.bytes.subarray(bom, page.safeBytes);
+  // 小到连一个 UTF-8 字符都放不下的请求不能回原位置游标，否则 Agent 会无限重试。
+  if (page.safeBytes === 0 && page.bytes.length > 0) {
+    throw new Error("limitBytes is too small to include one complete UTF-8 character; use at least 4");
+  }
+  const shown = utf8BytesForChars(payload, charBudget);
+  if (payload.length > 0 && shown === 0) {
+    throw new Error("limitBytes is too small to include one complete UTF-8 character; use at least 4");
+  }
+  const text = new TextDecoder("utf-8", { ignoreBOM: true }).decode(payload.subarray(0, shown));
+  const nextByteOffset = offsetBytes + bom + shown;
+  return { text, nextByteOffset, hasMore: nextByteOffset < page.size, size: page.size, clamped };
+}
+
+/**
+ * 行窗口保留完整行；遇到超长单行则只给一段完整 UTF-8 前缀和字节游标。
+ * 定位任意行时不再受 8 MB 限制，扫描速度过慢时明确返回可继续读取的位置。
  */
 async function readLineWindow(
   file: string,
@@ -1498,116 +1640,87 @@ async function readLineWindow(
   charBudget: number,
   signal?: AbortSignal,
 ): Promise<{
-  text: string;
-  firstLine: number;
-  lastLine: number;
-  hasMore: boolean;
-  scanStopped: boolean;
-  /** 目标行在扫描上限之内就开始了，但一直到上限都没等到换行 —— 内容只交出了前缀。 */
-  partialLine: boolean;
-  totalLines?: number;
+  text: string; firstLine: number; lastLine: number; hasMore: boolean;
+  partialLine: boolean; nextByteOffset?: number;
+  scanTimedOut: boolean; scannedThroughLine?: number; totalLines?: number;
 }> {
-  const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
-  await assertDirectoryIdentity(parentIdentity, file);
+  const parent = await captureDirectoryIdentity(path.dirname(file));
+  await assertDirectoryIdentity(parent, file);
   const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
+  let firstByte: number | undefined;
+  let size = 0;
+  let totalLines: number | undefined;
+  let scanTimedOut = false;
+  let nextByteOffset: number | undefined;
+  let scannedThroughLine: number | undefined;
   try {
     const stats = await handle.stat();
     if (!stats.isFile()) throw new Error("target is not a regular file");
     await assertOpenedFileStillNamed(file, stats, file);
-    await assertDirectoryIdentity(parentIdentity, file);
-
-    const decoder = new StringDecoder("utf8");
-    const chunk = Buffer.alloc(READ_CHUNK_BYTES);
-    const lines: string[] = [];
-    // 已经收进来的字符数（含行间换行），用来守住输出上限。
-    let chars = 0;
-    // 还没遇到换行的那一截：块边界可能正好落在行中间，不能当成完整行。
-    let carry = "";
-    let lineNumber = 0;
-    let position = 0;
-    // 第一块单独标记：BOM 只在文件最开头剥一次，不能每块都判断（否则一串 U+FEFF 会被连续吃掉）。
-    let firstChunk = true;
-    let hasMore = false;
-    let scanStopped = false;
-    let partialLine = false;
-    let totalLines: number | undefined;
-
-    /**
-     * 这一行还收得下吗？
-     *
-     * 空窗口永远收第一行：单行本身超预算时，至少让模型看到它的开头（由 `clip` 截断并标明），
-     * 下一段从它的下一行继续 —— 这样既不会一个字都不给，也不会跳过没给过的行。
-     */
-    const fits = (part: string): boolean =>
-      lines.length === 0 || chars + 1 + part.length <= charBudget;
-
-    for (;;) {
-      // 取消要在两块之间生效：读一个几百 MB 的文件不该等到读完才响应 Ctrl-C。
-      if (signal?.aborted === true) throw new Error("cancelled while reading the file window");
-      // 文件正好在扫描上限处结束就不算「扫到上限」：再读一次拿到 EOF，这一行是完整的。
-      if (position >= MAX_READ_SCAN_BYTES && position < stats.size) {
-        scanStopped = true;
-        // 停下来的位置可能正落在目标行内部（这一行比扫描上限还长，一直没换行）。
-        // 那不是「没到达目标行」，而是「到达了但没读完」—— 必须交出有界前缀并说明不完整，
-        // 否则模型会以为文件里根本没有这一行。
-        if (lines.length === 0 && carry !== "" && lineNumber + 1 === offset) {
-          lines.push(carry.slice(0, charBudget));
-          partialLine = true;
-        }
-        break;
-      }
-      const want = Math.max(0, Math.min(READ_CHUNK_BYTES, MAX_READ_SCAN_BYTES - position));
-      const { bytesRead } = await handle.read(chunk, 0, want, position);
-      if (bytesRead === 0) {
-        // EOF：收尾那一截（文件末尾没有换行时它就是最后一行）。
-        carry += decoder.end();
-        if (carry !== "") {
-          lineNumber++;
-          if (lineNumber >= offset) {
-            if ((limit !== undefined && lines.length >= limit) || !fits(carry)) hasMore = true;
-            else lines.push(carry);
-          }
-        }
-        totalLines = lineNumber;
-        break;
-      }
-      position += bytesRead;
-      carry += decoder.write(chunk.subarray(0, bytesRead));
-      // 文件开头的 BOM：无窗口路径用 TextDecoder（默认剥掉），这里用 StringDecoder（不剥）。
-      // 两条读法必须给出同一个第一行 —— 差一个 U+FEFF，模型拿这段去 write 会凭空多写一个 BOM，
-      // 拿去和 edit 的片段比对又对不上。只处理第一块，后文里的 U+FEFF 一律不动。
-      if (firstChunk) {
-        firstChunk = false;
-        if (carry.startsWith("\uFEFF")) carry = carry.slice(1);
-      }
-      const parts = carry.split("\n");
-      carry = parts.pop() ?? "";
-      for (const part of parts) {
-        lineNumber++;
-        if (lineNumber < offset) continue;
-        // 行数和字符数谁先到都算「窗口满了」：下一段的 offset 必须从真正给出去的那一行算。
-        if ((limit !== undefined && lines.length >= limit) || !fits(part)) {
-          hasMore = true;
-          break;
-        }
-        chars += (lines.length === 0 ? 0 : 1) + part.length;
-        lines.push(part);
-      }
-      if (hasMore) break;
-    }
-
-    return {
-      text: lines.join("\n"),
-      firstLine: offset,
-      lastLine: offset + lines.length - 1,
-      hasMore,
-      scanStopped,
-      partialLine,
-      totalLines,
-    };
+    await assertDirectoryIdentity(parent, file);
+    size = stats.size;
+    const located = await locateLine(handle, size, offset, signal);
+    firstByte = located.byteOffset;
+    totalLines = located.totalLines;
+    scanTimedOut = located.timedOut === true;
+    nextByteOffset = located.cursor;
+    scannedThroughLine = located.scannedLines;
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parent, file);
   } finally {
     await handle.close();
   }
+  const empty = {
+    text: "", firstLine: offset, lastLine: offset - 1, hasMore: false,
+    partialLine: false, scanTimedOut, nextByteOffset, scannedThroughLine, totalLines,
+  };
+  if (scanTimedOut || firstByte === undefined) return empty;
+  if (firstByte === size) return { ...empty, totalLines: offset - 1 };
+
+  const page = await readWindowBytes(file, firstByte, MAX_READ_BYTES, signal);
+  const bom = firstByte === 0 && page.safeBytes >= 3 &&
+    page.bytes[0] === 0xef && page.bytes[1] === 0xbb && page.bytes[2] === 0xbf ? 3 : 0;
+  const payload = page.bytes.subarray(bom, page.safeBytes);
+  const atEof = firstByte + page.safeBytes >= page.size;
+  const lines: string[] = [];
+  let chars = 0;
+  let cursor = 0;
+  let partialLine = false;
+  let hasMore = false;
+  while (cursor < payload.length) {
+    const newline = payload.indexOf(0x0a, cursor);
+    const complete = newline >= 0 || atEof;
+    const end = newline >= 0 ? newline : payload.length;
+    const rowBytes = payload.subarray(cursor, end);
+    const line = new TextDecoder("utf-8", { ignoreBOM: true }).decode(rowBytes);
+    const room = charBudget - chars - (lines.length === 0 ? 0 : 1);
+    if (!complete || line.length > room) {
+      if (lines.length === 0) {
+        const shown = utf8BytesForChars(rowBytes, charBudget);
+        if (shown === 0 && rowBytes.length > 0) throw new Error("cannot read a complete UTF-8 character");
+        lines.push(new TextDecoder("utf-8", { ignoreBOM: true }).decode(rowBytes.subarray(0, shown)));
+        nextByteOffset = firstByte + bom + cursor + shown;
+        partialLine = true;
+      } else {
+        hasMore = true;
+      }
+      break;
+    }
+    lines.push(line);
+    chars += line.length + (lines.length === 1 ? 0 : 1);
+    cursor = newline >= 0 ? newline + 1 : end;
+    if (limit !== undefined && lines.length >= limit) {
+      hasMore = firstByte + bom + cursor < page.size;
+      break;
+    }
+  }
+  if (!partialLine && !hasMore && firstByte + bom + cursor < page.size) hasMore = true;
+  return {
+    text: lines.join("\n"), firstLine: offset,
+    lastLine: offset + lines.length - 1,
+    hasMore, partialLine, nextByteOffset,
+    scanTimedOut: false, scannedThroughLine, totalLines,
+  };
 }
 
 /**
@@ -1988,9 +2101,11 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       // 读工具 read：把一个文本文件的内容读出来。
       // 一次最多读 8000 个字符；文件比这更大时，只读到前面这一截，
       // 并且明确告诉你被截断了，不会假装已经读完。
-      // 想看文件中间或后半段时传 offset 和 limit 读指定行区间，不要反复读开头。
-      description: "Read a UTF-8 text file. Output is truncated to 8000 chars. " +
-        "Use offset and limit to read a specific line range instead of rereading the beginning.",
+      // 想看中间或后半段可按行号读取；行号过深或者单行过长时，改用字节位置续读。
+      // 字节游标按实际交出的 UTF-8 字节计算，不会在字符中间截断。
+      description: "Read a UTF-8 text file, with up to 8000 output chars. " +
+        "Use offset and limit for line ranges, or offsetBytes and limitBytes for byte ranges and long lines. " +
+        "Follow the returned continuation offset to read more.",
       // 行号写错必须报错：静默忽略 offset 会让模型以为读到了后面，实际还是开头。
       strictArguments: true,
       parameters: {
@@ -2008,12 +2123,18 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
             type: "number",
             description: "Maximum number of lines to return. Omit to read to the end of the file or the output cap.",
           },
+          // 从文件的字节位置开始读取，UTF-8 字符不能切半。
+          offsetBytes: { type: "number", description: "Zero-based UTF-8 byte offset; use a returned continuation value." },
+          // 单次最多读取 32768 字节；不能与行窗口参数一起使用。
+          limitBytes: { type: "number", description: "Bytes to scan, clamped to 32768; do not combine with offset/limit." },
         },
         required: ["path"],
       },
       run: async (args) => workspace.read(String(args.path), {
         offset: typeof args.offset === "number" ? args.offset : undefined,
         limit: typeof args.limit === "number" ? args.limit : undefined,
+        offsetBytes: typeof args.offsetBytes === "number" ? args.offsetBytes : undefined,
+        limitBytes: typeof args.limitBytes === "number" ? args.limitBytes : undefined,
       }),
     },
     {

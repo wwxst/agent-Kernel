@@ -12,7 +12,7 @@
  *   - 读与列：超长截断并说明、正好等于上限不算截断、半个 UTF-8 字符不出现、
  *     空目录显式提示、条目超限先排序再截断；`read` 的 `offset` / `limit` 行窗口
  *     （中间段、越界、CRLF 原样、跨块不切行、参数非法、取消、受输出上限约束时下一段不漏行、
- *     目标行比扫描上限还长时给前缀并标明没读完）。
+ *     超大文件可续读、超长单行字节游标、UTF-8 边界与取消）。
  *   - 搜索：`glob` 的模式、搜索根与重复通配符有界匹配；`grep` 的正则 / `fixed` / flags / 超长行 / 超大文件跳过 /
  *     扫描预算用尽 / 灾难性回溯被超时打断 / 取消打断匹配线程 / 跳过 `node_modules` 与 `.git` /
  *     `path` 指向单个文件时只搜它自己。
@@ -1609,30 +1609,27 @@ test("grep：单文件没有命中时给出明确提示", async () => {
   });
 });
 
-test("read：行窗口同样受 8000 字符输出上限约束，并说明截掉多少", async () => {
+test("read：行窗口受 8000 字符预算约束，并提供字节续读位置", async () => {
   await withWorkspace(async (root) => {
     // 一行 20000 字符：limit=1 只取一行，但仍然必须被输出上限截住。
     await writeFile(path.join(root, "long.txt"), "x".repeat(20_000) + "\n");
     const slice = await new Workspace({ root }).read("long.txt", { offset: 1, limit: 1 });
 
     assert.ok(slice.length < 20_000, "不能把两万字原样塞给模型");
-    assert.match(slice, /… \[truncated \d+ chars\]$/);
+    assert.match(slice, /continue with offsetBytes=\d+/);
   });
 });
 
-test("read：目标行超过扫描上限时明确报告，不无限往后读", async () => {
+test("read：第 94000 行超过旧 8 MB 限制后仍可完整读取", async () => {
   await withWorkspace(async (root) => {
-    // 约 9 MB、每行 100 字符：第 95000 行在 8 MB 扫描上限之后。
-    const line = "y".repeat(99);
-    const body = Array.from({ length: 95_000 }, () => line).join("\n") + "\n";
-    await writeFile(path.join(root, "huge.log"), body);
-    const slice = await new Workspace({ root }).read("huge.log", { offset: 94_000, limit: 1 });
-
-    // 必须说「没走到」，不能说「没有内容」—— 后者会让模型以为文件就这么长。
-    assert.match(slice, /offset 94000 was not reached/);
-    assert.match(slice, /stopped after scanning 8000000 bytes/);
+    const row = "y".repeat(99);
+    const content = Array.from({ length: 95_000 }, () => row).join("\n") + "\n";
+    await writeFile(path.join(root, "huge.log"), content);
+    const page = await new Workspace({ root }).read("huge.log", { offset: 94_000, limit: 1 });
+    assert.equal(page, row);
   });
 });
+
 
 // ── 分页连续性：受输出上限约束时不能漏行 ──────────────────────────────────────
 // 曾经的 bug：窗口按行数收（100 行），clip 之后按字符截（只出 40 行），
@@ -1688,7 +1685,7 @@ test("read：连续分页拼接后与原文完全一致，不漏行、不重复"
   });
 });
 
-test("read：单行超过输出上限时仍给出该行开头，下一段从下一行继续", async () => {
+test("read：超长单行先字节续读完，再按行号读取下一行", async () => {
   await withWorkspace(async (root) => {
     const huge = "H".repeat(20_000);
     await writeFile(path.join(root, "one.txt"), huge + "\nSECOND\n");
@@ -1696,9 +1693,10 @@ test("read：单行超过输出上限时仍给出该行开头，下一段从下�
 
     const page = await workspace.read("one.txt", { offset: 1, limit: 1 });
     assert.ok(page.startsWith("HHHH"), "至少要给出这一行的开头");
-    assert.match(page, /… \[truncated \d+ chars\]/);
-    assert.match(page, /continue with offset=2/);
-    // 下一段确实能读到第二行，没有因为第一行被截断而跳过它。
+    const cursor = Number(/continue with offsetBytes=(\d+)/.exec(page)?.[1]);
+    assert.ok(cursor > 0 && cursor < 20_000, "这行剩余部分不能被当成已读完");
+    const next = await workspace.read("one.txt", { offsetBytes: cursor, limitBytes: 20 });
+    assert.match(next, /^H{20}/);
     assert.equal(await workspace.read("one.txt", { offset: 2, limit: 1 }), "SECOND");
   });
 });
@@ -1715,58 +1713,70 @@ test("read：不传分页参数时仍是一次性读到 8000 字符上限", asyn
   });
 });
 
-// ── 扫描上限处的超长单行 ──────────────────────────────────────────────────────
-// 目标行在 8 MB 之内就开始了，但一直到上限都没等到换行。这不是「没到达目标行」，
-// 而是「到了但没读完」—— 必须给前缀并说清不完整。
-
-test("read：目标行比扫描上限还长时给前缀并说明没读完，不谎称没这一行", async () => {
+// ── 大文件与超长单行：没有固定扫描字节死线，仍有有界输出 ────────────
+test("read：超过 8 MB 的单行按字节续读，不丢失同一行的后半段", async () => {
   await withWorkspace(async (root) => {
     await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
-    const page = await new Workspace({ root }).read("long.txt", { offset: 1, limit: 1 });
-
-    assert.ok(page.startsWith("XXXX"), "至少要给出这一行的开头");
-    assert.ok(page.length <= 8000, "输出仍受 8000 字符上限约束，实际 " + page.length);
-    assert.doesNotMatch(page, /was not reached/);
-    assert.match(page, /line 1 did not end within 8000000 bytes/);
-    assert.match(page, /the rest of this line was skipped/);
+    const workspace = new Workspace({ root });
+    const first = await workspace.read("long.txt", { offset: 1, limit: 1 });
+    assert.ok(first.startsWith("XXXX"));
+    const cursor = Number(/offsetBytes=(\d+)/.exec(first)?.[1]);
+    assert.ok(cursor > 0 && cursor < 8_000_001);
+    const second = await workspace.read("long.txt", { offsetBytes: cursor, limitBytes: 20 });
+    assert.match(second, /^X{20}/);
+    assert.match(second, /continue with offsetBytes=/);
   });
 });
 
-test("read：确实没走到目标行时仍然明说「没到达」", async () => {
+test("read：超长行之前的普通行可继续以行号分页", async () => {
   await withWorkspace(async (root) => {
-    await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
-    // 第 2 行在这 8 MB 之外：这一次是真的没走到，说法必须和上一条区分开。
-    const page = await new Workspace({ root }).read("long.txt", { offset: 2, limit: 1 });
-
-    assert.match(page, /offset 2 was not reached/);
-    assert.doesNotMatch(page, /did not end within/);
-  });
-});
-
-test("read：扫到扫描上限而窗口没满时，也要说清下一段从哪读", async () => {
-  await withWorkspace(async (root) => {
-    // 三行短的，后面接一条 8 MB 都没结束的超长行：窗口没满，但扫描预算已经用光。
     await writeFile(path.join(root, "tail.log"), "a\nb\nc\n" + "X".repeat(8_000_100));
-    const page = await new Workspace({ root }).read("tail.log", { offset: 1 });
-
-    assert.ok(page.startsWith("a\nb\nc"), "前三行要照常交出去");
-    assert.match(page, /stopped after scanning 8000000 bytes/);
-    // 必须确认走的是「扫描上限」而不是「窗口满」：后者的尾注本来就会带 offset，
-    // 混在一起这条用例就证明不了任何东西。
-    assert.doesNotMatch(page, /more lines follow/);
-    // 只说「后面还有没读的」不够：必须给出下一段的 offset，模型才知道怎么继续。
-    assert.match(page, /continue with offset=4/);
+    const workspace = new Workspace({ root });
+    const first = await workspace.read("tail.log", { offset: 1, limit: 3 });
+    assert.match(first, /^a\nb\nc\n/);
+    assert.match(first, /continue with offset=4/);
+    const second = await workspace.read("tail.log", { offset: 4 });
+    assert.ok(second.startsWith("XXXX"));
+    assert.match(second, /continue with offsetBytes=/);
   });
 });
 
-test("read：文件正好在扫描上限处结束时按文件末尾处理，不说「没读完」", async () => {
+test("read：超长单行之后不存在的行明确说没有，不假装遇到扫描上限", async () => {
   await withWorkspace(async (root) => {
-    await writeFile(path.join(root, "exact.txt"), "X".repeat(8_000_000));
-    const page = await new Workspace({ root }).read("exact.txt", { offset: 1, limit: 1 });
+    await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
+    const page = await new Workspace({ root }).read("long.txt", { offset: 2, limit: 1 });
+    assert.match(page, /no lines to read at offset 2/);
+    assert.match(page, /1 line\(s\)/);
+  });
+});
 
-    assert.doesNotMatch(page, /did not end within/);
-    assert.doesNotMatch(page, /was not reached/);
-    // 仍然受输出上限约束，并如实标出截断。
-    assert.match(page, /… \[truncated \d+ chars\]/);
+test("read：字节分页跨过中文和 emoji，不丢字、不切断 UTF-8", async () => {
+  await withWorkspace(async (root) => {
+    const content = "中😀".repeat(6000);
+    await writeFile(path.join(root, "utf8.txt"), content);
+    const workspace = new Workspace({ root });
+    const parts = [];
+    let offsetBytes = 0;
+    for (let round = 0; round < 12; round++) {
+      const page = await workspace.read("utf8.txt", { offsetBytes });
+      const tail = page.indexOf("\n… [more bytes follow, continue with offsetBytes=");
+      parts.push(tail === -1 ? page : page.slice(0, tail));
+      const next = /continue with offsetBytes=(\d+)/.exec(page);
+      if (next === null) break;
+      const n = Number(next[1]);
+      assert.ok(n > offsetBytes);
+      offsetBytes = n;
+    }
+    assert.equal(parts.join(""), content);
+  });
+});
+
+test("read：字节游标不允许切在中文字符中间，参数错误必须明确拒绝", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "utf8.txt"), "中文\n");
+    const workspace = new Workspace({ root });
+    await assert.rejects(() => workspace.read("utf8.txt", { offsetBytes: 1 }), /splits a UTF-8 character/);
+    await assert.rejects(() => workspace.read("utf8.txt", { offsetBytes: 0, limitBytes: 1 }), /too small/);
+    await assert.rejects(() => workspace.read("utf8.txt", { offset: 1, offsetBytes: 0 }), /cannot be combined/);
   });
 });
