@@ -1,6 +1,6 @@
 # Issue tracker：本地 markdown
 
-本仓库没有远端，issue 与 spec 以 markdown 文件的形式放在 `.scratch/` 里。
+本地技能使用的 issue 与 spec 以 Markdown 文件存放在 `.scratch/`；它与 GitHub 远端仓库、PR 是两套独立流程。
 
 ## 约定
 

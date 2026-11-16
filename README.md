@@ -1,6 +1,6 @@
 # agent-Kernel
 
-最小 Coding Agent：**一个类、一个循环、十个工具、完全访问**，运行时零依赖。
+最小 Coding Agent：**一个类、一个循环、十一个工具、完全访问**，运行时零依赖。
 
 > 当前状态：v0.5，个人练习项目。
 
@@ -86,6 +86,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/core/tool-log.ts` | 第一个真实 Hook 用户：每次工具调用追加一行 JSON 到 `AGENT_TOOL_LOG` 指定的文件；写不进去只提醒一次 |
 | `src/core/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
 | `src/tools/todo.ts` | TodoWrite：任务清单的校验、原子更新和进度渲染；每个 Agent 会话一份、不会跨进程保存 |
+| `src/tools/subagent.ts` | 委派：两种子 Agent 角色的工具与系统提示、`run_subagent` 的说明书与参数校验、结果排版；只依赖 `protocol/`，不 import `Agent` |
 | `src/tools/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
 | `src/model/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
 | `src/model/project-instructions.ts` | 读 `AGENTS.md` 注入系统提示：只做读取与有界截断，不发明格式 |
@@ -185,7 +186,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
-## 十个工具
+## 十一个工具
 
 复杂任务可调用 `todo_write`，一次提交完整清单并更新 `pending` / `in_progress` / `done` 状态；最多 20 项，同一时刻最多一个 `in_progress`。计划只在当前 Agent 会话内有效，`/reset` 或重启后清空。它是进度记录，不会自行执行任务或判断目标达成；简单单步任务不要求使用。
 
@@ -193,18 +194,23 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 | 工具 | 说明 | 对应工作区方法 |
 | --- | --- | --- |
-| `read` | 读 UTF-8 文本，超过 8k 字符截断 | `Workspace.read` |
+| `read` | 读 UTF-8 文本，超过 8k 字符截断；`offset` / `limit` 读指定行区间 | `Workspace.read` |
 | `write` | 创建/覆盖整个文件，自动建父目录 | `Workspace.write` |
 | `edit` | 把唯一命中的一段换成另一段 | `Workspace.edit` |
 | `glob` | 按模式找文件，如 `src/**/*.ts` | `Workspace.glob` |
-| `grep` | 按正则搜文件内容，回 `路径:行号: 内容`；匹配跑在 worker 里，超时中断 | `Workspace.grep` |
+| `grep` | 按正则搜文件内容，回 `路径:行号: 内容`；`path` 可以是目录或单个文件；匹配跑在 worker 里，超时中断 | `Workspace.grep` |
 | `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
 | `shell` | 默认在默认目录跑 shell，命令内可 `cd` 到任意位置；超时/取消杀整棵进程树，输出有上限 | `Workspace.run` |
 | `shell-output` | 读后台任务自上次调用之后的新输出；第一行是它的状态 | `Workspace.readJobOutput` |
 | `shell-kill` | 停掉后台任务连同它的后代进程 | `Workspace.killJob` |
 | `todo_write` | 更新完整的任务计划，状态为 pending / in_progress / done | `TodoManager.update` |
+| `run_subagent` | 把一件独立子任务交给临时子 Agent，只拿回一份最终报告 | 子 Agent 自己的 `Agent` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
+
+`read` 传 `offset` / `limit` 可以按行读取中间或后半段（行号从 1 起）；现在**不再有 8 MB 固定扫描死线**，定位很慢时会提供字节位置续读。特别长的单行改用 `offsetBytes` / `limitBytes` 从中间读取，不会假装已经读完整行。每次按字节最多读取 32 KB，返回给模型的文本仍受 8000 字符上限保护；不传任何分页参数时保持原先的默认行为。`grep` 的 `path` 指向单个文件时就只搜它自己，不用先绕到父目录。
+
+文件类工具（`read` / `write` / `edit` / `glob` / `grep` / `ls`）会把**多传的参数当错误报出来**，并列出可用参数。参数写错比悄悄忽略好：模型传一个不存在的 `offset`，静默忽略会让它以为读到了别处，然后基于错的内容继续干活。`shell` 保持宽松 —— Worker 的 shell 包装层正是靠「多余字段不报错」来强制前台的。
 
 `shell-output` 与 `shell-kill` 不是新能力，是 `shell` 那半个功能的收尾。`shell` 带 `background:true` 时立刻返回一个任务编号（`job-1`），进程继续跑：
 
@@ -235,7 +241,7 @@ shell-kill { job_id: "job-1" }
 
 路径解析统一成一条规则：相对路径以默认目录为基准，绝对路径直接使用，`../` 可以走出默认目录；符号链接、junction 解析到实际目标，读写落在目标位置。这里**没有目录边界**——能访问什么由启动 Agent 的操作系统账户决定（见 [ADR-0019](./docs/adr/0019-full-access-is-the-only-mode.md)）。文件读写使用解析后的真实路径，编辑通过同一个句柄读写；写入/编辑在提交修改前复查取消信号，POSIX 文件打开也避免跟随末端符号链接。**已知边界：这不能完全消除恶意并发替换父目录的 TOCTOU 竞态，Windows 不支持同样的末端链接打开标志；仍应按 Trusted Local Agent 使用。**
 
-已知边界：`glob` 只认 `*`、`**`、`?` 三种通配，`{}`、`[]` 按字面匹配（这是刻意的，见下）；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中，单次最多访问 20 000 个目录项，符号链接不跟随；`read` 最多读 32 KB，`grep` 按字节读到 1 MB 为止、超出的文件跳过，`edit` 不接受超过 2 MB 的文件（读不全就拒绝，绝不拿半截内容覆盖），`ls` 最多展示 500 条、扫到 20 000 项就停。`grep` 的正则匹配另有 2 秒预算（只算匹配时间，不算读文件），超时会杀掉匹配线程并标注结果不完整。目录用 `opendir` 边读边收，预算限制的是真正读了多少项，而不是 `readdir` 之后切了多少项；所有截断、跳过、没搜完的统计都保留在结果末尾，不会被结果自己的长度上限吃掉。扫描提前停手时会明说 `results may be incomplete`，不会声称拿到了全局排序结果。
+已知边界：`glob` 只认 `*`、`**`、`?` 三种通配，`{}`、`[]` 按字面匹配（这是刻意的，见下）；`glob` / `grep` 默认跳过 `.git` 和 `node_modules`、最多回 200 条命中，单次最多访问 20 000 个目录项，符号链接不跟随；`read` 默认一次读 32 KB（行号扫描不设固定文件大小限制、字节分页每次最多 32 KB），`grep` 按字节读到 1 MB 为止、超出的文件跳过，`edit` 不接受超过 2 MB 的文件（读不全就拒绝，绝不拿半截内容覆盖），`ls` 最多展示 500 条、扫到 20 000 项就停。`grep` 的正则匹配另有 2 秒预算（只算匹配时间，不算读文件），超时会杀掉匹配线程并标注结果不完整。目录用 `opendir` 边读边收，预算限制的是真正读了多少项，而不是 `readdir` 之后切了多少项；所有截断、跳过、没搜完的统计都保留在结果末尾，不会被结果自己的长度上限吃掉。扫描提前停手时会明说 `results may be incomplete`，不会声称拿到了全局排序结果。
 
 `grep(path)` 使用经过真实路径校验的物理起点，不再沿可变的路径别名展开目录；深层目录在枚举与打开之间仍存在已知 TOCTOU，完全隔离需要 OS 级目录句柄约束。
 
@@ -248,6 +254,43 @@ shell-kill { job_id: "job-1" }
 Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功。启动失败、非零退出或卡住时，尝试 `child.kill()` 停掉直接子进程，**并以错误报告「进程树清理未确认，可能仍有后代运行」**，而不是冒充清理完成。停止后的子进程管道最多等待 4 秒；如果 stdout/stderr 被残留后代持续占用，也要终止等待、明确报错。注意：Node 自带的 `child.kill()` 不能保证 Windows 孙进程退出；自动故障注入与真实 Windows 进程树超时/取消测试也不能证明所有异常环境均可回收。
 
 **文件工具与 `shell` 的能力是一致的**：两者都以启动 Agent 的操作系统账户执行，都能读写任意有权访问的位置、都能出网。真正的限制来自操作系统账户与系统安全策略，不来自 agent-Kernel；需要更强隔离时用容器、独立用户或只读挂载，而不是指望工具层的字符串判断（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）。
+
+## 委派给子 Agent
+
+主 Agent 可以把一件相对独立的子任务交给一个**临时子 Agent**：它有自己的 `messages[]`、自己的工具注册表、自己的预算，跑完只交回一份最终报告 —— 主 Agent 看不到它内部的对话轮次。
+
+```text
+run_subagent { task: "调查 src/core/agent.ts 的取消处理，指出遗漏", mode: "explore" }
+→ [Subagent completed]
+  mode: explore
+  requests: 4
+  tool_calls: 3
+  tokens: 12000
+  unknown_usage: 0
+
+  Final report:
+  ……
+```
+
+两种角色，工具范围不同：
+
+| 角色 | 能用的工具 | 适合什么 |
+| --- | --- | --- |
+| `explore`（默认） | `read` / `glob` / `grep` / `ls` | 查代码、找线索、给结论；不产生文件副作用 |
+| `execute` | 上面四个 + `write` / `edit` / `shell` + 自己的 `todo_write` | 明确的开发子任务：改文件、跑测试 |
+
+几条必须知道的边界：
+
+- **它看不到当前对话。** 背景、路径、约束都要写进 `task`（最多 8000 字符）；子 Agent 也拿不到你的 Todo 清单。
+- **`explore` 不是沙箱。** 它只是工具层的只读角色；完全访问下 `read` 仍能读当前账户有权读的任何位置。
+- **`execute` 的 `shell` 只能前台跑。** 模型收到的说明书里根本没有 `background`，传了也按前台执行 —— 子 Agent 起一个后台进程就结束，会留下没人收尾的任务。
+- **一次只跑一个，而且是同步的。** 父 Agent 在等它；按 `Ctrl+C` 时父子一起停（共用同一个取消信号）。
+- **预算更窄**：20 步、30 次工具调用、100000 token，并且取「你配置的值」与这个上限的较小者。子 Agent 的花销**不计入**父 Agent 的 `[usage]`，它自己的统计在那条工具结果里。
+- **失败不回滚。** `execute` 改完文件后失败，改动仍在；失败结果里会写明这一点。
+- **不能再往下委派。** 子 Agent 的工具表里没有 `run_subagent`。
+- **进程树没确认收干净时不算成功。** 委派会抛 `ProcessCleanupError`，父 Agent 进入「禁用后续工具、只许收尾」的状态，而不是接着改文件。
+
+一个循环、多个独立 Agent —— 不复制历史，也不建第二套循环。取舍记在 [ADR-0025](./docs/adr/0025-subagent-uses-fresh-agent-instance.md)。
 
 ## 完全访问（Full Access）
 
@@ -276,7 +319,7 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 
 ## 轻量 TUI v0.3
 
-`npm run agent -- --tui`（不带任务时默认就是这个）在同一个 Agent 会话外面套一个聊天式终端界面，它是唯一的交互模式：原来的逐行 REPL 和 `--repl` 开关已经移除。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。布局与验收规则见 [TUI v0.3 规范](./docs/design/tui-v0.3-layout-spec.md)（历史设计文档；其中权限模式与审批部分已删除）。
+`npm run agent -- --tui`（不带任务时默认就是这个）在同一个 Agent 会话外面套一个聊天式终端界面，它是唯一的交互模式：原来的逐行 REPL 和 `--repl` 开关已经移除。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。展示分层见 [设计原则](./docs/design/display-layers.md)，主屏追加的决定和原因见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)。
 
 布局：
 
@@ -311,9 +354,9 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 
 资源边界：单次模型响应（JSON / SSE，按解压后的响应体计）最多读取 **8 MiB**，超限明确报错并关闭连接；HTTP 错误只读取前 500 字符详情，SSE 收到 `[DONE]` 就结束读取。输入历史只读取文件末尾最多 **8 MiB**，从中选取最近 500 条有效记录，切口处的残行跳过，磁盘上的旧记录保留。取舍见 [ADR-0022](./docs/adr/0022-bound-external-response-and-history-reads.md)。
 
-统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
+统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。具体边界见 [展示分层](./docs/design/display-layers.md)。
 
-已知边界：完整布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；主视图不捕获鼠标，历史靠终端原生滚动；Run log 保留最近 2000 条逻辑行；暂不支持多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
+已知边界：完整布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；主视图不捕获鼠标，历史靠终端原生滚动；Run log 保留最近 2000 条逻辑行；可通过括号粘贴提交多行内容，实际支持受终端协议影响。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。显示原则及限制见 [展示分层](./docs/design/display-layers.md)。
 
 ## 配置
 
@@ -387,9 +430,9 @@ npm run eval:cross-day   # 在不同自然日各运行 3 轮，固定使用 eac7
 | --- | --- | --- | --- | --- |
 | **120/120（6/6 轮 20/20）** | 89.5 | 85.5 | 118,817（111,458.5 + 7,277.5） | 70.8s |
 
-6 轮全部满分。相比上一版提示词（119/120、101.5 请求、139,040 tokens）：请求 -11.8%、tokens -14.5%、墙钟 -10.4%，轮间 token 从 118k–168k（1.42×）收窄到 103k–126k（1.22×）。收益来自系统提示词里新增的一行——要求模型一次只跑一条简单 shell 命令，减少 `|`、`rm` 之类的语法失败重试（见 [提示词 v2 报告](./docs/reports/2026-11-05-prompt-v2.md)）。逐任务波动见 [eval/baseline.md](./eval/baseline.md)：`13-callback-to-promise` 3.76×、`20-fix-email-regex` 2.51×、`08-extract-duplication` 1.40×，剩余波动仍来自模型自己的路径选择，成本要按中位数加余量估。第一阶段验收基线是 DeepSeek-V4.1-Flash：20/20、178 请求、200 工具调用、389,074 tokens、66.5s。
+6 轮全部满分。相比上一版提示词（119/120、101.5 请求、139,040 tokens）：请求 -11.8%、tokens -14.5%、墙钟 -10.4%，轮间 token 从 118k–168k（1.42×）收窄到 103k–126k（1.22×）。收益来自系统提示词里新增的一行——要求模型一次只跑一条简单 shell 命令，减少 `|`、`rm` 之类的语法失败重试（采用该约束是为了降低 Shell 语法失败与额外模型重试；见 [评测结论](./eval/baseline.md)）。逐任务波动见 [eval/baseline.md](./eval/baseline.md)：`13-callback-to-promise` 3.76×、`20-fix-email-regex` 2.51×、`08-extract-duplication` 1.40×，剩余波动仍来自模型自己的路径选择，成本要按中位数加余量估。第一阶段验收基线是 DeepSeek-V4.1-Flash：20/20、178 请求、200 工具调用、389,074 tokens、66.5s。
 
-跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。跨天基线现在钉在 `eac798d`（prompt v2），v2 序列从 2026-11-06 起跑，跑满三个自然日再写结论；v1（`4edd0e4`）的 11-05 数据只作历史，归档在 `eval/baselines/cross-day-v1-4edd0e4/`。
+跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。跨天基线现在钉在 `eac798d`（prompt v2），v2 序列已归档 2026-11-06 和 2026-11-07 两个自然日；第三天尚无归档，不能宣称三天跨天验证完成；v1（`4edd0e4`）的 11-05 数据只作历史，归档在 `eval/baselines/cross-day-v1-4edd0e4/`。
 
 关于耗时与成本：`hy3` 单任务中位数约 12.4 秒、4.5 次模型请求，其中**请求与请求之间的等待几乎全是模型往返**，工具执行加内核开销占比很小。省时间主要靠任务之间并发（默认 `--jobs 4`，20 个任务墙钟约 71 秒）；省钱主要靠选模型（输入 token 占 93.8%，成本来自反复重发完整对话历史）、少让模型走冤枉路，以及收紧 `MAX_TOTAL_TOKENS` / `MAX_OUTPUT_TOKENS`。上下文压缩这一阶段刻意不做，先用多轮评测判断它是不是真的瓶颈。
 
@@ -407,17 +450,19 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 - 会话持久化到磁盘：进程内的多轮 TUI 已经有了，跨进程恢复 transcript 没有做
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
-- 鼠标、多行输入和 Hooks 尚未做；TUI 主视图只追加、`Ctrl+T` 回看并展开历史，仍保留底部输入区、`Ctrl+E/O/G` 逐层浏览及 `/` Slash 自动补全（早期布局决策见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)，主屏渲染见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)）。
+- 不捕获鼠标；TUI 主视图只追加、`Ctrl+T` 进入历史详情，底部输入保留 `Ctrl+E/O/G` 与 Slash 补全；括号粘贴支持多行，但不能保证所有终端兼容。工具 Hooks 已实现（见 [ADR-0020](./docs/adr/0020-tool-hooks-live-in-the-registry.md)），不属于未做事项。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
+- 多个子 Agent 并行、Agent 团队、Mailbox、Worktree、子 Agent 持久化与恢复、子 Agent 后台执行：第 6 课只做「一次一个、同步、跑完即丢」的委派
 - 操作系统级隔离：agent-Kernel 只有完全访问，工具与 Shell 都以启动者的权限执行（见 [ADR-0019](./docs/adr/0019-full-access-is-the-only-mode.md) 与 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、非 TUI 模式的自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）
 
 ## 文档与技能
 
-- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、注释、模块形状、命名、错误处理、防御性编程、测试）。
-- [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、项目导航（代码地图）、测试放哪。
-- [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Core、Step、Transcript、ERROR text……）。
-- [docs/permission-design.md](./docs/permission-design.md)：当前权限与访问设计的实现说明（只有完全访问）。
-- [docs/adr/](./docs/adr/)：已经定下、别再重新讨论的决定。
-- [docs/reports/](./docs/reports/)：阶段修复报告（问题、方案、测试、CI 与评测基线）。
-- `.agents/skills/`：装好的 agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：长期工程规范。
+- [AGENTS.md](./AGENTS.md)：Agent 入口、代码地图、测试分工。
+- [GLOSSARY.md](./GLOSSARY.md)：统一领域词汇。
+- [docs/adr/](./docs/adr/)：已经采用的架构决定以及为什么这样选；历史 ADR 有被取代标记。
+- [docs/design/display-layers.md](./docs/design/display-layers.md)：展示分层原则。
+- [docs/design/reliability-decisions.md](./docs/design/reliability-decisions.md)：稳定性设计结论与已知风险。
+- [eval/baseline.md](./eval/baseline.md)：可复现的评测结论；原始结果保留在 `eval/baselines/`。
+- `.agents/skills/`：已安装的 Agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。

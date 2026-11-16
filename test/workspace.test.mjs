@@ -10,9 +10,12 @@
  *   - 写与改：原子提交后的前后快照、超大文件不给快照、取消不截断原文件、保留权限与 BOM、
  *     符号链接换向不碰外部文件、`edit` 唯一命中 / 多处拒绝 / 空片段拒绝 / CRLF 兼容。
  *   - 读与列：超长截断并说明、正好等于上限不算截断、半个 UTF-8 字符不出现、
- *     空目录显式提示、条目超限先排序再截断。
+ *     空目录显式提示、条目超限先排序再截断；`read` 的 `offset` / `limit` 行窗口
+ *     （中间段、越界、CRLF 原样、跨块不切行、参数非法、取消、受输出上限约束时下一段不漏行、
+ *     超大文件可续读、超长单行字节游标、UTF-8 边界与取消）。
  *   - 搜索：`glob` 的模式、搜索根与重复通配符有界匹配；`grep` 的正则 / `fixed` / flags / 超长行 / 超大文件跳过 /
- *     扫描预算用尽 / 灾难性回溯被超时打断 / 取消打断匹配线程 / 跳过 `node_modules` 与 `.git`。
+ *     扫描预算用尽 / 灾难性回溯被超时打断 / 取消打断匹配线程 / 跳过 `node_modules` 与 `.git` /
+ *     `path` 指向单个文件时只搜它自己。
  *   - 跑命令：exit code 与两路输出、8000 字符上限、多字节分片解码、超时与取消后整棵进程树被杀、
  *     Windows `taskkill` 的各种失败路径。
  *   - 后台任务：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、
@@ -1473,6 +1476,309 @@ test("shell-output：被切断的多字节字符不会读成替换字符，补�
     } finally {
       await stopJob(workspace, pid);
     }
+  });
+});
+
+// ── read 的行窗口（offset / limit）────────────────────────────────────────────
+// 为什么要有这组：以前 read 只能从头读一屏，模型想看文件后半段就只能反复读同一个路径，
+// 拿回的还是同一段开头 —— 它以为在翻页，实际在原地打转，最后把预算烧光。
+
+test("read：不传 offset / limit 时行为与以前完全一致", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "plain.txt"), "first\nsecond\n");
+    assert.equal(await new Workspace({ root }).read("plain.txt"), "first\nsecond\n");
+  });
+});
+
+test("read：offset + limit 读中间一段，并说清怎么继续读", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "lines.txt"), "L1\nL2\nL3\nL4\nL5\n");
+    const workspace = new Workspace({ root });
+
+    // 只给 offset：从第 3 行读到末尾，行数已知，不该出现「后面还有」。
+    assert.equal(await workspace.read("lines.txt", { offset: 3 }), "L3\nL4\nL5");
+
+    // offset + limit 停在中间：必须告诉模型下一段的 offset。
+    assert.equal(
+      await workspace.read("lines.txt", { offset: 2, limit: 2 }),
+      "L2\nL3\n… [lines 2-3; more lines follow, continue with offset=4]",
+    );
+
+    // limit 刚好读到末尾：不能谎称「后面还有」。
+    assert.equal(await workspace.read("lines.txt", { offset: 4, limit: 5 }), "L4\nL5");
+  });
+});
+
+test("read：行窗口与无窗口读法对文件开头 BOM 的处理必须一致", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "bom.txt"), "\uFEFFfirst\nsecond\n");
+    const workspace = new Workspace({ root });
+
+    // 无窗口路径用 TextDecoder，默认剥掉 BOM。
+    assert.equal(await workspace.read("bom.txt"), "first\nsecond\n");
+    // 窗口路径同样必须剥掉：同一个文件的第一行不能在两条读法下长得不一样。
+    // 差一个 U+FEFF，模型拿这段去 write 就会凭空多写一个 BOM，去比对又对不上。
+    assert.equal(await workspace.read("bom.txt", { offset: 1 }), "first\nsecond");
+
+    // Windows 上最常见的组合：BOM + CRLF。BOM 剥掉，`\r` 一个不少。
+    await writeFile(path.join(root, "bom-crlf.txt"), "\uFEFFfirst\r\nsecond\r\n");
+    assert.equal(await workspace.read("bom-crlf.txt", { offset: 1 }), "first\r\nsecond\r");
+  });
+});
+
+test("read：offset 越过文件末尾时明说没有内容，并给出总行数", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "short.txt"), "a\nb\n");
+    const workspace = new Workspace({ root });
+
+    assert.equal(
+      await workspace.read("short.txt", { offset: 9 }),
+      "(no lines to read at offset 9) The file has 2 line(s).",
+    );
+  });
+});
+
+test("read：窗口里的 CRLF 行尾原样保留，能直接拿去 edit 精确替换", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "crlf.txt"), "one\r\ntwo\r\nthree\r\n");
+    const workspace = new Workspace({ root });
+
+    // 读到文件末尾，所以没有「后面还有」的提示，内容就是原样的 CRLF 片段。
+    const slice = await workspace.read("crlf.txt", { offset: 2, limit: 2 });
+    assert.equal(slice, "two\r\nthree\r");
+    // 少一个 \r 就匹配不上原文件 —— 这正是 edit 的命中要求。
+    assert.equal(await workspace.edit("crlf.txt", "two\r", "TWO\r"), "edited crlf.txt (17 → 17 chars)");
+  });
+});
+
+test("read：行窗口跨读取块边界时不切行、不丢行", async () => {
+  await withWorkspace(async (root) => {
+    // 每行 40 字符、共 3000 行 ≈ 120 KB，远大于单次 64 KB 的块，必然跨块。
+    const lines = Array.from({ length: 3000 }, (_, index) => `line-${index + 1}`.padEnd(40, "."));
+    await writeFile(path.join(root, "big.txt"), `${lines.join("\n")}\n`);
+
+    const slice = await new Workspace({ root }).read("big.txt", { offset: 2999, limit: 2 });
+    assert.equal(slice, `${lines[2998]}\n${lines[2999]}`);
+  });
+});
+
+test("read：offset / limit 写错直接报错，不悄悄取整", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "x.txt"), "a\n");
+    const workspace = new Workspace({ root });
+
+    await assert.rejects(workspace.read("x.txt", { offset: 0 }), /offset must be a positive integer line number, got 0/);
+    await assert.rejects(workspace.read("x.txt", { offset: 1.5 }), /offset must be a positive integer/);
+    await assert.rejects(workspace.read("x.txt", { limit: -2 }), /limit must be a positive integer/);
+  });
+});
+
+test("read：行窗口读到一半被取消就停下，不把整个文件读完", async () => {
+  await withWorkspace(async (root) => {
+    const lines = Array.from({ length: 3000 }, (_, index) => `line-${index + 1}`.padEnd(40, "."));
+    await writeFile(path.join(root, "big.txt"), `${lines.join("\n")}\n`);
+    const controller = new AbortController();
+    const workspace = new Workspace({ root, signal: controller.signal });
+    controller.abort(new Error("test cancel"));
+
+    await assert.rejects(workspace.read("big.txt", { offset: 1 }), /cancelled while (locating the file line|reading the byte window)/);
+  });
+});
+
+// ── grep 接受单个文件 ─────────────────────────────────────────────────────────
+
+test("grep：path 指向单个文件时只搜这个文件", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "a.ts"), "const target = 1;\n");
+    await writeFile(path.join(root, "b.ts"), "const target = 2;\n");
+    const workspace = new Workspace({ root });
+
+    assert.equal(await workspace.grep("target", "a.ts"), "a.ts:1: const target = 1;");
+    // 目录仍然递归：行为不能被单文件支持改坏。
+    assert.equal(
+      await workspace.grep("target", "."),
+      "a.ts:1: const target = 1;\nb.ts:1: const target = 2;",
+    );
+  });
+});
+
+test("grep：单文件没有命中时给出明确提示", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "a.ts"), "nothing here\n");
+    assert.equal(await new Workspace({ root }).grep("missing", "a.ts"), "(no matches)");
+  });
+});
+
+test("read：行窗口受 8000 字符预算约束，并提供字节续读位置", async () => {
+  await withWorkspace(async (root) => {
+    // 一行 20000 字符：limit=1 只取一行，但仍然必须被输出上限截住。
+    await writeFile(path.join(root, "long.txt"), "x".repeat(20_000) + "\n");
+    const slice = await new Workspace({ root }).read("long.txt", { offset: 1, limit: 1 });
+
+    assert.ok(slice.length < 20_000, "不能把两万字原样塞给模型");
+    assert.match(slice, /continue with offsetBytes=\d+/);
+  });
+});
+
+test("read：第 94000 行超过旧 8 MB 限制后仍可完整读取", async () => {
+  await withWorkspace(async (root) => {
+    const row = "y".repeat(99);
+    const content = Array.from({ length: 95_000 }, () => row).join("\n") + "\n";
+    await writeFile(path.join(root, "huge.log"), content);
+    const page = await new Workspace({ root }).read("huge.log", { offset: 94_000, limit: 1 });
+    assert.ok(page.startsWith(row + "\n"), "目标行正文必须完整返回");
+    assert.match(page, /continue with offset=94001/, "后面还有行时应提供下一页行号");
+  });
+});
+
+
+// ── 分页连续性：受输出上限约束时不能漏行 ──────────────────────────────────────
+// 曾经的 bug：窗口按行数收（100 行），clip 之后按字符截（只出 40 行），
+// 但尾注仍按第 101 行提示下一段 —— 中间 60 行永远读不到。
+
+/** 造一份「每行 200 字符」的文件，保证一屏 8000 字符装不下 100 行。 */
+function wideLines(count) {
+  return Array.from({ length: count }, (_, index) =>
+    ("L" + String(index + 1).padStart(3, "0") + "-").padEnd(200, "."));
+}
+
+/** 把一页里的正文和尾注拆开；没有尾注就是整页正文。 */
+function pageBody(page) {
+  const index = page.indexOf("\n… [lines ");
+  return index === -1 ? page : page.slice(0, index);
+}
+
+test("read：输出上限截断时，下一段 offset 从真正给出去的行算起", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "wide.txt"), wideLines(200).join("\n") + "\n");
+    const page = await new Workspace({ root }).read("wide.txt", { offset: 1, limit: 100 });
+
+    // 上限仍然生效。
+    assert.ok(page.length <= 8000, "一页不能超过 8000 字符，实际 " + page.length);
+    // 正文里真正拿到了多少行，尾注就必须从它的下一行开始。
+    const body = pageBody(page);
+    const returned = body.split("\n").length;
+    const hinted = Number(page.match(/offset=(\d+)/)[1]);
+    assert.equal(hinted, returned + 1, "提示的下一段 offset 必须紧接最后一行，不能跳过被截掉的行");
+    assert.equal(body.split("\n").at(-1).slice(0, 4), "L" + String(returned).padStart(3, "0"));
+  });
+});
+
+test("read：连续分页拼接后与原文完全一致，不漏行、不重复", async () => {
+  await withWorkspace(async (root) => {
+    const original = wideLines(200).join("\n") + "\n";
+    await writeFile(path.join(root, "wide.txt"), original);
+    const workspace = new Workspace({ root });
+
+    const pages = [];
+    let offset = 1;
+    for (let guard = 0; guard < 40; guard++) {
+      const page = await workspace.read("wide.txt", { offset, limit: 100 });
+      pages.push(pageBody(page));
+      const hint = page.match(/offset=(\d+)/);
+      // 最后一页不能谎报「后面还有」。
+      if (hint === null) break;
+      offset = Number(hint[1]);
+    }
+
+    assert.ok(pages.length > 1, "这份文件应该需要多页");
+    assert.equal(pages.join("\n") + "\n", original);
+  });
+});
+
+test("read：超长单行先字节续读完，再按行号读取下一行", async () => {
+  await withWorkspace(async (root) => {
+    const huge = "H".repeat(20_000);
+    await writeFile(path.join(root, "one.txt"), huge + "\nSECOND\n");
+    const workspace = new Workspace({ root });
+
+    const page = await workspace.read("one.txt", { offset: 1, limit: 1 });
+    assert.ok(page.startsWith("HHHH"), "至少要给出这一行的开头");
+    const cursor = Number(/continue with offsetBytes=(\d+)/.exec(page)?.[1]);
+    assert.ok(cursor > 0 && cursor < 20_000, "这行剩余部分不能被当成已读完");
+    const next = await workspace.read("one.txt", { offsetBytes: cursor, limitBytes: 20 });
+    assert.match(next, /^H{20}/);
+    assert.equal(await workspace.read("one.txt", { offset: 2, limit: 1 }), "SECOND");
+  });
+});
+
+test("read：不传分页参数时仍是一次性读到 8000 字符上限", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "wide.txt"), wideLines(200).join("\n") + "\n");
+    const text = await new Workspace({ root }).read("wide.txt");
+
+    // 旧路径：没有「下一段」提示，只有自己的截断标记与字节上限说明。
+    assert.doesNotMatch(text, /continue with offset=/);
+    assert.match(text, /… \[truncated \d+ chars\]/);
+    assert.match(text, /… \[stopped after 32768 bytes\]$/);
+  });
+});
+
+// ── 大文件与超长单行：没有固定扫描字节死线，仍有有界输出 ────────────
+test("read：超过 8 MB 的单行按字节续读，不丢失同一行的后半段", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
+    const workspace = new Workspace({ root });
+    const first = await workspace.read("long.txt", { offset: 1, limit: 1 });
+    assert.ok(first.startsWith("XXXX"));
+    const cursor = Number(/offsetBytes=(\d+)/.exec(first)?.[1]);
+    assert.ok(cursor > 0 && cursor < 8_000_001);
+    const second = await workspace.read("long.txt", { offsetBytes: cursor, limitBytes: 20 });
+    assert.match(second, /^X{20}/);
+    assert.match(second, /continue with offsetBytes=/);
+  });
+});
+
+test("read：超长行之前的普通行可继续以行号分页", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "tail.log"), "a\nb\nc\n" + "X".repeat(8_000_100));
+    const workspace = new Workspace({ root });
+    const first = await workspace.read("tail.log", { offset: 1, limit: 3 });
+    assert.match(first, /^a\nb\nc\n/);
+    assert.match(first, /continue with offset=4/);
+    const second = await workspace.read("tail.log", { offset: 4 });
+    assert.ok(second.startsWith("XXXX"));
+    assert.match(second, /continue with offsetBytes=/);
+  });
+});
+
+test("read：超长单行之后不存在的行明确说没有，不假装遇到扫描上限", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
+    const page = await new Workspace({ root }).read("long.txt", { offset: 2, limit: 1 });
+    assert.match(page, /no lines to read at offset 2/);
+    assert.match(page, /1 line\(s\)/);
+  });
+});
+
+test("read：字节分页跨过中文和 emoji，不丢字、不切断 UTF-8", async () => {
+  await withWorkspace(async (root) => {
+    const content = "中😀".repeat(6000);
+    await writeFile(path.join(root, "utf8.txt"), content);
+    const workspace = new Workspace({ root });
+    const parts = [];
+    let offsetBytes = 0;
+    for (let round = 0; round < 12; round++) {
+      const page = await workspace.read("utf8.txt", { offsetBytes });
+      const tail = page.indexOf("\n… [more bytes follow, continue with offsetBytes=");
+      parts.push(tail === -1 ? page : page.slice(0, tail));
+      const next = /continue with offsetBytes=(\d+)/.exec(page);
+      if (next === null) break;
+      const n = Number(next[1]);
+      assert.ok(n > offsetBytes);
+      offsetBytes = n;
+    }
+    assert.equal(parts.join(""), content);
+  });
+});
+
+test("read：字节游标不允许切在中文字符中间，参数错误必须明确拒绝", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "utf8.txt"), "中文\n");
+    const workspace = new Workspace({ root });
+    await assert.rejects(() => workspace.read("utf8.txt", { offsetBytes: 1 }), /splits a UTF-8 character/);
+    await assert.rejects(() => workspace.read("utf8.txt", { offsetBytes: 0, limitBytes: 1 }), /too small/);
+    await assert.rejects(() => workspace.read("utf8.txt", { offset: 1, offsetBytes: 0 }), /cannot be combined/);
   });
 });
 

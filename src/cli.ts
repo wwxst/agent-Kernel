@@ -14,14 +14,16 @@
  *   - `parseArgs()`：命令行参数；`--permission` / `--repl` 已移除，传入即报错。
  *   - `loadConfig()`：环境变量 → `Config`；占位 API Key 在发请求前就拒绝。
  *   - `createAgent()`：把客户端、工具注册表、系统提示、预算、回调，以及可选的工具调用日志 Hook
- *     装成一个 `Agent`。
+ *     装成一个 `Agent`；`role` 决定装成主 Agent、只读调查子 Agent 还是可写执行子 Agent。
+ *   - `runSubagent()`：跑一次委派 —— 新建子 Agent、跑一次 Run、只把最终结果和统计交回来。
  *   - `runTurn()`：跑一次任务并打印结果；`printUsage()`：打印统计。
  *   - `tuiSession()`：TUI 会话，含 `/help`、`/reset` 等命令的分发。
  *   - `describeForUser()`：把模型类错误翻成「标题 + 建议 + 详情」三段。
  *   - 文件末尾：顶层入口 —— 决定进 TUI 还是单次任务，接 SIGINT / SIGTERM，设置退出码。
  *
- * 模块关系：依赖 `core/`（`Agent`、`ToolRegistry`）、`tools/`（`Workspace`、`createWorkspaceTools`）、
- * `model/`（`Llm`、项目指令）、`tools/todo.ts`（任务计划）、`ui/`（`Tui`、`RunPresenter`）、`protocol/`。
+ * 模块关系：依赖 `core/`（`Agent`、`ToolRegistry`）、`tools/`（`Workspace`、`createWorkspaceTools`、
+ * `tools/subagent.ts`）、`model/`（`Llm`、项目指令）、`tools/todo.ts`（任务计划）、
+ * `ui/`（`Tui`、`RunPresenter`）、`protocol/`。
  * 由 `bin/agent.mjs`（`npm link` 后的全局命令）与 `test/cli.test.mjs` 启动。
  */
 import { statSync } from "node:fs";
@@ -40,6 +42,19 @@ import { Tui, parseTuiColorMode, parseTuiTheme, uiLanguageFromLocale } from "./u
 import type { ToolCall } from "./protocol/types.ts";
 import { Workspace, createWorkspaceTools } from "./tools/workspace.ts";
 import { TodoManager, createTodoTool, TODO_PLANNING_GUIDANCE } from "./tools/todo.ts";
+import {
+  SUBAGENT_GUIDANCE,
+  SUBAGENT_MAX_STEPS,
+  SUBAGENT_MAX_TOOL_CALLS,
+  SUBAGENT_MAX_TOTAL_TOKENS,
+  WORKER_SUBAGENT_GUIDANCE,
+  createExplorerSystemPrompt,
+  createSubagentTool,
+  subagentWorkspaceContext,
+  throwIfProcessesUnverified,
+  toolsForSubagentRole,
+} from "./tools/subagent.ts";
+import type { SubagentMode, SubagentOutcome, SubagentRequest, SubagentStats } from "./tools/subagent.ts";
 import { projectInstructionsPrompt, readProjectInstructions } from "./model/project-instructions.ts";
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
@@ -290,35 +305,70 @@ interface AgentCallbacks {
 }
 
 /**
+ * 子 Agent 的显示回调：全部是空操作。
+ *
+ * 为什么不能「什么都不传」：`createAgent` 会给缺省回调填上写 `console` 或 `activePresenter` 的实现，
+ * 子 Agent 的流式正文和工具进度就会混进主 Agent 的输出。显式给空函数，
+ * 才是真的「子 Agent 静默执行」—— 它的过程只体现在父 Agent 的那一条工具结果里。
+ * 顺带一个效果：没有 `onRetry`，子 Agent 的模型重试就是关的（第一版如此）。
+ */
+const SILENT_CALLBACKS: AgentCallbacks = {
+  onRequestStart: () => {},
+  onToolCall: () => {},
+  onToolResult: () => {},
+  onDelta: () => {},
+};
+
+/** 装成哪种 Agent：主 Agent，或两种子 Agent 角色之一。 */
+type AgentRole = "main" | SubagentMode;
+
+/**
  * 组装一个 Agent。TUI 的 /reset 也走这里 —— 换一个全新的 Agent，
  * 但复用同一份配置和取消信号（Ctrl-C 应该停掉整个进程，而不是只停一轮）。
  *
  * signal 是这次会话唯一的取消源：同一个 controller 交给 Agent、Llm、Workspace，
  * 三处各自响应 —— 循环停手、HTTP 断开、进程树被杀。取消链上没有第二个管理器。
+ * 子 Agent 用的是同一个 signal，所以父 Agent 被取消时，子 Agent 的模型请求和 shell 一起停。
  *
  * `announce: false` 只给 TUI 用：TUI 头部/页脚已经显示模型/工作区，不再往运行记录里
  * 打一遍启动 banner。
+ *
+ * `role` 决定装成谁：`main` 有全部工具加 `run_subagent`；`explore` 只有四个只读工具；
+ * `execute` 多出写、改、前台 shell 和它自己的任务清单。子 Agent 一律另建 `Workspace`，
+ * 不共享父 Agent 的后台任务状态 —— 但文件系统是同一个，这一点不会被隔离。
  */
 function createAgent(
   config: Config,
   signal: AbortSignal,
   options: { announce?: boolean; callbacks?: AgentCallbacks; narrateProgress?: boolean;
+    role?: AgentRole; silent?: boolean;
     onEditCommitted?: (path: string, before: string, after: string) => void;
     onWriteCommitted?: (path: string, before: string | undefined, after: string | undefined, created: boolean) => void;
     onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
+  const role: AgentRole = options.role ?? "main";
   // 工具调用日志：设了 AGENT_TOOL_LOG 才登记 Hook，不设就完全没变化（空执行器）。
   // 它挂在唯一的执行入口上，所以所有内置工具自动全部记到，不用逐个接线。
+  // 子 Agent 各建一份：同一个日志文件，但它自己的注册表与 Hook。
   const toolLogPath = process.env.AGENT_TOOL_LOG?.trim() ?? "";
   const hooks = toolLogPath === "" ? undefined : new ToolHooks(createToolLogHooks(toolLogPath));
 
   const workspace = new Workspace({ root: config.root, timeoutMs: config.toolTimeoutMs, signal,
     onEditCommitted: options.onEditCommitted, onWriteCommitted: options.onWriteCommitted,
     onImageRead: options.onImageRead });
-  const tools = new ToolRegistry(
-    [...createWorkspaceTools(workspace), createTodoTool(new TodoManager())],
-    hooks,
-  );
+  const workspaceTools = createWorkspaceTools(workspace);
+  const tools = role === "main"
+    ? new ToolRegistry([
+      ...workspaceTools,
+      createTodoTool(new TodoManager()),
+      createSubagentTool((request) => runSubagent(config, signal, request)),
+    ], hooks)
+    : new ToolRegistry([
+      // 按角色挑工具；Worker 的 shell 在这里被改成纯前台（Schema 里没有 background）。
+      ...toolsForSubagentRole(workspaceTools, role),
+      // Worker 有自己的一份任务清单，和父 Agent 的清单互不相干。
+      ...(role === "execute" ? [createTodoTool(new TodoManager())] : []),
+    ], hooks);
 
   if (options.announce !== false) {
     // 中文对照：默认目录：… ／ 模型：… ／ 访问级别：… ／ 工具：…
@@ -331,7 +381,7 @@ function createAgent(
     console.log("");
   }
 
-  const callbacks = options.callbacks;
+  const callbacks = options.silent === true ? SILENT_CALLBACKS : options.callbacks;
 
   return new Agent({
     llm: new Llm({
@@ -341,18 +391,37 @@ function createAgent(
       maxOutputTokens: config.maxOutputTokens,
       signal,
       // 交互式 CLI 用流式：模型一开口就能看到字，不必等整段生成完。
-      stream: true,
+      // 子 Agent 不往主界面输出，走非流式：少一条解析路径，也不会误把增量递出去。
+      stream: role === "main",
     }),
     tools,
     // 函数在每次请求前求值：项目指令变化后，下一次请求立即看到新内容。
     systemPrompt: () => {
       // AGENTS.md 可能被本轮工具或用户修改；每次请求重新读取，不能闭包缓存旧正文。
       const projectInstructions = readProjectInstructions(config.root);
-      return `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}${projectInstructions === undefined ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`}${options.narrateProgress ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
+      const projectBlock = projectInstructions === undefined
+        ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`;
+      // 三种角色三份提示：只读角色绝不能拿到「你可以改文件、跑命令」的默认提示，
+      // 否则提示与实际工具不一致，模型会去调它根本没有的工具。
+      const rolePrompt = role === "explore"
+        ? createExplorerSystemPrompt()
+        : role === "execute"
+          ? `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}\n\n${WORKER_SUBAGENT_GUIDANCE}`
+          : `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}\n\n${SUBAGENT_GUIDANCE}`;
+      // 子 Agent 额外拿到真实工作区根目录：模型最容易凭空猜一个 `/workspace/...` 这样的路径，
+      // 猜错就要连读连搜几次，把预算烧在找路上。主 Agent 不需要 —— 它一直待在自己的目录里，
+      // 用户消息里也通常带着路径，重复一遍只是浪费 token。
+      const workspaceBlock = role === "main" ? "" : `\n\n${subagentWorkspaceContext(config.root)}`;
+      return `${rolePrompt}${workspaceBlock}${projectBlock}${options.narrateProgress === true ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
     },
-    maxSteps: config.maxSteps,
-    maxToolCalls: config.maxToolCalls,
-    maxTotalTokens: config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens,
+    // 子 Agent 的预算是「它自己的上限」和「用户配置」取较小值：一次委派不该吃掉整轮额度。
+    maxSteps: role === "main" ? config.maxSteps : Math.min(config.maxSteps, SUBAGENT_MAX_STEPS),
+    maxToolCalls: role === "main" ? config.maxToolCalls : Math.min(config.maxToolCalls, SUBAGENT_MAX_TOOL_CALLS),
+    maxTotalTokens: role === "main"
+      ? (config.maxTotalTokens === 0 ? undefined : config.maxTotalTokens)
+      : (config.maxTotalTokens === 0
+        ? SUBAGENT_MAX_TOTAL_TOKENS
+        : Math.min(config.maxTotalTokens, SUBAGENT_MAX_TOTAL_TOKENS)),
     signal,
     // 只在 TUI 启用有界暂时故障重试；其它 CLI/评测继续保持一次一请求。
     maxModelRetries: callbacks?.onRetry === undefined ? 0 : 5,
@@ -367,6 +436,48 @@ function createAgent(
     // CLI 显示在 RunPresenter；TUI 使用自己提供的流式回调。
     onDelta: callbacks?.onDelta ?? ((text) => activePresenter?.delta(text)),
   });
+}
+
+/**
+ * 跑一次委派：新建子 Agent → 跑一次 Run → 只把最终结果和统计带回来。
+ *
+ * 每次调用都是全新实例，所以子 Agent 有自己的 `messages[]`、工具注册表、预算和统计；
+ * 父 Agent 的历史、Todo 清单、工具调用记录一概不传过去。子 Agent 跑完就丢，
+ * 不驻留、不恢复、也不能再往下委派（它的工具表里没有 `run_subagent`）。
+ */
+async function runSubagent(
+  config: Config,
+  signal: AbortSignal,
+  request: SubagentRequest,
+): Promise<SubagentOutcome> {
+  const child = createAgent(config, signal, { role: request.mode, silent: true, announce: false });
+  const snapshot = (): SubagentStats => ({
+    mode: request.mode,
+    requests: child.stats.requests,
+    toolCalls: child.stats.toolCalls,
+    tokens: child.stats.usage.totalTokens,
+    unknownUsage: child.stats.usage.unknown,
+    budgetExceeded: child.stats.tokenBudget.exceeded,
+  });
+
+  // 成功与失败走同一条收尾路径：先把结果收下来，再看进程树，最后才决定这算什么。
+  const settled = await child.run(request.task).then(
+    (reply) => ({ ok: true as const, content: reply.content ?? "" }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
+
+  // 子 Agent 的 shell 可能还没停干净：这种时候连「正常的最终回复」也不能算成功，
+  // 必须抛出去，让父 Agent 进入工具禁用状态，而不是继续改文件。
+  throwIfProcessesUnverified(request.mode, child.toolExecutionDisabled);
+
+  if (!settled.ok) {
+    return {
+      status: signal.aborted ? "cancelled" : "failed",
+      reason: describeError(settled.error),
+      stats: snapshot(),
+    };
+  }
+  return { status: "completed", content: settled.content, stats: snapshot() };
 }
 
 /**

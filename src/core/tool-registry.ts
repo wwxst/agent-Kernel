@@ -16,7 +16,8 @@
  *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
  *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
  *   - 内部：`assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
- *     共用的一套字段体检、`validateArguments()` 按 Schema 校验参数、
+ *     共用的一套字段体检、`validateArguments()` 按 Schema 校验参数（并对声明了
+ *     `strictArguments` 的工具额外拒绝未声明字段）、`findUnknownArguments()` 列出多传的字段、
  *     `SUPPORTED_PARAMETER_TYPES` 校验器真正认识的那几种类型。
  *
  * 模块关系：依赖 `protocol/types.ts`（`Tool` / `ToolCall` / `ToolDefinition`）、
@@ -150,7 +151,30 @@ function validateValue(schema: Record<string, unknown>, value: unknown, path: st
   return undefined;
 }
 
+/**
+ * 参数里有没有工具根本没声明过的字段。
+ *
+ * 只对声明了 `strictArguments` 的工具生效：静默忽略一个 `offset` 会让模型以为
+ * 「它照我说的读了」，然后基于错的内容继续干活 —— 那比一条明确的报错贵得多。
+ * 默认不开启，是因为有些工具（例如被包了一层、刻意吞掉 `background` 的 shell）
+ * 依赖「多余字段不报错」这个行为。
+ */
+function findUnknownArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
+  const properties = (tool.parameters as Record<string, unknown>).properties;
+  const declared = isRecord(properties) ? Object.keys(properties) : [];
+  const unknown = Object.keys(args).filter((key) => !declared.includes(key));
+  if (unknown.length === 0) return undefined;
+  const names = unknown.map((key) => `"${key}"`).join(", ");
+  // 把可用参数列出来，模型才知道下一步该怎么改。
+  return `unknown argument${unknown.length > 1 ? "s" : ""} ${names}; ` +
+    `this tool accepts: ${declared.length === 0 ? "(none)" : declared.join(", ")}`;
+}
+
 function validateArguments(tool: Tool, args: Record<string, unknown>): string | undefined {
+  if (tool.strictArguments === true) {
+    const unknown = findUnknownArguments(tool, args);
+    if (unknown !== undefined) return unknown;
+  }
   return validateValue(tool.parameters, args, "");
 }
 
