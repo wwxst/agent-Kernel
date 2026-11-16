@@ -484,6 +484,15 @@ export class Workspace {
       MAX_OUTPUT_CHARS - MAX_READ_TAIL_CHARS,
       this.signal,
     );
+    if (slice.partialLine) {
+      // 目标行比扫描上限还长：给前缀，并说清「这一行没读完、后面还有」。
+      // 不给下一段的 offset —— 那一行的剩余部分和后面的行都还在 8 MB 之外，指了也读不到。
+      return this.clip(
+        slice.text,
+        `\n… [line ${slice.firstLine} did not end within ${MAX_READ_SCAN_BYTES} bytes; ` +
+          `only its first ${slice.text.length} characters are shown and the rest of this line was skipped]`,
+      );
+    }
     if (slice.lastLine < slice.firstLine) {
       // 扫到上限还没走到目标行：必须说「没走到」，不能说「没有内容」——
       // 后者会让模型以为文件到这就结束了，于是放弃或去改别的文件。
@@ -1474,8 +1483,9 @@ function assertPositiveLine(value: number, name: string): void {
  * 少一个 `\r` 就匹配不上 CRLF 文件。
  *
  * 已知边界：行号必须从文件头顺序数（文本文件没有行索引），所以目标行很靠后时会先扫过
- * 前面所有字节；扫到 `MAX_READ_SCAN_BYTES` 还没到就明确报告，不猜内容。文件在读取过程中
- * 被改写时，行号以读到的内容为准 —— 这不是快照隔离。
+ * 前面所有字节；扫到 `MAX_READ_SCAN_BYTES` 还没到就明确报告，不猜内容。**如果目标行本身
+ * 就比扫描上限还长**，那是「到了但没读完」：交出有界前缀、标记这一行不完整，不谎称没这一行。
+ * 文件在读取过程中被改写时，行号以读到的内容为准 —— 这不是快照隔离。
  */
 async function readLineWindow(
   file: string,
@@ -1489,6 +1499,8 @@ async function readLineWindow(
   lastLine: number;
   hasMore: boolean;
   scanStopped: boolean;
+  /** 目标行在扫描上限之内就开始了，但一直到上限都没等到换行 —— 内容只交出了前缀。 */
+  partialLine: boolean;
   totalLines?: number;
 }> {
   const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
@@ -1511,6 +1523,7 @@ async function readLineWindow(
     let position = 0;
     let hasMore = false;
     let scanStopped = false;
+    let partialLine = false;
     let totalLines: number | undefined;
 
     /**
@@ -1525,11 +1538,19 @@ async function readLineWindow(
     for (;;) {
       // 取消要在两块之间生效：读一个几百 MB 的文件不该等到读完才响应 Ctrl-C。
       if (signal?.aborted === true) throw new Error("cancelled while reading the file window");
-      if (position >= MAX_READ_SCAN_BYTES) {
+      // 文件正好在扫描上限处结束就不算「扫到上限」：再读一次拿到 EOF，这一行是完整的。
+      if (position >= MAX_READ_SCAN_BYTES && position < stats.size) {
         scanStopped = true;
+        // 停下来的位置可能正落在目标行内部（这一行比扫描上限还长，一直没换行）。
+        // 那不是「没到达目标行」，而是「到达了但没读完」—— 必须交出有界前缀并说明不完整，
+        // 否则模型会以为文件里根本没有这一行。
+        if (lines.length === 0 && carry !== "" && lineNumber + 1 === offset) {
+          lines.push(carry.slice(0, charBudget));
+          partialLine = true;
+        }
         break;
       }
-      const want = Math.min(READ_CHUNK_BYTES, MAX_READ_SCAN_BYTES - position);
+      const want = Math.max(0, Math.min(READ_CHUNK_BYTES, MAX_READ_SCAN_BYTES - position));
       const { bytesRead } = await handle.read(chunk, 0, want, position);
       if (bytesRead === 0) {
         // EOF：收尾那一截（文件末尾没有换行时它就是最后一行）。
@@ -1568,6 +1589,7 @@ async function readLineWindow(
       lastLine: offset + lines.length - 1,
       hasMore,
       scanStopped,
+      partialLine,
       totalLines,
     };
   } finally {

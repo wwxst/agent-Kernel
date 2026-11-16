@@ -11,7 +11,8 @@
  *     符号链接换向不碰外部文件、`edit` 唯一命中 / 多处拒绝 / 空片段拒绝 / CRLF 兼容。
  *   - 读与列：超长截断并说明、正好等于上限不算截断、半个 UTF-8 字符不出现、
  *     空目录显式提示、条目超限先排序再截断；`read` 的 `offset` / `limit` 行窗口
- *     （中间段、越界、CRLF 原样、跨块不切行、参数非法、取消）。
+ *     （中间段、越界、CRLF 原样、跨块不切行、参数非法、取消、受输出上限约束时下一段不漏行、
+ *     目标行比扫描上限还长时给前缀并标明没读完）。
  *   - 搜索：`glob` 的模式、搜索根与重复通配符有界匹配；`grep` 的正则 / `fixed` / flags / 超长行 / 超大文件跳过 /
  *     扫描预算用尽 / 灾难性回溯被超时打断 / 取消打断匹配线程 / 跳过 `node_modules` 与 `.git` /
  *     `path` 指向单个文件时只搜它自己。
@@ -1694,5 +1695,45 @@ test("read：不传分页参数时仍是一次性读到 8000 字符上限", asyn
     assert.doesNotMatch(text, /continue with offset=/);
     assert.match(text, /… \[truncated \d+ chars\]/);
     assert.match(text, /… \[stopped after 32768 bytes\]$/);
+  });
+});
+
+// ── 扫描上限处的超长单行 ──────────────────────────────────────────────────────
+// 目标行在 8 MB 之内就开始了，但一直到上限都没等到换行。这不是「没到达目标行」，
+// 而是「到了但没读完」—— 必须给前缀并说清不完整。
+
+test("read：目标行比扫描上限还长时给前缀并说明没读完，不谎称没这一行", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
+    const page = await new Workspace({ root }).read("long.txt", { offset: 1, limit: 1 });
+
+    assert.ok(page.startsWith("XXXX"), "至少要给出这一行的开头");
+    assert.ok(page.length <= 8000, "输出仍受 8000 字符上限约束，实际 " + page.length);
+    assert.doesNotMatch(page, /was not reached/);
+    assert.match(page, /line 1 did not end within 8000000 bytes/);
+    assert.match(page, /the rest of this line was skipped/);
+  });
+});
+
+test("read：确实没走到目标行时仍然明说「没到达」", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "long.txt"), "X".repeat(8_000_001));
+    // 第 2 行在这 8 MB 之外：这一次是真的没走到，说法必须和上一条区分开。
+    const page = await new Workspace({ root }).read("long.txt", { offset: 2, limit: 1 });
+
+    assert.match(page, /offset 2 was not reached/);
+    assert.doesNotMatch(page, /did not end within/);
+  });
+});
+
+test("read：文件正好在扫描上限处结束时按文件末尾处理，不说「没读完」", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "exact.txt"), "X".repeat(8_000_000));
+    const page = await new Workspace({ root }).read("exact.txt", { offset: 1, limit: 1 });
+
+    assert.doesNotMatch(page, /did not end within/);
+    assert.doesNotMatch(page, /was not reached/);
+    // 仍然受输出上限约束，并如实标出截断。
+    assert.match(page, /… \[truncated \d+ chars\]/);
   });
 });
