@@ -319,7 +319,7 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 
 ## 轻量 TUI v0.3
 
-`npm run agent -- --tui`（不带任务时默认就是这个）在同一个 Agent 会话外面套一个聊天式终端界面，它是唯一的交互模式：原来的逐行 REPL 和 `--repl` 开关已经移除。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。布局与验收规则见 [TUI v0.3 规范](./docs/design/tui-v0.3-layout-spec.md)（历史设计文档；其中权限模式与审批部分已删除）。
+`npm run agent -- --tui`（不带任务时默认就是这个）在同一个 Agent 会话外面套一个聊天式终端界面，它是唯一的交互模式：原来的逐行 REPL 和 `--repl` 开关已经移除。`--tui` 后面可以跟一个初始任务：先跑完，再等下一行输入。展示分层见 [设计原则](./docs/design/display-layers.md)，主屏追加的决定和原因见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)。
 
 布局：
 
@@ -354,9 +354,9 @@ agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，
 
 资源边界：单次模型响应（JSON / SSE，按解压后的响应体计）最多读取 **8 MiB**，超限明确报错并关闭连接；HTTP 错误只读取前 500 字符详情，SSE 收到 `[DONE]` 就结束读取。输入历史只读取文件末尾最多 **8 MiB**，从中选取最近 500 条有效记录，切口处的残行跳过，磁盘上的旧记录保留。取舍见 [ADR-0022](./docs/adr/0022-bound-external-response-and-history-reads.md)。
 
-统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。逐张参考图对照后的实际效果见 [Windows Terminal 验收截图](./docs/design/verification/tui-v0.3-windows-terminal/README.md)。
+统计按 Session 累计；只要有一条请求没有 usage，就写 `at least`，不把已知下限说成精确值。取舍见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)。具体边界见 [展示分层](./docs/design/display-layers.md)。
 
-已知边界：完整布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；主视图不捕获鼠标，历史靠终端原生滚动；Run log 保留最近 2000 条逻辑行；暂不支持多行输入。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。真实终端截图、验证范围与显示局限见 [验收记录](./docs/design/verification/tui-v0.3/README.md)。
+已知边界：完整布局要求终端至少 12 行、30 列；宽度按近似显示宽度换行（CJK / emoji 按 2 列，组合字符按 0 列），不做完整 Unicode East Asian Width / grapheme 表，ZWJ / 旗帜等组合 emoji 的实际终端列宽可能偏差；正文硬换行；主视图不捕获鼠标，历史靠终端原生滚动；Run log 保留最近 2000 条逻辑行；可通过括号粘贴提交多行内容，实际支持受终端协议影响。自动测试覆盖组合字符、一次性 IME 上屏、长会话裁剪与关闭清理，但不等于覆盖所有真实输入法/终端。`Ctrl+E/O/G` 以键盘逐层浏览任务、活动和工具详情；命令补全支持已有的真实 Slash 命令。显示原则及限制见 [展示分层](./docs/design/display-layers.md)。
 
 ## 配置
 
@@ -430,9 +430,9 @@ npm run eval:cross-day   # 在不同自然日各运行 3 轮，固定使用 eac7
 | --- | --- | --- | --- | --- |
 | **120/120（6/6 轮 20/20）** | 89.5 | 85.5 | 118,817（111,458.5 + 7,277.5） | 70.8s |
 
-6 轮全部满分。相比上一版提示词（119/120、101.5 请求、139,040 tokens）：请求 -11.8%、tokens -14.5%、墙钟 -10.4%，轮间 token 从 118k–168k（1.42×）收窄到 103k–126k（1.22×）。收益来自系统提示词里新增的一行——要求模型一次只跑一条简单 shell 命令，减少 `|`、`rm` 之类的语法失败重试（见 [提示词 v2 报告](./docs/reports/2026-11-05-prompt-v2.md)）。逐任务波动见 [eval/baseline.md](./eval/baseline.md)：`13-callback-to-promise` 3.76×、`20-fix-email-regex` 2.51×、`08-extract-duplication` 1.40×，剩余波动仍来自模型自己的路径选择，成本要按中位数加余量估。第一阶段验收基线是 DeepSeek-V4.1-Flash：20/20、178 请求、200 工具调用、389,074 tokens、66.5s。
+6 轮全部满分。相比上一版提示词（119/120、101.5 请求、139,040 tokens）：请求 -11.8%、tokens -14.5%、墙钟 -10.4%，轮间 token 从 118k–168k（1.42×）收窄到 103k–126k（1.22×）。收益来自系统提示词里新增的一行——要求模型一次只跑一条简单 shell 命令，减少 `|`、`rm` 之类的语法失败重试（采用该约束是为了降低 Shell 语法失败与额外模型重试；见 [评测结论](./eval/baseline.md)）。逐任务波动见 [eval/baseline.md](./eval/baseline.md)：`13-callback-to-promise` 3.76×、`20-fix-email-regex` 2.51×、`08-extract-duplication` 1.40×，剩余波动仍来自模型自己的路径选择，成本要按中位数加余量估。第一阶段验收基线是 DeepSeek-V4.1-Flash：20/20、178 请求、200 工具调用、389,074 tokens、66.5s。
 
-跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。跨天基线现在钉在 `eac798d`（prompt v2），v2 序列从 2026-11-06 起跑，跑满三个自然日再写结论；v1（`4edd0e4`）的 11-05 数据只作历史，归档在 `eval/baselines/cross-day-v1-4edd0e4/`。
+跨天验证与诊断模式的约束、归档路径和使用方法见 [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)。跨天基线现在钉在 `eac798d`（prompt v2），v2 序列已归档 2026-11-06 和 2026-11-07 两个自然日；第三天尚无归档，不能宣称三天跨天验证完成；v1（`4edd0e4`）的 11-05 数据只作历史，归档在 `eval/baselines/cross-day-v1-4edd0e4/`。
 
 关于耗时与成本：`hy3` 单任务中位数约 12.4 秒、4.5 次模型请求，其中**请求与请求之间的等待几乎全是模型往返**，工具执行加内核开销占比很小。省时间主要靠任务之间并发（默认 `--jobs 4`，20 个任务墙钟约 71 秒）；省钱主要靠选模型（输入 token 占 93.8%，成本来自反复重发完整对话历史）、少让模型走冤枉路，以及收紧 `MAX_TOTAL_TOKENS` / `MAX_OUTPUT_TOKENS`。上下文压缩这一阶段刻意不做，先用多轮评测判断它是不是真的瓶颈。
 
@@ -450,7 +450,7 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 - 会话持久化到磁盘：进程内的多轮 TUI 已经有了，跨进程恢复 transcript 没有做
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
-- 鼠标、多行输入和 Hooks 尚未做；TUI 主视图只追加、`Ctrl+T` 回看并展开历史，仍保留底部输入区、`Ctrl+E/O/G` 逐层浏览及 `/` Slash 自动补全（早期布局决策见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)，主屏渲染见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)）。
+- 不捕获鼠标；TUI 主视图只追加、`Ctrl+T` 进入历史详情，底部输入保留 `Ctrl+E/O/G` 与 Slash 补全；括号粘贴支持多行，但不能保证所有终端兼容。工具 Hooks 已实现（见 [ADR-0020](./docs/adr/0020-tool-hooks-live-in-the-registry.md)），不属于未做事项。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 多个子 Agent 并行、Agent 团队、Mailbox、Worktree、子 Agent 持久化与恢复、子 Agent 后台执行：第 6 课只做「一次一个、同步、跑完即丢」的委派
 - 操作系统级隔离：agent-Kernel 只有完全访问，工具与 Shell 都以启动者的权限执行（见 [ADR-0019](./docs/adr/0019-full-access-is-the-only-mode.md) 与 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
@@ -458,10 +458,11 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 
 ## 文档与技能
 
-- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：规范本体（语言分层、注释、模块形状、命名、错误处理、防御性编程、测试）。
-- [AGENTS.md](./AGENTS.md)：agent 的入口 —— 命令、项目导航（代码地图）、测试放哪。
-- [GLOSSARY.md](./GLOSSARY.md)：领域词汇（Core、Step、Transcript、ERROR text……）。
-- [docs/permission-design.md](./docs/permission-design.md)：当前权限与访问设计的实现说明（只有完全访问）。
-- [docs/adr/](./docs/adr/)：已经定下、别再重新讨论的决定。
-- [docs/reports/](./docs/reports/)：阶段修复报告（问题、方案、测试、CI 与评测基线）。
-- `.agents/skills/`：装好的 agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：长期工程规范。
+- [AGENTS.md](./AGENTS.md)：Agent 入口、代码地图、测试分工。
+- [GLOSSARY.md](./GLOSSARY.md)：统一领域词汇。
+- [docs/adr/](./docs/adr/)：已经采用的架构决定以及为什么这样选；历史 ADR 有被取代标记。
+- [docs/design/display-layers.md](./docs/design/display-layers.md)：展示分层原则。
+- [docs/design/reliability-decisions.md](./docs/design/reliability-decisions.md)：稳定性设计结论与已知风险。
+- [eval/baseline.md](./eval/baseline.md)：可复现的评测结论；原始结果保留在 `eval/baselines/`。
+- `.agents/skills/`：已安装的 Agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。

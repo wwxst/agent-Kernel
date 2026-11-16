@@ -93,7 +93,7 @@ _Avoid_: exception, failure, error object
 _Avoid_: cwd, working directory, project root, sandbox
 
 **Background job**:
-`shell` 带 `background:true` 起的一次脱离进程，由宿主登记成一个编号（`job-1`）。它的输出写进系统临时目录的日志文件，**不写工作区**；`shell-output` 按字节游标只返回新长出来的部分，`shell-kill` 停整棵进程树。日志接文件而不是管道，是因为管道的 handle 会让宿主进程退不出去（见 [踩坑记录](./docs/notes/background-jobs.md)）。
+`shell` 带 `background:true` 起的一次脱离进程，由宿主登记成一个编号（`job-1`）。它的输出写进系统临时目录的日志文件，**不写工作区**；`shell-output` 按字节游标只返回新长出来的部分，`shell-kill` 停整棵进程树。日志接文件而不是管道，是因为管道的 handle 会让宿主进程退不出去（见 [设计决定](./docs/adr/0027-background-job-lifecycle.md)）。
 _Avoid_: daemon, service, task queue, session（它不是会话，也不排队）
 
 **Step limit**:

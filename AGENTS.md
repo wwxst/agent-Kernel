@@ -12,7 +12,6 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
-| `npm run agent -- "<task>"` | 默认就是完全访问：没有审批，也没有工作区目录边界；`--permission` / `AGENT_PERMISSION` 已移除，传入会报错 |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
 | `npm run agent --` | 不带任务：直接进全屏 TUI（唯一交互界面）；`--repl` 已移除，传入会报错 |
@@ -74,17 +73,17 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。
 
-## 领域文档
+## 长期文档
 
-- [GLOSSARY.md](./GLOSSARY.md)：概念、关系、要避开的同义词。
-- [docs/permission-design.md](./docs/permission-design.md)：当前权限与访问设计（只有完全访问；路径解析、Shell、网络、稳定性保护）。
-- [docs/adr/](./docs/adr/)：已经定下、别在评审里重新讨论的决定。
-- [docs/design/display-layers.md](./docs/design/display-layers.md)：概览层与详情层怎么分，终端与未来前端共用。
-- [docs/notes/tui-pitfalls.md](./docs/notes/tui-pitfalls.md)：TUI 踩过的十五个坑 + 四条底层规则，动渲染层前必读。
-- [docs/notes/cli-and-tooling.md](./docs/notes/cli-and-tooling.md)：命令行参数、全局安装、测试迁移的九个坑。
-- [docs/notes/background-jobs.md](./docs/notes/background-jobs.md)：后台任务六个坑（管道卡住宿主、Windows `shell+detached` 丢输出、增量读的字节边界），动 `shell` 前后台路径前必读。
-- [docs/compare/agent-cli-matrix.md](./docs/compare/agent-cli-matrix.md)：与 Claude Code / Codex 的逐项能力对照，缺口清单。
+- [GLOSSARY.md](./GLOSSARY.md)：当前领域词汇及关系。
+- [docs/adr/](./docs/adr/)：最终架构决定、当初的理由、代价与不变量；被取代的 ADR 标明历史状态，不能当作现行行为。
+- [docs/design/display-layers.md](./docs/design/display-layers.md)：概览与详情的长期分层原则。
+- [docs/design/reliability-decisions.md](./docs/design/reliability-decisions.md)：跨模块稳定性结论和仍需注意的边界。
+- [docs/adr/0027-background-job-lifecycle.md](./docs/adr/0027-background-job-lifecycle.md)：后台任务输出与生命周期为什么这么做。
+- [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)：固定版本的跨天评测与可选诊断。
 - [docs/agents/domain.md](./docs/agents/domain.md)：探索代码前该读什么。
+
+长期文档不保存调试流水账、阶段计划、单次 PR 验收截图；一般修复由代码、测试与 Git 历史承载。
 
 ## Agent skills
 
