@@ -666,10 +666,17 @@ test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", 
   const toolResult = afterToolRequest[assistantIndex + 1];
   assert.equal(toolResult.role, "tool");
   assert.equal(toolResult.tool_call_id, "compact-1");
-  assert.match(toolResult.content, /context compacted/);
-  assert.ok(toolResult.content.length < 1_000, "large tool output should be bounded");
+  assert.equal(toolResult.content, "tool-output-" + "x".repeat(6_000),
+    "当前批次结果必须先完整交给模型，不能在模型读取前压缩");
 
   await agent.run("second task");
+  const consumedToolResult = chat.requests[2].messages.find((message) =>
+    message.role === "tool" && message.tool_call_id === "compact-1");
+  assert.ok(consumedToolResult);
+  assert.match(consumedToolResult.content, /context compacted/);
+  assert.ok(consumedToolResult.content.length < 1_000,
+    "模型已经读取过的旧工具结果可以在后续 Run 压缩");
+
   await agent.run("third task");
   await agent.run("fourth task");
 
