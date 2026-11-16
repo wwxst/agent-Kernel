@@ -1581,7 +1581,7 @@ test("read：行窗口读到一半被取消就停下，不把整个文件读完"
     const workspace = new Workspace({ root, signal: controller.signal });
     controller.abort(new Error("test cancel"));
 
-    await assert.rejects(workspace.read("big.txt", { offset: 1 }), /cancelled while reading the file window/);
+    await assert.rejects(workspace.read("big.txt", { offset: 1 }), /cancelled while (locating the file line|reading the byte window)/);
   });
 });
 
@@ -1626,7 +1626,8 @@ test("read：第 94000 行超过旧 8 MB 限制后仍可完整读取", async () 
     const content = Array.from({ length: 95_000 }, () => row).join("\n") + "\n";
     await writeFile(path.join(root, "huge.log"), content);
     const page = await new Workspace({ root }).read("huge.log", { offset: 94_000, limit: 1 });
-    assert.equal(page, row);
+    assert.ok(page.startsWith(row + "\n"), "目标行正文必须完整返回");
+    assert.match(page, /continue with offset=94001/, "后面还有行时应提供下一页行号");
   });
 });
 
