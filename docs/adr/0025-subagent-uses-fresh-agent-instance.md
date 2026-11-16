@@ -17,6 +17,7 @@
 - 工具集按角色在装配层筛：`explore` 只有 `read` / `glob` / `grep` / `ls`；`execute` 再加 `write` / `edit` / `shell` 和它自己的 `todo_write`。两种角色都没有 `run_subagent`，所以不能嵌套委派。
 - `execute` 的 `shell` 被改成纯前台：Schema 删掉 `background`，执行时强制 `background: false`。子 Agent 起一个后台进程后立刻结束，会留下没人收尾的任务，而任务管理属于第 11 课。
 - 子 Agent 各建一份 `Workspace`：隔离的是后台任务等**运行状态**，不是文件系统 —— 两者改的是同一批文件。
+- 子 Agent 的系统提示里注入**真实工作区根目录**（`subagentWorkspaceContext()`），只读角色还写明两条工具事实：`read` 没有 `offset` / `limit`（重复读同一路径只会拿回同样的开头）、`grep` 的 `path` 必须是目录。这些是实测出来的无效调用来源：模型会凭空猜 `/workspace/...`，也会以为 `read` 能翻页、把文件当目录交给 `grep`。提示词只能降低概率，不能替代预算闸门，更不是沙箱。
 - 预算取「子 Agent 上限」与「用户配置」的较小值（20 步 / 30 次工具 / 100000 token）。统计不并入父 Agent 的 `stats` 和 `[usage]`，避免把「这一轮主任务花了多少」和「含子 Agent 一共花了多少」混成一个数。
 - 取消只用一个 `AbortSignal`：父 Agent 被取消时，子 Agent 的模型请求和 shell 一起停。没有单独停某个子 Agent 的入口 —— 它是前台同步执行的。
 - 子 Agent 的展示回调全是空函数：它的流式正文和工具进度不进主界面，过程只体现在父 Agent 那一条工具结果里。

@@ -33,8 +33,10 @@ import {
   DEFAULT_SUBAGENT_MODE,
   SUBAGENT_RESULT_MAX_CHARS,
   SUBAGENT_TASK_MAX_CHARS,
+  createExplorerSystemPrompt,
   createSubagentTool,
   formatSubagentResult,
+  subagentWorkspaceContext,
   throwIfProcessesUnverified,
   toolsForSubagentRole,
 } from "../src/tools/subagent.ts";
@@ -215,6 +217,30 @@ test("角色工具：Worker 的 shell 拿掉了 background，传了也按前台�
     assert.match(result, /foreground-only/);
     assert.doesNotMatch(result, /started job-/);
   });
+});
+
+test("提示词：Explorer 只描述只读能力，工作区路径交给共享函数", () => {
+  const prompt = createExplorerSystemPrompt();
+
+  assert.match(prompt, /^You are a temporary read-only exploration subagent/);
+  assert.match(prompt, /Your only available tools are read, glob, grep, and ls\./);
+  assert.match(prompt, /You cannot modify files, execute shell commands, or create another subagent\./);
+  // 只读角色绝不能被告知「你可以改文件、跑命令」—— 那是默认编码提示里的话。
+  assert.doesNotMatch(prompt, /You may read, create, modify, and delete files/);
+  // 工作区路径只在共享函数里写一次；这里再写一份就是白烧 token。
+  assert.doesNotMatch(prompt, /The workspace root for this task is/);
+});
+
+test("提示词：共享的工作区说明带上真实路径，并管住相对路径与范围", () => {
+  const root = "D:\\work\\demo";
+  const block = subagentWorkspaceContext(root);
+
+  // 路径原样写进去（JSON 转义后），模型才不用猜。
+  assert.ok(block.includes(JSON.stringify(root)), `提示里应含 ${JSON.stringify(root)}`);
+  assert.match(block, /Resolve relative file paths from this exact directory\./);
+  assert.match(block, /Stay within this workspace unless the delegated task explicitly requires an external path\./);
+  // 说明只讲行为，不能冒充沙箱。
+  assert.doesNotMatch(block, /sandbox|restricted|denied/i);
 });
 
 test("上下文隔离：子 Agent 第一次请求只有自己的 system 和自己的任务", async () => {

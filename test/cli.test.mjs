@@ -1121,8 +1121,14 @@ test("委派：主 Agent 调用 run_subagent，子 Agent 用独立上下文只�
       // 父 Agent 的任务原文、工具历史都不能被复制过去。
       assert.doesNotMatch(JSON.stringify(childFirst.messages), /do the task/);
       // 只读角色拿到的是调查提示，不是「你可以改文件、跑命令」的默认提示。
-      assert.match(childFirst.messages[0].content, /temporary exploration subagent/);
+      assert.match(childFirst.messages[0].content, /temporary read-only exploration subagent/);
       assert.doesNotMatch(childFirst.messages[0].content, /You may read, create, modify, and delete files/);
+      // 真实工作区根目录必须写进提示：这是防「凭空猜 /workspace 路径」的那道防线。
+      assert.match(childFirst.messages[0].content, /The workspace root for this task is "/);
+      assert.ok(
+        childFirst.messages[0].content.includes(path.basename(workdir)),
+        `子 Agent 的提示里必须带上真实工作区路径，实际是：\n${childFirst.messages[0].content.slice(0, 400)}`,
+      );
       // 工具表只有四个只读工具：没有写、没有 shell，也没有 run_subagent。
       assert.deepEqual(
         childFirst.tools.map((tool) => tool.function.name),
@@ -1166,6 +1172,9 @@ test("委派：execute 模式的子 Agent 能改文件、能前台跑命令，�
 
       const childFirst = mock.requests[1];
       assert.match(childFirst.messages[0].content, /temporary execution subagent/);
+      // Worker 同样要拿到真实工作区路径，否则它也会去猜路径。
+      assert.match(childFirst.messages[0].content, /The workspace root for this task is "/);
+      assert.ok(childFirst.messages[0].content.includes(path.basename(workdir)));
       assert.deepEqual(
         childFirst.tools.map((tool) => tool.function.name),
         ["read", "write", "edit", "glob", "grep", "ls", "shell", "todo_write"],

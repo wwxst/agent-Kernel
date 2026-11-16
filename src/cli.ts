@@ -43,13 +43,14 @@ import type { ToolCall } from "./protocol/types.ts";
 import { Workspace, createWorkspaceTools } from "./tools/workspace.ts";
 import { TodoManager, createTodoTool, TODO_PLANNING_GUIDANCE } from "./tools/todo.ts";
 import {
-  EXPLORER_SYSTEM_PROMPT,
   SUBAGENT_GUIDANCE,
   SUBAGENT_MAX_STEPS,
   SUBAGENT_MAX_TOOL_CALLS,
   SUBAGENT_MAX_TOTAL_TOKENS,
   WORKER_SUBAGENT_GUIDANCE,
+  createExplorerSystemPrompt,
   createSubagentTool,
+  subagentWorkspaceContext,
   throwIfProcessesUnverified,
   toolsForSubagentRole,
 } from "./tools/subagent.ts";
@@ -403,11 +404,15 @@ function createAgent(
       // 三种角色三份提示：只读角色绝不能拿到「你可以改文件、跑命令」的默认提示，
       // 否则提示与实际工具不一致，模型会去调它根本没有的工具。
       const rolePrompt = role === "explore"
-        ? EXPLORER_SYSTEM_PROMPT
+        ? createExplorerSystemPrompt()
         : role === "execute"
           ? `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}\n\n${WORKER_SUBAGENT_GUIDANCE}`
           : `${DEFAULT_SYSTEM_PROMPT}\n\n${TODO_PLANNING_GUIDANCE}\n\n${SUBAGENT_GUIDANCE}`;
-      return `${rolePrompt}${projectBlock}${options.narrateProgress === true ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
+      // 子 Agent 额外拿到真实工作区根目录：模型最容易凭空猜一个 `/workspace/...` 这样的路径，
+      // 猜错就要连读连搜几次，把预算烧在找路上。主 Agent 不需要 —— 它一直待在自己的目录里，
+      // 用户消息里也通常带着路径，重复一遍只是浪费 token。
+      const workspaceBlock = role === "main" ? "" : `\n\n${subagentWorkspaceContext(config.root)}`;
+      return `${rolePrompt}${workspaceBlock}${projectBlock}${options.narrateProgress === true ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
     },
     // 子 Agent 的预算是「它自己的上限」和「用户配置」取较小值：一次委派不该吃掉整轮额度。
     maxSteps: role === "main" ? config.maxSteps : Math.min(config.maxSteps, SUBAGENT_MAX_STEPS),
