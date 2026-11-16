@@ -44,7 +44,7 @@ function matchLines({ id, text, pattern, flags, limit }: MatchRequest): MatchRep
   } catch (error) {
     return { id, error: error instanceof Error ? error.message : String(error) };
   }
-  if (limit <= 0) return { id, lines: [] };
+  if (limit <= 0 || text.length === 0) return { id, lines: [] };
 
   const lines: number[] = [];
   let start = 0;
@@ -57,7 +57,8 @@ function matchLines({ id, text, pattern, flags, limit }: MatchRequest): MatchRep
       lines.push(index + 1);
       if (lines.length >= limit) break;
     }
-    if (end === -1) break;
+    // 最末的 LF 终结当前行，不凭空创建下一行。中间的空行仍是真实行。
+    if (end === -1 || end === text.length - 1) break;
     start = end + 1;
   }
   return { id, lines };

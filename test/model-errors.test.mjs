@@ -65,3 +65,11 @@ test("自动恢复只处理真实网络/暂时 HTTP 错误，不重试鉴权、4
     new ChatResponseError("invalid"),
   ]) assert.equal(isRetryableModelError(error), false);
 });
+
+
+test("错误文案契约：展示标题与建议来自各自唯一来源，不再出现旧鉴权标题", () => {
+  const result = modelFailure(new ModelHttpError(401, "bad token"), "zh");
+  assert.equal(result.title, "模型认证失败");
+  assert.match(result.advice, /API Key/);
+  assert.doesNotMatch(result.title, /鉴权/);
+});

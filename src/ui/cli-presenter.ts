@@ -211,7 +211,8 @@ export class RunPresenter {
 
   /** 命令行展示方法 toolResult（工具结果）：打一行 ✓ 或 ✗，再跟一句结果摘要；详细模式展开完整返回。 */
   toolResult(call: ToolCall, result: string, isError = false): void {
-    const output = escapeControlCharacters(result);
+    // CRLF 是行分隔，不是可见控制字符；孤立 CR 仍必须被安全转义。
+    const output = escapeControlCharacters(result.replace(/\r\n/g, "\n"));
     const firstLine = output.split("\n", 1)[0] ?? "";
     const excerpt = firstLine.slice(0, 120);
     const truncated = firstLine.length > 120 || output.includes("\n");
@@ -221,7 +222,9 @@ export class RunPresenter {
     if (this.view === "detailed") {
       console.log("    ┌ result");
       const shown = output.slice(0, 4000);
-      for (const line of shown.split("\n")) console.log("    │ " + line);
+      // 末尾换行终结最后一行，不应多渲染一个幽灵空行。
+      const lines = (shown.endsWith("\n") ? shown.slice(0, -1) : shown).split("\n");
+      for (const line of lines) console.log("    │ " + line);
       if (output.length > shown.length) {
         console.log("    │ … " + (output.length - shown.length) + " chars omitted");
       }

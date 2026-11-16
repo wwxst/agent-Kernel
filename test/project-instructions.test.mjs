@@ -85,3 +85,12 @@ test("项目指令：8 MiB 读取窗口外的正文不读取，空白前缀也�
     assert.doesNotMatch(instructions.text, /OUTSIDE_READ_WINDOW/);
   });
 });
+
+
+test("UTF-16 截断辅助函数：前缀和后缀都不会拆开 emoji", async () => {
+  const { takeUtf16Prefix, takeUtf16Suffix } = await import("../src/protocol/text-boundaries.ts");
+  assert.equal(takeUtf16Prefix("a😀b", 2), "a");
+  assert.equal(takeUtf16Prefix("a😀b", 3), "a😀");
+  assert.equal(takeUtf16Suffix("a😀b", 2), "b");
+  assert.equal(takeUtf16Suffix("a😀b", 3), "😀b");
+});

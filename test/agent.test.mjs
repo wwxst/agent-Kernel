@@ -996,3 +996,13 @@ test("HTTP 401 不重试；收到取消时等待退避会立即停手", async ()
   assert.equal(interrupted.stats.requests, 1);
   assert.equal(interrupted.retryAttempts, 0, "等待期间取消尚未发出的重试不得计数");
 });
+
+
+test("工具清单契约：默认提示不再维护一份静态工具名", async () => {
+  const chat = createScriptedChat([finalReply("ok")]);
+  await new Agent({ llm: chat, tools: makeRegistry([echoTool()]) }).run("task");
+  assert.equal(chat.requests[0].tools.length, 1);
+  assert.equal(chat.requests[0].tools[0].name, "echo");
+  assert.doesNotMatch(chat.requests[0].messages[0].content, /Tools: read, write, edit/);
+  assert.match(chat.requests[0].messages[0].content, /provided in this request/);
+});

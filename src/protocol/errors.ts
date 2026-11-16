@@ -97,34 +97,34 @@ export function modelFailure(error: unknown, language: "zh" | "en"): {
   else if (error instanceof ChatResponseError) kind = error.code === "stream_incomplete" ? "stream" : "invalid";
   else return undefined;
 
-  const messages = {
+  const adviceByKind = {
     config: {
-      zh: ["尚未配置模型服务", "请填写有效的 API_KEY，并检查 .env 中的 MODEL / BASE_URL。"],
-      en: ["Model service is not configured", "Set a valid API_KEY and check MODEL / BASE_URL in .env."],
+      zh: "请填写有效的 API_KEY，并检查 .env 中的 MODEL / BASE_URL。",
+      en: "Set a valid API_KEY and check MODEL / BASE_URL in .env.",
     },
     auth: {
-      zh: ["模型鉴权失败", "请检查 API Key、服务商及账号权限。"],
-      en: ["Model authentication failed", "Check your API key, provider, and account permissions."],
+      zh: "请检查 API Key、服务商及账号权限。",
+      en: "Check your API key, provider, and account permissions.",
     },
     not_found: {
-      zh: ["模型或接口地址不存在", "请检查 MODEL 名称及 BASE_URL；HTTP 404 无法单独确定是哪一项。"],
-      en: ["Model or endpoint not found", "Check MODEL and BASE_URL; HTTP 404 alone cannot identify which is wrong."],
+      zh: "请检查 MODEL 名称及 BASE_URL；HTTP 404 无法单独确定是哪一项。",
+      en: "Check MODEL and BASE_URL; HTTP 404 alone cannot identify which is wrong.",
     },
     http: {
-      zh: ["模型服务请求失败", "请检查服务商返回的状态码和技术详情。"],
-      en: ["Model service request failed", "Check the provider status code and technical details."],
+      zh: "请检查服务商返回的状态码和技术详情。",
+      en: "Check the provider status code and technical details.",
     },
     network: {
-      zh: ["无法连接模型服务", "请检查网络、BASE_URL 和模型服务是否可用。"],
-      en: ["Cannot connect to model service", "Check the network, BASE_URL, and provider availability."],
+      zh: "请检查网络、BASE_URL 和模型服务是否可用。",
+      en: "Check the network, BASE_URL, and provider availability.",
     },
     stream: {
-      zh: ["模型回复中断", "已收到部分响应，但缺少完成标记；此前显示的草稿已作废，不能作为最终回复。请重试或检查流式协议兼容性。"],
-      en: ["Model response interrupted", "The stream ended without a completion marker; any previously shown preview is discarded, not a confirmed reply. Retry or check streaming compatibility."],
+      zh: "已收到部分响应，但缺少完成标记；此前显示的草稿已作废，不能作为最终回复。请重试或检查流式协议兼容性。",
+      en: "The stream ended without a completion marker; any previously shown preview is discarded, not a confirmed reply. Retry or check streaming compatibility.",
     },
     invalid: {
-      zh: ["模型响应格式异常", "服务返回的数据不符合预期；此前显示的增量草稿已作废，不能作为最终回复；请检查接口兼容性。"],
-      en: ["Invalid model response", "The provider returned unexpected data; any previously shown preview is discarded, not a confirmed reply. Check API compatibility."],
+      zh: "服务返回的数据不符合预期；此前显示的增量草稿已作废，不能作为最终回复；请检查接口兼容性。",
+      en: "The provider returned unexpected data; any previously shown preview is discarded, not a confirmed reply. Check API compatibility.",
     },
   } as const;
   // UI 只保留三种终态 + 运行中的重连状态；内部细分类型和原始详情仍完整保留。
@@ -133,8 +133,7 @@ export function modelFailure(error: unknown, language: "zh" | "en"): {
     : kind === "auth"
       ? (language === "zh" ? "模型认证失败" : "Model authentication failed")
       : (language === "zh" ? "模型服务不可用" : "Model service unavailable");
-  const [, advice] = messages[kind][language];
-  return { title, advice, detail: describeError(error) };
+  return { title, advice: adviceByKind[kind][language], detail: describeError(error) };
 }
 
 /** 进程树停止失败：后台进程可能仍有副作用，必须结束当前 Agent Run，而非正常重试。 */

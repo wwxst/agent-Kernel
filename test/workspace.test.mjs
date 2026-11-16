@@ -1781,3 +1781,32 @@ test("read：字节游标不允许切在中文字符中间，参数错误必须�
     await assert.rejects(() => workspace.read("utf8.txt", { offset: 1, offsetBytes: 0 }), /cannot be combined/);
   });
 });
+
+
+test("grep：末尾 LF 不制造空行命中，中间的真实空行仍能命中", async () => {
+  await withWorkspace(async (root) => {
+    const workspace = new Workspace({ root });
+    await workspace.write("one.txt", "alpha\n");
+    assert.equal(await workspace.grep("^$"), "(no matches)");
+    assert.equal(await workspace.grep(".*"), "one.txt:1: alpha");
+    assert.equal(await workspace.grep("\\s*"), "one.txt:1: alpha");
+    await workspace.write("one.txt", "alpha\n\n");
+    assert.equal(await workspace.grep("^$"), "one.txt:2: ");
+    await workspace.write("one.txt", "");
+    assert.equal(await workspace.grep("^$"), "(no matches)");
+  });
+});
+
+test("短读：BOM 的三个字节分散到多次 read 仍能无损解码", async () => {
+  const source = Buffer.from("\uFEFFhello", "utf8");
+  const target = Buffer.alloc(source.length + 1);
+  let position = 0;
+  const bytesRead = await fillBuffer(async (buffer, offset, length) => {
+    const count = Math.min(position < 2 ? 1 : 2, length, source.length - position);
+    source.copy(buffer, offset, position, position + count);
+    position += count;
+    return { bytesRead: count };
+  }, target);
+  assert.equal(bytesRead, source.length);
+  assert.equal(new TextDecoder("utf-8", { ignoreBOM: true }).decode(target.subarray(0, bytesRead)), "\uFEFFhello");
+});
