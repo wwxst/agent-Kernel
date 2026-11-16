@@ -347,13 +347,20 @@ test("TUI 稳定日志 ID：展开较早的工具详情不会把历史中段跳�
 
 
 
-test("TUI：不主动启用鼠标追踪，保留终端原生滚轮和选中复制", (t) => {
+test("TUI 鼠标：拆包 SGR 序列安全解析，滚轮以小步长浏览历史", async (t) => {
   const ui = makeTui({ interactive: true, tty: true, rows: 26, columns: 85 });
   t.after(() => ui.cleanup());
   ui.tui.start();
-  assert.doesNotMatch(ui.text(), /\x1b\[\?100[026]h/, "不应开启鼠标跟踪模式");
-  ui.tui.close();
-  assert.doesNotMatch(ui.text(), /\x1b\[\?100[026]l/, "不应关闭从未启用的鼠标模式");
+  for (let i = 0; i < 60; i++) ui.tui.logLine(`mouse-history-${i}`);
+  const last = screenRows(ui, 26).join("\n");
+  assert.match(last, /mouse-history-59/);
+  ui.input.write("\x1b[<64;20;");
+  ui.input.write("10M");
+  await tick();
+  assert.match(screenRows(ui, 26).join("\n"), /(?:↑|\^) 3 (?:lines|行)/);
+  ui.input.write("\x1b[<65;20;10M");
+  await tick();
+  assert.match(screenRows(ui, 26).join("\n"), /mouse-history-59/);
 });
 
 

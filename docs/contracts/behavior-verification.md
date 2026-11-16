@@ -10,7 +10,7 @@
 | 文件句柄短读不能损坏 BOM 或丢失剩余内容 | fillBuffer + readTextUpToHandle | test/workspace.test.mjs |
 | 模型使用本次请求实际提供的工具定义，不信静态提示列举 | ToolRegistry.definitions | test/agent.test.mjs |
 | 模型错误显示标题与修复建议不维护两套标题 | modelFailure | test/model-errors.test.mjs |
-| TUI 默认不捕获鼠标，终端原生滚轮和拖选可用 | Tui.start | test/tui.test.mjs + 真实终端手动验收 |
+| TUI 不主动启用鼠标跟踪，但会过滤意外到达的 SGR 鼠标报告 | Tui 输入层 | test/tui.test.mjs + test/cli-pty.test.mjs |
 
 ## 修改规则
 
@@ -24,8 +24,9 @@
 
 src/ui/tui.ts 同时负责输入、状态、渲染，src/tools/workspace.ts 同时负责文件 I/O、搜索、后台进程。
 行数本身不是缺陷；拆分前必须先明确模块边界、跨模块契约和端到端测试。
-本次只移除不会从生产入口触达、且不符合当前终端原生交互设计的鼠标解析/映射路径，
-不为了追求行数减少而重写运行主干。后续如需拆分，优先通过稳定的纯函数和独立测试逐步迁移。
+本次保留 SGR 输入过滤：即使 TUI 不主动启用鼠标跟踪，PTY 或上游输入仍可能送来 SGR 报告，必须阻止坐标混入任务文本。
+主视图不主动接管鼠标滚轮和文本选中；输入安全过滤与鼠标交互功能不是一回事。
+后续如需拆分，优先通过稳定的纯函数和独立测试逐步迁移。
 
 ## 验证命令
 
