@@ -184,14 +184,21 @@ export const SUBAGENT_GUIDANCE = [
   "Then continue and finish the overall task.",
 ].join("\n");
 
-/** 改写后的 shell 说明书：去掉了后台参数，所以必须同时去掉「用 background 跑服务」那句。 */
+/**
+ * 改写后的 shell 说明书：去掉了后台参数，所以必须同时去掉「用 background 跑服务」那句。
+ *
+ * 只删 `background` 那一段，其余能力照旧要说：`timeout` 参数还在 Schema 里，
+ * 说明书不提它，模型就不知道慢构建、慢测试可以把超时调长，只会把「等超时」当成失败。
+ */
 const FOREGROUND_SHELL_DESCRIPTION =
   // 跑一条 shell 命令，返回退出码与 stdout/stderr。
   "Run a shell command; returns exit code plus stdout/stderr. " +
   // 工作目录默认是工作区根目录，命令里可以 cd 到别处或用绝对路径。
   "The working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
   // 只在前台执行：不会自己结束的命令（服务、监听）会一直阻塞到超时，所以不要启动它们。
-  "Foreground only: a command that never exits (a server, a watcher) blocks until it times out, so never start one.";
+  "Foreground only: a command that never exits (a server, a watcher) blocks until it times out, so never start one. " +
+  // 超时参数仍然可用：默认 120 秒，上限 600 秒。
+  "Set timeout (milliseconds, default 120000, max 600000) when a build or test run needs longer.";
 
 /**
  * 把 `shell` 改成纯前台：Schema 里删掉 `background`，执行时强制 `background: false`。
@@ -199,6 +206,10 @@ const FOREGROUND_SHELL_DESCRIPTION =
  * 为什么两层都要做：只删 Schema，模型仍可能从旧上下文里照抄 `background:true`；
  * 只强制 false，模型仍会以为能起后台任务，然后拿到一个它无法用 `shell-output` 跟踪的进程。
  * 已知边界：这是工具层的限制，不是操作系统级隔离 —— 命令内部仍可能自行派生脱离管理的进程。
+ *
+ * 这里刻意不搬运 `strictArguments`：`shell` 本身没有开它，而这一层包装的正确性恰恰依赖
+ * 「多余字段不报错」—— 模型塞进来的 `background` 要能被吞掉再强制改成前台。
+ * 如果以后给 `shell` 打开 `strictArguments`，这个包装会先被注册表拒掉，必须先改这里。
  */
 function foregroundShell(shell: Tool): Tool {
   const parameters = structuredClone(shell.parameters);
@@ -268,12 +279,19 @@ function readRequest(args: Record<string, unknown>): SubagentRequest {
   return { task, mode };
 }
 
-/** 结果正文超长时截断，并在末尾写明丢了多少 —— 不能让人以为拿到的是完整结论。 */
+/**
+ * 结果正文超长时截断，并在末尾写明丢了多少 —— 不能让人以为拿到的是完整结论。
+ *
+ * 上限数的是 UTF-16 代码单元，所以可能正好切在一个 emoji（代理对）中间。
+ * 留下半个代理，编码成 UTF-8 就是一个替换字符：模型读到的正文是坏的，
+ * 而「丢了多少」还会少算一个。宁可多丢一个代码单元，也不交出半个字符。
+ */
 function clipResult(content: string): string {
   if (content.length <= SUBAGENT_RESULT_MAX_CHARS) return content;
-  const omitted = content.length - SUBAGENT_RESULT_MAX_CHARS;
-  return content.slice(0, SUBAGENT_RESULT_MAX_CHARS) +
-    `\n\n[... subagent result truncated: ${omitted} chars omitted]`;
+  const cut = content.slice(0, SUBAGENT_RESULT_MAX_CHARS);
+  const kept = /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+  const omitted = content.length - kept.length;
+  return kept + `\n\n[... subagent result truncated: ${omitted} chars omitted]`;
 }
 
 /** 统计块的统一排版：成功、失败、取消三种结果都要带，主 Agent 才能自己判断花了多少。 */

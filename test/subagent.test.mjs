@@ -189,6 +189,18 @@ test("委派结果：超长报告被截断，并写明丢了多少字符", () =>
   assert.match(text, /Final report:\nAAAA/);
 });
 
+test("委派结果：截断点落在代理对中间时不留半个字符", () => {
+  // 前面加 1 个字符，让 12000 这个偶数上限正好切在一个 emoji 的两个代码单元之间。
+  const content = "x" + "😀".repeat(SUBAGENT_RESULT_MAX_CHARS);
+  const text = formatSubagentResult({ status: "completed", content, stats: subagentStats() });
+  const body = text.split("Final report:\n")[1].split("\n\n[... subagent")[0];
+
+  // 孤立的高位代理编码成 UTF-8 会变成替换字符：模型读到的是一段坏掉的正文。
+  assert.doesNotMatch(body, /[\uD800-\uDBFF]$/, "截断不能停在半个 emoji 上");
+  // 少一个代码单元是可以接受的代价，但「丢了多少」必须如实算进去。
+  assert.match(text, /subagent result truncated: \d+ chars omitted\]$/);
+});
+
 test("角色工具：Explorer 只有四个只读工具，Worker 多出写、改、前台 shell", async () => {
   await withWorkspace(async (root) => {
     const all = createWorkspaceTools(new Workspace({ root }));
@@ -215,6 +227,10 @@ test("角色工具：Worker 的 shell 拿掉了 background，传了也按前台�
 
     assert.equal(Object.hasOwn(shell.parameters.properties, "background"), false);
     assert.doesNotMatch(shell.description, /background/i);
+    // 只删 background：timeout 参数还在 Schema 里，说明书就不能假装它不存在，
+    // 否则模型不知道慢构建、慢测试可以把超时调长，只会把「等超时」当成失败。
+    assert.equal(Object.hasOwn(shell.parameters.properties, "timeout"), true);
+    assert.match(shell.description, /timeout/);
 
     // 模型硬塞 background:true 也只能前台跑完：结果是退出码，不是任务编号。
     const result = await registry.execute({
