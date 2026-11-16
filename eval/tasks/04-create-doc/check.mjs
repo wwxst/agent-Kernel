@@ -14,7 +14,7 @@ export default async function check(root) {
 
   const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
   const scripts = pkg.scripts ?? {};
-  const rows = [...usage.matchAll(/^\\|\\s*([^|]+)\\|\\s*([^|]+)\\|\\s*$/gm)];
+  const rows = [...usage.matchAll(/^\|\s*([^|]+)\|\s*([^|]+)\|\s*$/gm)];
   const documented = new Map();
   for (const [, rawCommand, rawDescription] of rows) {
     const command = rawCommand.trim().replace(/^`|`$/g, "");

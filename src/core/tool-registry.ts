@@ -173,7 +173,7 @@ export class ToolRegistry {
       seen.add(tool.name);
       assertSupportedSchema(tool);
     }
-    // Snapshot caller-owned tool definitions so later mutation cannot change validation rules.
+    // 复制调用方提供的工具定义，避免注册后再修改原对象而改变参数校验规则。
     this.tools = Object.freeze(tools.map((tool) => Object.freeze({
       ...tool,
       parameters: structuredClone(tool.parameters),

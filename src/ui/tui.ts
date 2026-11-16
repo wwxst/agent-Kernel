@@ -64,9 +64,9 @@ const LOG_TOP = 4;
 const MAX_LOG_LINES = 2_000;
 const MAX_EDITOR_BYTES = 1_048_576;
 
-/** Read editor output through a bounded regular-file handle. */
+/** 通过有界的普通文件句柄读取外部编辑器的输出。 */
 function readEditorFile(file: string): string {
-  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  const fd = openSync(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
     if (!fstatSync(fd).isFile()) throw new Error("editor output is not a regular file");
     const buffer = Buffer.alloc(MAX_EDITOR_BYTES + 1);

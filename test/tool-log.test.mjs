@@ -156,8 +156,9 @@ test("日志：凭据字段与 Bearer token 脱敏，但工具返回原文不变
     })), "Bearer abc.def.ghi");
     const [record] = await readLog(file);
     const serialized = JSON.stringify(record);
-    assert.doesNotMatch(serialized, /top-secret|hidden|abc\\.def\\.ghi/);
+    assert.doesNotMatch(serialized, /top-secret|hidden|abc\.def\.ghi/);
     assert.match(serialized, /REDACTED/);
+    assert.equal(record.detail, "Bearer [REDACTED]", "Bearer token 必须从实际落盘内容中消失");
   });
 });
 

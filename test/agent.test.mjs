@@ -15,7 +15,7 @@
  *   - 三个预算：步数上限（最后一批工具不执行）、工具调用预算（整批不执行、跨批累计）、
  *     token 预算（软预算，顶穿时最终答复仍成功但状态可见）。
  *   - 取消：开始前已 abort、中途 abort 后剩余调用留 `not run`、取消后仍返回的答案不提交。
- *   - 会话：第二个 Run 继承 transcript、返回值不能篡改历史、预算按 Run 重算、并发被拒、失败后可继续。
+ *   - 会话：第二个 Run 继承 transcript、长历史压缩、当前工具批次在模型读取前不被压缩、返回值不能篡改历史、预算按 Run 重算、并发被拒、失败后可继续。
  *   - 记账：usage 累加、缺失记 unknown 不补 0、请求失败也记账。
  *   - 系统提示词：默认一条、可替换、函数每次请求前求值、关键约定文案不变。
  *   - 重试：429 计入真实请求与未知成本且 Step 不重复；401 不重试、取消时退避立即停。
@@ -685,6 +685,33 @@ test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", 
       assert.equal(result?.tool_call_id, call.id, "compaction must never orphan a tool result");
       index++;
     }
+  }
+});
+
+test("会话：当前批次超过六个工具时，模型先看到每个工具的完整结果", async () => {
+  const calls = Array.from({ length: 7 }, (_, index) => ({
+    id: `batch-${index + 1}`,
+    type: "function",
+    function: { name: "echo", arguments: JSON.stringify({ value: String(index + 1) }) },
+  }));
+  const tool = {
+    ...echoTool(),
+    run: async (args) => `${args.value}:` + "x".repeat(1_200),
+  };
+  const chat = createScriptedChat([
+    { role: "assistant", content: null, tool_calls: calls },
+    finalReply("done"),
+  ]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxTranscriptChars: 1_024 });
+
+  await agent.run("执行这一批七个工具");
+
+  const nextRequest = chat.requests[1].messages;
+  for (let index = 0; index < calls.length; index++) {
+    const result = nextRequest.find((message) =>
+      message.role === "tool" && message.tool_call_id === calls[index].id);
+    assert.ok(result, `缺少第 ${index + 1} 个工具结果`);
+    assert.equal(result.content, `${index + 1}:` + "x".repeat(1_200), "当前批次结果不能在模型读取前被压缩");
   }
 });
 

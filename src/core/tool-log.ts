@@ -47,13 +47,13 @@ interface ToolLogRecord {
   detail: string;
 }
 
-/** Redact credential-like fields in local diagnostics without changing tool output. */
+/** 对本地诊断日志中的凭据字段脱敏，不改动工具实际返回内容。 */
 function redact(value: unknown, key = "", depth = 0): unknown {
   if (/(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|passwd|secret|authorization|cookie)/i.test(key)) {
     return "[REDACTED]";
   }
   if (typeof value === "string") {
-    return value.replace(/(Bearer\\s+)[A-Za-z0-9._~+\\/-]+=*/gi, "$1[REDACTED]");
+    return value.replace(/(Bearer\s+)[A-Za-z0-9._~+\/-]+=*/gi, "$1[REDACTED]");
   }
   if (depth >= 8) return "[MAX_DEPTH]";
   if (Array.isArray(value)) return value.slice(0, 100).map((item) => redact(item, "", depth + 1));

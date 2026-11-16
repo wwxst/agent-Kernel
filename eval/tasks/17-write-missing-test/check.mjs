@@ -31,7 +31,8 @@ export default async function check(root) {
   assert.ok((source.match(/\btest\s*\(/g) ?? []).length >= 3, "至少三个用例");
 
   const result = await runTests(root);
-  assert.match(result.stdout, /# pass 3\b/, "必须恰好跑完三个测试用例");
+  const passed = /# pass (\d+)\b/.exec(result.stdout);
+  assert.ok(passed !== null && Number(passed[1]) >= 3, "至少三个测试用例必须全部通过");
   assert.match(result.stdout, /# fail 0\b/, "测试必须全部通过");
 
   // Mutation testing：将正确实现分别替换为三个单点错误实现，测试必须能抓住每一种回归。

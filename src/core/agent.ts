@@ -2,7 +2,7 @@
  * 文件目的：整个程序的核心 —— 让 agent loop 跑起来。问模型 → 它要工具就去执行 →
  * 把结果塞回去 → 再问，直到它不再要工具。换模型、换工具集都不改这里，所以它叫「核心」。
  *
- * 一个实例对应一个 Session，可以顺序跑多个 Run；Transcript 累积，预算按 Run 重算。
+ * 一个实例对应一个 Session，可以顺序跑多个 Run；Transcript 跨 Run 累积，超预算时压缩旧内容，预算按 Run 重算。
  * 同时只允许一个 Run，返回的消息与统计都是副本，宿主不能改写已确认的会话状态。
  *
  * 文件职责：负责循环、消息顺序与 id 配对、三类预算（步数 / 工具调用 / token）、
@@ -14,7 +14,7 @@
  *   - `AgentUsage` / `AgentStats` / `AgentSessionStats`：用量与统计；成本未知单独计数，不补 0。
  *   - `AgentOptions`：客户端、工具、系统提示、三个预算、取消信号与五种观察回调。
  *   - `Agent`：`run(task)` 跑一次任务；`transcript`、`stats`、`sessionStats`、`observerFailureCount`。
- *   - 内部：`runLoop()` 主循环、`beginRun()` 重置本 Run 状态、`refreshSystemPrompt()`、
+ *   - 内部：`runLoop()` 主循环、`compactTranscript()` 按预算压缩旧上下文、`beginRun()` 重置本 Run 状态、`refreshSystemPrompt()`、
  *     `stopIfCancelled()` / `stopIfBudgetExhausted()`、`recordUsage()`、`skipCalls()`。
  *
  * 模块关系：依赖 `protocol/types.ts`、`protocol/errors.ts`，以及 `core/tool-registry.ts`
@@ -259,8 +259,8 @@ export class Agent {
   private processCleanupUnverified = false;
 
   /**
-   * 完整对话记录。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部上下文。
-   * 注意「重发」：模型是无状态的，它记得多少，完全取决于我们发过去多少。
+   * 当前对话上下文。它是 Agent 唯一的状态，也是每一轮要重发给模型的全部消息。
+   * 旧内容可能按预算压缩，所以它不是不可变的完整审计记录。
    * 对外只读：调用方可以看，但不能绕过循环往里塞消息。
    */
   private readonly messages: Message[] = [];
@@ -378,12 +378,13 @@ export class Agent {
    * 控制长期会话增长：
    * 1. 先整轮移除最旧且工具调用全部配对的历史，摘要放进 system；
    * 2. 当前轮不删除用户任务或 tool_call，只压缩较旧的 tool 结果正文；
-   * 3. 必要时再缩短所有 tool 结果，但始终保留每个 tool_call_id 对应的结果消息。
+   * 3. 当前批次的工具结果在下一次模型请求读取之前不压缩；必要时再缩短已被模型消费的旧结果。
+   *    即使当前批次暂时超过字符预算，也不能把模型尚未读取的结果提前截断。
    *
    * 用户原始任务、最新工具调用和消息顺序不被删除。单条超长用户输入本身可能超过预算，
    * 不会为了满足字符数上限而静默改写用户指令。
    */
-  private compactTranscript(): void {
+  private compactTranscript(protectedToolCallIds: ReadonlySet<string> = new Set()): void {
     if (this.transcriptSize() <= this.maxTranscriptChars) return;
     const target = Math.floor(this.maxTranscriptChars * 0.85);
     const turns: Message[][] = [];
@@ -401,7 +402,9 @@ export class Agent {
     }
 
     const toolMessages = this.messages.filter((message) => message.role === "tool");
-    const olderToolMessages = toolMessages.slice(0, Math.max(0, toolMessages.length - 6));
+    const compactableToolMessages = toolMessages.filter((message) =>
+      !protectedToolCallIds.has(message.tool_call_id ?? ""));
+    const olderToolMessages = compactableToolMessages.slice(0, Math.max(0, compactableToolMessages.length - 6));
     for (const message of olderToolMessages) {
       if (this.transcriptSize() <= target) break;
       const original = message.content ?? "";
@@ -413,6 +416,7 @@ export class Agent {
     if (this.transcriptSize() > this.maxTranscriptChars) {
       for (const message of toolMessages) {
         if (this.transcriptSize() <= target) break;
+        if (protectedToolCallIds.has(message.tool_call_id ?? "")) continue;
         const original = message.content ?? "";
         if (original.length > 240) message.content = compactText(original, 240);
       }
@@ -553,9 +557,9 @@ export class Agent {
   }
 
   /**
-   * 核心成员 transcript（对话记录）：到目前为止的完整对话记录。
+   * 核心成员 transcript（对话上下文）：当前保留、将随下一次请求发给模型的消息。
    *
-   * 返回深拷贝：数组复制挡不住 `snapshot[0].content = "..."`，只有把 Message 也复制了，
+   * 旧内容可能已按预算压缩；它不是完整审计档案。返回深拷贝：数组复制挡不住 `snapshot[0].content = "..."`，
    * 「只读」才是真的只读，而不是只挡住了 push/splice。
    */
   get transcript(): readonly Message[] {
@@ -569,11 +573,11 @@ export class Agent {
    * 把结果塞回去，直到它不再要工具。这里用带计数器的 for 代替 while (true)，
    * 并加了三道闸门：模型请求次数、工具执行次数、取消信号。
    *
-   * 一个 Agent 可以连续跑多个 Run（TUI 就是这样一个循环），Transcript 跨 Run 累积；
+   * 一个 Agent 可以连续跑多个 Run（TUI 就是这样一个循环），Transcript 跨 Run 累积，但旧内容可能按预算压缩；
    * 但同一时刻只允许一个 Run —— 两个循环同时往一条 transcript 里写，顺序无法解释。
    *
    * 失败时抛错而不是返回半成品：让调用方明确知道「任务没跑完」，
-   * 错误文案里带「已经执行了多少」，此时 transcript 里保留了全过程。
+   * 错误文案里带「已经执行了多少」，此时 transcript 保留当前上下文，较旧内容可能已被压缩。
    *
    * 最后的请求预算留给「收尾」：到第 maxSteps 次请求时，模型只能给最终答复；
    * 它若还想要工具，那些工具不执行 —— 执行了也没有下一次请求去验证结果，
@@ -606,7 +610,7 @@ export class Agent {
     // 取消发生在任务开始之前：用户已经按了 Ctrl-C，就不该再花一次模型请求。
     this.stopIfCancelled();
 
-    // 1) 用户消息先入栈；之后每次请求模型，都带着从 system 到此刻的完整历史。
+    // 1) 用户消息先入栈；之后每次请求模型，都带着当前保留的上下文（旧内容可能已按预算压缩）。
     this.messages.push({ role: "user", content: task });
     this.compactTranscript();
 
@@ -669,7 +673,7 @@ export class Agent {
       // 即使模型仍返回工具调用，也只补 not-run 结果，绝不再启动副作用。
       if (this.processCleanupUnverified) {
         this.skipCalls(calls, "process tree cleanup unverified; tool execution remains disabled for this Agent session");
-        this.compactTranscript();
+        this.compactTranscript(new Set(calls.map((call) => call.id)));
         continue;
       }
 
@@ -733,7 +737,7 @@ export class Agent {
         this.notifyObserver(this.onToolResult, structuredClone(call), result, isError);
       }
 
-      this.compactTranscript();
+      this.compactTranscript(new Set(calls.map((call) => call.id)));
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
     }

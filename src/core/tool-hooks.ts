@@ -110,9 +110,8 @@ function readBlockReason(decision: unknown): string | undefined {
  * 同一事件内**串行**执行，按登记顺序，一个跑完（含 await）才轮到下一个：
  * Hook 之间可能前后依赖（先记日志、再判断），并发会让「顺序」这个词失去意义。
  *
- * Hook 自己抛错只记一笔 `failureCount` 然后跳过它 —— 既不打断工具执行，
- * 也不改变工具结果，更不会变成模型看到的内容。Hook 是宿主侧的旁路观察者，
- * 它的故障不该冒充工具失败。
+ * 前置 Hook 抛错会记入 `failureCount` 并 fail-closed，阻止工具执行；后置 Hook 是旁路观察者，
+ * 抛错只记数并跳过，不改变工具结果，也不会进入模型上下文（fail-open）。
  *
  * 已知边界：没有超时。一个永不返回的 Hook 会一直挡住那次工具调用；
  * 第一版不引入后台调度或超时预算，需要时由 Hook 自己处理。

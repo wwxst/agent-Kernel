@@ -19,7 +19,7 @@
  *   - 流式正文：草稿与确认正文不一致时显式更正、行式模式不能撤回只能标记未确认。
  *   - 输入：长输入滚动与光标、中文宽度换行、Tab、组合字符与 emoji、括号粘贴、
  *     UTF-8 与粘贴标记分片、CR / LF 归一化、粘贴前后文和历史回填、会话粘贴归档上限、输入流恢复、
- *     `Ctrl+J` 与 `Shift+Enter` 换行、`@` 补全、`/` 命令菜单、`Ctrl+X Ctrl+E`、上下键翻历史。
+ *     `Ctrl+J` 与 `Shift+Enter` 换行、`@` 补全、`/` 命令菜单、`Ctrl+X Ctrl+E`（含 FIFO 替换与超大回读）、上下键翻历史。
  *   - 语言与权限：按任务与 locale 判断语言、只翻译界面不翻译模型正文、状态栏固定完全访问、
  *     `Shift+Tab` 不再是快捷键。
  *
@@ -29,6 +29,7 @@
  * 已知边界：真实终端里的行为留给手动验收 —— 没在真终端里跑过，就不假装验过。
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs, { readFileSync, rmSync } from "node:fs";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -2526,6 +2527,61 @@ test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) 
   await new Promise((resolve) => setTimeout(resolve, 300));
   assert.match(inputLine(ui), /keep this input/);
   assert.match(ui.text(), /exceeds 1048576 bytes/);
+});
+
+test("TUI 外部编辑器：临时文件被替换成 FIFO 时不会卡住", { skip: process.platform === "win32" }, async (t) => {
+  const editor = path.join(tmpdir(), `agent-editor-fifo-${process.pid}.mjs`);
+  const runner = path.join(tmpdir(), `agent-editor-fifo-runner-${process.pid}.mjs`);
+  const moduleUrl = new URL("../src/ui/tui.ts", import.meta.url).href;
+  await writeFile(editor, [
+    "import { unlinkSync } from 'node:fs';",
+    "import { spawnSync } from 'node:child_process';",
+    "const file = process.argv[2];",
+    "unlinkSync(file);",
+    "const result = spawnSync('mkfifo', [file]);",
+    "if (result.status !== 0) throw new Error('mkfifo failed');",
+    "",
+  ].join("\n"), "utf8");
+  await writeFile(runner, [
+    "import { PassThrough } from 'node:stream';",
+    `import { Tui } from ${JSON.stringify(moduleUrl)};`,
+    "process.env.TERM = 'xterm-256color';",
+    "const input = new PassThrough();",
+    "const output = new PassThrough();",
+    "output.isTTY = true; output.columns = 80; output.rows = 24;",
+    "let rendered = '';",
+    "output.on('data', chunk => rendered += String(chunk));",
+    "const tui = new Tui({ input, output, model: 'mock-model', workspace: process.cwd(), controller: new AbortController(), interactive: true, columns: 80, rows: 24, color: false, colorMode: 'full', theme: 'dark' });",
+    "tui.start();",
+    "const pending = tui.readLine(); pending.catch(() => {});",
+    "input.write('keep this input');",
+    "await new Promise(resolve => setImmediate(() => setImmediate(resolve)));",
+    "input.emit('keypress', '', { name: 'x', ctrl: true });",
+    "input.emit('keypress', '', { name: 'e', ctrl: true });",
+    "await new Promise(resolve => setTimeout(resolve, 250));",
+    "const rejectedFifo = rendered.includes('editor output is not a regular file');",
+    "tui.close();",
+    "if (!rejectedFifo) { console.error(rendered); process.exitCode = 1; }",
+    "",
+  ].join("\n"), "utf8");
+  t.after(() => {
+    rmSync(editor, { force: true });
+    rmSync(runner, { force: true });
+  });
+
+  const history = path.join(tmpdir(), `agent-editor-fifo-history-${process.pid}.jsonl`);
+  const result = spawnSync(process.execPath, [runner], {
+    encoding: "utf8",
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      EDITOR: `"${process.execPath}" "${editor}"`,
+      AGENT_HISTORY_FILE: history,
+    },
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.status, 0, result.stderr);
+  rmSync(history, { force: true });
 });
 
 test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次的任务", async (t) => {

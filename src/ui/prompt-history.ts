@@ -187,7 +187,7 @@ export function loadHistory(file = historyPath(), limit = MAX_HISTORY_ENTRIES): 
   if (!Number.isFinite(limit) || limit <= 0) return [];
   let raw: string;
   try {
-    const fd = openSync(file, constants.O_RDONLY | NO_FOLLOW);
+    const fd = openSync(file, constants.O_RDONLY | NO_FOLLOW | (constants.O_NONBLOCK ?? 0));
     try {
       const stats = fstatSync(fd);
       if (!stats.isFile()) return [];

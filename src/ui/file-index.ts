@@ -85,7 +85,7 @@ export function listWorkspaceFiles(root: string, limit = MAX_INDEXED_FILES): str
         scanned++;
         entries.push(entry);
       }
-      // Keep the historical lexical ordering before applying the global file limit.
+      // 先按原有字典序排序，再应用全局文件数量上限，保持历史输出顺序。
       entries.sort((left, right) => left.name.localeCompare(right.name));
       for (const entry of entries) {
         if (files.length >= boundedLimit) return;
