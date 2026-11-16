@@ -64,6 +64,15 @@ const MAX_READ_SCAN_BYTES = 8_000_000;
 /** 按行读窗口时每次读多少字节。太小则系统调用次数暴涨，太大则单次分配浪费。 */
 const READ_CHUNK_BYTES = 65_536;
 
+/**
+ * 给「下一段从哪读」那句尾注预留的字符数。
+ *
+ * 窗口按 `MAX_OUTPUT_CHARS - 这个值` 收口，正文和尾注加起来才不会超上限 ——
+ * 这样 `lastLine` 数的每一行都是真的交出去了的，下一段的 offset 也就对得上。
+ * 尾注最长约 70 字符（含行号），留 200 是余量；改动尾注措辞时不用回来调这个数。
+ */
+const MAX_READ_TAIL_CHARS = 200;
+
 /** grep 跳过超过这个大小的文件：大概率是日志、锁文件或打包产物，读进来只会拖慢。 */
 const MAX_GREP_FILE_BYTES = 1_000_000;
 
@@ -466,7 +475,15 @@ export class Workspace {
     const startLine = options.offset ?? 1;
     assertPositiveLine(startLine, "offset");
     if (options.limit !== undefined) assertPositiveLine(options.limit, "limit");
-    const slice = await readLineWindow(file, startLine, options.limit, this.signal);
+    // 字符预算要在这里就交给窗口：等 `clip()` 事后截断，`lastLine` 就会多算几行，
+    // 下一段的 offset 直接跳过那些模型没看到的行。
+    const slice = await readLineWindow(
+      file,
+      startLine,
+      options.limit,
+      MAX_OUTPUT_CHARS - MAX_READ_TAIL_CHARS,
+      this.signal,
+    );
     if (slice.lastLine < slice.firstLine) {
       // 扫到上限还没走到目标行：必须说「没走到」，不能说「没有内容」——
       // 后者会让模型以为文件到这就结束了，于是放弃或去改别的文件。
@@ -1441,11 +1458,17 @@ function assertPositiveLine(value: number, name: string): void {
 }
 
 /**
- * 按行读文件的一个窗口：从 `offset` 行（1 起）开始，最多 `limit` 行。
+ * 按行读文件的一个窗口：从 `offset` 行（1 起）开始，最多 `limit` 行、最多 `charBudget` 个字符。
  *
  * 为什么分块读，而不是「整个读进来再切」：一个 200 MB 的日志，`offset=100000` 也只需要
  * 前面几 MB 的行号，没必要把整个文件塞进内存。所以只保留「当前还没结束的那一行」和
  * 目标窗口里的行，扫到窗口末尾就停。
+ *
+ * **为什么窗口还要按字符收口**：如果只按行数收，100 行可能是两万字，回头 `clip()` 一截，
+ * 模型实际只看到前 40 行，而下一段的 `offset` 却按第 101 行算 —— 中间 60 行就永远读不到了。
+ * 所以字符预算必须在这里生效：`lastLine` 只数「真的要交出去的行」，下一段的 offset 才对得上。
+ * 唯一例外是单行本身就超过预算 —— 那时至少交出这一行（被 `clip` 截断并标明），
+ * 下一段从它的下一行开始，仍然不漏行。
  *
  * 行尾原样保留（`\r` 不剥）：模型常把读到的片段直接拿去 `edit` 做精确替换，
  * 少一个 `\r` 就匹配不上 CRLF 文件。
@@ -1458,6 +1481,7 @@ async function readLineWindow(
   file: string,
   offset: number,
   limit: number | undefined,
+  charBudget: number,
   signal?: AbortSignal,
 ): Promise<{
   text: string;
@@ -1479,6 +1503,8 @@ async function readLineWindow(
     const decoder = new StringDecoder("utf8");
     const chunk = Buffer.alloc(READ_CHUNK_BYTES);
     const lines: string[] = [];
+    // 已经收进来的字符数（含行间换行），用来守住输出上限。
+    let chars = 0;
     // 还没遇到换行的那一截：块边界可能正好落在行中间，不能当成完整行。
     let carry = "";
     let lineNumber = 0;
@@ -1486,6 +1512,15 @@ async function readLineWindow(
     let hasMore = false;
     let scanStopped = false;
     let totalLines: number | undefined;
+
+    /**
+     * 这一行还收得下吗？
+     *
+     * 空窗口永远收第一行：单行本身超预算时，至少让模型看到它的开头（由 `clip` 截断并标明），
+     * 下一段从它的下一行继续 —— 这样既不会一个字都不给，也不会跳过没给过的行。
+     */
+    const fits = (part: string): boolean =>
+      lines.length === 0 || chars + 1 + part.length <= charBudget;
 
     for (;;) {
       // 取消要在两块之间生效：读一个几百 MB 的文件不该等到读完才响应 Ctrl-C。
@@ -1502,8 +1537,8 @@ async function readLineWindow(
         if (carry !== "") {
           lineNumber++;
           if (lineNumber >= offset) {
-            if (limit === undefined || lines.length < limit) lines.push(carry);
-            else hasMore = true;
+            if ((limit !== undefined && lines.length >= limit) || !fits(carry)) hasMore = true;
+            else lines.push(carry);
           }
         }
         totalLines = lineNumber;
@@ -1516,10 +1551,12 @@ async function readLineWindow(
       for (const part of parts) {
         lineNumber++;
         if (lineNumber < offset) continue;
-        if (limit !== undefined && lines.length >= limit) {
+        // 行数和字符数谁先到都算「窗口满了」：下一段的 offset 必须从真正给出去的那一行算。
+        if ((limit !== undefined && lines.length >= limit) || !fits(part)) {
           hasMore = true;
           break;
         }
+        chars += (lines.length === 0 ? 0 : 1) + part.length;
         lines.push(part);
       }
       if (hasMore) break;

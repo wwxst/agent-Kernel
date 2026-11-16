@@ -1615,3 +1615,84 @@ test("read：目标行超过扫描上限时明确报告，不无限往后读", a
     assert.match(slice, /stopped after scanning 8000000 bytes/);
   });
 });
+
+// ── 分页连续性：受输出上限约束时不能漏行 ──────────────────────────────────────
+// 曾经的 bug：窗口按行数收（100 行），clip 之后按字符截（只出 40 行），
+// 但尾注仍按第 101 行提示下一段 —— 中间 60 行永远读不到。
+
+/** 造一份「每行 200 字符」的文件，保证一屏 8000 字符装不下 100 行。 */
+function wideLines(count) {
+  return Array.from({ length: count }, (_, index) =>
+    ("L" + String(index + 1).padStart(3, "0") + "-").padEnd(200, "."));
+}
+
+/** 把一页里的正文和尾注拆开；没有尾注就是整页正文。 */
+function pageBody(page) {
+  const index = page.indexOf("\n… [lines ");
+  return index === -1 ? page : page.slice(0, index);
+}
+
+test("read：输出上限截断时，下一段 offset 从真正给出去的行算起", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "wide.txt"), wideLines(200).join("\n") + "\n");
+    const page = await new Workspace({ root }).read("wide.txt", { offset: 1, limit: 100 });
+
+    // 上限仍然生效。
+    assert.ok(page.length <= 8000, "一页不能超过 8000 字符，实际 " + page.length);
+    // 正文里真正拿到了多少行，尾注就必须从它的下一行开始。
+    const body = pageBody(page);
+    const returned = body.split("\n").length;
+    const hinted = Number(page.match(/offset=(\d+)/)[1]);
+    assert.equal(hinted, returned + 1, "提示的下一段 offset 必须紧接最后一行，不能跳过被截掉的行");
+    assert.equal(body.split("\n").at(-1).slice(0, 4), "L" + String(returned).padStart(3, "0"));
+  });
+});
+
+test("read：连续分页拼接后与原文完全一致，不漏行、不重复", async () => {
+  await withWorkspace(async (root) => {
+    const original = wideLines(200).join("\n") + "\n";
+    await writeFile(path.join(root, "wide.txt"), original);
+    const workspace = new Workspace({ root });
+
+    const pages = [];
+    let offset = 1;
+    for (let guard = 0; guard < 40; guard++) {
+      const page = await workspace.read("wide.txt", { offset, limit: 100 });
+      pages.push(pageBody(page));
+      const hint = page.match(/offset=(\d+)/);
+      // 最后一页不能谎报「后面还有」。
+      if (hint === null) break;
+      offset = Number(hint[1]);
+    }
+
+    assert.ok(pages.length > 1, "这份文件应该需要多页");
+    assert.equal(pages.join("\n") + "\n", original);
+  });
+});
+
+test("read：单行超过输出上限时仍给出该行开头，下一段从下一行继续", async () => {
+  await withWorkspace(async (root) => {
+    const huge = "H".repeat(20_000);
+    await writeFile(path.join(root, "one.txt"), huge + "\nSECOND\n");
+    const workspace = new Workspace({ root });
+
+    const page = await workspace.read("one.txt", { offset: 1, limit: 1 });
+    assert.ok(page.startsWith("HHHH"), "至少要给出这一行的开头");
+    assert.match(page, /… \[truncated \d+ chars\]/);
+    assert.match(page, /continue with offset=2/);
+    // 下一段确实能读到第二行，没有因为第一行被截断而跳过它。
+    assert.equal(await workspace.read("one.txt", { offset: 2, limit: 1 }), "SECOND");
+  });
+});
+
+test("read：不传分页参数时仍是一次性读到 8000 字符上限", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "wide.txt"), wideLines(200).join("\n") + "\n");
+    const text = await new Workspace({ root }).read("wide.txt");
+
+    // 旧路径：没有「下一段」提示，只有自己的截断标记与字节上限说明。
+    assert.doesNotMatch(text, /continue with offset=/);
+    assert.match(text, /… \[truncated \d+ chars\]/);
+    assert.match(text, /… \[stopped after 32768 bytes\]$/);
+  });
+});
