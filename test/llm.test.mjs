@@ -113,6 +113,46 @@ async function respondWhileOpen(write) {
   };
 }
 
+test("SSE：同一事件的多条 data 行按换行拼接后再解析", async () => {
+  const server = createServer((request, response) => {
+    request.resume();
+    request.on("end", () => {
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.end('data: {"choices":[{"index":0,\ndata: "delta":{"content":"multi"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n');
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const result = await streamingClient(`http://127.0.0.1:${server.address().port}/v1`).chat([], []);
+    assert.equal(result.message.content, "multi");
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("SSE：兼容 CR-only 与跨分片 CRLF 换行", async () => {
+  for (const ending of ["\r", "\r\n"]) {
+    const payload = `data: ${JSON.stringify(streamDelta({ content: "line-ending" }, "stop"))}${ending}${ending}data: [DONE]${ending}${ending}`;
+    const server = createServer((request, response) => {
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "content-type": "text/event-stream" });
+        const split = payload.indexOf(ending) + 1;
+        response.write(payload.slice(0, split));
+        setTimeout(() => response.end(payload.slice(split)), 5);
+      });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const result = await streamingClient(`http://127.0.0.1:${server.address().port}/v1`).chat([], []);
+      assert.equal(result.message.content, "line-ending", `line ending ${JSON.stringify(ending)}`);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+});
 test("流式：DONE 结束读取，不处理结束标记之后的坏数据", async () => {
   const server = await respondWithStream([streamDelta({ content: "done" }, "stop"), "[DONE]", "{broken"]);
   try {

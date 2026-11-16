@@ -33,14 +33,20 @@ function call(name, args = {}, id = "call_1") {
   return { id, type: "function", function: { name, arguments: JSON.stringify(args) } };
 }
 
-test("故障隔离：读取前置 Hook 决定抛错时计数并继续后续 Hook", async () => {
+test("安全性：前置 Hook 的决定读取异常时 fail-closed，不执行工具或后续 Hook", async () => {
+  let ran = false;
+  let later = false;
   const hooks = new ToolHooks({ preToolUse: [
     () => ({ get block() { throw new Error("bad decision"); } }),
-    () => ({ block: "still checked" }),
+    () => { later = true; },
   ] });
-  const registry = new ToolRegistry([echoTool()], hooks);
+  const registry = new ToolRegistry([{
+    ...echoTool(), run: async () => { ran = true; return "should not run"; },
+  }], hooks);
   assert.equal(await registry.execute(call("echo", { value: "hi" })),
-    'ERROR: tool "echo" blocked by hook: still checked');
+    'ERROR: tool "echo" blocked by hook: pre-tool hook failed; execution blocked');
+  assert.equal(ran, false);
+  assert.equal(later, false);
   assert.equal(hooks.failureCount, 1);
 });
 
@@ -210,7 +216,7 @@ test("返回 block:false 或不返回任何东西都算放行", async () => {
   assert.equal(await registry.execute(call("echo", { value: "hi" })), "echo hi");
 });
 
-test("Hook 同步抛错：工具照常执行，结果不变，只记失败次数", async () => {
+test("Hook 同步抛错：前置失败阻止工具，后置失败仍隔离", async () => {
   const hooks = new ToolHooks({
     preToolUse: [() => {
       throw new Error("pre hook failed");
@@ -221,11 +227,12 @@ test("Hook 同步抛错：工具照常执行，结果不变，只记失败次数
   });
   const registry = new ToolRegistry([echoTool()], hooks);
 
-  assert.equal(await registry.execute(call("echo", { value: "hi" })), "echo hi");
-  assert.equal(hooks.failureCount, 2);
+  assert.equal(await registry.execute(call("echo", { value: "hi" })),
+    'ERROR: tool "echo" blocked by hook: pre-tool hook failed; execution blocked');
+  assert.equal(hooks.failureCount, 1, "前置 Hook 失败即短路，后置 Hook 不运行");
 });
 
-test("Hook 返回 rejected Promise：结果不变，失败计数照样记", async () => {
+test("Hook 返回 rejected Promise：前置失败阻止工具", async () => {
   const hooks = new ToolHooks({
     preToolUse: [async () => {
       throw new Error("async pre failed");
@@ -236,8 +243,9 @@ test("Hook 返回 rejected Promise：结果不变，失败计数照样记", asyn
   });
   const registry = new ToolRegistry([echoTool()], hooks);
 
-  assert.equal(await registry.execute(call("echo", { value: "hi" })), "echo hi");
-  assert.equal(hooks.failureCount, 2);
+  assert.equal(await registry.execute(call("echo", { value: "hi" })),
+    'ERROR: tool "echo" blocked by hook: pre-tool hook failed; execution blocked');
+  assert.equal(hooks.failureCount, 1);
 });
 
 test("Hook 抛错时工具也失败：ERROR 文本仍是工具自己的原因", async () => {

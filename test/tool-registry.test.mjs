@@ -52,6 +52,21 @@ test("definitions：只投影说明书字段，run 不外泄", () => {
   assert.equal(definition.name, "echo");
 });
 
+test("注册：外部修改原始 Tool Schema 不改变注册后的校验规则", async () => {
+  const tool = {
+    name: "guarded",
+    description: "Guarded tool.",
+    parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+    run: async () => "ran",
+  };
+  const registry = makeRegistry([tool]);
+  tool.parameters.required.length = 0;
+  tool.parameters.properties.value.type = "number";
+  assert.deepEqual(registry.definitions[0].parameters.required, ["value"]);
+  assert.match(await registry.execute(call("guarded", "{}")), /missing required argument "value"/);
+  assert.equal(await registry.execute(call("guarded", `{"value":"ok"}`)), "ran");
+});
+
 test("definitions：修改嵌套 Schema 不影响后续说明书与参数校验", async () => {
   const registry = makeRegistry([echoTool()]);
   const [definition] = registry.definitions;
@@ -65,6 +80,16 @@ test("definitions：修改嵌套 Schema 不影响后续说明书与参数校验"
     'ERROR: invalid arguments: missing required argument "value"');
   assert.equal(await registry.execute(call("echo", '{"value":{}}')),
     'ERROR: invalid arguments: argument "value" must be a string');
+});
+
+test("executeWithStatus：文件正文以 ERROR: 开头仍是成功结果", async () => {
+  const registry = makeRegistry([{
+    name: "read", description: "Read text.", parameters: { type: "object", properties: {} },
+    run: async () => "ERROR: this is literal file content",
+  }]);
+  const outcome = await registry.executeWithStatus(call("read"));
+  assert.deepEqual(outcome, { content: "ERROR: this is literal file content", isError: false });
+  assert.equal((await registry.executeWithStatus(call("missing"))).isError, true);
 });
 
 test("execute：命中工具就执行它", async () => {

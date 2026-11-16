@@ -292,22 +292,23 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
     },
   };
 
-  const execute = tools.execute.bind(tools);
+  const executeWithStatus = tools.executeWithStatus.bind(tools);
   try {
-    tools.execute = async (call) => {
+    tools.executeWithStatus = async (call) => {
       const index = trace.toolCalls.length + 1;
       const started = performance.now();
       let result;
       let thrown;
       let didThrow = false;
       try {
-        result = await execute(call);
+        result = await executeWithStatus(call);
       } catch (error) {
         didThrow = true;
         thrown = error;
       }
 
       const executedAt = performance.now();
+      const resultText = result?.content ?? "";
       let nextSnapshot = previousSnapshot;
       try {
         nextSnapshot = await snapshotFiles(workdir);
@@ -339,14 +340,14 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
     noteDiagnosticError(error);
   }
 
-  function onToolResult(call, result) {
+  function onToolResult(call, result, isError = false) {
     try {
       const queue = eventsByCallId.get(call.id);
       const event = queue?.shift();
       if (!event) return;
       event.resultChars = result.length;
       event.resultBytes = Buffer.byteLength(result);
-      event.resultKind = result.startsWith("ERROR:") ? "error" : "text";
+      event.resultKind = isError ? "error" : "text";
       if (event.resultKind === "error") event.resultPreview = result.slice(0, 200);
       if (queue.length === 0) eventsByCallId.delete(call.id);
     } catch (error) {

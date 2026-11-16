@@ -63,6 +63,18 @@ test("文件索引：修改返回数组不会污染后续补全缓存", async ()
   });
 });
 
+test("文件索引：目录项扫描和缓存键都有上限", async () => {
+  await withDir(async (root) => {
+    await mkdir(path.join(root, "many"));
+    await Promise.all(Array.from({ length: 250 }, (_, index) =>
+      writeFile(path.join(root, "many", `f-${String(index).padStart(3, "0")}.txt`), "")));
+    const files = listWorkspaceFiles(root, 10_000);
+    assert.ok(files.length <= 2_000, "单次索引不能超过文件数上限");
+    assert.deepEqual(listWorkspaceFiles(root, 10_000), files);
+    assert.deepEqual(listWorkspaceFiles(root, Number.POSITIVE_INFINITY), []);
+  });
+});
+
 test("文件索引：文件名精确匹配排在前面，同档短路径优先", async () => {
   const files = ["eval/tasks/04/package.json", "package.json", "src/package-lock.json"];
   assert.equal(matchFiles(files, "package")[0], "package.json");

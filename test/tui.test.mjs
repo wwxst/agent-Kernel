@@ -19,7 +19,7 @@
  *   - 流式正文：草稿与确认正文不一致时显式更正、行式模式不能撤回只能标记未确认。
  *   - 输入：长输入滚动与光标、中文宽度换行、Tab、组合字符与 emoji、括号粘贴、
  *     UTF-8 与粘贴标记分片、CR / LF 归一化、粘贴前后文和历史回填、会话粘贴归档上限、输入流恢复、
- *     `Ctrl+J` 与 `Shift+Enter` 换行、`@` 补全、`/` 命令菜单、`Ctrl+X Ctrl+E`、上下键翻历史。
+ *     `Ctrl+J` 与 `Shift+Enter` 换行、`@` 补全、`/` 命令菜单、`Ctrl+X Ctrl+E`（含 FIFO 替换与超大回读）、上下键翻历史。
  *   - 语言与权限：按任务与 locale 判断语言、只翻译界面不翻译模型正文、状态栏固定完全访问、
  *     `Shift+Tab` 不再是快捷键。
  *
@@ -29,6 +29,7 @@
  * 已知边界：真实终端里的行为留给手动验收 —— 没在真终端里跑过，就不假装验过。
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs, { readFileSync, rmSync } from "node:fs";
 import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
@@ -1051,9 +1052,9 @@ test("TUI：失败和未执行工具显示不同符号，原因在下一行", as
 
   ui.tui.start();
   ui.tui.toolCall(failed);
-  ui.tui.toolResult(failed, "ERROR: File not found: src/missing.ts");
+  ui.tui.toolResult(failed, "ERROR: File not found: src/missing.ts", true);
   ui.tui.toolCall(notRun);
-  ui.tui.toolResult(notRun, "ERROR: not run: task cancelled");
+  ui.tui.toolResult(notRun, "ERROR: not run: task cancelled", true);
   await tick();
 
   const text = ui.text();
@@ -1270,7 +1271,7 @@ test("TUI 中英文切换：不翻译模型正文和实际工具错误，只翻�
 
   const call = { id: "localized-error", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
   ui.tui.toolCall(call);
-  ui.tui.toolResult(call, "ERROR: file not found: missing.txt");
+  ui.tui.toolResult(call, "ERROR: file not found: missing.txt", true);
   assert.match(ui.text(), /file not found: missing\.txt/, "工具错误必须原样保留");
 
   assert.equal(ui.tui.uiText("session reset", "会话已重置"), "会话已重置");
@@ -1787,7 +1788,7 @@ test("TUI 过程概述：工具失败不显示为操作已成功", async (t) => 
   ui.tui.assistantDelta("检查失败，改为只检查文件。");
   const read = { id: "overview-fail-read", type: "function", function: { name: "read", arguments: '{"path":"missing.txt"}' } };
   ui.tui.toolCall(read);
-  ui.tui.toolResult(read, "ERROR: file not found");
+  ui.tui.toolResult(read, "ERROR: file not found", true);
   screen = await detailText(ui);
   assert.match(screen, /检查失败，改为只检查文件。/);
   assert.doesNotMatch(screen, /已读取文件 missing\.txt。/, "模型已说明的新阶段也不应由工具伪造成功进度");
@@ -2490,6 +2491,97 @@ test("TUI 主视图：Ctrl+X Ctrl+E 用 $EDITOR 编辑当前输入", async (t) =
   assert.match(inputLine(ui), /编辑后的内容/, "编辑器保存后内容回到输入框");
   ui.input.write("\r");
   assert.equal(await pending, "编辑后的内容");
+});
+
+test("TUI：ERROR: 开头的文件正文按成功结果展示", async () => {
+  const ui = makeTui({ interactive: true, tty: true });
+  ui.tui.start();
+  const read = { id: "literal-error-body", type: "function", function: { name: "read", arguments: JSON.stringify({ path: "notes.txt" }) } };
+  ui.tui.toolCall(read);
+  ui.tui.toolResult(read, "ERROR: this is literal file content", false);
+  assert.match(ui.text(), /[✓+] Read/);
+  assert.doesNotMatch(ui.text(), /[✗x] Read/);
+  ui.cleanup();
+});
+
+test("TUI 外部编辑器：超大回读被拒绝且原输入不变", async (t) => {
+  const script = path.join(tmpdir(), `agent-editor-large-${process.pid}.mjs`);
+  await writeFile(script, ["import { writeFileSync } from 'node:fs';", "writeFileSync(process.argv[2], 'x'.repeat(1048577));", ""].join(String.fromCharCode(10)), "utf8");
+  const previous = process.env.EDITOR;
+  process.env.EDITOR = `"${process.execPath}" "${script}"`;
+  t.after(() => {
+    if (previous === undefined) delete process.env.EDITOR;
+    else process.env.EDITOR = previous;
+    rmSync(script, { force: true });
+  });
+
+  const ui = makeTui({ interactive: true, tty: true });
+  t.after(() => ui.cleanup());
+  ui.tui.start();
+  ui.tui.readLine();
+  ui.input.write("keep this input");
+  await tick();
+  ui.input.emit("keypress", "", { name: "x", ctrl: true });
+  ui.input.emit("keypress", "", { name: "e", ctrl: true });
+  await tick();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.match(inputLine(ui), /keep this input/);
+  assert.match(ui.text(), /exceeds 1048576 bytes/);
+});
+
+test("TUI 外部编辑器：临时文件被替换成 FIFO 时不会卡住", { skip: process.platform === "win32" }, async (t) => {
+  const editor = path.join(tmpdir(), `agent-editor-fifo-${process.pid}.mjs`);
+  const runner = path.join(tmpdir(), `agent-editor-fifo-runner-${process.pid}.mjs`);
+  const moduleUrl = new URL("../src/ui/tui.ts", import.meta.url).href;
+  await writeFile(editor, [
+    "import { unlinkSync } from 'node:fs';",
+    "import { spawnSync } from 'node:child_process';",
+    "const file = process.argv[2];",
+    "unlinkSync(file);",
+    "const result = spawnSync('mkfifo', [file]);",
+    "if (result.status !== 0) throw new Error('mkfifo failed');",
+    "",
+  ].join("\n"), "utf8");
+  await writeFile(runner, [
+    "import { PassThrough } from 'node:stream';",
+    `import { Tui } from ${JSON.stringify(moduleUrl)};`,
+    "process.env.TERM = 'xterm-256color';",
+    "const input = new PassThrough();",
+    "const output = new PassThrough();",
+    "output.isTTY = true; output.columns = 80; output.rows = 24;",
+    "let rendered = '';",
+    "output.on('data', chunk => rendered += String(chunk));",
+    "const tui = new Tui({ input, output, model: 'mock-model', workspace: process.cwd(), controller: new AbortController(), interactive: true, columns: 80, rows: 24, color: false, colorMode: 'full', theme: 'dark' });",
+    "tui.start();",
+    "const pending = tui.readLine(); pending.catch(() => {});",
+    "input.write('keep this input');",
+    "await new Promise(resolve => setImmediate(() => setImmediate(resolve)));",
+    "input.emit('keypress', '', { name: 'x', ctrl: true });",
+    "input.emit('keypress', '', { name: 'e', ctrl: true });",
+    "await new Promise(resolve => setTimeout(resolve, 250));",
+    "const rejectedFifo = rendered.includes('editor output is not a regular file');",
+    "tui.close();",
+    "if (!rejectedFifo) { console.error(rendered); process.exitCode = 1; }",
+    "",
+  ].join("\n"), "utf8");
+  t.after(() => {
+    rmSync(editor, { force: true });
+    rmSync(runner, { force: true });
+  });
+
+  const history = path.join(tmpdir(), `agent-editor-fifo-history-${process.pid}.jsonl`);
+  const result = spawnSync(process.execPath, [runner], {
+    encoding: "utf8",
+    timeout: 5_000,
+    env: {
+      ...process.env,
+      EDITOR: `"${process.execPath}" "${editor}"`,
+      AGENT_HISTORY_FILE: history,
+    },
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.status, 0, result.stderr);
+  rmSync(history, { force: true });
 });
 
 test("TUI 主视图：启动时读回跨进程历史，上键能翻出上一次的任务", async (t) => {

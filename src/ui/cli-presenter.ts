@@ -210,12 +210,12 @@ export class RunPresenter {
   }
 
   /** 命令行展示方法 toolResult（工具结果）：打一行 ✓ 或 ✗，再跟一句结果摘要；详细模式展开完整返回。 */
-  toolResult(call: ToolCall, result: string): void {
+  toolResult(call: ToolCall, result: string, isError = false): void {
     const output = escapeControlCharacters(result);
     const firstLine = output.split("\n", 1)[0] ?? "";
     const excerpt = firstLine.slice(0, 120);
     const truncated = firstLine.length > 120 || output.includes("\n");
-    const failed = isToolResultFailure(call, result);
+    const failed = isToolResultFailure(call, result, isError);
     console.log("  ↳ " + escapeControlCharacters(call.function.name) + (failed ? " ✗ " : " ✓ ") + excerpt + (truncated ? "…" : ""));
 
     if (this.view === "detailed") {
