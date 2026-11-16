@@ -20,6 +20,7 @@
  */
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import path from "node:path";
+import { takeUtf16Prefix } from "../protocol/text-boundaries.ts";
 
 /** 约定的文件名。以后要支持 `.agent/AGENTS.md` 之类，在这里加候选即可。 */
 export const PROJECT_INSTRUCTIONS_FILE = "AGENTS.md";
@@ -74,7 +75,7 @@ export function readProjectInstructions(root: string): ProjectInstructions | und
   if (text.length <= MAX_INSTRUCTIONS_CHARS && !byteTruncated) return { path: file, text, truncated: false };
   return {
     path: file,
-    text: `${text.slice(0, MAX_INSTRUCTIONS_CHARS)}\n\n[... ${PROJECT_INSTRUCTIONS_FILE} truncated at ${byteTruncated ? `${MAX_INSTRUCTIONS_BYTES} bytes` : `${MAX_INSTRUCTIONS_CHARS} characters`}]`,
+    text: `${takeUtf16Prefix(text, MAX_INSTRUCTIONS_CHARS)}\n\n[... ${PROJECT_INSTRUCTIONS_FILE} truncated at ${byteTruncated ? `${MAX_INSTRUCTIONS_BYTES} bytes` : `${MAX_INSTRUCTIONS_CHARS} characters`}]`,
     truncated: true,
   };
 }

@@ -60,3 +60,24 @@ test("CLI：工具输出的方向控制字符全部转成可见转义", () => {
     console.log = originalLog;
   }
 });
+
+
+test("CLI：Windows CRLF 按行显示，孤立回车仍转义且没有幽灵空行", () => {
+  const lines = [];
+  const original = console.log;
+  console.log = (...args) => { lines.push(args.join(" ")); };
+  try {
+    const presenter = new RunPresenter("detailed", "balanced");
+    const call = { id: "crlf", type: "function", function: { name: "shell", arguments: "{}" } };
+    presenter.toolResult(call, "exit 0\r\nall tests passed\r\n");
+    assert.ok(lines.some((line) => line === "    │ exit 0"));
+    assert.ok(lines.some((line) => line === "    │ all tests passed"));
+    assert.equal(lines.filter((line) => line === "    │ ").length, 0, "尾部 CRLF 不应多一行");
+    assert.ok(lines.every((line) => !line.includes("\\u000d")));
+    lines.length = 0;
+    presenter.toolResult(call, "a\rb");
+    assert.ok(lines.some((line) => line.includes("\\u000d")), "单独的回车仍不能控制终端");
+  } finally {
+    console.log = original;
+  }
+});

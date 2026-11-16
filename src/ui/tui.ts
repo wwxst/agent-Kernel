@@ -38,7 +38,7 @@ import { spawnSync } from "node:child_process";
 import { closeSync, constants, fstatSync, mkdtempSync, openSync, readFileSync, readSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Transform, Writable } from "node:stream";
+import { Writable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { escapeControlCharacters } from "./text.ts";
 import { describeError } from "../protocol/errors.ts";
@@ -379,17 +379,6 @@ export class Tui {
 
   private readonly rl: Interface;
 
-  /** Alternate-screen SGR 鼠标事件在进入 readline 前必须过滤，否则坐标会污染输入框。 */
-  private readonly mouseInput?: Transform;
-
-  private mousePartial = "";
-
-  /** 允许 ESC、ESC[ 被拆包，同时不让单独按下的 Esc 永久卡住。 */
-  private mousePartialTimer?: NodeJS.Timeout;
-
-  /** 每次渲染确定屏幕箭头所在的实际单元格，鼠标点击不猜测文本位置。 */
-  private readonly mouseTargets = new Map<number, { column: number; turn?: TurnActivity; group?: ActivityGroup; tool?: ActivityTool }>();
-
   private stats?: AgentSessionStats;
 
   /** 已经收尾的日志行（已转义的单行文本 + 语义色）；ID 只存在于本次 TUI。 */
@@ -711,21 +700,7 @@ export class Tui {
         callback();
       },
     });
-    // readline 不认识 SGR 1006：若让鼠标报告直接进入它，坐标会被插入用户的任务输入。
-    // 完整 TUI 进入备用屏幕时过滤鼠标事件；非 TTY 保持原始输入。
-    if (this.ownedScreen) {
-      this.mouseInput = new Transform({
-        transform: (chunk: Buffer, _encoding, done) => {
-          try { done(null, this.filterMouseInput(chunk)); } catch (error) { done(error as Error); }
-        },
-      });
-      const input = this.mouseInput as Transform & { isTTY?: boolean; setRawMode?: (enabled: boolean) => void };
-      const source = options.input as NodeJS.ReadableStream & { isTTY?: boolean; setRawMode?: (enabled: boolean) => void };
-      input.isTTY = source.isTTY;
-      if (typeof source.setRawMode === "function") input.setRawMode = (enabled) => source.setRawMode!(enabled);
-      options.input.pipe(this.mouseInput);
-    }
-    this.rl = createInterface({ input: this.mouseInput ?? options.input, output: editorOutput, terminal: options.interactive });
+    this.rl = createInterface({ input: options.input, output: editorOutput, terminal: options.interactive });
     // 粘贴原文映射是会话级归档，readline 的 undo / redo / kill ring 可独立恢复占位符。
     // 跨进程历史：readline 的 history 是「最近的在前」，读回来要反转。
     // 读不到或文件损坏都只是「没有历史」，不影响启动。
@@ -899,11 +874,8 @@ export class Tui {
       this.scheduleInputChrome();
     };
     if (options.interactive) {
-      const editorInput = this.mouseInput ?? options.input;
-      emitKeypressEvents(editorInput);
-      (editorInput as NodeJS.EventEmitter).on("keypress", this.onKeypress);
-      // 测试夹具会显式向原始 input 发送键事件；生产运行只由 editorInput 解析字节。
-      if (this.mouseInput) (options.input as NodeJS.EventEmitter).on("keypress", this.onKeypress);
+      emitKeypressEvents(options.input);
+      (options.input as NodeJS.EventEmitter).on("keypress", this.onKeypress);
     }
 
     this.onResize = () => {
@@ -920,107 +892,6 @@ export class Tui {
     };
     this.controller.signal.addEventListener("abort", this.onAbort, { once: true });
     if (this.controller.signal.aborted) this.rl.close();
-  }
-
-  /**
-   * 从原始终端字节中取走 SGR 鼠标报告，不能让 readline 将“0;20;9M”加入任务。
-   * 用 latin1 往返只为保留 UTF-8 原始字节；残缺鼠标序列只暂存有限字符。
-   */
-  private filterMouseInput(chunk: Buffer): Buffer {
-    if (this.mousePartialTimer !== undefined) {
-      clearTimeout(this.mousePartialTimer);
-      this.mousePartialTimer = undefined;
-    }
-    const data = this.mousePartial + chunk.toString("latin1");
-    this.mousePartial = "";
-    let output = "";
-    let cursor = 0;
-    const prefix = "\x1b[<";
-    const pattern = /^\x1b\[<(\d{1,3});(\d{1,4});(\d{1,4})([Mm])/;
-    while (cursor < data.length) {
-      const at = data.indexOf("\x1b", cursor);
-      if (at < 0) {
-        output += data.slice(cursor);
-        break;
-      }
-      output += data.slice(cursor, at);
-      const remainder = data.slice(at);
-      // 终端可能在 ESC 或 ESC[ 处分片；不能提前把这些鼠标前缀交给 readline。
-      if (prefix.startsWith(remainder) && remainder.length < prefix.length) {
-        this.mousePartial = remainder;
-        break;
-      }
-      if (remainder.startsWith(prefix)) {
-        const match = pattern.exec(remainder);
-        if (match !== null) {
-          this.handleMouse(Number(match[1]), Number(match[2]), Number(match[3]), match[4] === "M");
-          cursor = at + match[0].length;
-          continue;
-        }
-        if (remainder.length <= 40 && /^\x1b\[<[0-9;]*$/.test(remainder)) {
-          this.mousePartial = remainder;
-          break;
-        }
-        // 畸形或超长鼠标报告不应变成用户任务；跳过直到消息终止符。
-        const end = remainder.search(/[Mm]/);
-        if (end >= 0 && end < 256) {
-          cursor = at + end + 1;
-          continue;
-        }
-        if (remainder.length <= 40) {
-          this.mousePartial = remainder;
-          break;
-        }
-        cursor = at + Math.min(remainder.length, 256);
-        continue;
-      }
-      // 非鼠标的 ANSI/普通 Esc 保持原样，交由 readline 处理键盘。
-      output += "\x1b";
-      cursor = at + 1;
-    }
-    if (this.mousePartial !== "") {
-      this.mousePartialTimer = setTimeout(() => {
-        const pending = this.mousePartial;
-        this.mousePartial = "";
-        this.mousePartialTimer = undefined;
-        // 孤立 ESC 仍应保留键盘语义；不完整鼠标坐标则直接丢弃。
-        if (!this.closed && pending !== "" && !pending.startsWith(prefix)) {
-          this.mouseInput?.push(Buffer.from(pending, "latin1"));
-        }
-      }, 80);
-      // 孤立 Esc 仍是用户操作：计时器必须保持事件循环。
-      // 对不完整鼠标序列，80ms 后放弃等待新字节。
-    }
-    return Buffer.from(output, "latin1");
-  }
-
-  private handleMouse(button: number, column: number, row: number, pressed: boolean): void {
-    if (!this.layout || !this.started || this.closed) return;
-    if ((button & 64) !== 0 && pressed) {
-      if ((button & 3) === 0 || (button & 3) === 1) {
-        this.scrollWheel((button & 3) === 0 ? "up" : "down");
-      }
-      return;
-    }
-    if (!pressed || button !== 0) return;
-    const target = this.mouseTargets.get(row);
-    if (target === undefined || target.column !== column) return;
-    this.captureHistoryAnchor();
-    if (target.tool !== undefined) {
-      target.tool.detailsExpanded = !target.tool.detailsExpanded;
-    } else if (target.group !== undefined) {
-      target.group.expanded = !target.group.expanded;
-    } else if (target.turn !== undefined) {
-      target.turn.expanded = !target.turn.expanded;
-    }
-    this.renderNow();
-  }
-
-  /** 鼠标滚轮一次翻三行，比 PageUp 整屏跳转更容易定位上下文。 */
-  private scrollWheel(direction: "up" | "down"): void {
-    this.scrollOffset = Math.max(0, Math.min(this.maxScroll(),
-      this.scrollOffset + (direction === "up" ? 3 : -3)));
-    this.redrawKeepingInput();
   }
 
   /** Slash 查询不包含空白；带空白的输入是完整命令，不再弹出补全。 */
@@ -1930,15 +1801,6 @@ export class Tui {
     this.historyTrimmedNotice = false;
     this.controller.signal.removeEventListener("abort", this.onAbort);
     (this.input as NodeJS.EventEmitter).removeListener("keypress", this.onKeypress);
-    this.mouseInput?.removeListener("keypress", this.onKeypress);
-    if (this.mousePartialTimer !== undefined) {
-      clearTimeout(this.mousePartialTimer);
-      this.mousePartialTimer = undefined;
-    }
-    this.mousePartial = "";
-    this.input.unpipe?.(this.mouseInput);
-    this.mouseInput?.destroy();
-    this.mouseTargets.clear();
     this.resizeSource?.removeListener("resize", this.onResize);
     this.rl.close();
     if (!this.started) return;
@@ -2274,16 +2136,9 @@ export class Tui {
     const end = total - this.scrollOffset;
     const start = Math.max(0, end - this.logHeight);
     const visible = lines.slice(start, end);
-    this.mouseTargets.clear();
-    // v0.3：对话从视口顶部开始，内容不足一屏时空白留在下方，不再贴底。
+    // 不捕获鼠标；终端原生滚轮与选中复制继续可用。
     for (let index = 0; index < this.logHeight; index++) {
       const line = visible[index];
-      if (line !== undefined && /  [▸▾>v]$/.test(line.text) &&
-          (line.kind === "turn-status" || line.kind === "activity" || line.tool !== undefined)) {
-        this.mouseTargets.set(LOG_TOP + index, {
-          column: displayWidth(line.text), turn: line.turn, group: line.activity, tool: line.tool,
-        });
-      }
       rows[LOG_TOP - 1 + index] = line === undefined
         ? ""
         : this.paintLogLine(line, width);

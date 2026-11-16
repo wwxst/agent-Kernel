@@ -38,6 +38,7 @@ import { StringDecoder } from "node:string_decoder";
 import { Worker } from "node:worker_threads";
 import type { Tool } from "../protocol/types.ts";
 import { ProcessCleanupError } from "../protocol/errors.ts";
+import { takeUtf16Prefix } from "../protocol/text-boundaries.ts";
 
 /** 单个工具返回给模型的字符上限：防止一条命令刷屏把上下文撑爆。 */
 const MAX_OUTPUT_CHARS = 8_000;
@@ -1287,8 +1288,9 @@ ${command}`;
   private clip(body: string, tail = ""): string {
     const room = Math.max(0, MAX_OUTPUT_CHARS - tail.length);
     if (body.length <= room) return body + tail;
-    const hidden = body.length - room;
-    return `${body.slice(0, room)}\n… [truncated ${hidden} chars]${tail}`;
+    const prefix = takeUtf16Prefix(body, room);
+    const hidden = body.length - prefix.length;
+    return prefix + "\n… [truncated " + hidden + " chars]" + tail;
   }
 }
 

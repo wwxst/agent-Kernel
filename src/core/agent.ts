@@ -24,6 +24,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { ChatResponseError, ProcessCleanupError, isRetryableModelError } from "../protocol/errors.ts";
 import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "../protocol/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
+import { takeUtf16Prefix, takeUtf16Suffix } from "../protocol/text-boundaries.ts";
 
 /**
  * 系统提示词：告诉模型「你是谁、有哪些工具、什么时候该停」。
@@ -33,8 +34,8 @@ import type { ToolRegistry } from "./tool-registry.ts";
 export const DEFAULT_SYSTEM_PROMPT = [
   // 你是一个在开发者机器上干活的编码 agent。
   "You are a coding agent working on the developer's machine.",
-  // 可用工具：read、write、edit、glob、grep、ls、shell。用它，不要靠猜。
-  "Tools: read, write, edit, glob, grep, ls, shell. Use them instead of guessing.",
+  // 真实工具清单由本次模型请求的 ToolRegistry.definitions 提供，不能在提示里维护第二份。
+  "Use only the tool names provided in this request; never guess unavailable tools.",
   // 权限：完全访问。没有审批提示，也没有工作区边界。
   "You run with full access: there are no approval prompts and no workspace sandbox.",
   // 相对路径从工作区根目录解析；绝对路径、../、其他磁盘都可用。
@@ -81,12 +82,15 @@ const MAX_COMPACTION_SUMMARY_CHARS = 12_000;
 /** 保留头尾和明确的省略标记；不会把截断后的工具输出伪装成完整内容。 */
 function compactText(text: string, limit: number): string {
   if (text.length <= limit) return text;
-  const omitted = Math.max(0, text.length - limit);
-  const marker = "\n… [context compacted: " + omitted + " chars omitted] …\n";
-  const room = Math.max(0, limit - marker.length);
+  // 为最大可能的省略数字预留字符预算，避免边界裁剪后标记溢出上限。
+  const markerFor = (omitted: number) => "\n… [context compacted: " + omitted + " chars omitted] …\n";
+  const room = Math.max(0, limit - markerFor(text.length).length);
   const head = Math.ceil(room * 0.75);
   const tail = room - head;
-  return text.slice(0, head) + marker + (tail > 0 ? text.slice(-tail) : "");
+  const prefix = takeUtf16Prefix(text, head);
+  const suffix = tail > 0 ? takeUtf16Suffix(text, tail) : "";
+  const omitted = text.length - prefix.length - suffix.length;
+  return prefix + markerFor(omitted) + suffix;
 }
 
 /**
