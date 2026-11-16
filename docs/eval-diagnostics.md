@@ -1,88 +1,32 @@
-# Stability experiments: pinned cross-day baseline and opt-in diagnostics
+# 固定基线的跨天评测与可选诊断
 
-This work stays outside src/. It does not change the Agent Loop, task prompts, fixtures, or checkers.
+## 当前决定与依据
 
-## 1. Cross-day baseline
+跨天评测必须把模型、端点、任务、并发、代码版本与运行环境固定，否则日期之间的波动无法归因。当前 `eval/cross-day.mjs` 固定：
 
-The measured implementation is pinned to:
+- 代码：`eac798de31b24463dba09361b8c2c551e1e114d2`（`stability-2026-11-05-prompt-v2`）。
+- 模型：`hy3`；端点：`http://127.0.0.1:8788/v1`。
+- 20 题、并发 4、每个自然日连续 3 轮；轮内不重试任务。
+- 仅接受**当前机器当天**的日期和干净工作树；运行器切换到固定提交执行，结束后还原原分支。中断时完成本轮、保留部分归档并尝试还原。
+- 对比不同日期时核对 Node/OS/架构/时区/模型/端点/题量/并发/基线 SHA；不一致则拒绝直接续跑。
 
-- Commit: 4edd0e4ab004e184d280a95c17e41690fd58c644
-- Model: hy3
-- Endpoint: http://127.0.0.1:8788/v1
-- Tasks: 20
-- Concurrency: 4
-- Rounds per natural day: 3
-- Per-task limits: the values already present at the pinned commit
+**实际已有归档**：`eval/baselines/cross-day/2026-11-06/` 与 `2026-11-07/`，各 3 轮、各 60/60 通过。仓库中**没有第三个自然日的完整归档**，因此还不能给出完成三天跨天验证的结论。历史 v1（`4edd0e4`）保存在 `eval/baselines/cross-day-v1-4edd0e4/`，它用了不同提示词，不混进 v2 序列。
 
-Run once on each of three different local natural days:
+该固定基线与当前 `main` 不相同，不能将旧提交的成绩当作当前代码的现场通过率。历史六轮原始数据和当前结论见 [评测基线](../eval/baseline.md)。
 
-~~~bash
+## 使用入口
+
+```bash
 npm run eval:cross-day
-~~~
-
-Or specify the date explicitly (it must equal the machine's current local date):
-
-~~~bash
-npm run eval:cross-day -- --date 2026-11-05
-~~~
-
-The runner:
-
-1. Requires API_KEY (or OPENAI_API_KEY), MODEL=hy3, and the exact baseline endpoint.
-2. Requires a clean worktree, except for earlier archives under eval/baselines/cross-day/.
-3. Temporarily checks out the exact baseline SHA, then imports and runs that commit's original eval/run.mjs.
-4. Runs three sequential full rounds, with four tasks concurrently inside each round. It does not retry tasks.
-5. Saves every round immediately and writes a daily summary.
-6. Restores the branch that was checked out before the run. On SIGINT/SIGTERM it finishes the current round, archives the partial result, restores the branch, and exits with an interruption status.
-7. On later dates, compares Node version, OS, architecture, timezone, model, endpoint, task count, concurrency, and baseline SHA with earlier daily summaries; it refuses to continue if they drift.
-
-Output:
-
-~~~text
-eval/baselines/cross-day/YYYY-MM-DD/
-  round-01.json
-  round-02.json
-  round-03.json
-  summary.json
-~~~
-
-Archives from the closed v1 series (`4edd0e4`, tag `stability-2026-11-04`) live under `eval/baselines/cross-day-v1-4edd0e4/` instead. They are deliberately outside the root above: the runner validates every earlier day against the pinned SHA, and v1 rounds ran against a different prompt.
-
-Do not use the diagnostic branch's newer evaluator for these baseline measurements. The helper deliberately imports the evaluator only after checking out the pinned SHA. Do not run the command three times on one day and call that cross-day validation.
-
-The original six-round summary did not record Node/OS/timezone metadata, so exact environment equivalence with that first day cannot be machine-verified. Run on the same machine/runtime used for the original six rounds; the new runner then enforces consistency across the three additional days.
-
-## 2. Investigating high-variance tasks
-
-The diagnostic mode is optional and is intended for investigation, not for the baseline reliability measurement:
-
-~~~bash
+npm run eval:cross-day -- --date YYYY-MM-DD   # 必须是机器当天日期
 npm run eval -- --trace --keep 13-callback-to-promise
-npm run eval -- --trace --keep 20-fix-email-regex
-npm run eval -- --trace --keep 08-extract-duplication
-~~~
+```
 
-Task filters mean only the selected task workspace is retained. Avoid --keep without a task filter: that retains every task workspace in the round.
+跨天评测会调用真实模型、产生费用，并在同一工作树中临时切换 Git 提交。**存在其他并发开发会话、未提交修改或需要保留当前检出状态时，不要执行该命令。** 用 `--trace --keep <任务名>` 调查单个任务，避免无过滤地 `--keep` 留下全部临时工作区。
 
-The per-task trace object is saved in the normal eval/results/<timestamp>.json record and contains:
+## 诊断结果怎么解释
 
-- Per-request prompt/completion/total tokens, reported-usage status, prompt-token delta (including the prior reported request index), request latency, message count, and payload-size proxies.
-- Tool call order, request index, tool name, bounded/redacted arguments, execution time, result character/byte counts, and error preview when applicable.
-- File additions, modifications, and deletions observed after each tool call and across the whole task.
-- Snapshot coverage and any diagnostic errors.
-
-No message contents or successful tool-result bodies are copied into the trace. Secret-looking argument keys are redacted. String arguments over 512 characters are represented by length, SHA-256, and a short preview.
-
-File snapshots skip .git and node_modules. Files up to 1 MB are fingerprinted with SHA-256; larger files use size/mtime metadata and mark snapshot coverage incomplete. The trace reports this limitation.
-
-Diagnostic snapshots add filesystem observation overhead. Therefore, use trace runs to understand model/tool behavior, not to compare wall-clock performance with the uninstrumented baseline. The wrappers preserve the original model responses and tool results; they do not alter Agent Loop behavior.
-
-## 3. Interpretation
-
-- Compare actual promptTokens across requests to see whether each turn's prompt is growing.
-- Compare repeated tool names and arguments to find duplicate reads, edits, or validation loops.
-- Use fileChanges to distinguish useful edits from repeated writes that leave the same file state.
-- A high messageChars value is only a payload-size proxy, not a token count. Use provider-reported promptTokens for token analysis.
-- If usage is missing, the request is marked unknown; it is not recorded as zero.
-
-Only after the traces identify a concrete cause should a prompt or tool-description change be proposed. Change one variable at a time and compare against the pinned baseline.
+- 诊断记录模型每次请求的 token、延迟、消息规模，以及工具调用顺序、参数摘要、输出长度、文件变化与快照覆盖范围。含疑似敏感字段的参数会脱敏、超长参数做摘要；但仍按可能含敏感路径或元数据的本地诊断文件管理。
+- 已报告的 `promptTokens` 才是 token 量；`messageChars` 只是字符规模代理。端点不返回 usage 时，标记为未知，不能填零。
+- 快照跳过 `.git`、`node_modules`；小文件做摘要指纹，大文件退化为大小和时间戳并标明覆盖不完整。追踪和快照增加额外 I/O，**带 `--trace` 的耗时不能与无诊断的墙钟直接比较**。
+- 重复工具调用、同一文件反复改写、请求上下文增长，都需要从数据判断，不应先猜测原因。改变提示词或工具描述后要在同一固定口径上对比。
