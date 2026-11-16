@@ -1,6 +1,6 @@
 # agent-Kernel
 
-最小 Coding Agent：**一个类、一个循环、十个工具、完全访问**，运行时零依赖。
+最小 Coding Agent：**一个类、一个循环、十一个工具、完全访问**，运行时零依赖。
 
 > 当前状态：v0.5，个人练习项目。
 
@@ -86,6 +86,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/core/tool-log.ts` | 第一个真实 Hook 用户：每次工具调用追加一行 JSON 到 `AGENT_TOOL_LOG` 指定的文件；写不进去只提醒一次 |
 | `src/core/tool-result-status.ts` | CLI/TUI 共享的工具失败判断：Shell 的非零退出、超时、取消；不修改回灌模型的文本 |
 | `src/tools/todo.ts` | TodoWrite：任务清单的校验、原子更新和进度渲染；每个 Agent 会话一份、不会跨进程保存 |
+| `src/tools/subagent.ts` | 委派：两种子 Agent 角色的工具与系统提示、`run_subagent` 的说明书与参数校验、结果排版；只依赖 `protocol/`，不 import `Agent` |
 | `src/tools/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
 | `src/model/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
 | `src/model/project-instructions.ts` | 读 `AGENTS.md` 注入系统提示：只做读取与有界截断，不发明格式 |
@@ -185,7 +186,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 字段名保留协议原样（`tool_calls`、`tool_call_id`），请求体可以原样序列化，不需要来回翻译。这个选择记在 [ADR-0001](./docs/adr/0001-keep-wire-field-names.md)。
 
-## 十个工具
+## 十一个工具
 
 复杂任务可调用 `todo_write`，一次提交完整清单并更新 `pending` / `in_progress` / `done` 状态；最多 20 项，同一时刻最多一个 `in_progress`。计划只在当前 Agent 会话内有效，`/reset` 或重启后清空。它是进度记录，不会自行执行任务或判断目标达成；简单单步任务不要求使用。
 
@@ -203,6 +204,7 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `shell-output` | 读后台任务自上次调用之后的新输出；第一行是它的状态 | `Workspace.readJobOutput` |
 | `shell-kill` | 停掉后台任务连同它的后代进程 | `Workspace.killJob` |
 | `todo_write` | 更新完整的任务计划，状态为 pending / in_progress / done | `TodoManager.update` |
+| `run_subagent` | 把一件独立子任务交给临时子 Agent，只拿回一份最终报告 | 子 Agent 自己的 `Agent` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
 
@@ -248,6 +250,43 @@ shell-kill { job_id: "job-1" }
 Windows `taskkill /T` 最多等待 2 秒：只有它以 0 退出才确认成功。启动失败、非零退出或卡住时，尝试 `child.kill()` 停掉直接子进程，**并以错误报告「进程树清理未确认，可能仍有后代运行」**，而不是冒充清理完成。停止后的子进程管道最多等待 4 秒；如果 stdout/stderr 被残留后代持续占用，也要终止等待、明确报错。注意：Node 自带的 `child.kill()` 不能保证 Windows 孙进程退出；自动故障注入与真实 Windows 进程树超时/取消测试也不能证明所有异常环境均可回收。
 
 **文件工具与 `shell` 的能力是一致的**：两者都以启动 Agent 的操作系统账户执行，都能读写任意有权访问的位置、都能出网。真正的限制来自操作系统账户与系统安全策略，不来自 agent-Kernel；需要更强隔离时用容器、独立用户或只读挂载，而不是指望工具层的字符串判断（见 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）。
+
+## 委派给子 Agent
+
+主 Agent 可以把一件相对独立的子任务交给一个**临时子 Agent**：它有自己的 `messages[]`、自己的工具注册表、自己的预算，跑完只交回一份最终报告 —— 主 Agent 看不到它内部的对话轮次。
+
+```text
+run_subagent { task: "调查 src/core/agent.ts 的取消处理，指出遗漏", mode: "explore" }
+→ [Subagent completed]
+  mode: explore
+  requests: 4
+  tool_calls: 3
+  tokens: 12000
+  unknown_usage: 0
+
+  Final report:
+  ……
+```
+
+两种角色，工具范围不同：
+
+| 角色 | 能用的工具 | 适合什么 |
+| --- | --- | --- |
+| `explore`（默认） | `read` / `glob` / `grep` / `ls` | 查代码、找线索、给结论；不产生文件副作用 |
+| `execute` | 上面四个 + `write` / `edit` / `shell` + 自己的 `todo_write` | 明确的开发子任务：改文件、跑测试 |
+
+几条必须知道的边界：
+
+- **它看不到当前对话。** 背景、路径、约束都要写进 `task`（最多 8000 字符）；子 Agent 也拿不到你的 Todo 清单。
+- **`explore` 不是沙箱。** 它只是工具层的只读角色；完全访问下 `read` 仍能读当前账户有权读的任何位置。
+- **`execute` 的 `shell` 只能前台跑。** 模型收到的说明书里根本没有 `background`，传了也按前台执行 —— 子 Agent 起一个后台进程就结束，会留下没人收尾的任务。
+- **一次只跑一个，而且是同步的。** 父 Agent 在等它；按 `Ctrl+C` 时父子一起停（共用同一个取消信号）。
+- **预算更窄**：20 步、30 次工具调用、100000 token，并且取「你配置的值」与这个上限的较小者。子 Agent 的花销**不计入**父 Agent 的 `[usage]`，它自己的统计在那条工具结果里。
+- **失败不回滚。** `execute` 改完文件后失败，改动仍在；失败结果里会写明这一点。
+- **不能再往下委派。** 子 Agent 的工具表里没有 `run_subagent`。
+- **进程树没确认收干净时不算成功。** 委派会抛 `ProcessCleanupError`，父 Agent 进入「禁用后续工具、只许收尾」的状态，而不是接着改文件。
+
+一个循环、多个独立 Agent —— 不复制历史，也不建第二套循环。取舍记在 [ADR-0025](./docs/adr/0025-subagent-uses-fresh-agent-instance.md)。
 
 ## 完全访问（Full Access）
 
@@ -409,6 +448,7 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 - 按轮取消：Ctrl-C 停的是整个会话；只停当前这一轮需要每轮换一个 signal，留给后续
 - 鼠标、多行输入和 Hooks 尚未做；TUI 主视图只追加、`Ctrl+T` 回看并展开历史，仍保留底部输入区、`Ctrl+E/O/G` 逐层浏览及 `/` Slash 自动补全（早期布局决策见 [ADR-0016](./docs/adr/0016-tui-v0.3-top-down-layout.md)，主屏渲染见 [ADR-0017](./docs/adr/0017-tui-renders-on-main-screen.md)）。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
+- 多个子 Agent 并行、Agent 团队、Mailbox、Worktree、子 Agent 持久化与恢复、子 Agent 后台执行：第 6 课只做「一次一个、同步、跑完即丢」的委派
 - 操作系统级隔离：agent-Kernel 只有完全访问，工具与 Shell 都以启动者的权限执行（见 [ADR-0019](./docs/adr/0019-full-access-is-the-only-mode.md) 与 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、非 TUI 模式的自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）
 

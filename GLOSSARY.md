@@ -48,6 +48,10 @@ _Avoid_: function, handler, plugin
 一次 Run 里提供给模型的全部 Tool，以及把每个 Tool call 执行成一条 Tool result 的那一步。
 _Avoid_: toolbelt, toolbox, tool set
 
+**Subagent**:
+主 Agent 通过 `run_subagent` 临时创建的一个独立 Agent 实例：全新的 `messages[]`、自己的 Tool registry、自己的预算与统计，跑完只交回一份最终报告，不返回内部 Transcript，也不能再往下委派。两种角色：`explore`（只读调查，默认）与 `execute`（可改文件、跑前台命令）。它复用同一个 `Agent` 类与同一个 Agent loop，不是第二套循环；子 Agent 的花销不并入父 Agent 的统计（见 [ADR-0025](./docs/adr/0025-subagent-uses-fresh-agent-instance.md)）。
+_Avoid_: worker agent, child process, teammate（Agent Teams 是后续课程，不是这个）
+
 **Hook**:
 挂在工具执行上的生命周期回调，三个事件：`PreToolUse`（执行前，可返回 `{ block: 原因 }` 阻止这次调用）、`PostToolUse`（成功之后，能拿到结果原文）、`PostToolUseFailure`（失败之后，能拿到原始错误）。它们挂在唯一的执行入口 `ToolRegistry.execute` 上，所有 Tool 自动经过；同一事件按登记顺序串行执行，Hook 自己出错只记 `failureCount`，不改变工具结果，也不进入 Transcript（见 [ADR-0020](./docs/adr/0020-tool-hooks-live-in-the-registry.md)）。
 _Avoid_: middleware, plugin, interceptor（它们改写请求或接管执行；Hook 只能旁观与阻止）

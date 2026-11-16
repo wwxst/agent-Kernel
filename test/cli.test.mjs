@@ -17,6 +17,8 @@
  *   - 展示细节：阶段提示、台词不影响请求、精简/详细模式、控制字符只显示转义文本。
  *   - 项目指令：工作区有 `AGENTS.md` 时注入系统提示，没有就不注入。
  *   - TodoWrite 会话：跨 Run 保留计划记录，/reset 清空旧会话并允许创建新计划。
+ *   - 委派（run_subagent）：子 Agent 用独立上下文、只回一条结果；两种角色拿到的工具与提示不同；
+ *     Worker 的 shell 没有 background；子 Agent 预算取「配置与上限的较小值」。
  *
  * 模块关系：以子进程启动 `src/cli.ts`，依赖 `test/support/harness.mjs` 造消息与临时工作区，
  * 由 `npm test` 启动。
@@ -237,7 +239,7 @@ test("完整跑通：写文件 → 读回 → 收尾，请求体是 OpenAI 兼�
       assert.equal(first.max_tokens, 8192, "单次输出上限要随请求发出去");
       assert.deepEqual(
         first.tools.map((tool) => tool.function.name),
-        ["read", "write", "edit", "glob", "grep", "ls", "shell", "shell-output", "shell-kill", "todo_write"],
+        ["read", "write", "edit", "glob", "grep", "ls", "shell", "shell-output", "shell-kill", "todo_write", "run_subagent"],
       );
 
       // mock 不回 usage：成本摘要必须写 at least，不能把「已统计到 0」说成「只花了 0」。
@@ -1092,5 +1094,115 @@ test("项目指令：工具更新 AGENTS.md 后，下一次模型请求立即看
       assert.match(mock.requests[1].messages[0].content, /NEW_PROJECT_RULE/);
       assert.doesNotMatch(mock.requests[1].messages[0].content, /OLD_PROJECT_RULE/);
     } finally { await mock.close(); }
+  });
+});
+
+test("委派：主 Agent 调用 run_subagent，子 Agent 用独立上下文只回一条结果", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "note.txt"), "auth lives in src/auth/index.ts\n");
+    const mock = await startMock([
+      callTool("call-sub", "run_subagent", {
+        task: "Find where auth is implemented. Report the file path.",
+        mode: "explore",
+      }),
+      callTool("child-read", "read", { path: "note.txt" }),
+      finalReply("AUTH_REPORT: auth lives in src/auth/index.ts"),
+      finalReply("parent summary: AUTH_REPORT: auth lives in src/auth/index.ts"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /parent summary: AUTH_REPORT/);
+
+      // 子 Agent 的第一次请求：只有自己的 system 和自己的任务。
+      const childFirst = mock.requests[1];
+      assert.deepEqual(childFirst.messages.map((message) => message.role), ["system", "user"]);
+      assert.equal(childFirst.messages[1].content, "Find where auth is implemented. Report the file path.");
+      // 父 Agent 的任务原文、工具历史都不能被复制过去。
+      assert.doesNotMatch(JSON.stringify(childFirst.messages), /do the task/);
+      // 只读角色拿到的是调查提示，不是「你可以改文件、跑命令」的默认提示。
+      assert.match(childFirst.messages[0].content, /temporary exploration subagent/);
+      assert.doesNotMatch(childFirst.messages[0].content, /You may read, create, modify, and delete files/);
+      // 工具表只有四个只读工具：没有写、没有 shell，也没有 run_subagent。
+      assert.deepEqual(
+        childFirst.tools.map((tool) => tool.function.name),
+        ["read", "glob", "grep", "ls"],
+      );
+
+      // 父 Agent 的最后一次请求里，子任务只留下一条工具结果。
+      const parentFinal = mock.requests[3].messages;
+      assert.equal(parentFinal.length, 4, "父 Agent 不该看到子 Agent 的内部轮次");
+      const subResults = parentFinal.filter((message) => message.role === "tool" && message.tool_call_id === "call-sub");
+      assert.equal(subResults.length, 1);
+      assert.match(subResults[0].content, /^\[Subagent completed\]/);
+      assert.match(subResults[0].content, /mode: explore/);
+      assert.match(subResults[0].content, /requests: 2/);
+      assert.match(subResults[0].content, /tool_calls: 1/);
+      assert.match(subResults[0].content, /AUTH_REPORT: auth lives in src\/auth\/index\.ts/);
+      // 子 Agent 自己的统计不能混进父 Agent 的 [usage] 行，免得被当成合计。
+      assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("委派：execute 模式的子 Agent 能改文件、能前台跑命令，但没有后台工具", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([
+      callTool("call-sub", "run_subagent", {
+        task: "Create out.txt containing the word written-by-child.",
+        mode: "execute",
+      }),
+      callTool("child-write", "write", { path: "out.txt", content: "written-by-child\n" }),
+      finalReply("created out.txt"),
+      finalReply("parent summary: created out.txt"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      // 子 Agent 真的改了文件：这就是 execute 与 explore 的区别。
+      assert.equal(await readFile(path.join(workdir, "out.txt"), "utf8"), "written-by-child\n");
+
+      const childFirst = mock.requests[1];
+      assert.match(childFirst.messages[0].content, /temporary execution subagent/);
+      assert.deepEqual(
+        childFirst.tools.map((tool) => tool.function.name),
+        ["read", "write", "edit", "glob", "grep", "ls", "shell", "todo_write"],
+      );
+      // 模型真正收到的 shell 说明书里没有 background：后台任务这一版不开放。
+      const shell = childFirst.tools.find((tool) => tool.function.name === "shell");
+      assert.equal(Object.hasOwn(shell.function.parameters.properties, "background"), false);
+      assert.doesNotMatch(shell.function.description, /background/i);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("委派：子 Agent 的预算取用户配置与上限的较小值，超了就是明确的失败结果", async () => {
+  await withWorkspace(async (workdir) => {
+    await writeFile(path.join(workdir, "note.txt"), "note\n");
+    const mock = await startMock([
+      callTool("call-sub", "run_subagent", { task: "keep reading forever", mode: "explore" }),
+      callTool("child-read-1", "read", { path: "note.txt" }),
+      callTool("child-read-2", "read", { path: "note.txt" }),
+      finalReply("parent saw the failure"),
+    ]);
+    try {
+      // MAX_STEPS=2 比子 Agent 的 20 更小，所以生效的是 2 —— 这就是「取较小值」。
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir, MAX_STEPS: "2" });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /parent saw the failure/);
+
+      const parentFinal = mock.requests[3].messages;
+      const failed = parentFinal.find((message) => message.role === "tool" && message.tool_call_id === "call-sub");
+      assert.match(failed.content, /^\[Subagent failed\]/);
+      assert.match(failed.content, /step limit 2 reached/);
+      assert.match(failed.content, /requests: 2/);
+      assert.match(failed.content, /does not roll back the file changes/);
+    } finally {
+      await mock.close();
+    }
   });
 });
