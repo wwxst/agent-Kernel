@@ -334,6 +334,10 @@ export function formatSubagentResult(outcome: SubagentOutcome): string {
  * 执行函数由调用方注入：本文件不认识 `Agent`，也不认识 `Workspace`，
  * 所以「怎么跑子 Agent」留在装配层，这里只负责说明书、校验和结果排版。
  * `ProcessCleanupError` 不在这里捕获 —— 它必须穿过去，交给 `ToolRegistry` 与父 Agent 处理。
+ *
+ * 返回的是带 `isError` 的结构化结果，不是裸字符串：子 Agent 失败或取消时，
+ * 注册表、Hook、工具日志和界面都要知道这次调用没成功。正文照样保留，
+ * 只是状态不再由正文内容「暗示」。
  */
 export function createSubagentTool(runSubagent: (request: SubagentRequest) => Promise<SubagentOutcome>): Tool {
   return {
@@ -367,6 +371,15 @@ export function createSubagentTool(runSubagent: (request: SubagentRequest) => Pr
       },
       required: ["task"],
     },
-    run: async (args) => formatSubagentResult(await runSubagent(readRequest(args))),
+    // 失败和取消必须带上 isError：只回一段写着 "[Subagent failed]" 的文本，
+    // 注册表会把它当成成功 —— Hook 走 PostToolUse、TUI 显示 ✓、工具日志记 ok:true，
+    // 三处都在骗人。状态要和正文说的是同一件事。
+    run: async (args) => {
+      const outcome = await runSubagent(readRequest(args));
+      return {
+        content: formatSubagentResult(outcome),
+        isError: outcome.status !== "completed",
+      };
+    },
   };
 }

@@ -1210,6 +1210,9 @@ test("委派：子 Agent 的预算取用户配置与上限的较小值，超了�
       assert.match(failed.content, /step limit 2 reached/);
       assert.match(failed.content, /requests: 2/);
       assert.match(failed.content, /does not roll back the file changes/);
+      // CLI 必须把它当失败展示：修复前这里是 ✓，正文却写着 failed。
+      assert.match(run.stdout, /run_subagent ✗/);
+      assert.doesNotMatch(run.stdout, /run_subagent ✓/);
     } finally {
       await mock.close();
     }

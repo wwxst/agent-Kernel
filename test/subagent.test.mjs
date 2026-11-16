@@ -17,16 +17,23 @@
  *   - 角色工具：Explorer 只有四个只读工具；Worker 多出写/改/shell/todo_write，且 shell 没有 background。
  *   - 上下文隔离：子 Agent 第一次请求只有自己的 system 与任务；两次委派互不可见。
  *   - 预算、失败与取消：子 Agent 到步数/token 上限就停，失败不伪装成功，共用 signal 取消后不再发请求。
+ *   - 委派状态：完成/失败/取消分别映射到 `isError`，失败走 `PostToolUseFailure`、工具日志记 `ok:false`。
  *   - 进程安全：进程树未确认时抛 `ProcessCleanupError`，不被折成普通失败文本。
  *
  * 模块关系：依赖 `src/core/agent.ts`（真实 Agent）、`src/core/tool-registry.ts`、
+ * `src/core/tool-hooks.ts` 与 `src/core/tool-log.ts`（验证失败状态真的传下去）、
  * `src/tools/subagent.ts`、`src/tools/workspace.ts`、`src/protocol/errors.ts`，
  * 以及 `test/support/harness.mjs` 的假模型与临时工作区。由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 import { Agent } from "../src/core/agent.ts";
+import { ToolHooks } from "../src/core/tool-hooks.ts";
+import { createToolLogHooks } from "../src/core/tool-log.ts";
 import { ToolRegistry } from "../src/core/tool-registry.ts";
+import { isToolResultFailure } from "../src/core/tool-result-status.ts";
 import { ProcessCleanupError } from "../src/protocol/errors.ts";
 import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import {
@@ -404,4 +411,64 @@ test("进程安全：进程树未确认时抛 ProcessCleanupError，不会被折
 
   // 关键：它必须穿透注册表，而不是变成一条 `ERROR: ...` 让父 Agent 继续干活。
   await assert.rejects(registry.executeWithStatus(subagentCall({ task: "run a command", mode: "execute" })), ProcessCleanupError);
+});
+
+// ── 委派状态：失败和取消不能被当成成功 ────────────────────────────────────────
+// 为什么要有这组：工具只回一段写着 "[Subagent failed]" 的文本时，注册表一律当成成功，
+// Hook 走 PostToolUse、TUI 显示 ✓、工具日志记 ok:true —— 三处都在骗人。
+
+test("委派状态：完成是成功，失败和取消都标记为 isError", async () => {
+  const cases = [
+    { outcome: { status: "completed", content: "ok", stats: subagentStats() }, isError: false, header: "[Subagent completed]" },
+    { outcome: { status: "failed", reason: "step limit 20 reached", stats: subagentStats() }, isError: true, header: "[Subagent failed]" },
+    { outcome: { status: "cancelled", reason: "cancelled: SIGINT", stats: subagentStats() }, isError: true, header: "[Subagent cancelled]" },
+  ];
+
+  for (const item of cases) {
+    const registry = registryWith(async () => item.outcome);
+    const result = await registry.executeWithStatus(subagentCall({ task: "do it" }));
+    assert.equal(result.isError, item.isError, item.header + " 的 isError 不对");
+    // 报告正文照旧保留，状态不是靠正文「暗示」的。
+    assert.ok(result.content.startsWith(item.header), "正文应以 " + item.header + " 开头");
+  }
+});
+
+test("委派状态：失败的委派走 PostToolUseFailure，而不是 PostToolUse", async () => {
+  const events = [];
+  const hooks = new ToolHooks({
+    postToolUse: [() => events.push("PostToolUse")],
+    postToolUseFailure: [() => events.push("PostToolUseFailure")],
+  });
+  const registry = new ToolRegistry([
+    createSubagentTool(async () => ({ status: "failed", reason: "budget", stats: subagentStats() })),
+  ], hooks);
+
+  await registry.execute(subagentCall({ task: "do it" }));
+  assert.deepEqual(events, ["PostToolUseFailure"]);
+});
+
+test("委派状态：失败的委派在工具日志里记 ok:false", async () => {
+  await withWorkspace(async (root) => {
+    const log = path.join(root, "tool-log.jsonl");
+    const registry = new ToolRegistry([
+      createSubagentTool(async () => ({ status: "failed", reason: "budget", stats: subagentStats() })),
+    ], new ToolHooks(createToolLogHooks(log)));
+
+    await registry.execute(subagentCall({ task: "do it" }));
+
+    const record = JSON.parse((await readFile(log, "utf8")).trim());
+    assert.equal(record.tool, "run_subagent");
+    assert.equal(record.ok, false);
+  });
+});
+
+test("委派状态：界面判断失败以 isError 为准，不看正文前缀", async () => {
+  const registry = registryWith(async () => ({ status: "failed", reason: "budget", stats: subagentStats() }));
+  const call = subagentCall({ task: "do it" });
+  const result = await registry.executeWithStatus(call);
+
+  // 报告正文不以 "ERROR:" 开头，界面仍必须判成失败 —— 依据是宿主侧的 isError。
+  assert.equal(isToolResultFailure(call, result.content, result.isError), true);
+  // 修复前就是这个样子：状态丢了，同一段正文被当成成功，界面显示 ✓。
+  assert.equal(isToolResultFailure(call, result.content, false), false);
 });
