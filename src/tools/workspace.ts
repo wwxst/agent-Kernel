@@ -510,8 +510,12 @@ export class Workspace {
         ? `\n… [lines ${slice.firstLine}-${slice.lastLine}; more lines follow, continue with offset=${slice.lastLine + 1}]`
         : `\n… [lines ${slice.firstLine}-${slice.lastLine} of ${slice.totalLines}; continue with offset=${slice.lastLine + 1}]`)
       : "";
+    // 扫到上限而停：后面确实还有内容没读。`more` 已经给了 offset 时不重复，
+    // 但窗口没满时它不会出现 —— 那种情况（超长行还没结束）同样要说清下一步从哪读，
+    // 否则模型只知道「还有」，不知道「怎么拿」。
     const stopped = slice.scanStopped
-      ? `\n… [stopped after scanning ${MAX_READ_SCAN_BYTES} bytes; later lines were not read]`
+      ? `\n… [stopped after scanning ${MAX_READ_SCAN_BYTES} bytes; later lines were not read` +
+        `${slice.hasMore ? "" : `, continue with offset=${slice.lastLine + 1}`}]`
       : "";
     return this.clip(slice.text, more + stopped);
   }
@@ -1521,6 +1525,8 @@ async function readLineWindow(
     let carry = "";
     let lineNumber = 0;
     let position = 0;
+    // 第一块单独标记：BOM 只在文件最开头剥一次，不能每块都判断（否则一串 U+FEFF 会被连续吃掉）。
+    let firstChunk = true;
     let hasMore = false;
     let scanStopped = false;
     let partialLine = false;
@@ -1567,6 +1573,13 @@ async function readLineWindow(
       }
       position += bytesRead;
       carry += decoder.write(chunk.subarray(0, bytesRead));
+      // 文件开头的 BOM：无窗口路径用 TextDecoder（默认剥掉），这里用 StringDecoder（不剥）。
+      // 两条读法必须给出同一个第一行 —— 差一个 U+FEFF，模型拿这段去 write 会凭空多写一个 BOM，
+      // 拿去和 edit 的片段比对又对不上。只处理第一块，后文里的 U+FEFF 一律不动。
+      if (firstChunk) {
+        firstChunk = false;
+        if (carry.startsWith("\uFEFF")) carry = carry.slice(1);
+      }
       const parts = carry.split("\n");
       carry = parts.pop() ?? "";
       for (const part of parts) {

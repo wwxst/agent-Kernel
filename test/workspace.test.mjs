@@ -1509,6 +1509,23 @@ test("read：offset + limit 读中间一段，并说清怎么继续读", async (
   });
 });
 
+test("read：行窗口与无窗口读法对文件开头 BOM 的处理必须一致", async () => {
+  await withWorkspace(async (root) => {
+    await writeFile(path.join(root, "bom.txt"), "\uFEFFfirst\nsecond\n");
+    const workspace = new Workspace({ root });
+
+    // 无窗口路径用 TextDecoder，默认剥掉 BOM。
+    assert.equal(await workspace.read("bom.txt"), "first\nsecond\n");
+    // 窗口路径同样必须剥掉：同一个文件的第一行不能在两条读法下长得不一样。
+    // 差一个 U+FEFF，模型拿这段去 write 就会凭空多写一个 BOM，去比对又对不上。
+    assert.equal(await workspace.read("bom.txt", { offset: 1 }), "first\nsecond");
+
+    // Windows 上最常见的组合：BOM + CRLF。BOM 剥掉，`\r` 一个不少。
+    await writeFile(path.join(root, "bom-crlf.txt"), "\uFEFFfirst\r\nsecond\r\n");
+    assert.equal(await workspace.read("bom-crlf.txt", { offset: 1 }), "first\r\nsecond\r");
+  });
+});
+
 test("read：offset 越过文件末尾时明说没有内容，并给出总行数", async () => {
   await withWorkspace(async (root) => {
     await writeFile(path.join(root, "short.txt"), "a\nb\n");
@@ -1723,6 +1740,22 @@ test("read：确实没走到目标行时仍然明说「没到达」", async () =
 
     assert.match(page, /offset 2 was not reached/);
     assert.doesNotMatch(page, /did not end within/);
+  });
+});
+
+test("read：扫到扫描上限而窗口没满时，也要说清下一段从哪读", async () => {
+  await withWorkspace(async (root) => {
+    // 三行短的，后面接一条 8 MB 都没结束的超长行：窗口没满，但扫描预算已经用光。
+    await writeFile(path.join(root, "tail.log"), "a\nb\nc\n" + "X".repeat(8_000_100));
+    const page = await new Workspace({ root }).read("tail.log", { offset: 1 });
+
+    assert.ok(page.startsWith("a\nb\nc"), "前三行要照常交出去");
+    assert.match(page, /stopped after scanning 8000000 bytes/);
+    // 必须确认走的是「扫描上限」而不是「窗口满」：后者的尾注本来就会带 offset，
+    // 混在一起这条用例就证明不了任何东西。
+    assert.doesNotMatch(page, /more lines follow/);
+    // 只说「后面还有没读的」不够：必须给出下一段的 offset，模型才知道怎么继续。
+    assert.match(page, /continue with offset=4/);
   });
 });
 
