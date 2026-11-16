@@ -194,11 +194,11 @@ for (let step = 1; step <= this.maxSteps; step++) {
 
 | 工具 | 说明 | 对应工作区方法 |
 | --- | --- | --- |
-| `read` | 读 UTF-8 文本，超过 8k 字符截断 | `Workspace.read` |
+| `read` | 读 UTF-8 文本，超过 8k 字符截断；`offset` / `limit` 读指定行区间 | `Workspace.read` |
 | `write` | 创建/覆盖整个文件，自动建父目录 | `Workspace.write` |
 | `edit` | 把唯一命中的一段换成另一段 | `Workspace.edit` |
 | `glob` | 按模式找文件，如 `src/**/*.ts` | `Workspace.glob` |
-| `grep` | 按正则搜文件内容，回 `路径:行号: 内容`；匹配跑在 worker 里，超时中断 | `Workspace.grep` |
+| `grep` | 按正则搜文件内容，回 `路径:行号: 内容`；`path` 可以是目录或单个文件；匹配跑在 worker 里，超时中断 | `Workspace.grep` |
 | `ls` | 列目录：类型、字节数、名称 | `Workspace.list` |
 | `shell` | 默认在默认目录跑 shell，命令内可 `cd` 到任意位置；超时/取消杀整棵进程树，输出有上限 | `Workspace.run` |
 | `shell-output` | 读后台任务自上次调用之后的新输出；第一行是它的状态 | `Workspace.readJobOutput` |
@@ -207,6 +207,10 @@ for (let step = 1; step <= this.maxSteps; step++) {
 | `run_subagent` | 把一件独立子任务交给临时子 Agent，只拿回一份最终报告 | 子 Agent 自己的 `Agent` |
 
 前三个是「改文件」，中间两个是「找东西」，`ls` 看一层目录，`shell` 是兜底。模型先找后改，顺序和它自己的直觉一致。
+
+`read` 传 `offset` / `limit` 可以读文件中间或后半段（行号从 1 起），不用反复读开头；读到中间会告诉你下一段从哪开始，越界或扫到上限也明说。`grep` 的 `path` 指向单个文件时就只搜它自己，不用先绕到父目录。
+
+文件类工具（`read` / `write` / `edit` / `glob` / `grep` / `ls`）会把**多传的参数当错误报出来**，并列出可用参数。参数写错比悄悄忽略好：模型传一个不存在的 `offset`，静默忽略会让它以为读到了别处，然后基于错的内容继续干活。`shell` 保持宽松 —— Worker 的 shell 包装层正是靠「多余字段不报错」来强制前台的。
 
 `shell-output` 与 `shell-kill` 不是新能力，是 `shell` 那半个功能的收尾。`shell` 带 `background:true` 时立刻返回一个任务编号（`job-1`），进程继续跑：
 

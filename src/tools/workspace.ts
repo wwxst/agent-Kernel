@@ -12,10 +12,13 @@
  * 两边各管一段，改的时候不会互相牵动。
  *
  * 内容目录：
- *   - `Workspace`：九个方法 `read` / `write` / `edit` / `list` / `glob` / `grep` /
- *     `run` / `readJobOutput` / `killJob`；内部有原子替换、路径解析、输出截断、进程树清理。
- *   - `createWorkspaceTools()`：把上面这些方法翻译成模型能调用的九个工具（含英文说明书）。
- *   - `WorkspaceOptions` / `GrepOptions` / `BackgroundJob`：构造参数、grep 选项、后台任务登记。
+ *   - `Workspace`：九个方法 `read`（可按行取窗口）/ `write` / `edit` / `list` / `glob` /
+ *     `grep`（起点可以是目录或单个文件）/ `run` / `readJobOutput` / `killJob`；
+ *     内部有原子替换、路径解析、输出截断、进程树清理。
+ *   - `createWorkspaceTools()`：把上面这些方法翻译成模型能调用的九个工具（含英文说明书）；
+ *     文件类工具声明 `strictArguments`，参数写错直接报错而不是被静默忽略。
+ *   - `WorkspaceOptions` / `ReadOptions` / `GrepOptions` / `BackgroundJob`：构造参数、read 的行窗口、
+ *     grep 选项、后台任务登记。
  *   - `RegexGrep`：grep 的正则匹配线程客户端，超时或取消就 terminate。
  *   - 导出的小工具：`fillBuffer()` 读满缓冲区、`terminateTree()` 收进程树。
  *   - 常量区：各类上限（读、输出、扫描、行宽、结果数）、超时、后台任务日志目录与轮询间隔。
@@ -48,6 +51,18 @@ const MAX_OUTPUT_CHARS = 8_000;
  * 又不会把几百 MB 的日志整个读进内存。
  */
 const MAX_READ_BYTES = 32_768;
+
+/**
+ * 带 `offset` 读文件时，最多往后扫多少字节去找那一行。
+ *
+ * 行号必须从文件头顺序数（文本文件没有行索引），所以「读第 5 万行」意味着先扫过前面所有字节。
+ * 8 MB 足够覆盖几万行源码；再大就明确报告「扫到上限仍未到达」，而不是把一个 200 MB 的日志
+ * 整个读进内存。这条上限和 `MAX_READ_BYTES` 是两件事：后者管「返回多少」，这里管「为了定位扫多少」。
+ */
+const MAX_READ_SCAN_BYTES = 8_000_000;
+
+/** 按行读窗口时每次读多少字节。太小则系统调用次数暴涨，太大则单次分配浪费。 */
+const READ_CHUNK_BYTES = 65_536;
 
 /** grep 跳过超过这个大小的文件：大概率是日志、锁文件或打包产物，读进来只会拖慢。 */
 const MAX_GREP_FILE_BYTES = 1_000_000;
@@ -280,6 +295,19 @@ export interface GrepOptions {
 }
 
 /**
+ * read 的可选窗口：从第几行开始、最多读几行。
+ *
+ * 两个都不传时行为与以前完全一致（从头读一屏）。这是给「看大文件后半段」用的：
+ * 以前只能反复读同一段开头，模型以为在翻页，其实拿到的永远是同一块内容。
+ */
+export interface ReadOptions {
+  /** 起始行号，1 起。 */
+  offset?: number;
+  /** 最多返回多少行；不传表示一直读到文件末尾或输出上限。 */
+  limit?: number;
+}
+
+/**
  * 一个后台任务：进程本身、它的日志文件、以及「已经交给模型多少字节」。
  *
  * cursor 是增量的关键：模型第二次调 shell-output 时只该看到新长出来的部分，
@@ -391,12 +419,13 @@ export class Workspace {
    *
    * 用有界读取：`readFile` 会把整个文件读进内存，模型一句 `read("big.log")`
    * 就能把进程撑爆。上限必须落在「读进来多少」，而不是「返回多少」。
+   *
+   * 传 `offset` / `limit` 时改成按行读窗口：这是给「看文件后半段」用的。不传时
+   * 仍走原来那条路，输出与截断文案一字不变 —— 老行为不能因为新参数而漂移。
    */
-  async read(requested: string): Promise<string> {
+  async read(requested: string, options: ReadOptions = {}): Promise<string> {
     const file = await this.resolveReal(this.resolve(requested), requested);
 
-    const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
-    const cut = truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "";
     // 仅真实获准的 read 才允许提取图片字节，不以 UI 的路径猜测绕过 ToolRegistry。
     // 已知边界：预览仅为本地终端展示，模型仍收到原有文字工具结果。
     if (this.onImageRead !== undefined && /\.(png|jpe?g|gif|webp)$/i.test(requested)) {
@@ -427,7 +456,38 @@ export class Workspace {
         this.editObserverFailures++;
       }
     }
-    return this.clip(text, cut);
+
+    // 不带窗口参数：保持原来的「从头读一屏」，连截断文案都不变。
+    if (options.offset === undefined && options.limit === undefined) {
+      const { text, truncated } = await readTextUpTo(file, MAX_READ_BYTES, Buffer.alloc(MAX_READ_BYTES + 1));
+      return this.clip(text, truncated ? `\n… [stopped after ${MAX_READ_BYTES} bytes]` : "");
+    }
+
+    const startLine = options.offset ?? 1;
+    assertPositiveLine(startLine, "offset");
+    if (options.limit !== undefined) assertPositiveLine(options.limit, "limit");
+    const slice = await readLineWindow(file, startLine, options.limit, this.signal);
+    if (slice.lastLine < slice.firstLine) {
+      // 扫到上限还没走到目标行：必须说「没走到」，不能说「没有内容」——
+      // 后者会让模型以为文件到这就结束了，于是放弃或去改别的文件。
+      if (slice.scanStopped) {
+        return `(offset ${startLine} was not reached) … [stopped after scanning ${MAX_READ_SCAN_BYTES} bytes without reaching it]`;
+      }
+      // 空文件，或 offset 越过了文件末尾：说清「这里没有内容」，不要回一段空白让模型猜。
+      const total = slice.totalLines === undefined ? "" : ` The file has ${slice.totalLines} line(s).`;
+      return `(no lines to read at offset ${startLine})${total}`;
+    }
+    // 还有后续行时必须说清怎么继续读；否则模型会以为这就是文件末尾。
+    // 总行数只有读到 EOF 才知道；为了省钱不去多扫一遍，所以两种说法分开写。
+    const more = slice.hasMore
+      ? (slice.totalLines === undefined
+        ? `\n… [lines ${slice.firstLine}-${slice.lastLine}; more lines follow, continue with offset=${slice.lastLine + 1}]`
+        : `\n… [lines ${slice.firstLine}-${slice.lastLine} of ${slice.totalLines}; continue with offset=${slice.lastLine + 1}]`)
+      : "";
+    const stopped = slice.scanStopped
+      ? `\n… [stopped after scanning ${MAX_READ_SCAN_BYTES} bytes; later lines were not read]`
+      : "";
+    return this.clip(slice.text, more + stopped);
   }
 
   /**
@@ -779,11 +839,18 @@ export class Workspace {
     const source = options.fixed === true ? escapeRegExp(pattern) : pattern;
     assertValidPattern(source, flags);
 
-    // grep 是读取已有目录，不是 write 的创建路径：起点必须真实存在。
+    // grep 是读取已有路径，不是 write 的创建路径：起点必须真实存在。
     // realpath 同时把链接解析成实际目标，后续遍历不会在解析后被别名换掉。
     const start = await realpath(this.resolve(requested));
     const rootReal = await this.realRoot();
     const outsideRoot = escapes(rootReal, start);
+    // 起点可以是目录，也可以是一个文件。模型经常想「就在这个文件里搜」，
+    // 以前传文件路径会走到遍历里、拿回一句「不是目录」，白费一次调用。
+    const startStats = await stat(start);
+    const singleFile = startStats.isFile();
+    if (!singleFile && !startStats.isDirectory()) {
+      throw new Error(`search path is neither a file nor a directory: ${requested}`);
+    }
 
     const hits: Array<{ file: string; line: number; text: string }> = [];
     let skippedLarge = 0;
@@ -794,61 +861,76 @@ export class Workspace {
     const buffer = Buffer.alloc(MAX_GREP_FILE_BYTES + 1);
     const budget = { remaining: this.scanLimit };
     const matcher = new RegexGrep(source, flags);
-    try {
-      for await (const file of walkFiles(start, budget)) {
-        if (hits.length >= MAX_RESULTS) break;
 
-        const remaining = this.regexBudgetMs - spentMs;
-        if (remaining <= 0) {
-          // 预算在「还有文件没搜」的时候用完了：结果不完整，必须说出来。
+    /**
+     * 搜一个文件。返回 true 表示「到此为止」：命中已满、正则预算用完，或超时。
+     *
+     * 抽成闭包而不是写两遍循环：单文件和多文件走的是同一段搜索逻辑，
+     * 复制一份迟早会有一边忘了更新（比如以后改命中上限）。
+     */
+    const visit = async (file: string): Promise<boolean> => {
+      const remaining = this.regexBudgetMs - spentMs;
+      if (remaining <= 0) {
+        // 预算在「还有文件没搜」的时候用完了：结果不完整，必须说出来。
+        regexStopped = true;
+        return true;
+      }
+
+      let content: string;
+      try {
+        // 用句柄读到上限为止：先 stat 再看 readFile 有竞态，真正的上限得落在读了多少字节。
+        const read = await readTextUpTo(file, MAX_GREP_FILE_BYTES, buffer);
+        if (read.truncated) {
+          skippedLarge++;
+          return false;
+        }
+        content = read.text;
+      } catch {
+        // 读不了也要记账：丢掉这个文件可以，但「结果可能不完整」必须告诉模型。
+        unreadable++;
+        return false;
+      }
+      if (content.includes("\u0000")) return false;
+
+      const startedAt = Date.now();
+      let lineNumbers: number[];
+      try {
+        lineNumbers = await matcher.match(content, MAX_RESULTS - hits.length, remaining, this.signal);
+      } catch (error) {
+        // 超时是预期结果，不是失败：停在当前文件，保留已经拿到的命中。
+        if (error instanceof Error && error.message === REGEX_TIMEOUT) {
           regexStopped = true;
-          break;
+          return true;
         }
+        throw error;
+      }
+      // 只累计匹配时间：读文件和 worker 启动不该吃掉正则的预算。
+      spentMs += Date.now() - startedAt;
 
-        let content: string;
-        try {
-          // 用句柄读到上限为止：先 stat 再看 readFile 有竞态，真正的上限得落在读了多少字节。
-          const read = await readTextUpTo(file, MAX_GREP_FILE_BYTES, buffer);
-          if (read.truncated) {
-            skippedLarge++;
-            continue;
-          }
-          content = read.text;
-        } catch {
-          // 读不了也要记账：丢掉这个文件可以，但「结果可能不完整」必须告诉模型。
-          unreadable++;
-          continue;
+      if (lineNumbers.length > 0) {
+        const lines = content.split("\n");
+        for (const lineNumber of lineNumbers) {
+          const line = lines[lineNumber - 1].trim();
+          hits.push({
+            // 工作区内相对工作区根目录；工作区外用绝对路径，避免一串 ../../ 无法定位。
+            file: outsideRoot ? toPosix(file) : toPosix(path.relative(rootReal, file)),
+            line: lineNumber,
+            // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
+            text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
+          });
+          if (hits.length >= MAX_RESULTS) break;
         }
-        if (content.includes("\u0000")) continue;
+      }
+      return hits.length >= MAX_RESULTS;
+    };
 
-        const startedAt = Date.now();
-        let lineNumbers: number[];
-        try {
-          lineNumbers = await matcher.match(content, MAX_RESULTS - hits.length, remaining, this.signal);
-        } catch (error) {
-          // 超时是预期结果，不是失败：停在当前文件，保留已经拿到的命中。
-          if (error instanceof Error && error.message === REGEX_TIMEOUT) {
-            regexStopped = true;
-            break;
-          }
-          throw error;
-        }
-        // 只累计匹配时间：读文件和 worker 启动不该吃掉正则的预算。
-        spentMs += Date.now() - startedAt;
-
-        if (lineNumbers.length > 0) {
-          const lines = content.split("\n");
-          for (const lineNumber of lineNumbers) {
-            const line = lines[lineNumber - 1].trim();
-            hits.push({
-              // 工作区内相对工作区根目录；工作区外用绝对路径，避免一串 ../../ 无法定位。
-              file: outsideRoot ? toPosix(file) : toPosix(path.relative(rootReal, file)),
-              line: lineNumber,
-              // 超长行必须留下截断标记：悄悄切到 200 字，模型会以为那一行就到此为止。
-              text: line.length > MAX_LINE_CHARS ? `${line.slice(0, MAX_LINE_CHARS)}${LINE_TRUNCATED}` : line,
-            });
-            if (hits.length >= MAX_RESULTS) break;
-          }
+    try {
+      if (singleFile) {
+        await visit(start);
+      } else {
+        for await (const file of walkFiles(start, budget)) {
+          if (hits.length >= MAX_RESULTS) break;
+          if (await visit(file)) break;
         }
       }
     } finally {
@@ -1347,6 +1429,116 @@ async function readTextUpToHandle(
 }
 
 /**
+ * 行号必须是正整数：0、负数、小数都当参数错误抛出去，不悄悄取整。
+ *
+ * 静默取整最坏的情况是「模型以为读了第 1.5 行附近，实际拿到第 1 行」，
+ * 它接着基于错的内容改代码 —— 宁可让它收到一条能看懂的错误。
+ */
+function assertPositiveLine(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer line number, got ${value}`);
+  }
+}
+
+/**
+ * 按行读文件的一个窗口：从 `offset` 行（1 起）开始，最多 `limit` 行。
+ *
+ * 为什么分块读，而不是「整个读进来再切」：一个 200 MB 的日志，`offset=100000` 也只需要
+ * 前面几 MB 的行号，没必要把整个文件塞进内存。所以只保留「当前还没结束的那一行」和
+ * 目标窗口里的行，扫到窗口末尾就停。
+ *
+ * 行尾原样保留（`\r` 不剥）：模型常把读到的片段直接拿去 `edit` 做精确替换，
+ * 少一个 `\r` 就匹配不上 CRLF 文件。
+ *
+ * 已知边界：行号必须从文件头顺序数（文本文件没有行索引），所以目标行很靠后时会先扫过
+ * 前面所有字节；扫到 `MAX_READ_SCAN_BYTES` 还没到就明确报告，不猜内容。文件在读取过程中
+ * 被改写时，行号以读到的内容为准 —— 这不是快照隔离。
+ */
+async function readLineWindow(
+  file: string,
+  offset: number,
+  limit: number | undefined,
+  signal?: AbortSignal,
+): Promise<{
+  text: string;
+  firstLine: number;
+  lastLine: number;
+  hasMore: boolean;
+  scanStopped: boolean;
+  totalLines?: number;
+}> {
+  const parentIdentity = await captureDirectoryIdentity(path.dirname(file));
+  await assertDirectoryIdentity(parentIdentity, file);
+  const handle = await open(file, constants.O_RDONLY | NO_FOLLOW_FILE | (constants.O_NONBLOCK ?? 0));
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile()) throw new Error("target is not a regular file");
+    await assertOpenedFileStillNamed(file, stats, file);
+    await assertDirectoryIdentity(parentIdentity, file);
+
+    const decoder = new StringDecoder("utf8");
+    const chunk = Buffer.alloc(READ_CHUNK_BYTES);
+    const lines: string[] = [];
+    // 还没遇到换行的那一截：块边界可能正好落在行中间，不能当成完整行。
+    let carry = "";
+    let lineNumber = 0;
+    let position = 0;
+    let hasMore = false;
+    let scanStopped = false;
+    let totalLines: number | undefined;
+
+    for (;;) {
+      // 取消要在两块之间生效：读一个几百 MB 的文件不该等到读完才响应 Ctrl-C。
+      if (signal?.aborted === true) throw new Error("cancelled while reading the file window");
+      if (position >= MAX_READ_SCAN_BYTES) {
+        scanStopped = true;
+        break;
+      }
+      const want = Math.min(READ_CHUNK_BYTES, MAX_READ_SCAN_BYTES - position);
+      const { bytesRead } = await handle.read(chunk, 0, want, position);
+      if (bytesRead === 0) {
+        // EOF：收尾那一截（文件末尾没有换行时它就是最后一行）。
+        carry += decoder.end();
+        if (carry !== "") {
+          lineNumber++;
+          if (lineNumber >= offset) {
+            if (limit === undefined || lines.length < limit) lines.push(carry);
+            else hasMore = true;
+          }
+        }
+        totalLines = lineNumber;
+        break;
+      }
+      position += bytesRead;
+      carry += decoder.write(chunk.subarray(0, bytesRead));
+      const parts = carry.split("\n");
+      carry = parts.pop() ?? "";
+      for (const part of parts) {
+        lineNumber++;
+        if (lineNumber < offset) continue;
+        if (limit !== undefined && lines.length >= limit) {
+          hasMore = true;
+          break;
+        }
+        lines.push(part);
+      }
+      if (hasMore) break;
+    }
+
+    return {
+      text: lines.join("\n"),
+      firstLine: offset,
+      lastLine: offset + lines.length - 1,
+      hasMore,
+      scanStopped,
+      totalLines,
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * 把 buffer 尽量读满，返回读到的字节数；只有遇到 EOF 或 buffer 满了才停。
  *
  * 单独抽出来是为了能被测试确定性地喂「半截读」—— 普通文件在本地磁盘上很少真的半截返回，
@@ -1712,6 +1904,11 @@ const PATH_DESCRIPTION =
 const DIR_DESCRIPTION =
   "Directory path. Relative paths resolve from the workspace root; absolute paths and ../ are allowed. Defaults to the workspace root.";
 
+/** grep 的搜索起点说明：目录递归搜，单个文件只搜它自己。 */
+const SEARCH_PATH_DESCRIPTION =
+  "File or directory to search: a directory is searched recursively, a single file only itself. " +
+  "Relative paths resolve from the workspace root; absolute paths and ../ are allowed. Defaults to the workspace root.";
+
 export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
@@ -1719,16 +1916,33 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       // 读工具 read：把一个文本文件的内容读出来。
       // 一次最多读 8000 个字符；文件比这更大时，只读到前面这一截，
       // 并且明确告诉你被截断了，不会假装已经读完。
-      description: "Read a UTF-8 text file. Output is truncated to 8000 chars.",
+      // 想看文件中间或后半段时传 offset 和 limit 读指定行区间，不要反复读开头。
+      description: "Read a UTF-8 text file. Output is truncated to 8000 chars. " +
+        "Use offset and limit to read a specific line range instead of rereading the beginning.",
+      // 行号写错必须报错：静默忽略 offset 会让模型以为读到了后面，实际还是开头。
+      strictArguments: true,
       parameters: {
         type: "object",
         properties: {
           // 文件路径：相对路径以工作区根目录为基准，绝对路径与 ../ 同样可用。
           path: { type: "string", description: PATH_DESCRIPTION },
+          // 从第几行开始读，行号从 1 开始；不传就是从第 1 行。
+          offset: {
+            type: "number",
+            description: "First line to read, 1-based. Omit to start at line 1.",
+          },
+          // 最多返回多少行；不传就是一直读到文件末尾或输出上限。
+          limit: {
+            type: "number",
+            description: "Maximum number of lines to return. Omit to read to the end of the file or the output cap.",
+          },
         },
         required: ["path"],
       },
-      run: async (args) => workspace.read(String(args.path)),
+      run: async (args) => workspace.read(String(args.path), {
+        offset: typeof args.offset === "number" ? args.offset : undefined,
+        limit: typeof args.limit === "number" ? args.limit : undefined,
+      }),
     },
     {
       name: "write",
@@ -1737,6 +1951,8 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       // 如果只是想改文件里的一小段，别用这个——用下面的改工具，它不会动其他地方。
       description:
         "Create or overwrite a whole UTF-8 file; parent directories are created. Prefer edit for changing part of an existing file.",
+      // 参数写错必须让模型知道：多传一个 content 拼错成 body，静默忽略会把文件清空。
+      strictArguments: true,
       parameters: {
         type: "object",
         properties: {
@@ -1757,6 +1973,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       // 新内容留空，就等于把那段删掉。
       description:
         "Replace exactly one occurrence of old_string with new_string in an existing file. old_string must appear exactly once; read the file first when unsure.",
+      strictArguments: true,
       parameters: {
         type: "object",
         properties: {
@@ -1782,6 +1999,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         'Find files by glob pattern (supports *, ** and ?). The pattern may be relative to the search root or absolute. ' +
         'Results are relative to the workspace root, or absolute when the search root is outside it. ' +
         'Example: "src/**/*.ts".',
+      strictArguments: true,
       parameters: {
         type: "object",
         properties: {
@@ -1799,15 +2017,18 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       // 搜内容工具 grep：按文字内容找，每条结果给出「文件路径:行号: 那一行的内容」。
       // 默认按「正则表达式」匹配——一种写查找规则的方式，比如 ^import 表示「以 import 开头」。
       // 如果只想搜一段普通文字，把 fixed 设成 true，就不用管正则里那些符号了。
+      // path 可以是一个目录（递归搜），也可以是一个文件（只搜它自己）。
       description:
-        "Search file contents by JavaScript regular expression; returns one file:line: match line per hit. Set fixed=true to search a literal string.",
+        "Search file contents by JavaScript regular expression; returns one file:line: match line per hit. " +
+        "Set fixed=true to search a literal string. The path may be a directory or a single file.",
+      strictArguments: true,
       parameters: {
         type: "object",
         properties: {
           // 要搜索的正则（JavaScript 语法，逐行匹配）；fixed=true 时按字面字符串解释。
           pattern: { type: "string", description: "JavaScript regular expression, matched line by line." },
-          // 从哪个目录开始搜；默认工作区根目录，也可以指向任意其他目录。
-          path: { type: "string", description: DIR_DESCRIPTION },
+          // 搜索起点：目录会递归搜，单个文件只搜它自己；默认工作区根目录。
+          path: { type: "string", description: SEARCH_PATH_DESCRIPTION },
           // 正则标志：i 忽略大小写，m / s / u 按 JS 语义；g 会被忽略。
           flags: { type: "string", description: "Regex flags: i, m, s, u (g is ignored)." },
           // true 时把 pattern 当字面字符串，不解释正则元字符。
@@ -1826,6 +2047,7 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
       // 列目录工具 ls：看看一个目录里有什么。
       // 每一项会给出三样东西：它是文件还是目录、有多大（字节数）、叫什么名字。
       description: "List a directory: entry type, size in bytes, and name.",
+      strictArguments: true,
       parameters: {
         type: "object",
         properties: {
