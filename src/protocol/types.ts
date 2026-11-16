@@ -91,6 +91,15 @@ export interface Tool {
   name: string;
   description: string;
   parameters: Record<string, unknown>;
+  /**
+   * true 时，模型多传的未声明参数直接报错，而不是被静默忽略。
+   *
+   * 默认 false：多余字段仍交给具体工具自己决定（既有行为不变）。
+   * 为什么要有这个开关：`read` 曾经收到 `offset` 却当没看见，模型以为在翻页、
+   * 实际每次拿回同一段开头，反复重试直到预算耗尽 —— 静默忽略比报错危险得多。
+   * 需要「参数写错必须让模型知道」的工具自己打开它，不做全局收紧。
+   */
+  strictArguments?: boolean;
   run(args: Record<string, unknown>): Promise<string | ToolExecutionResult>;
 }
 

@@ -11,6 +11,7 @@
  *   - `execute` 正常路径：命中就执行、参数齐全才真的执行、空 `arguments` 当空对象。
  *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填（只认对象自身字段）、类型不对、
  *     工具抛任何东西，一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
+ *   - 未知参数：声明 `strictArguments` 的工具拒绝并列出可用参数；未声明的仍按老规矩忽略。
  *   - 注册体检：重名、`array` / `object` 参数、非法 schema、`required` 未声明、缺类型。
  *
  * 模块关系：依赖 `src/protocol/errors.ts`、`test/support/harness.mjs` 与 `node:test`，
@@ -447,4 +448,22 @@ test("execute：number 参数拒绝 Infinity，boolean 参数拒绝字符串", a
     /argument "flag" must be a boolean/,
   );
   assert.equal(await registry.execute(call("num", '{"n": 1, "flag": true}')), "got 1 true");
+});
+
+// ── 未知参数：默认宽松，需要时逐个工具收紧 ────────────────────────────────────
+// 为什么要有这组：`read` 曾经收到 `offset` 却当没看见，模型以为在翻页、实际每次拿回
+// 同一段开头，反复重试直到预算耗尽。静默忽略比一条明确的报错危险得多；
+// 但全局收紧会打断「刻意吞掉某个参数」的工具（例如 Worker 的 shell 包装层）。
+
+test("参数：声明 strictArguments 的工具拒绝未声明的参数，并列出可用参数", async () => {
+  const registry = makeRegistry([{ ...echoTool(), strictArguments: true }]);
+
+  const result = await registry.execute(call("echo", JSON.stringify({ value: "x", start: 2 })));
+  assert.equal(result, 'ERROR: invalid arguments: unknown argument "start"; this tool accepts: value');
+});
+
+test("参数：未声明 strictArguments 的工具保持「多余字段忽略」的既有行为", async () => {
+  const registry = makeRegistry([echoTool()]);
+
+  assert.equal(await registry.execute(call("echo", JSON.stringify({ value: "x", start: 2 }))), "echo x");
 });

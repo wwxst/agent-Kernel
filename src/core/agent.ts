@@ -13,7 +13,8 @@
  *   - `DEFAULT_SYSTEM_PROMPT`：默认系统提示，一行一条英文，上方逐行中文对照。
  *   - `AgentUsage` / `AgentStats` / `AgentSessionStats`：用量与统计；成本未知单独计数，不补 0。
  *   - `AgentOptions`：客户端、工具、系统提示、三个预算、取消信号与五种观察回调。
- *   - `Agent`：`run(task)` 跑一次任务；`transcript`、`stats`、`sessionStats`、`observerFailureCount`。
+ *   - `Agent`：`run(task)` 跑一次任务；`transcript`、`stats`、`sessionStats`、`observerFailureCount`、
+ *     `toolExecutionDisabled`（进程树清理未确认时为 true，供包一层的宿主判断能不能算成功）。
  *   - 内部：`runLoop()` 主循环、`compactTranscript()` 按预算压缩旧上下文、`beginRun()` 重置本 Run 状态、`refreshSystemPrompt()`、
  *     `stopIfCancelled()` / `stopIfBudgetExhausted()`、`recordUsage()`、`skipCalls()`。
  *
@@ -478,6 +479,17 @@ export class Agent {
   /** 核心成员 retryAttempts（重试次数）：界面用它区分实际请求数和模型轮次，避免重试后错认已确认的正文。 */
   get retryAttempts(): number {
     return this.runRetries;
+  }
+
+  /**
+   * 核心成员 toolExecutionDisabled（工具是否已被禁用）：进程树清理未确认时为 true。
+   *
+   * 只读诊断口，给「把子 Agent 包起来」的宿主用：子 Agent 可能跑完一次 Run 正常返回，
+   * 但它的 shell 后代进程还没确认停掉。宿主必须据此拒绝把这次结果当成功，
+   * 否则父 Agent 会接着改文件，而那个进程还在跑。它不改变任何执行行为。
+   */
+  get toolExecutionDisabled(): boolean {
+    return this.processCleanupUnverified;
   }
 
   /** 没有执行的调用也要留下一条结果：明确写「没跑」，而不是让它们凭空消失。 */
