@@ -31,8 +31,10 @@ import { ProcessCleanupError } from "../src/protocol/errors.ts";
 import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import {
   DEFAULT_SUBAGENT_MODE,
+  SUBAGENT_GUIDANCE,
   SUBAGENT_RESULT_MAX_CHARS,
   SUBAGENT_TASK_MAX_CHARS,
+  WORKER_SUBAGENT_GUIDANCE,
   createExplorerSystemPrompt,
   createSubagentTool,
   formatSubagentResult,
@@ -219,16 +221,41 @@ test("角色工具：Worker 的 shell 拿掉了 background，传了也按前台�
   });
 });
 
-test("提示词：Explorer 只描述只读能力，工作区路径交给共享函数", () => {
+test("提示词：Explorer 只描述只读角色与交付物，不给操作步骤", () => {
   const prompt = createExplorerSystemPrompt();
 
-  assert.match(prompt, /^You are a temporary read-only exploration subagent/);
-  assert.match(prompt, /Your only available tools are read, glob, grep, and ls\./);
-  assert.match(prompt, /You cannot modify files, execute shell commands, or create another subagent\./);
+  assert.match(prompt, /^You are an independent exploration subagent/);
+  // 角色能力：四个只读工具，不能改文件、不能跑 shell、不能再委派。
+  assert.match(prompt, /read-only tools \(read, glob, grep, ls\)/);
+  assert.match(prompt, /You cannot modify files, run shell commands, or create another subagent\./);
+  // 交付要求：结论 + 依据 + 建议，且只报核实过的。
+  assert.match(prompt, /Return your conclusion, the key evidence behind it/);
   // 只读角色绝不能被告知「你可以改文件、跑命令」—— 那是默认编码提示里的话。
   assert.doesNotMatch(prompt, /You may read, create, modify, and delete files/);
   // 工作区路径只在共享函数里写一次；这里再写一份就是白烧 token。
   assert.doesNotMatch(prompt, /The workspace root for this task is/);
+  // 不给步骤：不出现「先做什么、再做几次」这类流程规定。
+  assert.doesNotMatch(prompt, /Before calling read|at most once|first, then|step \d/i);
+});
+
+test("提示词：Worker 保留授权边界，但不规定执行步骤", () => {
+  // 安全约束必须留着：提交、推送、合并这类动作要任务明确授权。
+  assert.match(WORKER_SUBAGENT_GUIDANCE, /Do not commit, push, merge, rebase, reset, clean, or stash/);
+  assert.match(WORKER_SUBAGENT_GUIDANCE, /unless the task explicitly authorizes that exact action/);
+  // 自主执行：不需要逐步确认。
+  assert.match(WORKER_SUBAGENT_GUIDANCE, /You do not need to ask for step-by-step confirmation/);
+  // 不再规定先看 git status、跑哪个测试、重跑几次这类流程。
+  assert.doesNotMatch(WORKER_SUBAGENT_GUIDANCE, /git status|git diff --check|narrowest relevant tests/);
+});
+
+test("提示词：主 Agent 的委派规矩给判断依据，不给强制流程", () => {
+  assert.match(SUBAGENT_GUIDANCE, /Decide yourself when to delegate/);
+  // 失败不回滚这条事实必须保留：主 Agent 据此才会自己去查工作区。
+  assert.match(SUBAGENT_GUIDANCE, /file changes are not rolled back/);
+  // 不强制委派：简单任务自己做。
+  assert.match(SUBAGENT_GUIDANCE, /Handle simple or tightly coupled work yourself/);
+  // 不再规定「必须默认 explore」「一次只能一个」这类流程条款。
+  assert.doesNotMatch(SUBAGENT_GUIDANCE, /Use explore by default|Run only one subagent at a time/);
 });
 
 test("提示词：共享的工作区说明带上真实路径，并管住相对路径与范围", () => {
