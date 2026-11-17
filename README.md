@@ -441,7 +441,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-603 个用例，都不需要 API Key、不联网（其中 15 条依赖 Linux / POSIX 能力，在 Windows 上跳过）：
+603 个用例，都不需要 API Key、不联网（其中 14 条依赖 Linux / POSIX 能力，在 Windows 上跳过）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -460,7 +460,7 @@ npm run check       # typecheck + 全部测试
 | `test/file-index.test.mjs` | 文件清单：跳过 `node_modules` / `.git`、数量上限、`@` 补全的排序口径 |
 | `test/prompt-history.test.mjs` | 输入历史：坏行跳过、文件不存在不算错、单条与总条数上限 |
 | `test/project-instructions.test.mjs` | 项目指令：读不到返回 `undefined`、空白文件等同没有、超长截断、同名目录不报错 |
-| `test/skills.test.mjs` | 技能目录：两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能跳过并写明原因、长描述裁剪、控制字符不能伪造目录项、超预算与超扫描上限都要写明（且不编剩余数量）、普通文件不算技能、条目枚举有上限（1023/1024/1025 三档边界）、两种上限同时触发时两种原因都写出来、隐藏目录跳过、目录不存在/不是目录不算错误、权限与 IO 错误要报告且不连累另一级、FIFO 不阻塞、符号链接按设计处理、名称规则；以及 frontmatter 的引号、行内注释、块标量、非法 YAML 拒绝、中文与 Emoji |
+| `test/skills.test.mjs` | 技能目录：两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能跳过并写明原因、长描述裁剪、控制字符不能伪造目录项、超预算与超扫描上限都要写明（且不编剩余数量）、普通文件不算技能、条目枚举有上限（1023/1024/1025 三档边界）、两种上限同时触发时两种原因都写出来、隐藏目录跳过、目录不存在/不是目录不算错误、errno 分类表（`ENOENT`/`ENOTDIR` 是 absent，`EACCES`/`EIO`/`ELOOP` 等是 unreadable）、ELOOP 端到端验证 errno 保留且不连累另一级、提示里那句原因不带路径、FIFO 不阻塞、符号链接按设计处理、名称规则；以及 frontmatter 的引号、行内注释、块标量、非法 YAML 拒绝、中文与 Emoji |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |

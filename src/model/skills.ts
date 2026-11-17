@@ -214,7 +214,7 @@ interface ScanBudget {
  * 权限不足与 IO 错误在行为上是同一件事（都只能标记扫描不完整），区别只在错误码 ——
  * 所以错误码原样带进提示，类型不再细分：多一个只改名字不改行为的枚举值是假的精确。
  */
-type DirectoryFailure = "absent" | "unreadable";
+export type DirectoryFailure = "absent" | "unreadable";
 
 /** 空结果。每一处「这里没有技能」都返回它，调用方不用判断 undefined。 */
 function emptyScan(): ScanResult {
@@ -511,8 +511,12 @@ function readSkill(directory: string, name: string, scope: SkillScope, projectRo
  *
  * `ENOTDIR`（路径上有普通文件）也归到「不存在」：那不是读不了，是这里根本没有这个目录。
  * 不认识的错误码一律按读不了处理 —— 宁可多说一句「可能还有更多」，也不能悄悄吞掉。
+ *
+ * 导出是为了让测试直接压这张表：真实文件系统造不出 `EACCES` / `EIO`，
+ * 而 `chmod` 在 Windows 与 root 下不生效，靠它造的用例会退化成「只在某个平台、某种身份下执行」。
+ * 端到端（`ScanIssue`、errno 保留、提示文案）由真实文件系统上的 ELOOP 用例守着。
  */
-function classifyDirectoryError(code: string | undefined): DirectoryFailure {
+export function classifyDirectoryError(code: string | undefined): DirectoryFailure {
   if (code === "ENOENT" || code === "ENOTDIR") return "absent";
   return "unreadable";
 }

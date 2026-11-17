@@ -19,7 +19,8 @@
  *   - 预算不变量：坏技能的原因再长也不能把目录撑出上限。
  *   - 扫描资源上限：普通文件不算技能、条目枚举有上限（1023/1024/1025 三档边界）、
  *     两级共享预算、两种上限同时触发时两种原因都写出来、隐藏目录跳过。
- *   - 目录读不了：不存在/不是目录不算错误，权限不足与 IO 错误要报告且不连累另一级、不带绝对路径。
+ *   - 目录读不了：不存在/不是目录不算错误；errno 分类表（absent / unreadable）直接压；
+ *     ELOOP 端到端验证 errno 保留、不连累另一级、提示里那句原因不带路径。
  *   - 文件安全：FIFO 不阻塞、符号链接目录/文件按设计处理、读不了的目录不崩、文件描述符不漏。
  *   - 名称规则：小写字母数字加单个横线；仓库里已有的技能必须全部仍然合法。
  *
@@ -29,7 +30,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -38,6 +39,7 @@ import {
   MAX_DIRECTORY_ENTRIES,
   MAX_SKILLS_PROMPT_CHARS,
   MAX_SKILLS_SCANNED,
+  classifyDirectoryError,
   discoverSkills,
   skillsPrompt,
 } from "../src/model/skills.ts";
@@ -85,6 +87,20 @@ async function addSkill(projectRoot, name, description = `Use when working on ${
 async function addUnreadableDirectory(directory) {
   await mkdir(path.dirname(directory), { recursive: true });
   await symlink(directory, directory, DIRECTORY_LINK_TYPE);
+}
+
+/**
+ * 断言「这一级读不了」那句话里没有漏出路径。
+ *
+ * 只查那一句，不查整段提示：用户级技能的 `readPath` 是绝对路径（就在工作区外），
+ * 那是必须写的。拿整段去查会把这个正确行为当成泄漏 —— 上一版就是这么在 POSIX 上挂掉的。
+ */
+function assertReasonHasNoPath(prompt, scope, root) {
+  const label = scope === "project" ? "project-level" : "user-level";
+  const line = prompt.split("\n").find((text) => text.includes(`${label} skills directory could not be read`));
+  assert.ok(line !== undefined, `提示里要有一句说明 ${label} 这一级读不了`);
+  assert.equal(line.includes(root), false, "原因里不能带绝对路径");
+  assert.doesNotMatch(line, /[\\/]/, "原因里不能出现路径分隔符");
 }
 
 test("技能：没有 .agents/skills 目录时不产生提示段落", async () => {
@@ -722,13 +738,17 @@ test("技能：项目级目录读不了时，用户级照常扫描并写明原�
     // 一个根目录读不了，不能连累另一个。
     assert.deepEqual(catalog.skills.map((skill) => skill.name), ["user-skill"]);
     assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]), [["project", "read-error"]]);
+    assert.equal(catalog.truncated, true, "读不了不能被伪装成「没有技能」");
 
     const [issue] = catalog.issues;
     assert.match(issue.code ?? "", /^E[A-Z]+$/, "错误码要带上，用户才知道该查什么");
     const prompt = skillsPrompt(catalog);
     assert.match(prompt, /- user-skill \[user\]/);
     assert.match(prompt, new RegExp(`project-level skills directory could not be read \\(${issue.code}\\)`));
-    assert.equal(prompt.includes(root), false, "原因里不能带绝对路径");
+    // 只查「读不了」那一句有没有漏路径。
+    // 不能拿整个 prompt 去查 root：用户级技能的 readPath 本来就是绝对路径（就在 root 下），
+    // 那是给 read 用的、必须写；拿整段去查会在 POSIX 上误报（Windows 只因分隔符不同而侥幸躲过）。
+    assertReasonHasNoPath(prompt, "project", root);
   });
 });
 
@@ -741,7 +761,9 @@ test("技能：用户级目录读不了时，项目级照常扫描并写明原�
     const catalog = discoverSkills({ projectRoot: root, userRoot });
     assert.deepEqual(catalog.skills.map((skill) => skill.name), ["project-skill"]);
     assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]), [["user", "read-error"]]);
-    assert.match(skillsPrompt(catalog), /user-level skills directory could not be read \(E[A-Z]+\)/);
+    const prompt = skillsPrompt(catalog);
+    assert.match(prompt, /user-level skills directory could not be read \(E[A-Z]+\)/);
+    assertReasonHasNoPath(prompt, "user", root);
   });
 });
 
@@ -757,33 +779,26 @@ test("技能：两级目录都读不了时各报一条，提示里两句都有",
       [["project", "read-error"], ["user", "read-error"]]);
     const prompt = skillsPrompt(catalog);
     // 读不到技能也要产出一段：什么都不说，模型会以为这台机器没装技能。
-    assert.match(prompt, /project-level skills directory could not be read/);
-    assert.match(prompt, /user-level skills directory could not be read/);
+    assertReasonHasNoPath(prompt, "project", root);
+    assertReasonHasNoPath(prompt, "user", root);
   });
 });
 
-test("技能：权限不足时报告扫描不完整，不伪装成没有技能",
-  { skip: (process.platform === "win32" || process.getuid?.() === 0) && "chmod 拦不住文件所有者或 root 的读取" },
-  async () => {
-  await withRoot(async (root) => {
-    const directory = skillsDir(root);
-    await addSkill(root, "good-skill");
-    await chmod(directory, 0o000);
-    try {
-      const catalog = discoverSkills({ projectRoot: root });
-      assert.deepEqual(catalog.skills, [], "读不了就看不到技能");
-      assert.equal(catalog.truncated, true, "权限错误不能被说成「没有技能」");
-      assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]), [["project", "read-error"]]);
-
-      const prompt = skillsPrompt(catalog);
-      assert.match(prompt, /were not read to the end/);
-      assert.match(prompt, /project-level skills directory could not be read \(EACCES\)/);
-      // 提示进的是系统提示，不写用户主目录、也不写完整路径。
-      assert.equal(prompt.includes(root), false, "原因里不能带绝对路径");
-    } finally {
-      await chmod(directory, 0o755);
-    }
-  });
+test("技能：目录打不开的错误码按「没有这个目录」和「读不了」分类", () => {
+  // 真实文件系统造不出 EACCES 和 EIO；chmod 在 Windows 与 root 下又不生效 ——
+  // 那种用例会退化成「只在某个平台、某种身份下执行」，本地还看不出来（它在 Windows 上是跳过的）。
+  // 所以这里直接压分类表，端到端（ScanIssue、errno 保留、提示文案）交给上面的 ELOOP 用例。
+  for (const code of ["ENOENT", "ENOTDIR"]) {
+    assert.equal(classifyDirectoryError(code), "absent", `${code} 是「这里没有这个目录」，不是读不了`);
+  }
+  for (const code of ["EACCES", "EPERM", "EIO", "ELOOP", "EMFILE", "ENAMETOOLONG"]) {
+    assert.equal(classifyDirectoryError(code), "unreadable", `${code} 意味着可能有技能没看到`);
+  }
+  // 拿不到 code（不是 ErrnoException）或遇到认不出的码：宁可报「读不了」，
+  // 也不能悄悄当成「没有技能」—— 前者只是多说一句，后者会让模型以为目录是完整的。
+  for (const code of [undefined, "", "ERR_INVALID_ARG_VALUE", "EWHATEVER"]) {
+    assert.equal(classifyDirectoryError(code), "unreadable", `认不出的 ${String(code)} 要按读不了处理`);
+  }
 });
 
 test("技能：名称只允许小写字母数字和单个横线", async () => {
