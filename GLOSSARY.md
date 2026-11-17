@@ -53,11 +53,11 @@ _Avoid_: toolbelt, toolbox, tool set
 _Avoid_: worker agent, child process, teammate（Agent Teams 是后续课程，不是这个）
 
 **Skill**:
-磁盘上的一份按需加载的工作方法，标准入口是 `<技能目录>/<名字>/SKILL.md`：开头是 YAML frontmatter（`name` 必须等于目录名，`description` 一句话说清什么时候该用），后面是正文和可选的参考资料。两级目录 —— 项目级 `<工作区>/.agents/skills/`（`--cwd` 换项目就跟着换），用户级 `~/.agents/skills/`；同名时项目级优先。Agent 只把「名字 + 用途 + 文件路径」放进 **Skill catalog**，正文由模型自己用 `read` 取：没有专用加载工具，也没有独立执行引擎，读技能就是一次普通读文件（见 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)）。
+磁盘上的一份按需加载的工作方法，标准入口是 `<技能目录>/<名字>/SKILL.md`：开头是 YAML frontmatter（`name` 必须等于目录名，且只能用小写字母、数字和单个横线；`description` 一句话说清什么时候该用），后面是正文和可选的参考资料。两级目录 —— 项目级 `<工作区>/.agents/skills/`（`--cwd` 换项目就跟着换），用户级 `~/.agents/skills/`；同名时项目级优先。Agent 只把「名字 + 用途 + 文件路径」放进 **Skill catalog**，正文由模型自己用 `read` 取：没有专用加载工具，也没有独立执行引擎，读技能就是一次普通读文件（见 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)）。
 _Avoid_: plugin, command, prompt template（技能不是可执行插件，也不是斜杠命令）
 
 **Skill catalog**:
-系统提示里那段技能目录：每个可用技能一行（名字、级别、文件路径、用途），末尾写明哪些技能被跳过及原因、以及有几个因为预算没列出来。它和 `AGENTS.md` 一样属于动态系统提示，每次模型请求前重扫重算；目录里没有正文。
+系统提示里那段技能目录：每个可用技能一行（名字、级别、文件路径、用途），末尾写明哪些技能被跳过及原因、有几个因为预算没列出来、以及扫描是否读完（没读完就只说「可能还有更多」，不报剩余数量）。它和 `AGENTS.md` 一样属于动态系统提示，每次模型请求前重扫重算；目录里没有正文。
 _Avoid_: skill list, skill index
 
 **Hook**:

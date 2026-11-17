@@ -314,7 +314,7 @@ Each line below lists one available skill: its name, its scope in brackets (proj
 
 同名时项目级覆盖用户级（越靠近当前项目，规则越可能贴合这个仓库）。
 
-**技能文件长什么样**（Agent Skills 标准，`name` 必须等于目录名）：
+**技能文件长什么样**（Agent Skills 标准）：`name` 必须等于目录名，只能用小写字母、数字和单个横线（`code-review`、`tdd`、`skill-123`；`My-Skill`、`my_skill`、`my--skill` 都不行），最长 64 字符。
 
 ```markdown
 ---
@@ -335,7 +335,10 @@ description: "Write a changelog entry for this repository. Use when the user ask
 - **读技能不会执行任何东西。** 技能里提到的脚本，模型只有在你确实需要时才自己去跑，走的是平常的 `shell` 与授权边界。
 - **不是沙箱。** 技能文件可以放在任意可读位置，`read` 也照旧能读当前账户有权读的任何文件；这里做的是「认得出哪个是技能」，不是「关得住谁」。
 - **读不全要接着说。** 单次 `read` 有 8000 字符输出上限，被截断时结果里会写 `[truncated N chars]`，提示里要求模型用 `offset` 续读到完整为止 —— 不把半份技能当全份。
-- **坏技能不拖垮别人。** 缺 `SKILL.md`、frontmatter 不合法、名字与目录对不上：那一个被跳过，原因写进目录末尾（模型看得到，能直接告诉你为什么用不了），其他技能照常。
+- **坏技能不拖垮别人。** 缺 `SKILL.md`、frontmatter 不合法、名字与目录对不上、`SKILL.md` 不是普通文件（比如被换成 FIFO）：那一个被跳过，原因写进目录末尾（模型看得到，能直接告诉你为什么用不了），其他技能照常。
+- **扫描有硬上限，并且会承认自己没扫完。** 技能目录最多检查 256 个（两级共享，项目级先花），一个目录最多枚举 1024 个条目；到上限就停，末尾只说「没读到末尾，可能还有更多」，不编一个剩余数量 —— 数清它就得把目录读到底，那正是上限要防的事。
+- **`disable-model-invocation` 是行为约定，不是权限。** 标了 `(user-invoked only)` 的技能，提示里要求模型只在用户点名时才读；但内核不拦 `read`，也没有「当前激活了哪个技能」的状态。它防的是误触发，不是防有心绕过。
+- **只看一个工作区根目录。** 技能从 `<工作区>/.agents/skills` 和 `~/.agents/skills` 发现，`--cwd` 指哪就扫哪；不向上递归找父级仓库的技能目录 —— monorepo 里在子包启动，看到的就是子包的技能。
 - **目录每个模型请求都重扫。** 会话中途新增或删掉技能，下一次请求就能看到；没有文件监听，也不需要重启。上下文被压缩后如果还需要某个技能，模型会重新读一次。
 
 子 Agent 也有同样的技能目录（它有自己的只读工具），但**不会**继承父 Agent 已经读过的正文 —— 上下文隔离照旧。取舍记在 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)。
@@ -437,7 +440,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-564 个用例，都不需要 API Key、不联网（其中 12 条依赖 Linux / POSIX 能力，在 Windows 上跳过）：
+591 个用例，都不需要 API Key、不联网（其中 15 条依赖 Linux / POSIX 能力，在 Windows 上跳过）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -456,7 +459,7 @@ npm run check       # typecheck + 全部测试
 | `test/file-index.test.mjs` | 文件清单：跳过 `node_modules` / `.git`、数量上限、`@` 补全的排序口径 |
 | `test/prompt-history.test.mjs` | 输入历史：坏行跳过、文件不存在不算错、单条与总条数上限 |
 | `test/project-instructions.test.mjs` | 项目指令：读不到返回 `undefined`、空白文件等同没有、超长截断、同名目录不报错 |
-| `test/skills.test.mjs` | 技能目录：两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能跳过并写明原因、长描述裁剪、控制字符不能伪造目录项、超预算与超扫描上限都要写明；以及 frontmatter 的引号与块标量 |
+| `test/skills.test.mjs` | 技能目录：两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能跳过并写明原因、长描述裁剪、控制字符不能伪造目录项、超预算与超扫描上限都要写明（且不编剩余数量）、普通文件不算技能、条目枚举有上限、隐藏目录跳过、FIFO 不阻塞、符号链接按设计处理、读不了的目录不崩、名称规则；以及 frontmatter 的引号、块标量、中文与 Emoji |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |

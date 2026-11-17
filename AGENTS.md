@@ -72,7 +72,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 - `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行且异常时 fail-closed、后置 Hook 抛错不影响工具结果、Hook 拿到副本、九个工作区工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
 - `test/tool-log.test.mjs`：内置的工具调用日志 Hook —— 成功/失败各一行（`shell` 非零退出算失败）、超长截断、写失败只提醒一次、被拦下的调用不留记录。
 - `test/subagent.test.mjs`：委派这一层 —— 参数校验（空任务、超长、非法 mode、默认 explore）、结果格式（完成 / 失败 / 取消 / 预算提示 / 超长截断）、两种角色的工具清单、Worker 的 shell 是否真的只能前台、上下文隔离与「只回一条结果」、子 Agent 的两道预算、失败/取消的委派必须标记 `isError`（Hook 走 `PostToolUseFailure`、工具日志记 `ok:false`）、进程树未确认时必须抛 `ProcessCleanupError`。`cli.test.mjs` 的委派用例守着真实装配：子 Agent 的提示与工具表、`MAX_STEPS` 取较小值、execute 真的改到文件。
-- `test/skills.test.mjs`：技能目录这一层 —— 两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能逐个跳过并写明原因、长描述裁剪、控制字符不能伪造出目录项、超预算与超扫描上限都要写明、`disable-model-invocation` 的标注、frontmatter 支持的子集（引号、块标量）。`cli.test.mjs` 的技能用例守着真实装配：目录进系统提示且不带正文、目录里写的路径真能被 `read` 打开、`--cwd` 换项目、长文件读出来报告截断。
+- `test/skills.test.mjs`：技能目录这一层 —— 两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能逐个跳过并写明原因、长描述裁剪、控制字符不能伪造出目录项、超预算与超扫描上限都要写明（只说「没读完」，不编剩余数量）、两级共享扫描预算、普通文件与隐藏目录不算技能、条目枚举有上限、FIFO 不阻塞、符号链接按设计处理、名称规则、frontmatter 支持的子集（引号、块标量、中文与 Emoji）。`cli.test.mjs` 的技能用例守着真实装配：目录进系统提示且不带正文、目录里写的路径真能被 `read` 打开、`--cwd` 换项目、长文件读出来报告截断、增删改后下一轮就更新、三种角色都发现技能且子 Agent 不继承父 Agent 读过的正文。
 - `Workspace` 的九个方法：工作区外读写（绝对路径、`../`、符号链接）、有界读取、`read` 的 `offset` / `limit` 行窗口（跨块不切行、CRLF 原样、越界明确报错、可取消）、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、`grep` 的 `path` 可以是单个文件、工作区外 shell、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、状态栏固定完全访问、`Shift+Tab` 不再是快捷键、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。
@@ -97,7 +97,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 ## Agent skills
 
-技能装在 `.agents/skills/`（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。每次模型请求前扫描这个目录（项目级优先，其次是 `~/.agents/skills`），把名字、用途和文件路径放进系统提示；正文由模型自己用 `read` 取，不预先塞进上下文。新增或删除技能下一次请求就生效，不需要重启。取舍见 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)。
+技能装在 `.agents/skills/`（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。每次模型请求前扫描这个目录（项目级优先，其次是 `~/.agents/skills`；只看 `--cwd` 指定的工作区根目录，不向上递归），把名字、用途和文件路径放进系统提示；正文由模型自己用 `read` 取，不预先塞进上下文。新增或删除技能下一次请求就生效，不需要重启。取舍见 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)。
 
 ### Issue tracker
 
