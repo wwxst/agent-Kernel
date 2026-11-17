@@ -21,6 +21,14 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run eval:summary` | 汇总最近 3 轮完整评测的通过率、请求数、耗时中位数；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
 
+**任务参数是多行文本时，别走 `npm run`。** Windows 上 npm 经 `cmd.exe` 转发参数，内容会断在第一个换行处，而且不报错 —— 模型只收到第一行，看起来像它没听懂你的要求。多行任务直接跑入口：
+
+```bash
+node --env-file-if-exists=.env src/cli.ts "<多行任务>"
+```
+
+`cli.ts` 的 `parseArgs` 是按 argv 数组拼接的，本身支持多行；截断只发生在 npm 这一层，绕过它即可。
+
 ## 代码地图
 
 `src/` 按职责分五层：`protocol/`（类型与错误，处在依赖图最底层）、`core/`（循环与调度）、`tools/`（给模型的工具：文件与 shell）、`model/`（跟模型打交道：请求与系统提示）、`ui/`（终端展示）。`cli.ts` 留在根目录，是唯一的组装入口 —— 看目录名就知道那堆文件管什么，不用点进去。
