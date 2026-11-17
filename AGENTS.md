@@ -21,6 +21,14 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run eval:summary` | 汇总最近 3 轮完整评测的通过率、请求数、耗时中位数；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
 
+**任务参数是多行文本时，别走 `npm run`。** Windows 上 npm 经 `cmd.exe` 转发参数，内容会断在第一个换行处，而且不报错 —— 模型只收到第一行，看起来像它没听懂你的要求。多行任务直接跑入口：
+
+```bash
+node --env-file-if-exists=.env src/cli.ts "<多行任务>"
+```
+
+`cli.ts` 的 `parseArgs` 是按 argv 数组拼接的，本身支持多行；截断只发生在 npm 这一层，绕过它即可。
+
 ## 代码地图
 
 `src/` 按职责分五层：`protocol/`（类型与错误，处在依赖图最底层）、`core/`（循环与调度）、`tools/`（给模型的工具：文件与 shell）、`model/`（跟模型打交道：请求与系统提示）、`ui/`（终端展示）。`cli.ts` 留在根目录，是唯一的组装入口 —— 看目录名就知道那堆文件管什么，不用点进去。
@@ -42,6 +50,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `src/tools/grep-worker.ts` | `grep` 的正则匹配放独立线程跑，好让主线程能超时打断 |
 | `src/model/llm.ts` | 跟模型服务说话：发请求、收流式响应、解析用量 |
 | `src/model/project-instructions.ts` | 读项目里的 `AGENTS.md`，塞进系统提示 |
+| `src/model/skills.ts` | 技能目录：扫两级 `.agents/skills`、解析 `SKILL.md` 元数据、拼出系统提示里那段目录；只给位置，正文由模型自己 `read` |
 | `src/ui/tui.ts` | 全屏终端界面：主视图、transcript 视图、工具活动的分层展示 |
 | `src/ui/tui-image.ts` | 把读到的图片变成终端里看得懂的文字缩略图 |
 | `src/ui/tui-mood.ts` | 状态栏那几句中英文角色台词 |
@@ -63,6 +72,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 - `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行且异常时 fail-closed、后置 Hook 抛错不影响工具结果、Hook 拿到副本、九个工作区工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
 - `test/tool-log.test.mjs`：内置的工具调用日志 Hook —— 成功/失败各一行（`shell` 非零退出算失败）、超长截断、写失败只提醒一次、被拦下的调用不留记录。
 - `test/subagent.test.mjs`：委派这一层 —— 参数校验（空任务、超长、非法 mode、默认 explore）、结果格式（完成 / 失败 / 取消 / 预算提示 / 超长截断）、两种角色的工具清单、Worker 的 shell 是否真的只能前台、上下文隔离与「只回一条结果」、子 Agent 的两道预算、失败/取消的委派必须标记 `isError`（Hook 走 `PostToolUseFailure`、工具日志记 `ok:false`）、进程树未确认时必须抛 `ProcessCleanupError`。`cli.test.mjs` 的委派用例守着真实装配：子 Agent 的提示与工具表、`MAX_STEPS` 取较小值、execute 真的改到文件。
+- `test/skills.test.mjs`：技能目录这一层 —— 两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能逐个跳过并写明原因、长描述裁剪、控制字符不能伪造出目录项、超预算与超扫描上限都要写明（只说「没读完」，不编剩余数量）、两级共享扫描预算、普通文件与隐藏目录不算技能、条目枚举有上限（1023/1024/1025 三档边界，恰好 1024 条算读完）、两种上限同时触发时两种原因都写出来、目录不存在与「读不了」分开（`ENOENT`/`ENOTDIR` 归 absent，其余 errno 归 unreadable；分类表直接压，端到端用真实 ELOOP 链接验证 errno 保留、不连累另一级、提示里那句原因不带路径）、FIFO 不阻塞、符号链接按设计处理、名称规则、frontmatter 支持的子集（引号、行内注释、块标量、非法 YAML 拒绝、中文与 Emoji）。`cli.test.mjs` 的技能用例守着真实装配：目录进系统提示且不带正文、目录里写的路径真能被 `read` 打开、`--cwd` 换项目、长文件读出来报告截断、增删改后下一轮就更新、三种角色都发现技能且子 Agent 不继承父 Agent 读过的正文。
 - `Workspace` 的九个方法：工作区外读写（绝对路径、`../`、符号链接）、有界读取、`read` 的 `offset` / `limit` 行窗口（跨块不切行、CRLF 原样、越界明确报错、可取消）、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、`grep` 的 `path` 可以是单个文件、工作区外 shell、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、状态栏固定完全访问、`Shift+Tab` 不再是快捷键、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。
@@ -87,7 +97,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 
 ## Agent skills
 
-技能装在 `.agents/skills/`（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。DSH 在会话开始时扫描这个目录，改动后新开一个会话才生效。
+技能装在 `.agents/skills/`（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。每次模型请求前扫描这个目录（项目级优先，其次是 `~/.agents/skills`；只看 `--cwd` 指定的工作区根目录，不向上递归），把名字、用途和文件路径放进系统提示；正文由模型自己用 `read` 取，不预先塞进上下文。新增或删除技能下一次请求就生效，不需要重启。取舍见 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)。
 
 ### Issue tracker
 

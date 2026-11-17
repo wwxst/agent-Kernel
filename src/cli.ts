@@ -15,6 +15,7 @@
  *   - `loadConfig()`：环境变量 → `Config`；占位 API Key 在发请求前就拒绝。
  *   - `createAgent()`：把客户端、工具注册表、系统提示、预算、回调，以及可选的工具调用日志 Hook
  *     装成一个 `Agent`；`role` 决定装成主 Agent、只读调查子 Agent 还是可写执行子 Agent。
+ *     系统提示是函数，每次请求前重新读 `AGENTS.md` 与技能目录。
  *   - `runSubagent()`：跑一次委派 —— 新建子 Agent、跑一次 Run、只把最终结果和统计交回来。
  *   - `runTurn()`：跑一次任务并打印结果；`printUsage()`：打印统计。
  *   - `tuiSession()`：TUI 会话，含 `/help`、`/reset` 等命令的分发。
@@ -22,11 +23,12 @@
  *   - 文件末尾：顶层入口 —— 决定进 TUI 还是单次任务，接 SIGINT / SIGTERM，设置退出码。
  *
  * 模块关系：依赖 `core/`（`Agent`、`ToolRegistry`）、`tools/`（`Workspace`、`createWorkspaceTools`、
- * `tools/subagent.ts`）、`model/`（`Llm`、项目指令）、`tools/todo.ts`（任务计划）、
+ * `tools/subagent.ts`）、`model/`（`Llm`、项目指令、技能目录）、`tools/todo.ts`（任务计划）、
  * `ui/`（`Tui`、`RunPresenter`）、`protocol/`。
  * 由 `bin/agent.mjs`（`npm link` 后的全局命令）与 `test/cli.test.mjs` 启动。
  */
 import { statSync } from "node:fs";
+import { homedir } from "node:os";
 import * as path from "node:path";
 import { Agent, DEFAULT_SYSTEM_PROMPT } from "./core/agent.ts";
 import type { AgentStats } from "./core/agent.ts";
@@ -56,6 +58,7 @@ import {
 } from "./tools/subagent.ts";
 import type { SubagentMode, SubagentOutcome, SubagentRequest, SubagentStats } from "./tools/subagent.ts";
 import { projectInstructionsPrompt, readProjectInstructions } from "./model/project-instructions.ts";
+import { discoverSkills, skillsPrompt } from "./model/skills.ts";
 
 /** 取第一个 trim 后非空的值；空白的 API_KEY 不能挡住后面的回退。 */
 function firstNonEmpty(...values: Array<string | undefined>): string {
@@ -323,6 +326,26 @@ const SILENT_CALLBACKS: AgentCallbacks = {
 type AgentRole = "main" | SubagentMode;
 
 /**
+ * 用户级技能目录（`~/.agents/skills`）：跨项目复用的个人技能。
+ *
+ * 读不到用户主目录时返回 undefined，只保留项目级技能 —— 技能是可选的，
+ * 拿不到个人目录不该让整个 agent 起不来。
+ *
+ * 两层防护各管一件事：`homedir()` 在 `HOME` / `USERPROFILE` 都为空时**抛**
+ * `ERR_SYSTEM_ERROR`（本机实测，不是返回空串），由 catch 兜住；空串判断是纵深防御 ——
+ * 一旦它返回空串，`path.join("", ".agents", "skills")` 会退化成相对路径，
+ * 把「当前目录下的 `.agents/skills`」错当成用户级技能扫进来。
+ */
+function userSkillsRoot(): string | undefined {
+  try {
+    const home = homedir().trim();
+    return home === "" ? undefined : path.join(home, ".agents", "skills");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * 组装一个 Agent。TUI 的 /reset 也走这里 —— 换一个全新的 Agent，
  * 但复用同一份配置和取消信号（Ctrl-C 应该停掉整个进程，而不是只停一轮）。
  *
@@ -347,6 +370,9 @@ function createAgent(
     onImageRead?: (path: string, bytes: Buffer) => void } = {},
 ): Agent {
   const role: AgentRole = options.role ?? "main";
+  // 技能目录的两级根：项目级跟着工作区走（`--cwd` 换项目就换目录），用户级跟着账号走。
+  // 根只算一次；每次请求重新扫描由 systemPrompt 负责，所以会话中途增删技能下一轮就能看到。
+  const skillsRoots = { projectRoot: config.root, userRoot: userSkillsRoot() };
   // 工具调用日志：设了 AGENT_TOOL_LOG 才登记 Hook，不设就完全没变化（空执行器）。
   // 它挂在唯一的执行入口上，所以所有内置工具自动全部记到，不用逐个接线。
   // 子 Agent 各建一份：同一个日志文件，但它自己的注册表与 Hook。
@@ -401,6 +427,10 @@ function createAgent(
       const projectInstructions = readProjectInstructions(config.root);
       const projectBlock = projectInstructions === undefined
         ? "" : `\n\n${projectInstructionsPrompt(projectInstructions)}`;
+      // 技能目录：只列名字、用途和文件位置，正文由模型自己用 `read` 取。
+      // 没有技能时 `skillsPrompt` 返回空串，整段不出现 —— 不装技能的机器看到的提示与以前一致。
+      // 三种角色都带：子 Agent 有自己的只读工具，能自己发现并读取需要的技能。
+      const skillsBlock = skillsPrompt(discoverSkills(skillsRoots));
       // 三种角色三份提示：只读角色绝不能拿到「你可以改文件、跑命令」的默认提示，
       // 否则提示与实际工具不一致，模型会去调它根本没有的工具。
       const rolePrompt = role === "explore"
@@ -412,7 +442,8 @@ function createAgent(
       // 猜错就要连读连搜几次，把预算烧在找路上。主 Agent 不需要 —— 它一直待在自己的目录里，
       // 用户消息里也通常带着路径，重复一遍只是浪费 token。
       const workspaceBlock = role === "main" ? "" : `\n\n${subagentWorkspaceContext(config.root)}`;
-      return `${rolePrompt}${workspaceBlock}${projectBlock}${options.narrateProgress === true ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
+      const skillsSection = skillsBlock === "" ? "" : `\n\n${skillsBlock}`;
+      return `${rolePrompt}${workspaceBlock}${projectBlock}${skillsSection}${options.narrateProgress === true ? `\n\n${TUI_PROGRESS_GUIDANCE}` : ""}`;
     },
     // 子 Agent 的预算是「它自己的上限」和「用户配置」取较小值：一次委派不该吃掉整轮额度。
     maxSteps: role === "main" ? config.maxSteps : Math.min(config.maxSteps, SUBAGENT_MAX_STEPS),

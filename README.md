@@ -90,6 +90,7 @@ CLI 将真实的执行事件展示为 **Preparing → Thinking → Tool → Answ
 | `src/tools/workspace.ts` | 文件与 Shell：读、写、改、找文件、搜内容、列目录、跑命令；相对路径以默认目录为基准，绝对路径和 `../` 直接可用，另有有界读取、扫描预算与取消 |
 | `src/model/llm.ts` | `ChatClient` 的 HTTP 实现，POST 一个 OpenAI 兼容端点并保留 `usage` |
 | `src/model/project-instructions.ts` | 读 `AGENTS.md` 注入系统提示：只做读取与有界截断，不发明格式 |
+| `src/model/skills.ts` | 扫两级 `.agents/skills`、解析 `SKILL.md` 的 frontmatter、拼出技能目录；只给位置不给正文，正文由模型自己 `read` |
 | `src/ui/tui.ts` | TUI：聊天布局、任务前/中/结束状态、真实 AI 阶段说明与工具活动分组、工具失败同行展示、Ctrl+O 活动详情；主视图在主屏就地追加、`Ctrl+T` 进 transcript 整屏视图，不触碰 Agent Loop |
 | `src/ui/tui-mood.ts` | 状态驱动的中英文角色短句库：元气、调皮、好奇、温柔为主，少量傲娇/天然；临时展示、不写 Transcript |
 | `src/ui/cli-presenter.ts` | CLI 展示：执行阶段、动态台词、工具日志精简/详细视图；不写入 Transcript |
@@ -292,6 +293,57 @@ run_subagent { task: "调查 src/core/agent.ts 的取消处理，指出遗漏", 
 
 一个循环、多个独立 Agent —— 不复制历史，也不建第二套循环。取舍记在 [ADR-0025](./docs/adr/0025-subagent-uses-fresh-agent-instance.md)。
 
+## 技能（Skill）
+
+技能是**按需加载的工作方法**：一段写在磁盘上的说明，平时只让模型知道「有这么个技能、干什么用、文件在哪」，真正需要时才用 `read` 把正文读进来。仓库里已经装了 27 个（`.agents/skills/`），没有额外机制、没有第二套执行器 —— 读技能就是一次普通的 `read`。
+
+```text
+# Skills
+Each line below lists one available skill: its name, its scope in brackets (project or user), the file that holds it, and what it is for.
+...
+- code-review [project] .agents/skills/code-review/SKILL.md — Review the changes since a fixed point …
+- reverse-engineer-anything [user] C:/Users/you/.agents/skills/reverse-engineer-anything/SKILL.md — …
+```
+
+**两级目录，项目级优先：**
+
+| 级别 | 位置 | 什么时候用 |
+| --- | --- | --- |
+| 项目级 | `<工作区>/.agents/skills/<名字>/SKILL.md` | 只属于这个仓库的技能；`--cwd` 打开别的项目时，跟着换成那个项目的技能 |
+| 用户级 | `~/.agents/skills/<名字>/SKILL.md` | 跨项目复用的个人技能 |
+
+同名时项目级覆盖用户级（越靠近当前项目，规则越可能贴合这个仓库）。
+
+**技能文件长什么样**（Agent Skills 标准）：`name` 必须等于目录名，只能用小写字母、数字和单个横线（`code-review`、`tdd`、`skill-123`；`My-Skill`、`my_skill`、`my--skill` 都不行），最长 64 字符。
+
+```markdown
+---
+name: changelog-entry
+description: "Write a changelog entry for this repository. Use when the user asks for a changelog line or release note."
+---
+
+正文：具体怎么做。可以引用同目录的参考资料、模板、脚本，模型按需再读。
+```
+
+支持的 frontmatter 只有这几样：`name`、`description`、`disable-model-invocation`（标成「只在用户点名时加载」）。嵌套键（例如 `metadata:`）忽略；多行描述支持 `|` 和 `>` 两种写法；行内注释按 YAML 规则处理 —— `#` 只在行首或空白之后才开始注释，所以 `name: code-review # 代码审查` 的值是 `code-review`，而引号里的 `#`、`C#`、`issue#12` 都是内容。描述最多进目录 300 字符，整段目录最多 12000 字符 —— 超出的技能不会被悄悄丢掉，段落末尾会写明「还有几个没列出来」。
+
+**代价**：目录随每次请求一起发出去。本仓库这 27 个技能的目录约 6.9k 字符（约 1.7k token；2026-11 的统计快照，会随技能增删变化），再加上你自己装到 `~/.agents/skills` 的那些 —— 这是「模型能自己选技能」要付的固定成本；技能装得越多、描述写得越长，这笔成本越高。正文仍然只在需要时读一次。
+
+几条边界，别指望它做别的事：
+
+- **技能是指导，不是命令。** 它不能覆盖你的要求、系统指令或项目规则，也不能给「破坏性操作 / 对外操作」授权；提示里明确写了这一条。
+- **读技能不会执行任何东西。** 技能里提到的脚本，模型只有在你确实需要时才自己去跑，走的是平常的 `shell` 与授权边界。
+- **不是沙箱。** 技能文件可以放在任意可读位置，`read` 也照旧能读当前账户有权读的任何文件；这里做的是「认得出哪个是技能」，不是「关得住谁」。
+- **读不全要接着说。** 单次 `read` 有 8000 字符输出上限，被截断时结果里会写 `[truncated N chars]`，提示里要求模型用 `offset` 续读到完整为止 —— 不把半份技能当全份。
+- **坏技能不拖垮别人。** 缺 `SKILL.md`、frontmatter 不合法、名字与目录对不上、`SKILL.md` 不是普通文件（比如被换成 FIFO）：那一个被跳过，原因写进目录末尾（模型看得到，能直接告诉你为什么用不了），其他技能照常。
+- **扫描有硬上限，并且会承认自己没扫完。** 技能目录最多检查 256 个（两级共享，项目级先花），一个目录最多枚举 1024 个条目（读满之后再探一条，刚好 1024 条算读完，多一条才算没读完）；到上限就停，末尾只说原因、不编一个剩余数量 —— 数清它就得把目录读到底，那正是上限要防的事。三种原因分开写：技能数超限、条目数超限、目录读不了。
+- **目录读不了不等于没装技能。** 目录不存在（或路径上是普通文件）按「没有技能」处理，这是正常情况；权限不足、符号链接成环、IO 错误则标成扫描不完整，并在末尾写明是哪一级、错误码是什么（`EACCES` 还是 `ELOOP` 决定你去查权限还是查挂载）。一个根目录读不了不影响另一个，也不影响 Agent 本身跑起来。提示里不写路径。
+- **`disable-model-invocation` 是行为约定，不是权限。** 标了 `(user-invoked only)` 的技能，提示里要求模型只在用户点名时才读；但内核不拦 `read`，也没有「当前激活了哪个技能」的状态。它防的是误触发，不是防有心绕过。
+- **只看一个工作区根目录。** 技能从 `<工作区>/.agents/skills` 和 `~/.agents/skills` 发现，`--cwd` 指哪就扫哪；不向上递归找父级仓库的技能目录 —— monorepo 里在子包启动，看到的就是子包的技能。
+- **目录每个模型请求都重扫。** 会话中途新增或删掉技能，下一次请求就能看到；没有文件监听，也不需要重启。上下文被压缩后如果还需要某个技能，模型会重新读一次。
+
+子 Agent 也有同样的技能目录（它有自己的只读工具），但**不会**继承父 Agent 已经读过的正文 —— 上下文隔离照旧。取舍记在 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)。
+
 ## 完全访问（Full Access）
 
 agent-Kernel 只有一种运行模式：**完全访问**。没有模式切换，没有审批提示，也没有工作区目录边界。
@@ -389,7 +441,7 @@ npm install
 npm run check       # typecheck + 全部测试
 ```
 
-381 个用例，都不需要 API Key、不联网（其中 6 条在 Windows 上跳过：2 条 Linux PTY、SIGINT 投递、2 条 POSIX 文件权限、1 条 POSIX 进程组）：
+603 个用例，都不需要 API Key、不联网（其中 14 条依赖 Linux / POSIX 能力，在 Windows 上跳过）：
 
 | 文件 | 打在哪个缝上 |
 | --- | --- |
@@ -408,6 +460,7 @@ npm run check       # typecheck + 全部测试
 | `test/file-index.test.mjs` | 文件清单：跳过 `node_modules` / `.git`、数量上限、`@` 补全的排序口径 |
 | `test/prompt-history.test.mjs` | 输入历史：坏行跳过、文件不存在不算错、单条与总条数上限 |
 | `test/project-instructions.test.mjs` | 项目指令：读不到返回 `undefined`、空白文件等同没有、超长截断、同名目录不报错 |
+| `test/skills.test.mjs` | 技能目录：两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能跳过并写明原因、长描述裁剪、控制字符不能伪造目录项、超预算与超扫描上限都要写明（且不编剩余数量）、普通文件不算技能、条目枚举有上限（1023/1024/1025 三档边界）、两种上限同时触发时两种原因都写出来、隐藏目录跳过、目录不存在/不是目录不算错误、errno 分类表（`ENOENT`/`ENOTDIR` 是 absent，`EACCES`/`EIO`/`ELOOP` 等是 unreadable）、ELOOP 端到端验证 errno 保留且不连累另一级、提示里那句原因不带路径、FIFO 不阻塞、符号链接按设计处理、名称规则；以及 frontmatter 的引号、行内注释、块标量、非法 YAML 拒绝、中文与 Emoji |
 | `test/selfcheck.test.mjs` | 评测自检：断言失败 / 任务无效 / 基础设施错误三类必须分开 |
 | `test/eval.test.mjs` | 评测轮次：检查器里未 await 的 promise 必须让整轮判失败 |
 | `test/eval-diagnostics.test.mjs` | 评测诊断：逐请求 usage、工具结果大小、文件变化、参数脱敏、跨天 runner 入口 |
@@ -453,6 +506,7 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 - 不捕获鼠标；TUI 主视图只追加、`Ctrl+T` 进入历史详情，底部输入保留 `Ctrl+E/O/G` 与 Slash 补全；括号粘贴支持多行，但不能保证所有终端兼容。工具 Hooks 已实现（见 [ADR-0020](./docs/adr/0020-tool-hooks-live-in-the-registry.md)），不属于未做事项。
 - 工具并发（串行是有意的，见 [ADR-0003](./docs/adr/0003-run-tool-calls-serially.md)）
 - 多个子 Agent 并行、Agent 团队、Mailbox、Worktree、子 Agent 持久化与恢复、子 Agent 后台执行：第 6 课只做「一次一个、同步、跑完即丢」的委派
+- 技能市场、在线搜索安装技能、技能自动生成与改写、技能云同步、向量检索技能：第 7 课只做「扫目录 + 用 `read` 读正文」，没有专用加载工具，也没有独立执行引擎（见 [ADR-0028](./docs/adr/0028-skills-are-files-read-on-demand.md)）
 - 操作系统级隔离：agent-Kernel 只有完全访问，工具与 Shell 都以启动者的权限执行（见 [ADR-0019](./docs/adr/0019-full-access-is-the-only-mode.md) 与 [ADR-0008](./docs/adr/0008-trusted-local-agent.md)）
 - 上下文压缩、非 TUI 模式的自动重试、tokenizer 级精确成本估算（只统计端点返回的 usage）
 
@@ -465,4 +519,4 @@ npm run eval:summary    # 汇总最近几轮：通过率、请求数、token、�
 - [docs/design/display-layers.md](./docs/design/display-layers.md)：展示分层原则。
 - [docs/design/reliability-decisions.md](./docs/design/reliability-decisions.md)：稳定性设计结论与已知风险。
 - [eval/baseline.md](./eval/baseline.md)：可复现的评测结论；原始结果保留在 `eval/baselines/`。
-- `.agents/skills/`：已安装的 Agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）。
+- `.agents/skills/`：已安装的 Agent 技能（来自 [mattpocock/skills](https://github.com/mattpocock/skills)，MIT）；怎么发现、怎么加载见上文「技能（Skill）」。

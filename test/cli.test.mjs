@@ -16,6 +16,9 @@
  *   - TUI 组装：状态栏、运行记录、统计、会话命令、初始任务、语言切换、重试状态、无 TTY 行为。
  *   - 展示细节：阶段提示、台词不影响请求、精简/详细模式、控制字符只显示转义文本。
  *   - 项目指令：工作区有 `AGENTS.md` 时注入系统提示，没有就不注入。
+ *   - 技能：`.agents/skills` 的目录进系统提示、目录里的路径真能被 `read` 打开、`--cwd` 换项目时跟着换、
+ *     用户级与项目级同名时的优先级、长技能文件读出来会明确报告截断、增删改后下一轮就更新、
+ *     三种角色都发现技能且子 Agent 不继承父 Agent 读过的正文。
  *   - TodoWrite 会话：跨 Run 保留计划记录，/reset 清空旧会话并允许创建新计划。
  *   - 委派（run_subagent）：子 Agent 用独立上下文、只回一条结果；两种角色拿到的工具与提示不同；
  *     Worker 的 shell 没有 background；子 Agent 预算取「配置与上限的较小值」。
@@ -25,16 +28,24 @@
  */
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { callTool, finalReply, withWorkspace } from "./support/harness.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = path.join(projectRoot, "src", "cli.ts");
+
+/**
+ * 每个进程一个空的主目录：用户级技能（`~/.agents/skills`）会进系统提示，
+ * 跑测试的人本机装了什么技能不该改变断言结果。要测用户级技能的用例自己传 HOME。
+ */
+const isolatedHome = mkdtempSync(path.join(tmpdir(), "agent-home-"));
+after(() => rmSync(isolatedHome, { recursive: true, force: true }));
 
 /** 启动 mock 服务，按脚本回放模型的响应；请求次数超出脚本时重复最后一条。 */
 async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [], httpStatus = 200,
@@ -110,7 +121,16 @@ function runCli(env, { args = ["do the task"], input } = {}) {
     // API_KEY 给个假值：测试里没有真实网络请求（缺 Key 的用例会显式覆盖它）。
     // AGENT_PERMISSION 显式清空：本机 shell 或 .env 里若残留它，启动会直接报错；
     // 要测「已移除」的用例自己传值。
-    env: { ...process.env, API_KEY: "test-key", OPENAI_API_KEY: "", AGENT_PERMISSION: "", ...env },
+    // HOME / USERPROFILE 指向空目录：用户级技能目录不跟着开发机的安装情况漂移（见 isolatedHome）。
+    env: {
+      ...process.env,
+      API_KEY: "test-key",
+      OPENAI_API_KEY: "",
+      AGENT_PERMISSION: "",
+      HOME: isolatedHome,
+      USERPROFILE: isolatedHome,
+      ...env,
+    },
   });
 
   if (input !== undefined) child.stdin.end(input);
@@ -1094,6 +1114,188 @@ test("项目指令：工具更新 AGENTS.md 后，下一次模型请求立即看
       assert.match(mock.requests[1].messages[0].content, /NEW_PROJECT_RULE/);
       assert.doesNotMatch(mock.requests[1].messages[0].content, /OLD_PROJECT_RULE/);
     } finally { await mock.close(); }
+  });
+});
+
+test("技能：工作区的技能进系统提示目录，模型用目录里的路径读到正文", async () => {
+  await withWorkspace(async (workdir) => {
+    const skillDir = path.join(workdir, ".agents", "skills", "hello");
+    await mkdirSync(skillDir, { recursive: true });
+    await writeFile(path.join(skillDir, "SKILL.md"),
+      '---\nname: hello\ndescription: "Greet people the house way."\n---\n\n# Hello\n\nSKILL_BODY_MARKER\n');
+    const mock = await startMock([
+      callTool("read-skill", "read", { path: ".agents/skills/hello/SKILL.md" }),
+      finalReply("done"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      const system = mock.requests[0].messages[0].content;
+      assert.match(system, /^- hello \[project\] \.agents\/skills\/hello\/SKILL\.md — Greet people the house way\.$/m);
+      assert.doesNotMatch(system, /SKILL_BODY_MARKER/, "目录只给位置，不带正文");
+      // 目录里写的那条路径必须真能打开：模型不该为了读技能去猜路径。
+      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.match(toolMessage.content, /SKILL_BODY_MARKER/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("技能：没有安装技能时不加技能段落，行为与以前一致", async () => {
+  await withWorkspace(async (workdir) => {
+    const mock = await startMock([finalReply("ok")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.doesNotMatch(mock.requests[0].messages[0].content, /^# Skills$/m);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("技能：--cwd 打开别的项目时发现那个项目的技能，不是本仓库的", async () => {
+  await withWorkspace(async (workdir) => {
+    const skillDir = path.join(workdir, ".agents", "skills", "alpha");
+    await mkdirSync(skillDir, { recursive: true });
+    await writeFile(path.join(skillDir, "SKILL.md"), '---\nname: alpha\ndescription: "Project alpha skill."\n---\n');
+    const mock = await startMock([finalReply("ok")]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url }, { args: ["--cwd", workdir, "do the task"] });
+      assert.equal(run.code, 0, run.stderr);
+      const system = mock.requests[0].messages[0].content;
+      assert.match(system, /- alpha \[project\]/);
+      // 不这么做就只能把 agent-Kernel 自己的技能带进别人的项目。
+      assert.doesNotMatch(system, /- code-review \[project\]/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("技能：用户级技能可用，与项目级同名时项目级优先", async () => {
+  await withWorkspace(async (workdir) => {
+    const home = path.join(workdir, "home");
+    const userSkills = path.join(home, ".agents", "skills");
+    await mkdirSync(path.join(userSkills, "shared"), { recursive: true });
+    await writeFile(path.join(userSkills, "shared", "SKILL.md"),
+      '---\nname: shared\ndescription: "USER_LEVEL_SHARED"\n---\n');
+    await mkdirSync(path.join(userSkills, "solo"), { recursive: true });
+    await writeFile(path.join(userSkills, "solo", "SKILL.md"),
+      '---\nname: solo\ndescription: "USER_LEVEL_SOLO"\n---\n');
+    await mkdirSync(path.join(workdir, ".agents", "skills", "shared"), { recursive: true });
+    await writeFile(path.join(workdir, ".agents", "skills", "shared", "SKILL.md"),
+      '---\nname: shared\ndescription: "PROJECT_LEVEL_SHARED"\n---\n');
+
+    // 用户级技能在工作区外，目录里给的是绝对路径；模型会原样拿它去 read，必须真的打得开。
+    const userSoloPath = path.join(userSkills, "solo", "SKILL.md").split(path.sep).join("/");
+    const mock = await startMock([
+      callTool("read-user-skill", "read", { path: userSoloPath }),
+      finalReply("ok"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir, HOME: home, USERPROFILE: home });
+      assert.equal(run.code, 0, run.stderr);
+      const system = mock.requests[0].messages[0].content;
+      assert.match(system, /PROJECT_LEVEL_SHARED/);
+      assert.doesNotMatch(system, /USER_LEVEL_SHARED/);
+      assert.match(system, /- solo \[user\]/);
+      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.match(toolMessage.content, /USER_LEVEL_SOLO/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("技能：技能文件较长时，读取结果明确说明被截断", async () => {
+  await withWorkspace(async (workdir) => {
+    const skillDir = path.join(workdir, ".agents", "skills", "long");
+    await mkdirSync(skillDir, { recursive: true });
+    // 20k 字符：超过单次 read 的 8000 字符输出上限，模型必须能看出自己没读全。
+    await writeFile(path.join(skillDir, "SKILL.md"),
+      `---\nname: long\ndescription: "A long skill."\n---\n\n${"LONG_SKILL_LINE\n".repeat(1500)}`);
+    const mock = await startMock([
+      callTool("read-long", "read", { path: ".agents/skills/long/SKILL.md" }),
+      finalReply("done"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      const toolMessage = mock.requests[1].messages.find((message) => message.role === "tool");
+      assert.match(toolMessage.content, /\[truncated \d+ chars\]/, "截断必须写明，不能伪装成完整文件");
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("技能：新增、修改、删除技能后，下一轮模型请求就更新目录", async () => {
+  await withWorkspace(async (workdir) => {
+    // 同一个 Run 里的连续请求：每次请求前重扫，所以三次改动都能在下一轮看到。
+    // 中间三步都是工具调用 —— 一次 final reply 就结束这个 Run 了。
+    const mock = await startMock([
+      callTool("add-skill", "write", {
+        path: ".agents/skills/fresh/SKILL.md",
+        content: '---\nname: fresh\ndescription: "FRESH_V1"\n---\n',
+      }),
+      callTool("edit-skill", "edit", {
+        path: ".agents/skills/fresh/SKILL.md",
+        old_string: "FRESH_V1",
+        new_string: "FRESH_V2",
+      }),
+      callTool("drop-skill", "shell", {
+        // 用 node 删目录：`rm -rf` 在 Windows 的 shell 里不通用。
+        command: `node -e "require('node:fs').rmSync('.agents/skills/fresh',{recursive:true,force:true})"`,
+      }),
+      finalReply("done"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.doesNotMatch(mock.requests[0].messages[0].content, /^# Skills$/m, "一开始没有技能");
+      assert.match(mock.requests[1].messages[0].content, /FRESH_V1/, "新增之后下一轮就能看到");
+      assert.match(mock.requests[2].messages[0].content, /FRESH_V2/, "改了描述下一轮就是新描述");
+      assert.doesNotMatch(mock.requests[2].messages[0].content, /FRESH_V1/);
+      assert.doesNotMatch(mock.requests[3].messages[0].content, /^# Skills$/m, "删掉之后下一轮就不再出现");
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("技能：main、explore、execute 三种角色都能发现技能，子 Agent 不继承父 Agent 读过的正文", async () => {
+  await withWorkspace(async (workdir) => {
+    const skillDir = path.join(workdir, ".agents", "skills", "house-style");
+    await mkdirSync(skillDir, { recursive: true });
+    await writeFile(path.join(skillDir, "SKILL.md"),
+      '---\nname: house-style\ndescription: "Write in the house style."\n---\n\nPARENT_READ_BODY_MARKER\n');
+    const mock = await startMock([
+      callTool("parent-read", "read", { path: ".agents/skills/house-style/SKILL.md" }),
+      callTool("call-explore", "run_subagent", { task: "Look around.", mode: "explore" }),
+      finalReply("explored"),
+      callTool("call-execute", "run_subagent", { task: "Change one file.", mode: "execute" }),
+      finalReply("executed"),
+      finalReply("done"),
+    ]);
+    try {
+      const run = await runCli({ BASE_URL: mock.url, MODEL: "mock-model", WORKDIR: workdir });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(mock.requests[0].messages[0].content, /^- house-style \[project\]/m, "主 Agent 有目录");
+
+      // 子 Agent 的第一次请求：目录照样在，但父 Agent 读过的正文不在。
+      for (const index of [2, 4]) {
+        const child = mock.requests[index];
+        assert.match(child.messages[0].content, /^- house-style \[project\]/m, "子 Agent 也该自己发现技能");
+        assert.doesNotMatch(JSON.stringify(child.messages), /PARENT_READ_BODY_MARKER/,
+          "父 Agent 读过的技能正文不能自动复制给子 Agent");
+      }
+      // 只读角色不能因为技能而多出工具：它仍然只有四个只读工具。
+      assert.deepEqual(mock.requests[2].tools.map((tool) => tool.function.name), ["read", "glob", "grep", "ls"]);
+    } finally {
+      await mock.close();
+    }
   });
 });
 
