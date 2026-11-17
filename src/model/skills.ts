@@ -17,7 +17,7 @@
  *   - `discoverSkills()`：扫两级目录、合并同名技能、收集被跳过的原因。
  *   - `skillsPrompt()`：把结果拼成系统提示里的一段；没有技能时返回空串。
  *   - 内部：`scanScope()` 扫一级目录、`readSkillHead()` 只读文件头、`parseFrontmatter()` 解析元数据、
- *     `inlineText()` 把任意文本压成安全的一行。
+ *     `inlineText()` 把任意文本压成安全的一行、`clipReason()` 给「为什么用不了」加上长度上限。
  *
  * 模块关系：只依赖 `node:fs`、`node:path` 与 `protocol/text-boundaries.ts`。
  * 由 `cli.ts` 在每次模型请求前调用（和 `AGENTS.md` 一样每请求刷新），拼好的文本随系统提示
@@ -56,8 +56,17 @@ export const MAX_SKILL_DESCRIPTION_CHARS = 300;
  */
 export const MAX_SKILLS_PROMPT_CHARS = 12_000;
 
-/** 给段落末尾那几行提示预留的字符数：正文先收口，提示才不会被截掉。 */
-const FOOTER_RESERVE = 400;
+/**
+ * 末尾「还有几个没列出来」那行的预算上限。
+ *
+ * 它的长度取决于被省略的技能数（几位数字），不可能提前算准，所以先扣掉一笔固定额度；
+ * 实际那行约 145 字符，这里留足余量。固定末尾（坏技能、未扫描）不算在这里 ——
+ * 它们的长度可以提前算出来，直接按实际值扣。
+ */
+const OMITTED_FOOTER_RESERVE = 240;
+
+/** 单个「为什么用不了」最多多少字符：原因会被拼进系统提示，不能让坏文件决定提示长度。 */
+const MAX_SKIP_REASON_CHARS = 200;
 
 /** 最多看这么多个技能目录：一次请求要扫一遍，目录再多就该换索引方式了。 */
 export const MAX_SKILLS_SCANNED = 256;
@@ -130,10 +139,13 @@ function emptyScan(): ScanResult {
 }
 
 /**
- * 把任意文本压成一行安全的内容：控制字符、换行、双向覆盖符全部清掉。
+ * 把任意文本压成一行安全的内容：控制字符、换行、行分隔符、双向覆盖符全部清掉。
  *
  * 为什么必须做：技能文件是外部内容，一个描述里塞进换行就能在目录里伪造出额外条目，
  * 塞进 U+202E 就能让后面的文字倒着显示。目录是给模型读的指令区，不能由被描述的内容改写结构。
+ *
+ * U+2028 / U+2029（行分隔符、段分隔符）必须一起清：它们不在 C0/C1 控制字符范围内，
+ * 但在多数渲染与分词里就是换行 —— 漏了它们，等于留了一条伪造目录项的后门。
  */
 function inlineText(value: string): string {
   return value
@@ -141,8 +153,23 @@ function inlineText(value: string): string {
     .replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ")
     // 零宽字符与双向覆盖符：会被用来伪装顺序，直接删掉。
     .replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, "")
+    // 行分隔符与段分隔符：渲染上是换行，等价于换行，按空格处理。
+    .replace(/[\u2028\u2029]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * 把一句「为什么用不了」压成有界的一行。
+ *
+ * 原因里会嵌入来自文件的内容（例如 frontmatter 里写的名字），长度不受我们控制；
+ * 不设上限的话，几个坏技能就能把整段目录撑到预算之外。
+ */
+function clipReason(reason: string): string {
+  const oneLine = inlineText(reason);
+  return oneLine.length <= MAX_SKIP_REASON_CHARS
+    ? oneLine
+    : `${takeUtf16Prefix(oneLine, MAX_SKIP_REASON_CHARS)}…`;
 }
 
 /** 目录里展示给模型的路径一律用 `/`：Windows 的反斜杠在提示里容易被当成转义。 */
@@ -172,9 +199,16 @@ function readSkillHead(file: string): { text: string } | { reason: string } {
     descriptor = openSync(file, "r");
     if (!fstatSync(descriptor).isFile()) return { reason: `${SKILL_FILE} is not a regular file` };
     const buffer = Buffer.alloc(MAX_SKILL_HEAD_BYTES);
-    const count = readSync(descriptor, buffer, 0, MAX_SKILL_HEAD_BYTES, 0);
+    // 循环读到文件末尾或读满缓冲区：`readSync` 允许短读（返回的字节数少于请求），
+    // 只调一次就可能把 frontmatter 的结尾漏在缓冲区外，把一个好技能判成「没闭合」。
+    let filled = 0;
+    while (filled < MAX_SKILL_HEAD_BYTES) {
+      const count = readSync(descriptor, buffer, filled, MAX_SKILL_HEAD_BYTES - filled, filled);
+      if (count === 0) break;
+      filled += count;
+    }
     // 截断可能切在一个 UTF-8 字符中间：末尾那个替换字符不是文件内容，去掉。
-    return { text: new TextDecoder().decode(buffer.subarray(0, count)).replace(/\uFFFD$/, "") };
+    return { text: new TextDecoder().decode(buffer.subarray(0, filled)).replace(/\uFFFD$/, "") };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return { reason: `missing ${SKILL_FILE}` };
@@ -233,18 +267,27 @@ function parseFrontmatter(text: string): Map<string, string> | string {
 
   for (let index = 1; index < lines.length; index++) {
     const line = lines[index];
+    // 缩进行属于上一个键：块标量就收集，嵌套结构就忽略。
+    // 必须先于下面的 `---` 判断：块标量内容里缩进的 `---` 是正文，不是结束标记。
+    if (/^[ \t]/.test(line)) {
+      if (blockLines !== undefined) blockLines.push(line.trim());
+      continue;
+    }
+    // 块标量里的空行是段落分隔（YAML 合法），块还没结束，不能在这里收口。
+    if (blockLines !== undefined && line.trim() === "") {
+      blockLines.push("");
+      continue;
+    }
     const trimmed = line.trim();
     if (trimmed === "---" || trimmed === "...") {
       closed = true;
       break;
     }
-    // 缩进行属于上一个键：块标量就收集，嵌套结构就忽略。
-    if (/^[ \t]/.test(line)) {
-      if (blockLines !== undefined) blockLines.push(trimmed);
-      continue;
-    }
     flushBlock();
-    const match = /^([A-Za-z0-9_-]+)[ \t]*:[ \t]*(.*)$/.exec(line);
+    // 值用 `[\s\S]*` 而不是 `.*`：`.` 不匹配 U+2028 / U+2029（它们在 JS 里算行终止符），
+    // 用 `.*` 会让「描述里带行分隔符」的整行匹配失败，一个好技能被误判成「没有描述」。
+    // 这两个字符在 `inlineText` 里会被压成空格，先让这一行解析成功更诚实。
+    const match = /^([A-Za-z0-9_-]+)[ \t]*:[ \t]*([\s\S]*)$/.exec(line);
     if (match === null) continue;
     const name = match[1];
     const value = match[2].trim();
@@ -273,10 +316,16 @@ function readSkill(directory: string, name: string, scope: SkillScope, projectRo
   const declaredName = (fields.get("name") ?? "").trim();
   if (declaredName === "") return { reason: "frontmatter is missing a name" };
   if (declaredName !== name) {
-    return { reason: `frontmatter name "${inlineText(declaredName)}" does not match the directory name` };
+    // 名字来自文件，长度不受控：先裁到合法名字的上限，再进原因，否则一句原因就能吃掉整个预算。
+    const shown = takeUtf16Prefix(inlineText(declaredName), MAX_SKILL_NAME_CHARS);
+    return { reason: `frontmatter name "${shown}" does not match the directory name` };
   }
   const description = inlineText(fields.get("description") ?? "");
-  if (description === "") return { reason: "frontmatter is missing a description" };
+  if (description === "") {
+    return {
+      reason: "frontmatter is missing a description (keep it on one line, or use a | or > block)",
+    };
+  }
 
   const file = path.join(directory, name, SKILL_FILE);
   return {
@@ -328,7 +377,7 @@ function scanScope(directory: string, scope: SkillScope, projectRoot?: string): 
       continue;
     }
     const read = readSkill(directory, entry.name, scope, projectRoot);
-    if ("reason" in read) result.skipped.push({ name: entry.name, reason: read.reason });
+    if ("reason" in read) result.skipped.push({ name: entry.name, reason: clipReason(read.reason) });
     else result.skills.push(read.skill);
   }
   return result;
@@ -365,7 +414,10 @@ export function discoverSkills(options: { projectRoot: string; userRoot?: string
 
   return {
     skills,
-    skipped: [...skipped.entries()].map(([name, reason]) => ({ name, reason })),
+    // 按名字排序：坏技能列表也要每次一致，否则提示会随目录遍历顺序漂移。
+    skipped: [...skipped.entries()]
+      .map(([name, reason]) => ({ name, reason }))
+      .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),
     unscanned: project.unscanned + user.unscanned,
   };
 }
@@ -402,37 +454,46 @@ export function skillsPrompt(catalog: SkillCatalog): string {
     "Load a skill marked (user-invoked only) only when the user names it.",
   ].join("\n");
 
+  // 先拼固定末尾：它们的长度不依赖「列了几个技能」，可以按实际值从预算里扣掉。
+  // 先算条目再扣末尾，末尾一旦变长（坏技能多、名字长）就会把总长顶出预算 —— 那是本文件最该守住的东西。
+  const fixedFooters: string[] = [];
+  if (catalog.skipped.length > 0) {
+    const shown = catalog.skipped.slice(0, MAX_SKIPPED_SHOWN);
+    const rest = catalog.skipped.length - shown.length;
+    const list = shown.map((item) => `${inlineText(item.name)} (${inlineText(item.reason)})`).join("; ");
+    fixedFooters.push(`(Unusable skills, skipped while reading the skills directories: ${list}${rest > 0 ? `; and ${rest} more` : ""}.)`);
+  }
+  if (catalog.unscanned > 0) {
+    fixedFooters.push(
+      `(Only the first ${MAX_SKILLS_SCANNED} skill directories were inspected; ${catalog.unscanned} more were not checked.)`,
+    );
+  }
+  // 每个元素后面都跟着一个 `\n`：末尾 +1 是它自己的换行。
+  const fixedFooterChars = fixedFooters.reduce((total, footer) => total + footer.length + 1, 0);
+
+  // 标题与空行占 header.length + 2（两个换行），再扣掉固定末尾与「还有几个没列」那行的预留。
+  const entryBudget = MAX_SKILLS_PROMPT_CHARS - (header.length + 2) - fixedFooterChars - OMITTED_FOOTER_RESERVE;
+
   const entries: string[] = [];
-  let used = header.length;
+  let used = 0;
   let omitted = 0;
   for (const skill of catalog.skills) {
     const flag = skill.userInvokedOnly ? " (user-invoked only)" : "";
     const entry = `- ${skill.name} [${skill.scope}] ${skill.readPath}${flag} — ${skill.description}`;
     // 预算不够就整条不列，不截半条：半个路径比没有路径更糟。
-    if (used + 1 + entry.length > MAX_SKILLS_PROMPT_CHARS - FOOTER_RESERVE) {
+    if (used + entry.length + 1 > entryBudget) {
       omitted++;
       continue;
     }
     entries.push(entry);
-    used += 1 + entry.length;
+    used += entry.length + 1;
   }
 
-  const footers: string[] = [];
+  const footers = [...fixedFooters];
   if (omitted > 0) {
-    footers.push(
+    footers.unshift(
       `(${omitted} more skill(s) are installed but not listed: this catalog reached its size limit. ` +
         "Use ls or glob on the skills directories to see the rest.)",
-    );
-  }
-  if (catalog.skipped.length > 0) {
-    const shown = catalog.skipped.slice(0, MAX_SKIPPED_SHOWN);
-    const rest = catalog.skipped.length - shown.length;
-    const list = shown.map((item) => `${inlineText(item.name)} (${inlineText(item.reason)})`).join("; ");
-    footers.push(`(Unusable skills, skipped while reading the skills directories: ${list}${rest > 0 ? `; and ${rest} more` : ""}.)`);
-  }
-  if (catalog.unscanned > 0) {
-    footers.push(
-      `(Only the first ${MAX_SKILLS_SCANNED} skill directories were inspected; ${catalog.unscanned} more were not checked.)`,
     );
   }
 

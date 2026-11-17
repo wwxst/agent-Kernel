@@ -330,10 +330,16 @@ type AgentRole = "main" | SubagentMode;
  *
  * 读不到用户主目录时返回 undefined，只保留项目级技能 —— 技能是可选的，
  * 拿不到个人目录不该让整个 agent 起不来。
+ *
+ * 两层防护各管一件事：`homedir()` 在 `HOME` / `USERPROFILE` 都为空时**抛**
+ * `ERR_SYSTEM_ERROR`（本机实测，不是返回空串），由 catch 兜住；空串判断是纵深防御 ——
+ * 一旦它返回空串，`path.join("", ".agents", "skills")` 会退化成相对路径，
+ * 把「当前目录下的 `.agents/skills`」错当成用户级技能扫进来。
  */
 function userSkillsRoot(): string | undefined {
   try {
-    return path.join(homedir(), ".agents", "skills");
+    const home = homedir().trim();
+    return home === "" ? undefined : path.join(home, ".agents", "skills");
   } catch {
     return undefined;
   }
