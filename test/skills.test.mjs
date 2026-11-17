@@ -14,9 +14,12 @@
  *   - 发现：没有目录、单个技能、两级同名、换项目、坏技能的四种写法。
  *   - 目录排版：正文不进目录、长描述裁剪、控制字符不能伪造条目、超预算要写明、
  *     超扫描上限要写明（只说「没读完」不编数字）、`disable-model-invocation` 的标注。
- *   - frontmatter：引号转义、块标量（含空行与缩进的 `---`）、缺字段、中文与 Emoji、嵌套键忽略。
+ *   - frontmatter：引号转义、行内注释（引号里的 `#` 是内容）、块标量（含空行与缩进的 `---`）、
+ *     缺字段、引号没闭合按非法 YAML 拒绝、中文与 Emoji、嵌套键忽略。
  *   - 预算不变量：坏技能的原因再长也不能把目录撑出上限。
- *   - 扫描资源上限：普通文件不算技能、条目枚举有上限、两级共享预算、隐藏目录跳过。
+ *   - 扫描资源上限：普通文件不算技能、条目枚举有上限（1023/1024/1025 三档边界）、
+ *     两级共享预算、两种上限同时触发时两种原因都写出来、隐藏目录跳过。
+ *   - 目录读不了：不存在/不是目录不算错误，权限不足与 IO 错误要报告且不连累另一级、不带绝对路径。
  *   - 文件安全：FIFO 不阻塞、符号链接目录/文件按设计处理、读不了的目录不崩、文件描述符不漏。
  *   - 名称规则：小写字母数字加单个横线；仓库里已有的技能必须全部仍然合法。
  *
@@ -72,6 +75,16 @@ async function addSkill(projectRoot, name, description = `Use when working on ${
   await addSkillIn(skillsDir(projectRoot), name, {
     frontmatter: `---\nname: ${name}\ndescription: "${description}"\n---`,
   });
+}
+
+/**
+ * 造一个指向自己的目录链接：打开它会得到 `ELOOP`，用来模拟「目录存在但读不了」。
+ *
+ * 不用 chmod 是刻意的：那种做法在 Windows 上拦不住文件所有者，而这些用例要跨平台跑。
+ */
+async function addUnreadableDirectory(directory) {
+  await mkdir(path.dirname(directory), { recursive: true });
+  await symlink(directory, directory, DIRECTORY_LINK_TYPE);
 }
 
 test("技能：没有 .agents/skills 目录时不产生提示段落", async () => {
@@ -258,6 +271,133 @@ test("技能：frontmatter 的引号转义与块标量都能读出描述", async
   });
 });
 
+test("技能：frontmatter 的行内注释不影响取值", async () => {
+  await withRoot(async (root) => {
+    const directory = skillsDir(root);
+    // YAML 的注释从「空白之后的 #」开始，三种字段都要按注释前的内容取值。
+    await addSkillIn(directory, "annotated", {
+      frontmatter: [
+        "---",
+        "name: annotated # 代码审查技能",
+        "description: Review code # 注释不是描述的一部分",
+        "disable-model-invocation: true # 只能由用户点名",
+        "---",
+      ].join("\n"),
+    });
+
+    const catalog = discoverSkills({ projectRoot: root });
+    assert.deepEqual(catalog.skipped, [], "带注释的合法 frontmatter 不该被判死");
+    assert.equal(catalog.skills[0].name, "annotated");
+    assert.equal(catalog.skills[0].description, "Review code");
+    assert.equal(catalog.skills[0].userInvokedOnly, true, "注释不能把 true 变成字符串 'true # …'");
+  });
+});
+
+test("技能：引号里的 # 是内容，不是注释", async () => {
+  await withRoot(async (root) => {
+    const directory = skillsDir(root);
+    await addSkillIn(directory, "double-quoted", {
+      frontmatter: '---\nname: double-quoted\ndescription: "Use for issue #12 and C# files"\n---',
+    });
+    await addSkillIn(directory, "single-quoted", {
+      frontmatter: "---\nname: single-quoted\ndescription: 'Use for issue #12 and C# files'\n---",
+    });
+    // 双引号里的转义引号不结束标量：后面的 # 仍然是内容。
+    await addSkillIn(directory, "escaped", {
+      frontmatter: '---\nname: escaped\ndescription: "say \\"hi\\" # not a comment"\n---',
+    });
+    // 单引号里写两遍引号表示一个引号，也不结束标量。
+    await addSkillIn(directory, "doubled", {
+      frontmatter: "---\nname: doubled\ndescription: 'it''s # still content'\n---",
+    });
+
+    const catalog = discoverSkills({ projectRoot: root });
+    assert.deepEqual(catalog.skipped, []);
+    const byName = new Map(catalog.skills.map((skill) => [skill.name, skill.description]));
+    assert.equal(byName.get("double-quoted"), "Use for issue #12 and C# files");
+    assert.equal(byName.get("single-quoted"), "Use for issue #12 and C# files");
+    assert.equal(byName.get("escaped"), 'say "hi" # not a comment');
+    assert.equal(byName.get("doubled"), "it's # still content");
+  });
+});
+
+test("技能：没有空白分隔的 # 不是注释", async () => {
+  await withRoot(async (root) => {
+    const directory = skillsDir(root);
+    // `a#b` 是一个完整的标量：只有行首或空白之后的 # 才开始注释。
+    await addSkillIn(directory, "hash-tag", {
+      frontmatter: "---\nname: hash-tag\ndescription: C#and issue#12 stay intact\n---",
+    });
+
+    const catalog = discoverSkills({ projectRoot: root });
+    assert.deepEqual(catalog.skipped, []);
+    assert.equal(catalog.skills[0].description, "C#and issue#12 stay intact");
+  });
+});
+
+test("技能：普通标量里的引号只是字符，不会被当成引号标量", async () => {
+  await withRoot(async (root) => {
+    const directory = skillsDir(root);
+    // 普通标量里 `It's` 的撇号、`"hi"` 的引号都只是字符：把第一个引号当引号开头会误判成「没闭合」。
+    await addSkillIn(directory, "apostrophe", {
+      frontmatter: "---\nname: apostrophe\ndescription: It's a skill for ADR's and notes\n---",
+    });
+    await addSkillIn(directory, "inline-quotes", {
+      frontmatter: '---\nname: inline-quotes\ndescription: Use when the user says "diagnose" or "debug"\n---',
+    });
+
+    const catalog = discoverSkills({ projectRoot: root });
+    assert.deepEqual(catalog.skipped, []);
+    const byName = new Map(catalog.skills.map((skill) => [skill.name, skill.description]));
+    assert.equal(byName.get("apostrophe"), "It's a skill for ADR's and notes");
+    assert.equal(byName.get("inline-quotes"), 'Use when the user says "diagnose" or "debug"');
+  });
+});
+
+test("技能：引号没有正确闭合时按非法 YAML 拒绝", async () => {
+  await withRoot(async (root) => {
+    const directory = skillsDir(root);
+    // 不是「带 # 的描述」，是语法错误：照实拒绝，不猜作者想写什么。
+    await addSkillIn(directory, "open-quote", {
+      frontmatter: '---\nname: open-quote\ndescription: "never closed\n---',
+    });
+    await addSkillIn(directory, "open-single", {
+      frontmatter: "---\nname: open-single\ndescription: 'never closed\n---",
+    });
+    // 引号闭合了，后面还跟着别的东西：同样不是合法标量。
+    await addSkillIn(directory, "trailing-text", {
+      frontmatter: '---\nname: trailing-text\ndescription: "closed" then extra\n---',
+    });
+
+    const catalog = discoverSkills({ projectRoot: root });
+    assert.deepEqual(catalog.skills, []);
+    const reasons = new Map(catalog.skipped.map((item) => [item.name, item.reason]));
+    assert.match(reasons.get("open-quote"), /unterminated quote in frontmatter/);
+    assert.match(reasons.get("open-single"), /unterminated quote in frontmatter/);
+    assert.match(reasons.get("trailing-text"), /unexpected text after the closing quote/);
+  });
+});
+
+test("技能：块标量正文里的 # 原样保留", async () => {
+  await withRoot(async (root) => {
+    const directory = skillsDir(root);
+    // 块标量的内容不经过行内注释处理：`#` 在这里就是正文。
+    await addSkillIn(directory, "block-hash", {
+      frontmatter: "---\nname: block-hash\ndescription: |\n  First line # keep this\n  Second line\n---",
+    });
+    // 块标量指示符后面也可以跟注释：`|` 仍然是指示符。
+    await addSkillIn(directory, "block-annotated", {
+      frontmatter: "---\nname: block-annotated\ndescription: | # 说明\n  Body line\n---",
+    });
+
+    const catalog = discoverSkills({ projectRoot: root });
+    assert.deepEqual(catalog.skipped, []);
+    const byName = new Map(catalog.skills.map((skill) => [skill.name, skill.description]));
+    assert.equal(byName.get("block-hash"), "First line # keep this Second line");
+    assert.equal(byName.get("block-annotated"), "Body line");
+  });
+});
+
 test("技能：同一名字一级坏一级好时用好的那份，不把它同时说成不可用", async () => {
   await withRoot(async (root) => {
     const userRoot = path.join(root, "home", ".agents", "skills");
@@ -375,17 +515,60 @@ test("技能：技能目录里的普通文件不会被当成技能", async () =>
   });
 });
 
-test("技能：目录条目达到枚举上限时说明扫描不完整", async () => {
+test("技能：目录条目上限的边界是「读满之后还有没有下一条」", async () => {
+  // 读满上限后再探一次：探到 null 说明刚好读完，探到条目才算没读完。
+  // 三档都要守：只测「上限 + 5」的话，恰好 1024 条会被误报成扫描不完整。
+  const table = [
+    { entries: MAX_DIRECTORY_ENTRIES - 1, truncated: false },
+    { entries: MAX_DIRECTORY_ENTRIES, truncated: false },
+    { entries: MAX_DIRECTORY_ENTRIES + 1, truncated: true },
+  ];
+  for (const row of table) {
+    await withRoot(async (root) => {
+      const directory = skillsDir(root);
+      await mkdir(directory, { recursive: true });
+      for (let index = 0; index < row.entries; index++) {
+        await writeFile(path.join(directory, `filler-${index}.txt`), "");
+      }
+
+      const catalog = discoverSkills({ projectRoot: root });
+      assert.equal(catalog.truncated, row.truncated, `${row.entries} 个条目时的判断`);
+      if (row.truncated) {
+        assert.deepEqual(catalog.issues.map((issue) => issue.kind), ["entry-limit"]);
+        const prompt = skillsPrompt(catalog);
+        assert.match(prompt, /were not read to the end/);
+        assert.match(prompt, new RegExp(`more entries than the scan reads \\(${MAX_DIRECTORY_ENTRIES}\\)`));
+        // 条目上限这条不带「检查了几个技能目录」：这里一个技能目录都没检查，
+        // 报「只检查了 0 个」只会让人以为哪里算错了。
+        assert.doesNotMatch(prompt, /skill directories were inspected/);
+      } else {
+        assert.deepEqual(catalog.issues, [], "读完了就不该报扫描不完整");
+        assert.equal(skillsPrompt(catalog), "", "没有技能也没有坏技能时不产生段落");
+      }
+    });
+  }
+});
+
+test("技能：条目上限与技能上限同时触发时，两种原因都写出来", async () => {
   await withRoot(async (root) => {
     const directory = skillsDir(root);
-    await mkdir(directory, { recursive: true });
-    // 上限之外还有条目：条目枚举本身必须停下来，不能为了数清剩余数量把目录读到底。
-    for (let index = 0; index < MAX_DIRECTORY_ENTRIES + 5; index++) {
-      await writeFile(path.join(directory, `filler-${index}.txt`), "");
+    // 300 个技能目录（超过 256 预算）+ 800 个普通文件（条目总数超过 1024 上限）。
+    for (let index = 0; index < MAX_SKILLS_SCANNED + 44; index++) {
+      const name = `s-${String(index).padStart(3, "0")}`;
+      await mkdir(path.join(directory, name), { recursive: true });
+      await writeFile(path.join(directory, name, "SKILL.md"), `---\nname: ${name}\ndescription: "d"\n---\n`);
     }
+    for (let index = 0; index < 800; index++) {
+      await writeFile(path.join(directory, `z-filler-${index}.txt`), "");
+    }
+
     const catalog = discoverSkills({ projectRoot: root });
-    assert.equal(catalog.truncated, true, "没读到末尾就必须说出来");
-    assert.match(skillsPrompt(catalog), /were not read to the end/);
+    assert.equal(catalog.scanned, MAX_SKILLS_SCANNED);
+    assert.deepEqual(catalog.issues.map((issue) => issue.kind).sort(), ["entry-limit", "skill-limit"]);
+    const prompt = skillsPrompt(catalog);
+    assert.match(prompt, new RegExp(`only ${MAX_SKILLS_SCANNED} skill directories were inspected`));
+    assert.match(prompt, /more entries than the scan reads/);
+    assert.ok(prompt.length <= MAX_SKILLS_PROMPT_CHARS, "两种原因加起来也不能撑破预算");
   });
 });
 
@@ -502,7 +685,84 @@ test("技能：坏技能反复扫描不会漏掉文件描述符",
   });
 });
 
-test("技能：技能目录读不了时按没有技能处理，不崩溃",
+test("技能：两级技能目录都不存在时不算扫描不完整", async () => {
+  await withRoot(async (root) => {
+    const catalog = discoverSkills({
+      projectRoot: path.join(root, "project"),
+      userRoot: path.join(root, "home", ".agents", "skills"),
+    });
+    assert.deepEqual(catalog.issues, [], "没装技能是正常情况，不是错误");
+    assert.equal(catalog.truncated, false);
+    assert.equal(skillsPrompt(catalog), "");
+  });
+});
+
+test("技能：技能目录位置上是普通文件时按不存在处理", async () => {
+  await withRoot(async (root) => {
+    await mkdir(path.join(root, ".agents"), { recursive: true });
+    await writeFile(skillsDir(root), "not a directory");
+
+    const catalog = discoverSkills({ projectRoot: root });
+    // ENOTDIR 是「这里没有这个目录」，不是「读不了」：不该报扫描不完整。
+    assert.deepEqual(catalog.issues, []);
+    assert.equal(catalog.truncated, false);
+    assert.equal(skillsPrompt(catalog), "");
+  });
+});
+
+test("技能：项目级目录读不了时，用户级照常扫描并写明原因", async () => {
+  await withRoot(async (root) => {
+    await addUnreadableDirectory(skillsDir(root));
+    const userRoot = path.join(root, "home", ".agents", "skills");
+    await addSkillIn(userRoot, "user-skill", {
+      frontmatter: '---\nname: user-skill\ndescription: "USER_LEVEL"\n---',
+    });
+
+    const catalog = discoverSkills({ projectRoot: root, userRoot });
+    // 一个根目录读不了，不能连累另一个。
+    assert.deepEqual(catalog.skills.map((skill) => skill.name), ["user-skill"]);
+    assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]), [["project", "read-error"]]);
+
+    const [issue] = catalog.issues;
+    assert.match(issue.code ?? "", /^E[A-Z]+$/, "错误码要带上，用户才知道该查什么");
+    const prompt = skillsPrompt(catalog);
+    assert.match(prompt, /- user-skill \[user\]/);
+    assert.match(prompt, new RegExp(`project-level skills directory could not be read \\(${issue.code}\\)`));
+    assert.equal(prompt.includes(root), false, "原因里不能带绝对路径");
+  });
+});
+
+test("技能：用户级目录读不了时，项目级照常扫描并写明原因", async () => {
+  await withRoot(async (root) => {
+    await addSkill(root, "project-skill");
+    const userRoot = path.join(root, "home", ".agents", "skills");
+    await addUnreadableDirectory(userRoot);
+
+    const catalog = discoverSkills({ projectRoot: root, userRoot });
+    assert.deepEqual(catalog.skills.map((skill) => skill.name), ["project-skill"]);
+    assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]), [["user", "read-error"]]);
+    assert.match(skillsPrompt(catalog), /user-level skills directory could not be read \(E[A-Z]+\)/);
+  });
+});
+
+test("技能：两级目录都读不了时各报一条，提示里两句都有", async () => {
+  await withRoot(async (root) => {
+    await addUnreadableDirectory(skillsDir(root));
+    const userRoot = path.join(root, "home", ".agents", "skills");
+    await addUnreadableDirectory(userRoot);
+
+    const catalog = discoverSkills({ projectRoot: root, userRoot });
+    assert.deepEqual(catalog.skills, []);
+    assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]).sort(),
+      [["project", "read-error"], ["user", "read-error"]]);
+    const prompt = skillsPrompt(catalog);
+    // 读不到技能也要产出一段：什么都不说，模型会以为这台机器没装技能。
+    assert.match(prompt, /project-level skills directory could not be read/);
+    assert.match(prompt, /user-level skills directory could not be read/);
+  });
+});
+
+test("技能：权限不足时报告扫描不完整，不伪装成没有技能",
   { skip: (process.platform === "win32" || process.getuid?.() === 0) && "chmod 拦不住文件所有者或 root 的读取" },
   async () => {
   await withRoot(async (root) => {
@@ -511,9 +771,15 @@ test("技能：技能目录读不了时按没有技能处理，不崩溃",
     await chmod(directory, 0o000);
     try {
       const catalog = discoverSkills({ projectRoot: root });
-      assert.deepEqual(catalog.skills, []);
-      assert.equal(catalog.truncated, false);
-      assert.equal(skillsPrompt(catalog), "");
+      assert.deepEqual(catalog.skills, [], "读不了就看不到技能");
+      assert.equal(catalog.truncated, true, "权限错误不能被说成「没有技能」");
+      assert.deepEqual(catalog.issues.map((issue) => [issue.scope, issue.kind]), [["project", "read-error"]]);
+
+      const prompt = skillsPrompt(catalog);
+      assert.match(prompt, /were not read to the end/);
+      assert.match(prompt, /project-level skills directory could not be read \(EACCES\)/);
+      // 提示进的是系统提示，不写用户主目录、也不写完整路径。
+      assert.equal(prompt.includes(root), false, "原因里不能带绝对路径");
     } finally {
       await chmod(directory, 0o755);
     }
@@ -657,15 +923,24 @@ test("技能：frontmatter 里的嵌套键与列表按忽略处理，不影响�
   });
 });
 
-test("技能：frontmatter 写成非法 YAML 时跳过并说明原因，不崩溃", async () => {
+test("技能：非法 YAML 与「名字不匹配」是两回事，原因要分得开", async () => {
   await withRoot(async (root) => {
-    await addSkillIn(skillsDir(root), "invalid", {
-      frontmatter: '---\nname: [oops\ndescription: "x"\n---',
+    const directory = skillsDir(root);
+    // 语法错误：引号没闭合，整份 frontmatter 不成立。
+    await addSkillIn(directory, "syntax-error", {
+      frontmatter: '---\nname: syntax-error\ndescription: "x\n---',
+    });
+    // 语法没问题，只是名字和目录对不上：这是语义错误，不是 YAML 坏了。
+    await addSkillIn(directory, "semantic-error", {
+      frontmatter: '---\nname: other-name\ndescription: "x"\n---',
     });
 
     const catalog = discoverSkills({ projectRoot: root });
     assert.deepEqual(catalog.skills, []);
-    assert.match(catalog.skipped[0].reason, /does not match the directory name/);
+    const reasons = new Map(catalog.skipped.map((item) => [item.name, item.reason]));
+    assert.match(reasons.get("syntax-error"), /unterminated quote in frontmatter/,
+      "语法错误要报语法错误，不能被名字校验抢先解释");
+    assert.match(reasons.get("semantic-error"), /does not match the directory name/);
   });
 });
 

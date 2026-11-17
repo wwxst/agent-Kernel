@@ -13,10 +13,12 @@
  * 内容目录：
  *   - `SKILL_FILE` / `SKILLS_DIRECTORY`：技能入口文件名与两级目录的相对位置。
  *   - 上限常量：单个描述长度、整个目录的字符预算、扫描的技能目录数、枚举的目录条目数、读取的文件头字节数。
- *   - `Skill` / `SkippedSkill` / `SkillCatalog`：一个可用技能、一个被跳过的技能、一次扫描的结果。
- *   - `discoverSkills()`：扫两级目录、合并同名技能、收集被跳过的原因。
+ *   - `Skill` / `SkippedSkill` / `SkillCatalog` / `ScanIssue`：一个可用技能、一个被跳过的技能、一次扫描的结果、
+ *     一条「这一级没读完」的记录。
+ *   - `discoverSkills()`：扫两级目录、合并同名技能、收集被跳过的原因与没读完的原因。
  *   - `skillsPrompt()`：把结果拼成系统提示里的一段；没有技能时返回空串。
  *   - 内部：`scanScope()` 有界地枚举一级目录、`readSkillHead()` 只读文件头、`parseFrontmatter()` 解析元数据、
+ *     `stripInlineComment()` 去掉标量末尾的行内注释、`classifyDirectoryError()` 判断目录打不开算哪种情况、
  *     `inlineText()` 把任意文本压成安全的一行、`clipReason()` / `clipName()` 给名字和「为什么用不了」加上长度上限。
  *
  * 模块关系：只依赖 `node:fs`、`node:path` 与 `protocol/text-boundaries.ts`。
@@ -58,8 +60,9 @@ export const MAX_SKILL_DESCRIPTION_CHARS = 300;
 /**
  * 整个技能段落的字符预算（含说明文字）。
  *
- * 定这个数的方式：本仓库装 29 个技能约 7.3k 字符，留出继续装技能的余量，
- * 同时给「有人装了上百个技能」留一道闸门 —— 预算不是日常限制，是防病态输入的兜底。
+ * 定这个数的方式：本仓库装 27 个技能，目录段约 6.9k 字符（2026-11 的统计快照，不是运行时固定值 ——
+ * 技能会增删、描述会改写），留出继续装技能的余量，同时给「有人装了上百个技能」留一道闸门 ——
+ * 预算不是日常限制，是防病态输入的兜底。
  * 已知边界：这是**字符**预算，不是 token 预算；中文描述的实际 token 数会比英文更高。
  * 超出的技能不会被悄悄丢掉 —— 段落末尾会写明还有几个没列出来。
  */
@@ -91,7 +94,8 @@ export const MAX_SKILLS_SCANNED = 256;
  *
  * 为什么还要这一道：`MAX_SKILLS_SCANNED` 管的是「看几个技能」，但目录里塞了几万个普通文件时，
  * 光是把名字读出来就是一次无界遍历，而且一个技能都不会多发现。
- * 已知边界：条目数超限时同样只报告「没读到末尾」，不去数还剩多少条。
+ * 读满上限之后会再探一条，只为判断「后面还有没有」：恰好这么多条目算读完，多一条才算没读完。
+ * 已知边界：超限时同样只报告「没读到末尾」，不去数还剩多少条。
  */
 export const MAX_DIRECTORY_ENTRIES = 1024;
 
@@ -147,6 +151,26 @@ export interface SkippedSkill {
   reason: string;
 }
 
+/**
+ * 一级技能目录没读完的原因。
+ *
+ * 三种情况要分开说，因为读者能做的事不同：前两种是「装得太多」（去删一些），
+ * 后一种是「读不了」（去看权限或挂载）。合并成一句布尔就会说出自相矛盾的话 ——
+ * 例如 1024 个普通文件把条目枚举撑满时，实际一个技能目录都没检查，却报「只检查了 0 个」。
+ */
+export type ScanLimit = "entry-limit" | "skill-limit" | "read-error";
+
+/** 一条「这一级没读完」的记录：哪一级、为什么、错误码（只有 read-error 有）。 */
+export interface ScanIssue {
+  scope: SkillScope;
+  kind: ScanLimit;
+  /**
+   * 系统错误码（例如 `EACCES`、`EIO`），只用于让模型和用户知道该查什么。
+   * 不含路径：提示里不写用户主目录这类机器信息。
+   */
+  code?: string;
+}
+
 /** 一次扫描的结果。 */
 export interface SkillCatalog {
   /** 可用技能，项目级在前、用户级在后，各自按名字排序。 */
@@ -156,19 +180,23 @@ export interface SkillCatalog {
   /** 这次一共检查了几个技能目录（两级合计）。 */
   scanned: number;
   /**
-   * 有没有没检查完的内容：目录条目读到上限，或者技能目录用完了预算。
-   *
-   * 只有布尔值，没有剩余数量 —— 要报准「还剩几个」就得把目录读到底，
-   * 那正好是这里要防的无界遍历。说「还有没看过的」是真话，编一个数字不是。
+   * 有没有没检查完的内容。等价于 `issues.length > 0`，保留布尔是为了调用方少写一层判断。
    */
   truncated: boolean;
+  /**
+   * 没读完的具体原因，按级别与种类去重。
+   *
+   * 只有原因，没有剩余数量 —— 要报准「还剩几个」就得把目录读到底，
+   * 那正好是这里要防的无界遍历。说「还有没看过的」是真话，编一个数字不是。
+   */
+  issues: ScanIssue[];
 }
 
 /** 扫描一个技能根目录的结果，合并之前先各自收集。 */
 interface ScanResult {
   skills: Skill[];
   skipped: SkippedSkill[];
-  truncated: boolean;
+  issues: ScanIssue[];
 }
 
 /** 两级目录共享的扫描预算：项目级先花，剩下的留给用户级。 */
@@ -179,9 +207,18 @@ interface ScanBudget {
   scanned: number;
 }
 
+/**
+ * 目录打不开的两种结果。
+ *
+ * `absent` 是正常情况（没装技能），不进 `issues`；`unreadable` 要报告，因为可能有技能没看到。
+ * 权限不足与 IO 错误在行为上是同一件事（都只能标记扫描不完整），区别只在错误码 ——
+ * 所以错误码原样带进提示，类型不再细分：多一个只改名字不改行为的枚举值是假的精确。
+ */
+type DirectoryFailure = "absent" | "unreadable";
+
 /** 空结果。每一处「这里没有技能」都返回它，调用方不用判断 undefined。 */
 function emptyScan(): ScanResult {
-  return { skills: [], skipped: [], truncated: false };
+  return { skills: [], skipped: [], issues: [] };
 }
 
 /**
@@ -254,11 +291,12 @@ function isDirectory(candidate: string): boolean {
  * 已知边界：Windows 上 Node 不导出 `O_NONBLOCK`（实测是 `undefined`），退回普通打开；
  * 那里没有 POSIX FIFO，普通文件路径不会因为「没有写入方」而阻塞，所以行为不受影响。
  */
-function readSkillHead(file: string): { text: string } | { reason: string } {
+function readSkillHead(file: string): { text: string; truncated: boolean } | { reason: string } {
   let descriptor: number | undefined;
   try {
     descriptor = openSync(file, fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK || 0));
-    if (!fstatSync(descriptor).isFile()) return { reason: `${SKILL_FILE} is not a regular file` };
+    const opened = fstatSync(descriptor);
+    if (!opened.isFile()) return { reason: `${SKILL_FILE} is not a regular file` };
     const buffer = Buffer.alloc(MAX_SKILL_HEAD_BYTES);
     // 循环读到文件末尾或读满缓冲区：`readSync` 允许短读（返回的字节数少于请求），
     // 只调一次就可能把 frontmatter 的结尾漏在缓冲区外，把一个好技能判成「没闭合」。
@@ -269,7 +307,11 @@ function readSkillHead(file: string): { text: string } | { reason: string } {
       filled += count;
     }
     // 截断可能切在一个 UTF-8 字符中间：末尾那个替换字符不是文件内容，去掉。
-    return { text: new TextDecoder().decode(buffer.subarray(0, filled)).replace(/\uFFFD$/, "") };
+    return {
+      text: new TextDecoder().decode(buffer.subarray(0, filled)).replace(/\uFFFD$/, ""),
+      // 文件比读到的多：最后一行可能是被切开的半行，解析时不能按完整行去校验它。
+      truncated: opened.size > filled,
+    };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return { reason: `missing ${SKILL_FILE}` };
@@ -298,16 +340,61 @@ function unquoteScalar(value: string): string {
 }
 
 /**
+ * 去掉标量末尾的行内注释，返回「真正属于值的那一段」。
+ *
+ * YAML 的规则有两条，漏掉任何一条都会改坏合法的文件：
+ *   1. `#` 只有出现在**行首或空白之后**才开始注释。`a#b`、`C#`、`issue#12` 都是一个完整的值。
+ *   2. 只有**以引号开头**的标量里，引号才有语法意义。普通标量里的 `'` 和 `"` 只是字符 ——
+ *      `It's a skill`、`says "hi"` 都是合法的普通标量，把第一个引号当引号开头就会把好文件判死。
+ *
+ * 引号标量里：`#` 是内容；双引号的 `\"` 不结束引号；单引号的 `''` 是一个转义的单引号。
+ * 引号没闭合、或者闭合之后还跟着别的东西，都是 YAML 语法错误 —— 照实拒绝，不猜作者想写什么。
+ */
+function stripInlineComment(value: string): { text: string } | { reason: string } {
+  const opener = value[0];
+  if (opener !== '"' && opener !== "'") {
+    // 普通标量：只找「空白之后（或行首）的 #」，其余一律当内容。
+    const comment = /(^|\s)#/.exec(value);
+    return { text: comment === null ? value : value.slice(0, comment.index).trimEnd() };
+  }
+
+  for (let index = 1; index < value.length; index++) {
+    const char = value[index];
+    if (opener === '"') {
+      // 反斜杠转义下一个字符：`\"` 不结束引号，`\\` 也不会让后面的引号失效。
+      if (char === "\\") {
+        index++;
+        continue;
+      }
+      if (char !== '"') continue;
+    } else if (char !== "'") {
+      continue;
+    } else if (value[index + 1] === "'") {
+      // YAML 的单引号转义是写两遍：`''` 是一个单引号，不是结束。
+      index++;
+      continue;
+    }
+    // 引号在这里闭合：后面只允许空白，或者空白之后的行内注释。
+    const rest = value.slice(index + 1).trim();
+    if (rest !== "" && !rest.startsWith("#")) {
+      return { reason: "unexpected text after the closing quote in frontmatter" };
+    }
+    return { text: value.slice(0, index + 1) };
+  }
+  return { reason: "unterminated quote in frontmatter" };
+}
+
+/**
  * 解析 `SKILL.md` 开头的 YAML frontmatter，只认顶层 `key: value`。
  *
  * 为什么自己写而不是引依赖：只需要几个标量字段，运行时零依赖是硬约束（ADR-0004）。
- * 支持范围写清楚，避免「表面兼容」：顶层标量、双/单引号、`|` 与 `>` 块标量；
+ * 支持范围写清楚，避免「表面兼容」：顶层标量、双/单引号、`|` 与 `>` 块标量、行内注释；
  * 嵌套键（例如 `metadata:` 下面的内容）与列表一律忽略 —— 它们不影响技能能不能用。
  * 认不出的顶层写法跳过，不猜；猜错比不认识更贵。
  *
  * 返回字符串表示「这个技能不能用」的原因（英文：它会被模型读到）。
  */
-function parseFrontmatter(text: string): Map<string, string> | string {
+function parseFrontmatter(text: string, truncated: boolean): Map<string, string> | string {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   if (lines[0]?.trim() !== "---") {
     return `missing YAML frontmatter: ${SKILL_FILE} must start with a --- block`;
@@ -352,7 +439,18 @@ function parseFrontmatter(text: string): Map<string, string> | string {
     const match = /^([A-Za-z0-9_-]+)[ \t]*:[ \t]*([\s\S]*)$/.exec(line);
     if (match === null) continue;
     const name = match[1];
-    const value = match[2].trim();
+    // 先剥注释再判断块标量：`description: | # 说明` 里的 `#` 也是注释，
+    // 而块标量**内容**的每一行都不经过这里（上面按缩进收集），正文里的 `#` 原样保留。
+    const scalar = stripInlineComment(match[2].trim());
+    if ("reason" in scalar) {
+      // 最后一行可能是被 64 KiB 截断切开的半行：那里的「引号没闭合」是截断的产物，
+      // 不是文件的问题。真到这一步 frontmatter 也没有闭合，下面那条通用原因更贴近事实。
+      if (truncated && index === lines.length - 1) {
+        return `unterminated YAML frontmatter: no closing --- line within the first ${MAX_SKILL_HEAD_BYTES} bytes`;
+      }
+      return scalar.reason;
+    }
+    const value = scalar.text;
     if (/^[|>][-+]?$/.test(value)) {
       blockKey = name;
       blockLines = [];
@@ -372,7 +470,7 @@ function readSkill(directory: string, name: string, scope: SkillScope, projectRo
   const head = readSkillHead(path.join(directory, name, SKILL_FILE));
   if ("reason" in head) return { reason: head.reason };
 
-  const fields = parseFrontmatter(head.text);
+  const fields = parseFrontmatter(head.text, head.truncated);
   if (typeof fields === "string") return { reason: fields };
 
   const declaredName = (fields.get("name") ?? "").trim();
@@ -405,13 +503,32 @@ function readSkill(directory: string, name: string, scope: SkillScope, projectRo
   };
 }
 
-/** 打开目录；不存在、不是目录、没权限，都等于「这一级没有技能」，不算错误。 */
-function openDirectory(directory: string): Dir | undefined {
+/**
+ * 目录打不开算哪一种情况。
+ *
+ * 「不存在」和「读不了」必须分开：前者是正常的（大多数人没装用户级技能），
+ * 后者意味着**可能有技能但没看到**，假装成「没有技能」就会让模型以为目录是完整的。
+ *
+ * `ENOTDIR`（路径上有普通文件）也归到「不存在」：那不是读不了，是这里根本没有这个目录。
+ * 不认识的错误码一律按读不了处理 —— 宁可多说一句「可能还有更多」，也不能悄悄吞掉。
+ */
+function classifyDirectoryError(code: string | undefined): DirectoryFailure {
+  if (code === "ENOENT" || code === "ENOTDIR") return "absent";
+  return "unreadable";
+}
+
+/**
+ * 打开目录，把失败原因分类。
+ *
+ * 不做「先 stat 再 opendir」：两次调用之间的窗口里目录可以被换掉，而这里只需要知道
+ * 打不开时该说什么，不需要提前确认它存在。
+ */
+function openDirectory(directory: string): { handle: Dir } | { failure: DirectoryFailure; code?: string } {
   try {
-    return opendirSync(directory);
-  } catch {
-    // 技能是可选内容：读不到就该当没有，而不是让整个 agent 起不来。
-    return undefined;
+    return { handle: opendirSync(directory) };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    return { failure: classifyDirectoryError(code), code };
   }
 }
 
@@ -420,26 +537,38 @@ function openDirectory(directory: string): Dir | undefined {
  *
  * 用 `opendirSync` 逐条读，而不是 `readdirSync` 一次性读全 —— 后者会把整个目录先搬进内存，
  * 目录里有几万个条目时，后面那些「最多扫 256 个技能」的上限就形同虚设。
- * 返回 `exhausted: false` 表示没读到末尾（要么到了条目上限，要么读到一半出错）。
+ *
+ * 读满上限之后**再探一次**：返回 null 说明目录刚好只有这么多条目（读完了），
+ * 返回条目才说明后面还有。少了这一探，「恰好 1024 条」会被误报成「没读完」，
+ * 而这一条探测结果只用来判断边界，不进 `entries`、不参与统计 —— 数清剩余条目
+ * 就得继续遍历，那正是上限要防的事。
+ *
+ * `failure` 只有两种非空值：`absent`（由调用方直接当没有技能）与 `unreadable`（要报告）。
  */
-function readEntries(directory: string): { entries: Dirent[]; exhausted: boolean } {
-  const handle = openDirectory(directory);
-  if (handle === undefined) return { entries: [], exhausted: true };
+function readEntries(directory: string): {
+  entries: Dirent[];
+  capped: boolean;
+  failure?: DirectoryFailure;
+  code?: string;
+} {
+  const opened = openDirectory(directory);
+  if (!("handle" in opened)) {
+    return { entries: [], capped: false, failure: opened.failure, code: opened.code };
+  }
 
+  const handle = opened.handle;
   const entries: Dirent[] = [];
-  let exhausted = false;
   try {
     while (entries.length < MAX_DIRECTORY_ENTRIES) {
       const entry = handle.readSync();
-      if (entry === null) {
-        exhausted = true;
-        break;
-      }
+      if (entry === null) return { entries, capped: false };
       entries.push(entry);
     }
-  } catch {
+    // 边界探测：只判断「后面还有没有」，拿到的这一条不处理、不统计。
+    return { entries, capped: handle.readSync() !== null };
+  } catch (error) {
     // 读到一半出错（网络盘、权限变化）：已经拿到的条目照常处理，但要说明没读完。
-    exhausted = false;
+    return { entries, capped: false, failure: "unreadable", code: (error as NodeJS.ErrnoException).code };
   } finally {
     try {
       handle.closeSync();
@@ -447,18 +576,22 @@ function readEntries(directory: string): { entries: Dirent[]; exhausted: boolean
       // 句柄已经关掉了：不影响已经读到的条目。
     }
   }
-  return { entries, exhausted };
 }
 
 /**
- * 扫一级技能目录：不存在、读不了、不是目录，都等于「这一级没有技能」，不算错误。
+ * 扫一级技能目录：不存在、不是目录，都等于「这一级没有技能」，不算错误；
+ * 权限不足、IO 错误则记一条 `read-error`，让提示里说清「这里可能有技能但没读到」。
  *
  * 枚举有界（见 `readEntries`），检查的技能目录数也走共享预算；到上限就停，
- * 只把结果标成 `truncated`，不去数还剩多少 —— 数清它就得继续遍历，那正是要防的事。
+ * 只把原因记成 `skill-limit` / `entry-limit`，不去数还剩多少 —— 数清它就得继续遍历，那正是要防的事。
  */
 function scanScope(directory: string, scope: SkillScope, budget: ScanBudget, projectRoot?: string): ScanResult {
   const result = emptyScan();
-  const { entries, exhausted } = readEntries(directory);
+  const { entries, capped, failure, code } = readEntries(directory);
+  // 一个根目录读不了只影响这一级：另一级照常扫，Agent 主体也照常跑。
+  if (failure === "unreadable") {
+    result.issues.push({ scope, kind: "read-error", code });
+  }
   // 按名字排序：目录的遍历顺序由文件系统决定，不排序的话每次请求的提示都可能不一样。
   // 已知边界：条目数超过上限时排序只覆盖读到的那部分，谁被选中取决于文件系统顺序。
   entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
@@ -468,7 +601,7 @@ function scanScope(directory: string, scope: SkillScope, budget: ScanBudget, pro
     if (entry.name.startsWith(".")) continue;
     if (!isDirectory(path.join(directory, entry.name))) continue;
     if (budget.remaining === 0) {
-      result.truncated = true;
+      result.issues.push({ scope, kind: "skill-limit" });
       break;
     }
     budget.remaining--;
@@ -486,7 +619,7 @@ function scanScope(directory: string, scope: SkillScope, budget: ScanBudget, pro
     else result.skills.push(read.skill);
   }
   // 没读到末尾：剩下的条目里可能还有技能，必须说出来。
-  if (!exhausted) result.truncated = true;
+  if (capped) result.issues.push({ scope, kind: "entry-limit" });
   return result;
 }
 
@@ -522,6 +655,17 @@ export function discoverSkills(options: { projectRoot: string; userRoot?: string
   // 一级坏、另一级可用时按可用的那份算：否则目录会同时说这个技能「能用」和「用不了」。
   for (const name of merged.keys()) skipped.delete(name);
 
+  // 没读完的原因按「级别 + 种类 + 错误码」去重：同一级只会有一条上限记录，
+  // 但两级可以各有一条，读不了的那条要保留错误码。
+  const issues: ScanIssue[] = [];
+  const seen = new Set<string>();
+  for (const issue of [...project.issues, ...user.issues]) {
+    const key = `${issue.scope}:${issue.kind}:${issue.code ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    issues.push(issue);
+  }
+
   return {
     skills,
     // 按名字排序：坏技能列表也要每次一致，否则提示会随目录遍历顺序漂移。
@@ -529,8 +673,43 @@ export function discoverSkills(options: { projectRoot: string; userRoot?: string
       .map(([name, reason]) => ({ name, reason }))
       .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0)),
     scanned: budget.scanned,
-    truncated: project.truncated || user.truncated,
+    truncated: issues.length > 0,
+    issues,
   };
+}
+
+/**
+ * 把「这一级没读完」渲染成末尾的句子，每种原因一句。
+ *
+ * 分开写而不是合成一句：两种上限和「读不了」对应完全不同的排查动作，
+ * 而数字只对 `skill-limit` 有意义 —— 条目枚举撑满时一个技能目录都没检查，
+ * 那时说「只检查了 0 个技能目录」是自相矛盾。
+ */
+function incompleteFooters(catalog: SkillCatalog): string[] {
+  const footers: string[] = [];
+  const kinds = new Set(catalog.issues.map((issue) => issue.kind));
+  const missing = "so some skills may be missing from this list.";
+  const hint = "Use ls or glob on the skills directories to see what is there.";
+  if (kinds.has("skill-limit")) {
+    // 只报「检查了几个」，不报「还剩几个」：数清剩余就得把目录读到底，那正是上限要防的事。
+    footers.push(
+      `(The skills directories were not read to the end: only ${catalog.scanned} skill directories were inspected, ${missing} ${hint})`,
+    );
+  }
+  if (kinds.has("entry-limit")) {
+    footers.push(
+      "(The skills directories were not read to the end: a skills directory holds more entries than the scan reads " +
+        `(${MAX_DIRECTORY_ENTRIES}), ${missing} ${hint})`,
+    );
+  }
+  // 一级一条：哪一级读不了、错误码是什么，决定了该去查权限还是查挂载。
+  for (const issue of catalog.issues) {
+    if (issue.kind !== "read-error") continue;
+    const label = issue.scope === "project" ? "project-level" : "user-level";
+    const reason = issue.code === undefined ? "could not be read" : `could not be read (${issue.code})`;
+    footers.push(`(The skills directories were not read to the end: the ${label} skills directory ${reason}, ${missing} ${hint})`);
+  }
+  return footers;
 }
 
 /**
@@ -575,15 +754,8 @@ export function skillsPrompt(catalog: SkillCatalog): string {
     const list = shown.map((item) => `${clipName(item.name)} (${inlineText(item.reason)})`).join("; ");
     fixedFooters.push(`(Unusable skills, skipped while reading the skills directories: ${list}${rest > 0 ? `; and ${rest} more` : ""}.)`);
   }
-  if (catalog.truncated) {
-    // 只说「没读完」，不说「还剩几个」：数清剩余条目就得把目录读到底，那正是扫描上限要防的事。
-    // 下面这句英文的中文对照：技能目录没有读到末尾：只检查了 N 个技能目录，所以可能还装着更多技能。
-    // 用 ls 或 glob 看技能目录里剩下的内容。
-    fixedFooters.push(
-      `(The skills directories were not read to the end: only ${catalog.scanned} skill directories were inspected, ` +
-        "so more skills may be installed. Use ls or glob on the skills directories to see the rest.)",
-    );
-  }
+  // 没读完的原因：每种一句，长度可以提前算准，所以按实际值扣预算。
+  fixedFooters.push(...incompleteFooters(catalog));
   // 每个元素后面都跟着一个 `\n`：末尾 +1 是它自己的换行。
   const fixedFooterChars = fixedFooters.reduce((total, footer) => total + footer.length + 1, 0);
 
