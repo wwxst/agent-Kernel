@@ -72,7 +72,9 @@ function createModel(options = {}) {
       const failure = options.failures?.[index];
       if (failure !== undefined) throw failure;
       const replies = options.replies ?? [finalReply("done")];
-      return { message: structuredClone(replies[Math.min(index, replies.length - 1)]) };
+      const message = structuredClone(replies[Math.min(index, replies.length - 1)]);
+      // 默认不带 usage（模拟端点不报用量）；需要精确核对记账时再显式给。
+      return options.businessUsage === undefined ? { message } : { message, usage: options.businessUsage };
     },
   };
 }
@@ -261,25 +263,40 @@ test("工具结果：先裁剪最早的旧结果，够了就停", async () => {
 });
 
 test("工具结果：第一刀不够时会再切一刀，但每份都留可读路径", async () => {
-  const calls = ["c1", "c2", "c3", "c4"].map((id, index) => ({
-    id,
-    type: "function",
-    function: { name: "echo", arguments: JSON.stringify({ value: String(index + 1) }) },
-  }));
-  const tool = { ...echoTool(), run: async () => "v".repeat(12_000) };
-  const chat = createModel({
-    replies: [{ role: "assistant", content: null, tool_calls: calls }, finalReply("first"), finalReply("second")],
+  await withWorkspace(async (root) => {
+    const calls = ["c1", "c2", "c3", "c4"].map((id, index) => ({
+      id,
+      type: "function",
+      function: { name: "echo", arguments: JSON.stringify({ value: String(index + 1) }) },
+    }));
+    const tool = { ...echoTool(), run: async () => "v".repeat(12_000) };
+    const chat = createModel({
+      replies: [{ role: "assistant", content: null, tool_calls: calls }, finalReply("first"), finalReply("second")],
+    });
+    const agent = new Agent({
+      llm: chat,
+      tools: makeRegistry([tool]),
+      maxTranscriptChars: 5_000,
+      contextArchiveDir: path.join(root, "archive"),
+    });
+
+    await agent.run("first task");
+    await agent.run("second task");
+
+    const results = chat.businessRequests.at(-1).messages.filter((message) => message.role === "tool");
+    assert.equal(results.length, 4, "四份结果都还在，只是变短");
+    assert.ok(results.every((message) => /full text: /.test(message.content)), "每份都要给出原文路径");
+    assert.ok(results.some((message) => message.content.length < 400), "第一刀（800）不够时必须再切一刀");
+    assert.ok(JSON.stringify(chat.businessRequests.at(-1).messages).length < 6_000);
+
+    // 第二刀不能把来源换成「上一份预览」：消息里的引用必须直接指向完整原文。
+    for (const message of results) {
+      const file = /full text: (.+?)\]/.exec(message.content)?.[1];
+      assert.ok(file !== undefined);
+      assert.equal(await readFile(file, "utf8"), "v".repeat(12_000),
+        `${message.tool_call_id} 的引用必须指向第一次存档的完整原文`);
+    }
   });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxTranscriptChars: 5_000 });
-
-  await agent.run("first task");
-  await agent.run("second task");
-
-  const results = chat.businessRequests.at(-1).messages.filter((message) => message.role === "tool");
-  assert.equal(results.length, 4, "四份结果都还在，只是变短");
-  assert.ok(results.every((message) => /full text: /.test(message.content)), "每份都要给出原文路径");
-  assert.ok(results.some((message) => message.content.length < 400), "第一刀（800）不够时必须再切一刀");
-  assert.ok(JSON.stringify(chat.businessRequests.at(-1).messages).length < 6_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -518,6 +535,112 @@ test("历史摘要：摘要长度上限跟着被替换内容走，不是写死�
   assert.ok(limit > 0 && limit < 12_000, `上限应该由被替换内容算出（实际 ${limit}）`);
 });
 
+test("历史摘要：压缩后 system 里留下可定位、可恢复的原文引用", async () => {
+  await withWorkspace(async (root) => {
+    const replies = [];
+    for (let step = 1; step <= 7; step++) {
+      replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(1_400)));
+    }
+    replies.push(finalReply("done"));
+    const chat = createModel({ replies, summary: summaryWith("indexed") });
+    const agent = new Agent({
+      llm: chat,
+      tools: makeRegistry([echoTool()]),
+      maxTranscriptChars: 8_000,
+      contextArchiveDir: path.join(root, "archive"),
+    });
+
+    await agent.run("run all seven steps");
+
+    assert.ok(agent.compactionStats.compactions >= 1, "这个用例的前提是发生过压缩");
+    const system = agent.transcript[0].content;
+    assert.match(system, /Archived originals removed by context compaction/,
+      "摘要之外还要有宿主生成的存档清单：摘要写得再差也不会把「原话在哪」一起丢掉");
+    const listed = [...system.matchAll(/^- (.+?) \(\d+ chars\)$/gm)].map((match) => match[1]);
+    assert.ok(listed.length >= 1, "至少要列出这次压缩的存档");
+
+    // 清单里的路径必须真的能读，而且内容就是被折叠掉的原文（含被省略的步骤）。
+    const body = await readFile(listed[0], "utf8");
+    assert.match(body, /step 1 /, "存档里要有被折叠的原始步骤");
+    assert.match(body, /"role": "tool"/, "存档是完整的消息序列，不是预览");
+  });
+});
+
+test("历史摘要：失败配额按 Run 重算，不会永久关闭压缩", async () => {
+  const replies = [];
+  for (let step = 1; step <= 7; step++) {
+    replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(1_400)));
+  }
+  replies.push(finalReply("done"));
+  const chat = createModel({ replies, summary: new Error("summary boom") });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+
+  const perRun = [];
+  for (const task of ["one", "two", "three", "four"]) {
+    const before = chat.summaryRequests.length;
+    await agent.run(task);
+    perRun.push(chat.summaryRequests.length - before);
+  }
+
+  assert.ok(perRun.every((count) => count <= 2), `单个 Run 内最多浪费两次：${perRun.join(",")}`);
+  assert.ok(perRun.slice(1).some((count) => count > 0),
+    `后面的 Run 必须还能再试，不能一次坏运气就永久关闭：${perRun.join(",")}`);
+  assert.ok(agent.compactionStats.summaryFailures >= 2);
+  assert.match(agent.compactionStats.lastError, /summary boom/);
+});
+
+test("历史摘要：摘要花掉预算后，不再发业务请求", async () => {
+  const replies = [];
+  for (let step = 1; step <= 7; step++) {
+    replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(1_400)));
+  }
+  replies.push(finalReply("done"));
+  const chat = createModel({ replies, summary: summaryWith("budget") });
+  // 摘要一次 60 token，预算只给 50：摘要把额度用光之后，那一步的业务请求不能再发。
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    maxTranscriptChars: 8_000,
+    maxTotalTokens: 50,
+  });
+
+  await assert.rejects(() => agent.run("run all seven steps"), /token budget 50 reached/);
+  const summaryAt = chat.requests.findIndex((request) => request.summary);
+  assert.ok(summaryAt >= 0, "这个用例的前提是发生过一次摘要请求");
+  assert.equal(chat.requests.slice(summaryAt + 1).filter((request) => !request.summary).length, 0,
+    "预算已被摘要用光，后面不能再有业务请求");
+});
+
+test("历史摘要：摘要返回后立刻取消，用量只记一次", async () => {
+  const controller = new AbortController();
+  const replies = [];
+  for (let step = 1; step <= 5; step++) {
+    replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(1_400)));
+  }
+  replies.push(finalReply("done"));
+  const chat = createModel({
+    replies,
+    summary: summaryWith("cancelled-after-reply"),
+    businessUsage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    beforeSummaryReply: () => controller.abort(),
+  });
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    maxTranscriptChars: 8_000,
+    signal: controller.signal,
+  });
+
+  await assert.rejects(() => agent.run("run all steps"), /cancelled/);
+
+  const usage = agent.stats.usage;
+  assert.equal(usage.reported, 1 + chat.businessRequests.length,
+    "每次请求各记一次：业务请求 + 摘要请求，不多不少");
+  assert.equal(usage.unknown, 0, "取消不能被当成一次「请求失败」再记一笔未知用量");
+  assert.equal(agent.stats.summaryRequests, 1);
+  assert.equal(agent.compactionStats.compactions, 0, "取消不提交摘要");
+});
+
 // ---------------------------------------------------------------------------
 // 上下文溢出：只认明确超限，最多恢复一次
 // ---------------------------------------------------------------------------
@@ -558,6 +681,24 @@ test("溢出：明确超限时做一次更强压缩并重发一次，不重跑�
   assert.equal(runs, 1, "恢复不能重跑已经完成的工具");
   assert.equal(agent.stats.requests - agent.retryAttempts, agent.runReplies.length,
     "超限重发也要计入「没有产生回复的请求」");
+});
+
+test("溢出：压缩后仍装不下的请求不再发送", async () => {
+  const chat = createModel({ replies: [finalReply("done")] });
+  // 只有一条超长用户消息，没有可裁剪的结果、也没有可折叠的历史：压缩救不了。
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([]),
+    contextWindowTokens: 2_000,
+    outputTokenReserve: 500,
+  });
+
+  await assert.rejects(
+    () => agent.run("y".repeat(20_000)),
+    /context window is too small for this request[\s\S]*compaction cannot shrink it further/,
+  );
+  assert.equal(chat.businessRequests.length, 0, "明知装不下就不要发出去白花钱");
+  assert.equal(agent.stats.requests, 0);
 });
 
 test("溢出：普通 400 不触发压缩恢复", async () => {
