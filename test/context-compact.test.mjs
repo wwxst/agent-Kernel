@@ -24,7 +24,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { Agent } from "../src/core/agent.ts";
-import { ModelHttpError } from "../src/protocol/errors.ts";
+import { ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
 import {
   CANNED_SUMMARY,
   SUMMARY_PROMPT_MARKER,
@@ -291,6 +291,56 @@ test("工具结果：模型复用同一个调用 id 时，两份原文各自存�
     assert.match(await readFile(files[0], "utf8"), /^A{100}/, "第一份存档是自己的原文");
     assert.match(await readFile(files[1], "utf8"), /^B{100}/, "第二份存档也必须是自己的原文");
   });
+});
+
+test("工具调用：同一轮里复用同一个调用 id 的完整配对仍可折叠", async () => {
+  // 协议只要求一次响应内 id 唯一：同一轮里两次响应都用 `same` 是合法历史。
+  const replies = [
+    { ...callTool("same", "echo", { value: "a" }), content: "step1 " + "a".repeat(1_500) },
+    { ...callTool("same", "echo", { value: "b" }), content: "step2 " + "b".repeat(1_500) },
+    finalReply("first answer " + "c".repeat(1_500)),
+    finalReply("second answer " + "d".repeat(1_500)),
+  ];
+  const chat = createModel({ replies, summary: summaryWith("reused-id") });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 6_000 });
+
+  await agent.run("first task");
+  await agent.run("second task");
+
+  assert.ok(agent.compactionStats.compactions >= 1,
+    "复用 id 是合法历史，不能因为配对检查太严就永远压不动");
+  assert.equal(chat.summaryRequests.length, 1);
+  assert.equal(agent.compactionStats.lastError, "");
+});
+
+test("进程树未确认后：请求按空工具表测量，模型仍能报告故障", async () => {
+  const bulky = {
+    name: "bulky",
+    description: "d".repeat(6_000),
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      throw new ProcessCleanupError("process tree cleanup unverified: test");
+    },
+  };
+  const chat = createModel({
+    replies: [
+      { ...callTool("c1", "bulky", {}), content: "x".repeat(3_000) },
+      finalReply("reported the cleanup failure"),
+    ],
+  });
+  // 窗口按「带全部工具」算不够、按「空工具表」算够：准入必须跟真正发出去的东西一致。
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([bulky]),
+    contextWindowTokens: 3_900,
+    outputTokenReserve: 1_000,
+  });
+
+  const reply = await agent.run("run it");
+
+  assert.equal(reply.content, "reported the cleanup failure");
+  assert.equal(agent.toolExecutionDisabled, true);
+  assert.equal(chat.businessRequests.at(-1).tools.length, 0, "后续请求不带工具");
 });
 
 test("工具结果：先裁剪最早的旧结果，够了就停", async () => {

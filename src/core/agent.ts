@@ -39,7 +39,7 @@ import {
   isContextOverflowError,
   isRetryableModelError,
 } from "../protocol/errors.ts";
-import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall } from "../protocol/types.ts";
+import type { ChatClient, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "../protocol/types.ts";
 import type { ToolRegistry } from "./tool-registry.ts";
 import { ContextArchive } from "./context-archive.ts";
 import type { ContextArchiveRef } from "./context-archive.ts";
@@ -519,9 +519,19 @@ export class Agent {
     return lines.join("\n");
   }
 
-  /** 整份请求的字符量（工具定义 + 全部消息）。这是压缩唯一的「体积」口径。 */
+  /**
+   * 这次请求真正会带上的工具定义。
+   *
+   * 进程树清理未确认后，业务请求只发空工具表（不再启动副作用）。测量必须跟着这个事实走：
+   * 否则会把「其实装得下的请求」按全部工具算成装不下，模型连报告故障的机会都没有。
+   */
+  private effectiveTools(): readonly ToolDefinition[] {
+    return this.processCleanupUnverified ? [] : this.tools.definitions;
+  }
+
+  /** 整份请求的字符量（实际会发送的工具定义 + 全部消息）。这是压缩唯一的「体积」口径。 */
   private measureChars(): number {
-    return requestChars(this.messages, this.tools.definitions);
+    return requestChars(this.messages, this.effectiveTools());
   }
 
   /** 把字符量换算成当前预算用的尺子：有窗口就是 token 估算，没有就是字符数。 */
@@ -606,7 +616,7 @@ export class Agent {
    * 与其发一个必然被拒的请求、白花一次钱，不如让调用方现在就看见原因。
    */
   private overflowMessage(size: number, limit: number): string {
-    const toolsChars = requestChars([], this.tools.definitions);
+    const toolsChars = requestChars([], this.effectiveTools());
     const systemChars = this.messages[0] === undefined ? 0 : JSON.stringify(this.messages[0]).length;
     const conversationChars = Math.max(0, this.measureChars() - toolsChars - systemChars);
     return `context window is too small for this request: about ${size} tokens (estimated) against a usable ` +
@@ -835,7 +845,7 @@ export class Agent {
     }
     const currentTask = [...this.messages].reverse().find((message) => message.role === "user");
     if (currentTask !== undefined && !candidate.includes(currentTask)) return "candidate dropped the current task";
-    if (requestChars(candidate, this.tools.definitions) >= this.measureChars()) {
+    if (requestChars(candidate, this.effectiveTools()) >= this.measureChars()) {
       return "compaction did not shrink the request";
     }
     return undefined;
@@ -1127,7 +1137,7 @@ export class Agent {
         // 每次尝试都重新量：溢出恢复会改变上下文，用旧数字校准会把估算带偏。
         sentChars = this.measureChars();
         try {
-          response = await this.llm.chat(this.messages, this.processCleanupUnverified ? [] : this.tools.definitions, {
+          response = await this.llm.chat(this.messages, this.effectiveTools(), {
             onDelta: this.onDelta === undefined ? undefined : (text) => this.notifyObserver(this.onDelta, text),
           });
           break;

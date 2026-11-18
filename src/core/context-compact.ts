@@ -142,23 +142,28 @@ export function compactText(text: string, limit: number, source?: string): strin
  * 这是「能不能整段移除」和「候选上下文能不能提交」共用的唯一判定：assistant 的每一条
  * tool_call 后面必须紧跟同 id 的 tool 结果，且不能出现对不上的 tool 消息。断开的配对
  * 会让下一次请求被 API 直接拒绝，所以它既是安全边界，也是提交门槛。
+ *
+ * 唯一性只按**一次 assistant 响应**要求：协议只保证一次响应内 id 不重复，模型在后续响应里
+ * 复用同一个 id 是合法的。早先把整段消息共用一个 id 集合，会让这种合法历史被判成「配对不完整」，
+ * 结果是这段历史永远折叠不了、也没有任何提示。
  */
 export function hasCompleteToolPairs(messages: readonly Message[]): boolean {
-  const expected = new Set<string>();
+  let callCount = 0;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
     if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+    const idsInThisResponse = new Set<string>();
     for (const call of message.tool_calls) {
+      if (idsInThisResponse.has(call.id)) return false;
+      idsInThisResponse.add(call.id);
       const result = messages[index + 1];
-      if (expected.has(call.id) || result?.role !== "tool" || result.tool_call_id !== call.id) return false;
-      expected.add(call.id);
+      if (result?.role !== "tool" || result.tool_call_id !== call.id) return false;
       index++;
+      callCount++;
     }
   }
-  const actual = messages.filter((message) => message.role === "tool");
-  const actualIds = new Set(actual.map((message) => message.tool_call_id));
-  return actual.length === expected.size && actualIds.size === expected.size &&
-    actual.every((message) => typeof message.tool_call_id === "string" && expected.has(message.tool_call_id));
+  // 每个 tool 结果都必须在上面被某次调用「领走」；数量对不上就说明有多余的结果消息。
+  return messages.filter((message) => message.role === "tool").length === callCount;
 }
 
 /**
