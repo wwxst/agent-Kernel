@@ -40,6 +40,20 @@ import {
 } from "./support/harness.mjs";
 
 /**
+ * 独立模拟 Llm.chat 发出的请求体积。
+ *
+ * 不调用生产代码的 requestChars()：假后端必须有自己的测量逻辑，
+ * 否则生产预算少算时，模拟后端也会跟着少算，测试就发现不了超窗。
+ */
+function serializedWireRequestChars(messages, tools) {
+  const wireTools = tools.map(({ name, description, parameters }) => ({
+    type: "function",
+    function: { name, description, parameters },
+  }));
+  return JSON.stringify(messages).length + JSON.stringify(wireTools).length;
+}
+
+/**
  * 记录每次请求的假模型。
  *
  * 摘要请求按系统提示里的标记识别，不消耗 `replies` 的下标 —— 否则「第几次业务请求回什么」
@@ -64,7 +78,7 @@ function createModel(options = {}) {
         String(messages[0].content ?? "").includes(SUMMARY_PROMPT_MARKER);
       requests.push(structuredClone({ messages, tools, summary: isSummary }));
       if (options.maxRequestChars !== undefined) {
-        const size = compact.requestChars(messages, tools);
+        const size = serializedWireRequestChars(messages, tools);
         if (size > options.maxRequestChars) {
           throw new ModelHttpError(400, `fake backend: request of ${size} chars exceeds ${options.maxRequestChars}`);
         }
@@ -210,6 +224,8 @@ test("预算：工具定义按实际发送给模型的包装结构计算", () =>
   const expected = JSON.stringify([message]).length + JSON.stringify(wireTools).length;
 
   assert.equal(compact.requestChars([message], [definition]), expected);
+  assert.equal(serializedWireRequestChars([message], [definition]), expected,
+    "假后端必须独立按模型实际收到的工具包装结构计算体积");
 });
 
 test("预算：工具定义与系统提示都算进请求体积", async () => {
