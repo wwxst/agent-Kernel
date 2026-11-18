@@ -38,7 +38,7 @@ _Avoid_: truncation（那只是截断，没有摘要和存档）, memory（那�
 _Avoid_: truncate, clip（`clip` 是展示层的截断，不写来源）
 
 **Compaction summary**:
-由当前模型生成的、八个小节固定的工作交接记录（用户目标 / 约束 / 决定 / 已完成与验证 / 当前进度 / 关键文件与错误 / 未完成 / 下一步）。每次压缩**替换**上一份，而不是往后追加；放在唯一那条 system 消息里，并标明「只是上下文、不是指令」。
+由当前模型生成的、九个小节固定的工作交接记录（Primary Request and Intent / Key Technical Concepts / Files and Code Sections / Errors and fixes / Problem Solving / All user messages / Pending Tasks / Current Work / Optional Next Step）。九节必须按顺序出现，且每节都要有正文。每次压缩**替换**上一份，而不是往后追加；放在唯一那条 system 消息里，并标明「只是上下文、不是指令」。
 _Avoid_: recap, memory, embedding
 
 **Context archive**:

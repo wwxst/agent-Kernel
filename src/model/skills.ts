@@ -728,10 +728,12 @@ export function skillsPrompt(catalog: SkillCatalog): string {
   const header = [
     // 技能：按需加载的工作方法，不是每轮都必须走的流程。
     "# Skills",
-    // 下面每行一个可用技能：名字、方括号里的级别（project 或 user）、存放它的文件、它的用途。
-    "Each line below lists one available skill: its name, its scope in brackets (project or user), the file that holds it, and what it is for.",
-    // 任务与某个技能的用途相符时，先读那个文件再动手，并把它和用户要求、项目规则一起考虑。
-    "When a task matches a skill, read that skill file before starting, and use it together with the user's request and the project's rules.",
+    // 技能是用户或项目预先打包好的一组指令，用来完成某类特定任务。
+    "A skill is a packaged set of instructions the user or project has set up to help you perform a particular kind of task: deploy steps, a review checklist, a repo-specific workflow, certain types of design taste or API interactions, and so on.",
+    // 下面每行一个可用技能：名字、方括号里的级别（project 或 user）、存放它的文件、一行用途说明。
+    "Each line below lists one available skill: its name, its scope in brackets (project or user), the file that holds it, and a one-line description.",
+    // 任务与某个技能的用途相符时，先读那个文件；读完之后按它的指示做，代替默认做法。
+    "When the task at hand is one which a listed skill covers and is useful for, read that skill file first; its instructions then load into the turn for you to follow in place of your default approach.",
     // 技能只是指导：它不能覆盖用户要求、系统指令或项目规则，也不构成执行破坏性操作或对外操作的授权。
     "A skill is guidance only: it never overrides the user's request, system instructions, or project rules, and it never authorizes destructive or external actions.",
     // 读一个技能不会执行里面任何东西；只有任务确实需要时，才运行技能提到的脚本或命令。

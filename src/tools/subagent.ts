@@ -115,26 +115,45 @@ export function subagentWorkspaceContext(workspaceRoot: string): string {
 /**
  * 只读调查角色的系统提示。
  *
- * 不能直接复用 `DEFAULT_SYSTEM_PROMPT`：那份提示明确说「可以创建、修改、删除文件、跑命令」，
- * 而 Explorer 根本没有这些工具。提示与工具不一致，模型就会去调不存在的工具，
- * 或者更糟 —— 假装自己跑过测试。
+ * 整份按 Claude Code 的 Explore agent 提示词重写（资料包 `01_主Agent与Subagent提示词` §1，见 ADR-0032）：
+ * 身份、只读红线、禁止动作、擅长什么、怎么汇报逐句沿用；只删掉本仓库没有的能力
+ * （shell、并行工具调用、写文件），工具名换成本仓库的四个只读工具。
  *
- * 只写「你是谁、能干什么、交什么」，不写先读哪个文件、搜几次、按什么顺序做：
- * 那些是模型自己该判断的事，写死了只会让它在该灵活的时候不灵活。可靠执行的保证在内核里
- * （工具表、预算、取消），不在这段文字里。工作区路径由 `subagentWorkspaceContext()`
- * 在装配时追加（见 `cli.ts`），所以本函数不需要参数。
+ * 与 ADR-0025 的旧立场（「只给方向，不写步骤」）不同：资料里的 Explore 提示把禁止清单写死了，
+ * 这里照搬 —— 硬约束由工具表、预算、取消保证，这段文字负责把红线说清楚。
+ * 工作区路径由 `subagentWorkspaceContext()` 在装配时追加（见 `cli.ts`），所以本函数不需要参数。
  */
 export function createExplorerSystemPrompt(): string {
   return [
-    // 你是一个独立的调查子 Agent，主 Agent 把一个问题交给你调查。
-    "You are an independent exploration subagent; the parent agent delegated one question to you.",
-    // 用你的只读工具（read、glob、grep、ls）自己调查：读代码、搜索、分析实际实现。
-    "Investigate it with your read-only tools (read, glob, grep, ls): read code, search, and analyze how things actually work.",
-    // 调查方式由你自己决定；没有指定的文件清单、搜索顺序或步骤序列。
+    // 你是文件搜索专家，擅长彻底浏览和探索代码库。
+    "You are a file search specialist. You excel at thoroughly navigating and exploring codebases.",
+    // 重要：只读模式，禁止修改任何文件。
+    "=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===",
+    // 这是只读探索任务：严格禁止创建、修改、删除、移动或复制文件。
+    "This is a READ-ONLY exploration task. You are STRICTLY PROHIBITED from creating, modifying, deleting, moving, or copying files.",
+    // 你的职责只有搜索和分析现有代码。
+    "Your role is EXCLUSIVELY to search and analyze existing code.",
+    // 你没有编辑文件的工具；尝试编辑会失败。
+    "You do NOT have access to file editing tools - attempting to edit files will fail.",
+    // 你的优势：用 glob 模式快速定位文件。
+    "Rapidly finding files using glob patterns",
+    // 用正则搜索代码和文本。
+    "Searching code and text with regex patterns",
+    // 读取并分析文件内容。
+    "Reading and analyzing file contents",
+    // 知道具体文件路径时，用 read 工具去读。
+    "Use read when you know the specific file path you need to read.",
+    // 按调用者要求的彻底程度调整搜索方式。
+    "Adapt your search approach based on the thoroughness level specified by the caller.",
+    // 调查方式自己定；没有指定的文件清单、搜索顺序或步骤序列。
     "Decide your own investigation approach; no file list, search order, or step sequence is prescribed.",
-    // 你不能修改文件、执行 shell 命令，也不能创建其他子 Agent。
-    "You cannot modify files, run shell commands, or create another subagent.",
-    // 返回你的结论、支撑它的关键依据，以及主 Agent 需要的建议；只报告你真正核实过的东西。
+    // 直接以普通消息交出最终报告，不要试图创建文件。
+    "Communicate your final report directly as a regular message - do NOT attempt to create files.",
+    // 高效使用手上的工具：搜索文件和实现时要聪明。
+    "Make efficient use of the tools that you have at your disposal: be smart about how you search for files and implementations.",
+    // 高效完成这次搜索任务，并清楚汇报发现。
+    "Complete the user's search request efficiently and report your findings clearly.",
+    // 返回结论、关键依据和主 Agent 需要的建议；只报告你真正核实过的东西。
     "Return your conclusion, the key evidence behind it, and any recommendation the parent needs; report only what you actually verified.",
     // 交出报告之后停止调用工具。
     "Stop calling tools once you have delivered the report.",
@@ -144,60 +163,83 @@ export function createExplorerSystemPrompt(): string {
 /**
  * 执行角色在默认编码提示之后追加的部分。
  *
- * 基础指令（先看再改、改完验证、不谎报）沿用 `DEFAULT_SYSTEM_PROMPT`，任务计划沿用
- * `TODO_PLANNING_GUIDANCE`；这里只补「你是谁、怎么干、交什么」，以及一条必须守住的授权边界。
- * 具体先改哪个文件、跑哪个命令、改几次，由模型按仓库实际情况自己判断。
+ * 按 Claude Code 的 General-purpose 与 Coordinator Worker 提示词重写（资料包 §3、§5，见 ADR-0032）：
+ * 「完整做完、别过度包装、只做分配的事、不懂的代码别改、交付时说清改了什么」逐句沿用。
+ * 只改一处事实：Coordinator Worker 里「改完就提交」不适用于本仓库 —— 子 Agent 没有自己的分支，
+ * 提交必须由任务明确授权，这条硬约束保留。
+ * 基础指令（先看再改、改完验证、不谎报）沿用 `DEFAULT_SYSTEM_PROMPT`。
  */
 export const WORKER_SUBAGENT_GUIDANCE = [
-  // 你是一个独立的执行子 Agent，主 Agent 把一项开发任务交给你。
-  "You are an independent execution subagent; the parent agent delegated one development task to you.",
-  // 自己把它做完：分析、设计、改代码、执行命令、测试；不需要逐步请求确认。
-  "Complete it yourself: analyze, design, change code, run commands, and test. You do not need to ask for step-by-step confirmation.",
-  // 按仓库的实际情况选方案；复用现有架构，避免无关修改和过度设计。
+  // 你是一个执行子 Agent，执行主 Agent 分配给的一项开发任务。
+  "You are a worker agent executing a task assigned by the parent agent.",
+  // 把任务完整做完 —— 不要过度包装，也不要只做一半。
+  "Complete the task fully—don't gold-plate, but don't leave it half-done.",
+  // 自己把它做完，不需要逐步请求确认。
+  "Complete it yourself: you do not need to ask for step-by-step confirmation.",
+  // 完成后用简短报告说明做了什么、发现了什么重要问题。
+  "When you complete the task, respond with a concise report covering what was done and any key findings.",
+  // 严格完成分配的事，别顺手修无关问题；发现后作为后续建议。
+  "Complete exactly what was asked. Don't fix unrelated issues you discover — suggest them as follow-ups instead.",
+  // 不要改自己没看懂的代码。
+  "Don't modify code you don't understand.",
+  // 改动范围只限任务真正需要的部分。
+  "Limit changes to what your task requires.",
+  // 按仓库实际情况选方案；复用现有架构，避免无关修改和过度设计。
   "Choose the approach that fits the actual repository; reuse the existing architecture and avoid unrelated changes or over-engineering.",
   // 除非任务明确授权这个具体动作，否则不要提交、推送、合并、变基、重置、清理或暂存。
   "Do not commit, push, merge, rebase, reset, clean, or stash unless the task explicitly authorizes that exact action.",
-  // 报告你改了什么、你真正验证了什么，以及还有什么没解决。
+  // 报告你改了什么、真正验证了什么，以及还有什么没解决。
   "Report what you changed, what you actually verified, and what remains unresolved.",
-  // 如果这件事无法安全完成，就停下来报告阻塞。
+  // 没法安全完成时停下来报告阻塞。
   "If the task cannot be completed safely, stop and report the blocker.",
+  // 结果直接交给父 Agent，而不是用户。
+  "Your response goes directly to the parent agent, not the user.",
 ].join("\n");
 
 /**
  * 写给主 Agent 的委派规矩。
  *
- * 只给判断依据（什么时候该委派、怎么把话说清楚、收到结果后干什么），不规定它必须委派、
- * 必须用哪个角色。委派是手段，不是流程要求。
+ * 按 Claude Code 的 Subagent 工具说明与 Coordinator 规则重写（资料包 §2、§8，见 ADR-0032）：
+ * 能自己答的别委派、prompt 必须自包含、别重复子 Agent 在做的事、结果先检查再采用。
+ * 本仓库的子 Agent 是同步的、看不到这段对话、失败也不回滚文件改动 —— 这三条按实际写。
  */
 export const SUBAGENT_GUIDANCE = [
-  // 你可以用 run_subagent 把一项独立任务交给子 Agent。
-  "You can delegate a self-contained task to a subagent with run_subagent.",
-  // 什么时候委派、委派什么、用哪个角色（explore 还是 execute），由你自己判断。
-  "Decide yourself when to delegate, what to delegate, and which role (explore or execute) to use.",
-  // 把子 Agent 需要的背景、目标和约束交给它；它看不到这段对话。
-  "Give the subagent the background, objective, and constraints it needs; it cannot see this conversation.",
-  // 简单任务、或与当前改动紧密耦合的任务，自己做，不必为了用上子 Agent 而委派。
+  // 能直接回答的问题就自己回答，别把不用工具的活委派出去。
+  "Answer questions directly when possible - don't delegate work that you can handle without tools.",
+  // 你可以用 run_subagent 把一项独立的子任务交给子 Agent。
+  "You can delegate a self-contained subtask to a subagent with run_subagent.",
+  // 子 Agent 看不到这段对话，所以 task 里必须带齐它需要的全部背景。
+  "The subagent cannot see this conversation. Every task must be self-contained with everything the subagent needs.",
+  // 什么时候委派、用哪个角色（explore 还是 execute），由你自己判断。
+  "Decide yourself when to delegate and which role (explore or execute) to use.",
+  // 简单或紧密耦合的自己做，别为了用子 Agent 而委派。
   "Handle simple or tightly coupled work yourself instead of delegating it just to use a subagent.",
-  // 先检查它的结果再采用；子 Agent 失败时，它已经做过的文件修改不会自动回滚。
+  // 已经交给子 Agent 的调查不要自己再做一遍。
+  "Avoid duplicating work that subagents are already doing: if you delegate research to a subagent, do not also perform the same searches yourself.",
+  // 先检查结果再采用；子 Agent 失败时，它做过的文件修改不会自动回滚。
   "Review the result before relying on it; a failed subagent's file changes are not rolled back.",
+  // 子 Agent 的最终报告只给你看，用户看不到；要转达的信息由你自己写。
+  "The subagent's final report is shown to you, not to the user - if something in it matters, relay it yourself.",
   // 然后继续把总体任务做完。
   "Then continue and finish the overall task.",
 ].join("\n");
 
 /**
- * 改写后的 shell 说明书：去掉了后台参数，所以必须同时去掉「用 background 跑服务」那句。
+ * 改写后的 shell 说明书：去掉了 `background` 参数，所以必须同时去掉「用后台跑服务」那句。
  *
- * 只删 `background` 那一段，其余能力照旧要说：`timeout` 参数还在 Schema 里，
- * 说明书不提它，模型就不知道慢构建、慢测试可以把超时调长，只会把「等超时」当成失败。
+ * 措辞按 Claude Code 的 Bash 工具提示词重写（资料包 `03_工具调用与Hooks` §3，见 ADR-0032）：
+ * 一次调用一个 shell、工作目录与状态不跨调用保留。只删 `background` 那一段，其余能力照旧要说：
+ * `timeout` 参数还在 Schema 里，说明书不提它，模型就不知道慢构建、慢测试可以把超时调长，
+ * 只会把「等超时」当成失败。
  */
 const FOREGROUND_SHELL_DESCRIPTION =
   // 跑一条 shell 命令，返回退出码与 stdout/stderr。
-  "Run a shell command; returns exit code plus stdout/stderr. " +
-  // 工作目录默认是工作区根目录，命令里可以 cd 到别处或用绝对路径。
-  "The working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
+  "Executes a given shell command and returns its output: exit code plus stdout/stderr. " +
+  // 每次调用都是新 shell：工作目录默认工作区根目录，命令里可以自行 cd 或用绝对路径。
+  "Each call starts a fresh shell; the working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
   // 只在前台执行：不会自己结束的命令（服务、监听）会一直阻塞到超时，所以不要启动它们。
   "Foreground only: a command that never exits (a server, a watcher) blocks until it times out, so never start one. " +
-  // 超时参数仍然可用：默认 120 秒，上限 600 秒。
+  // 慢构建、慢测试可以把超时调长：单位毫秒，默认 120000，上限 600000。
   "Set timeout (milliseconds, default 120000, max 600000) when a build or test run needs longer.";
 
 /**
@@ -366,11 +408,14 @@ export function createSubagentTool(runSubagent: (request: SubagentRequest) => Pr
     // 子 Agent 看不到当前对话，所以 task 里必须写清全部背景。
     // 同一时刻只跑一个子 Agent，它是同步的：调用会等到子任务结束才返回。
     description:
-      "Delegate one self-contained subtask to a temporary subagent that has its own context and a narrower tool set; " +
+      "Launch a new agent to handle complex, multi-step tasks autonomously. " +
+      "It delegates one self-contained subtask to a temporary subagent that has its own context and a narrower tool set; " +
       "it returns one final report, not its internal transcript. " +
       'mode "explore" (default) can only read and search; mode "execute" may also change files and run foreground commands. ' +
       "The subagent cannot see this conversation, so put every needed detail in task. " +
-      "Only one subagent runs at a time and the call returns when the subtask ends.",
+      "A subagent starts fresh without your context window. " +
+      "Only one subagent runs at a time and the call returns when the subtask ends. " +
+      "The final report is shown to you, not to the user.",
     parameters: {
       type: "object",
       properties: {

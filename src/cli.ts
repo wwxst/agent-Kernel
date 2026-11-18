@@ -282,17 +282,24 @@ let activePresenter: RunPresenter | undefined;
  * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（一次性任务）；
  * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
  */
-/** 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。 */
+/**
+ * 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。
+ *
+ * 措辞沿用 Claude Code 后台任务提示词的两句（「动手前一句说明做法；每完成一批说清发生了什么、
+ * 下一步做什么」，见 ADR-0032），再加上本仓库原有的「别逐个工具播报、不暴露推理」。
+ */
 const TUI_PROGRESS_GUIDANCE = [
-  // 在重要的一组工具调用之前，向用户简短说明当前准备做什么。
-  "In this interactive TUI, briefly tell the user what you are doing before a meaningful group of tool calls.",
-  // 有实际结果以后，简短说明观察到的结果，以及已经明确的下一步。
-  "After a meaningful result, briefly explain the observed outcome and your next step if known.",
+  // 动手前用一句话说明你打算怎么做。
+  "One line on your approach before acting.",
+  // 每完成一批工作，说明发生了什么、下一步做什么。
+  "After each chunk: what happened, what's next.",
   // 用用户的语言，每次只说一句；合并相关操作，不逐个工具播报。
   "Keep each visible progress update to one short sentence in the user's language; group related operations instead of narrating every tool.",
+  // 工具已经打印过结果，也要用自己的话再说清结果。
+  "State results in your own text even if a tool already printed them.",
   // 只说有证据的事实和计划；不伪造结果，也不暴露模型内部推理。
   "Only describe verified facts and plans, never invent results or reveal private chain-of-thought.",
-  // 正式回答与临时进度说明分离。
+  // 正式回答与临时进度说明分开。
   "Keep the final response separate from these progress updates.",
 ].join(" ");
 

@@ -25,7 +25,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { Agent } from "../src/core/agent.ts";
-// 整个模块导入：这条用例要验证的正是「摘要长度下限与八节结构一致」。写成命名导入的话，
+// 整个模块导入：这条用例要验证的正是「摘要长度下限与九节结构一致」。写成命名导入的话，
 // 旧版本缺这个导出时整个文件会加载失败，反而看不出是哪条断言不成立。
 import * as compact from "../src/core/context-compact.ts";
 import { ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
@@ -42,7 +42,7 @@ import {
 /**
  * 压缩用例只关心压缩机制，不关心默认系统提示写了什么。
  *
- * 长度刻意对齐默认提示（1086 字符）：这些用例的预算、触发线、
+ * 长度刻意对齐 ADR-0032 之前的默认提示（1086 字符）：这些用例的预算、触发线、
  * 「先裁哪一刀」都是按那个体积调出来的，换成任意短提示会让压力消失，断言就不再测原来的东西。
  * 显式传了 `systemPrompt` 的用例仍然用自己那份：展开顺序保证 options 覆盖默认值。
  */
@@ -119,24 +119,26 @@ function createModel(options = {}) {
   };
 }
 
-/** 形状合格、带唯一标记的摘要：八节齐全，够长，能过检查。 */
+/** 形状合格、带唯一标记的摘要：九节齐全，够长，能过检查。 */
 function summaryWith(tag) {
   return [
-    `## User goal`,
+    `## Primary Request and Intent`,
     `Goal recorded in ${tag}.`,
-    `## Requirements and constraints`,
-    "Keep the existing behaviour.",
-    `## Decisions and reasons`,
+    `## Key Technical Concepts`,
+    "None yet.",
+    `## Files and Code Sections`,
+    `src/core/agent.ts`,
+    `## Errors and fixes`,
+    `${tag} fixed nothing yet.`,
+    `## Problem Solving`,
     `${tag} decided to keep the change small.`,
-    `## Completed work and verification`,
-    "Earlier steps were executed.",
-    `## Current work and progress`,
+    `## All user messages`,
+    `Carry on with ${tag}.`,
+    `## Pending Tasks`,
+    "Finish the current task.",
+    `## Current Work`,
     `Progress noted by ${tag}.`,
-    `## Key files, commands, errors, findings`,
-    "src/core/agent.ts",
-    `## Open questions and todos`,
-    "None.",
-    `## Next step`,
+    `## Optional Next Step`,
     `Continue after ${tag}.`,
   ].join("\n");
 }
@@ -147,55 +149,37 @@ function callToolWithNotes(id, name, args, notes) {
 }
 
 /**
- * 一份「刚好装得下八节结构」的摘要：每节一行标题 + 一句最短正文。
+ * 一份「刚好装得下九节结构」的摘要：每节一行标题 + 一句最短正文。
  *
- * 用来验证「摘要长度下限必须容得下合法八节」—— 比这更短就不可能八节齐全。
+ * 用来验证「摘要长度下限必须容得下合法九节」—— 比这更短就不可能九节齐全。
  * 正文刻意留 24 字符：短到仍是合法结构，长到前 120 字符里塞不下四节。
  */
-function compactEightSections() {
+function compactNineSections() {
   return [
-    "User goal",
-    "Requirements and constraints",
-    "Decisions and reasons",
-    "Completed work and verification",
-    "Current work and progress",
-    "Key files, commands, errors, findings",
-    "Open questions and todos",
-    "Next step",
+    "Primary Request and Intent",
+    "Key Technical Concepts",
+    "Files and Code Sections",
+    "Errors and fixes",
+    "Problem Solving",
+    "All user messages",
+    "Pending Tasks",
+    "Current Work",
+    "Optional Next Step",
   ].map((section) => `## ${section}\n` + "b".repeat(24)).join("\n");
 }
 
 /**
- * 照提示词写摘要的假模型：八节齐全，但一旦超出「under N characters」就截断
+ * 照提示词写摘要的假模型：九节齐全，但一旦超出「under N characters」就截断
  * （提示词明说更长的摘要会被丢弃）。
  *
- * 这就是真实模型的处境：上限小于八节结构本身时，它无论怎么写都不合格 ——
+ * 这就是真实模型的处境：上限小于九节结构本身时，它无论怎么写都不合格 ——
  * 于是「摘要请求发出去了、回复也回来了，但永远提交不了」。
  */
 function summaryWithinStatedLimit(_count, messages) {
   const stated = /under (\d+) characters/.exec(String(messages[0].content ?? ""));
   const limit = stated === null ? Number.POSITIVE_INFINITY : Number(stated[1]);
-  const full = compactEightSections();
+  const full = compactNineSections();
   return full.length <= limit ? full : full.slice(0, limit);
-}
-
-/**
- * 一份「格式合格但特别长」的摘要：八节齐全、长度合法，但比被替换的内容还长。
- * 用来验证「格式过了 ≠ 压缩成功」——候选没缩小必须算一次失败。
- */
-function longValidSummary(total) {
-  const sections = [
-    "User goal",
-    "Requirements and constraints",
-    "Decisions and reasons",
-    "Completed work and verification",
-    "Current work and progress",
-    "Key files, commands, errors, findings",
-    "Open questions and todos",
-    "Next step",
-  ];
-  const per = Math.ceil(total / sections.length);
-  return sections.map((section) => `## ${section}\n` + "p".repeat(per)).join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -660,6 +644,23 @@ test("历史摘要：摘要为空或不合格时不提交替换，原上下文�
   }
 });
 
+test("历史摘要：缺少后四节或超过本次限长时，原始回答仍在业务请求里", async () => {
+  const valid = compactNineSections();
+  for (const summary of [valid.split("## Current Work")[0], valid + "x".repeat(80), valid.replace("## Optional Next Step", "## Primary Request and Intent"), valid.slice(0, valid.lastIndexOf("\n"))]) {
+    const original = "old answer " + "x".repeat(2_800);
+    const chat = createModel({ replies: [finalReply(original), finalReply("done")], summary });
+    const agent = makeAgent({
+      llm: chat, tools: makeRegistry([]), systemPrompt: "x",
+      contextWindowTokens: 1_050, outputTokenReserve: 0,
+    });
+    await agent.run("first");
+    await agent.run("second");
+    assert.equal(chat.summaryRequests.length, 1);
+    assert.equal(agent.compactionStats.compactions, 0);
+    assert.ok(chat.businessRequests.at(-1).messages.some(message => message.content === original));
+  }
+});
+
 test("历史摘要：失败配额用完后不再为同一批历史重复写存档", async () => {
   await withWorkspace(async root => {
     const replies = Array.from({ length: 9 }, (_, step) =>
@@ -889,19 +890,19 @@ test("历史摘要：转义密集的历史按序列化后的真实体积裁剪�
   });
 });
 
-test("摘要长度下限：容得下合法八节结构，又不是随手写的大数字", () => {
-  const minimal = compactEightSections();
-  assert.equal(compact.validateSummary(minimal), undefined, "这份八节摘要本身必须合格，否则下限无从谈起");
+test("摘要长度下限：容得下合法九节结构，又不是随手写的大数字", () => {
+  const minimal = compactNineSections();
+  assert.equal(compact.validateSummary(minimal), undefined, "这份九节摘要本身必须合格，否则下限无从谈起");
   assert.ok(minimal.length <= compact.MIN_SUMMARY_STRUCTURE_CHARS,
-    `下限必须装得下合法八节结构（${minimal.length} > ${compact.MIN_SUMMARY_STRUCTURE_CHARS}）`);
+    `下限必须装得下合法九节结构（${minimal.length} > ${compact.MIN_SUMMARY_STRUCTURE_CHARS}）`);
   assert.ok(compact.MIN_SUMMARY_STRUCTURE_CHARS - minimal.length <= 64,
     `下限要跟着结构走，不能比它大出一截（${compact.MIN_SUMMARY_STRUCTURE_CHARS} vs ${minimal.length}）`);
   assert.ok(compact.MIN_SUMMARY_STRUCTURE_CHARS >= compact.MIN_SUMMARY_CHARS, "结构下限不能低于摘要的合格下限");
 });
 
-test("历史摘要：输出预留为 0 时仍给合法八节摘要留够长度，压缩能提交", async () => {
+test("历史摘要：输出预留为 0 时仍给合法九节摘要留够长度，压缩能提交", async () => {
   // 输出预留为 0 是最容易写错的一档：摘要正文上限若退回 MIN_SUMMARY_CHARS，
-  // 提示词就变成「必须写满八节，但不超过 120 字符」—— 模型怎么写都不合格。
+  // 提示词就变成「必须写满九节，但不超过 120 字符」—— 模型怎么写都不合格。
   const chat = createModel({
     replies: [finalReply("a".repeat(2_800)), finalReply("done")],
     summary: summaryWithinStatedLimit,
@@ -922,14 +923,15 @@ test("历史摘要：输出预留为 0 时仍给合法八节摘要留够长度�
   assert.equal(agent.compactionStats.compactions, 1);
   const system = chat.businessRequests.at(-1).messages[0].content;
   for (const section of [
-    "User goal",
-    "Requirements and constraints",
-    "Decisions and reasons",
-    "Completed work and verification",
-    "Current work and progress",
-    "Key files, commands, errors, findings",
-    "Open questions and todos",
-    "Next step",
+    "Primary Request and Intent",
+    "Key Technical Concepts",
+    "Files and Code Sections",
+    "Errors and fixes",
+    "Problem Solving",
+    "All user messages",
+    "Pending Tasks",
+    "Current Work",
+    "Optional Next Step",
   ]) {
     assert.ok(system.includes(`## ${section}`), `提交的摘要必须保留小节「${section}」`);
   }
@@ -1092,9 +1094,11 @@ test("历史摘要：格式合格但没缩小的摘要也只给两次机会，�
     replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(2_500)));
   }
   replies.push(finalReply("done"));
-  // 摘要八节齐全、长度也合法，但比被折叠的内容还长 —— 候选必然「没有缩小」。
-  const oversized = longValidSummary(9_000);
-  const chat = createModel({ replies, summary: oversized });
+  // 原始长度合规，但控制字符序列化后占六个字符，仍会让候选变大。
+  const chat = createModel({ replies, summary: (_round, messages) => {
+    const limit = Number(/under (\d+) characters/.exec(messages[0].content)[1]);
+    return compactNineSections().padEnd(limit, "\u0001");
+  } });
   const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   await agent.run("run all six steps");

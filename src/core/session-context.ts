@@ -534,8 +534,8 @@ export class SessionContext {
     const previousSummary = this.compactedSummary.trim();
     // 摘要请求也是一次真实请求，必须按同一个窗口预算来装。三件事要同时成立：
     //   1. 请求本身（系统提示 + 旧摘要 + 待压缩历史）装得进可用窗口；
-    //   2. 摘要正文有地方写 —— 输出预留为 0 时也要给一份合法八节摘要留够长度，
-    //      否则提示词里「写满八节」和「不超过 N 字符」互相矛盾，写出来必然不合格；
+    //   2. 摘要正文有地方写 —— 输出预留为 0 时也要给一份合法九节摘要留够长度，
+    //      否则提示词里「写满九节」和「不超过 N 字符」互相矛盾，写出来必然不合格；
     //   3. 请求体积按**序列化之后**的真实字符量算，不按原始字符数估（见 fitSummaryInput）。
     // 优先级是「结构下限 > 输出预留 > 被替换内容的一半」：前两条是能不能写出来，最后一条是值不值。
     const reservedOutputChars = charsForTokens(this.outputTokenReserve, this.calibration);
@@ -547,7 +547,7 @@ export class SessionContext {
     if (this.contextWindowTokens === undefined) {
       history = buildSummaryInput(removed, archivePath);
     } else {
-      // 输出预留容不下八节时，从输入侧给最短合法摘要腾出差额。
+      // 输出预留容不下九节时，从输入侧给最短合法摘要腾出差额。
       const outputShortfall = Math.max(0, outputChars - reservedOutputChars);
       const requestLimit = charsForTokens(this.contextBudget().limit, this.calibration) - outputShortfall;
       const fit = fitSummaryInput(
@@ -590,7 +590,7 @@ export class SessionContext {
     // 这一句在 try 之外，所以它抛出的取消不会被记成一次「请求失败」。
     this.host.checkCancelled();
     const text = (response.content ?? "").trim();
-    const rejection = validateSummary(text);
+    const rejection = validateSummary(text, request.outputChars);
     if (rejection === undefined) {
       // 这里只判断「摘要本身合不合格」。成功计数要等候选真正提交之后才清
       // （见 compactHistory）：格式合格但没缩小的摘要，仍是一次失败的尝试。

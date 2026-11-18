@@ -32,6 +32,7 @@ ADR（Architecture Decision Record）只记录那些以后很可能会被问到�
 | [0029](./0029-context-compaction-is-bounded-and-recoverable.md) | 上下文压缩有界、可追溯，失败不提交 |
 | [0030](./0030-stop-repeated-identical-tool-batches.md) | 连续三批相同的工具调用与结果视为无进展，停止 |
 | [0031](./0031-offer-only-executable-tools.md) | 每个 Step 只提供可执行的工具，收尾请求省略工具字段 |
+| [0032](./0032-prompts-are-ported-from-claude-code.md) | 提示词逐句复用 Claude Code 资料，只改身份、工具名与不存在的能力 |
 
 目录里还有其他当前有效 ADR；上表只列最影响整体架构的决定。
 

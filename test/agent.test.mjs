@@ -684,6 +684,8 @@ test("会话：最新批次完整交给模型，被读过的旧结果才压缩�
   const agent = new Agent({
     llm: chat,
     tools: makeRegistry([largeTool]),
+    // 预算按「旧默认提示」的体积调：换个短提示，这条用例测的才是压缩策略本身。
+    systemPrompt: "t".repeat(1_086),
     maxTranscriptChars: 9_000,
   });
 
@@ -962,8 +964,13 @@ test("token 统计：请求失败且没有 usage 时记为未知，不丢账", a
   assert.equal(agent.stats.usage.totalTokens, 0);
 });
 
-test("系统提示词：关键歧义可以问，禁止编造验证结果，shell 一次一条", () => {
-  assert.match(DEFAULT_SYSTEM_PROMPT, /Ask when an ambiguity affects correctness/);
+test("系统提示词：分节沿用 Claude 的口径，关键歧义可以问，禁止编造验证结果，shell 一次一条", () => {
+  // 分节结构：按资料里的 # Doing tasks / # Executing actions with care / # Using your tools 组织。
+  assert.match(DEFAULT_SYSTEM_PROMPT, /# Doing tasks/);
+  assert.match(DEFAULT_SYSTEM_PROMPT, /# Executing actions with care/);
+  assert.match(DEFAULT_SYSTEM_PROMPT, /# Using your tools/);
+  // 歧义只在「不同理解会导致实质不同的工作」时才停下来问。
+  assert.match(DEFAULT_SYSTEM_PROMPT, /check in only when different readings would lead to materially different work/);
   assert.match(DEFAULT_SYSTEM_PROMPT, /Never claim to have run a command or test that you did not run/);
   assert.match(DEFAULT_SYSTEM_PROMPT, /Run one shell command per call with simple syntax/);
   assert.equal(DEFAULT_SYSTEM_PROMPT.includes("Do not ask questions"), false);
