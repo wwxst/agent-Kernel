@@ -11,8 +11,8 @@
  * 不负责存档（归 `core/context-archive.ts`）、不负责决定压缩时机。
  *
  * 内容目录：
- *   - `TokenCalibration` / `estimatePromptTokens()` / `contextSize()`：把字符数换算成 token，
- *     并优先用上一次请求的真实用量校准。
+ *   - `TokenCalibration` / `estimatePromptTokens()` / `charsForTokens()` / `contextSize()`：把字符数换算成 token，
+ *     并优先用上一次请求的真实用量校准；反向换算用于给辅助请求分配输入空间。
  *   - `requestChars()`：整份请求（工具定义 + 每条消息）的字符量，不是只数正文。
  *   - `compactText()`：头尾保留 + 明确省略标记；可以带原文来源。
  *   - `hasCompleteToolPairs()`：一段消息里的 tool_calls 是否逐条配齐、顺序正确。
@@ -58,6 +58,19 @@ export const MIN_SUMMARY_CHARS = 120;
 export const SUMMARY_INPUT_MAX_CHARS = 60_000;
 
 /**
+ * 摘要输入至少要留这么多字符，才值得请模型写一份八小节交接记录。
+ * 比这还小的窗口连一段可读的目标/约束都放不下，摘要只会是猜的。
+ */
+export const MIN_SUMMARY_INPUT_CHARS = 400;
+
+/**
+ * 摘要请求的安全余量：`requestChars()` 用 `JSON.stringify` 量整份请求，
+ * 历史里的换行和引号会被转义，比正文多占一点。预留一段，避免「按正文算够、
+ * 按序列化后超窗」。
+ */
+export const SUMMARY_REQUEST_SAFETY_CHARS = 256;
+
+/**
  * 值得为它请模型写摘要的最小历史量。
  *
  * 一份合格摘要本身就要一两千字符，拿它去替换几百字符的旧步骤是净亏：请求没变小，
@@ -98,6 +111,19 @@ export function estimatePromptTokens(chars: number, calibration?: TokenCalibrati
  */
 export function contextSize(chars: number, usesTokens: boolean, calibration?: TokenCalibration): number {
   return usesTokens ? estimatePromptTokens(chars, calibration) : chars;
+}
+
+/**
+ * `estimatePromptTokens()` 的反向换算：给定 token 预算，最多能用多少字符。
+ *
+ * 向下取整，保证换算回来不会超过原预算；没有校准时用同一个保守密度。
+ * 只用于给「摘要请求」这类辅助调用分配输入空间，不改变 `estimatePromptTokens()` 的口径。
+ */
+export function charsForTokens(tokens: number, calibration?: TokenCalibration): number {
+  if (calibration !== undefined && calibration.chars > 0 && calibration.tokens > 0) {
+    return Math.floor((calibration.chars * tokens) / calibration.tokens);
+  }
+  return Math.floor(tokens * DEFAULT_CHARS_PER_TOKEN);
 }
 
 /**
@@ -359,8 +385,13 @@ export function buildSummaryMessages(previousSummary: string, history: string, l
  *
  * 每条消息按角色给不同的裁剪上限：用户原话留得多（目标与约束都在里面），工具结果留得少
  * （细节能从文件重读，完整原文在存档里）。整段再加一个总上限，避免摘要请求自己超窗口。
+ * `maxChars` 由调用方按当前窗口算出来；固定上限只是没有窗口时的兜底。
  */
-export function buildSummaryInput(removed: readonly Message[], archivePath?: string): string {
+export function buildSummaryInput(
+  removed: readonly Message[],
+  archivePath?: string,
+  maxChars: number = SUMMARY_INPUT_MAX_CHARS,
+): string {
   const lines: string[] = [];
   for (const message of removed) {
     if (message.role === "user") {
@@ -379,7 +410,7 @@ export function buildSummaryInput(removed: readonly Message[], archivePath?: str
       }
     }
   }
-  return compactText(lines.join("\n"), SUMMARY_INPUT_MAX_CHARS, archivePath);
+  return compactText(lines.join("\n"), Math.min(SUMMARY_INPUT_MAX_CHARS, Math.max(0, Math.floor(maxChars))), archivePath);
 }
 
 /**

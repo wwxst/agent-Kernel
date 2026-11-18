@@ -45,12 +45,17 @@ import { ContextArchive } from "./context-archive.ts";
 import type { ContextArchiveRef } from "./context-archive.ts";
 import {
   MAX_SUMMARY_CHARS,
+  MIN_SUMMARY_CHARS,
+  MIN_SUMMARY_INPUT_CHARS,
   MIN_SUMMARY_WORTH_CHARS,
+  SUMMARY_REQUEST_SAFETY_CHARS,
+  SUMMARY_INPUT_MAX_CHARS,
   TOOL_RESULT_EMERGENCY_CHARS,
   TOOL_RESULT_SNIP_CHARS,
   TOOL_RESULT_SNIP_MARGIN,
   buildSummaryInput,
   buildSummaryMessages,
+  charsForTokens,
   collectRemovableUnits,
   compactText,
   contextSize,
@@ -782,17 +787,46 @@ export class Agent {
     allowFold: boolean,
     summaryBudget: number,
   ): Promise<string | undefined> {
-    const history = buildSummaryInput(removed, archivePath);
+    const previousSummary = this.compactedSummary.trim();
+    // 摘要请求也是一次真实请求，必须按同一个窗口预算来装：
+    //   可用输入 = 窗口 − 输出预留；其中还要先放下系统提示、旧摘要和序列化余量，
+    //   剩下的才轮到待压缩历史。没有窗口时沿用原来的固定字符上限。
+    // 输出预留为 0 时仍留一份合法摘要的最短长度，否则「摘要」从一开始就不可能合格。
+    const outputChars = Math.min(
+      summaryBudget,
+      Math.max(MIN_SUMMARY_CHARS, charsForTokens(this.outputTokenReserve, this.calibration)),
+    );
+    let inputLimit = SUMMARY_INPUT_MAX_CHARS;
+    if (this.contextWindowTokens !== undefined) {
+      const usableChars = charsForTokens(this.contextBudget().limit, this.calibration);
+      const overhead = requestChars(buildSummaryMessages(previousSummary, "", outputChars), []);
+      inputLimit = Math.min(inputLimit, usableChars - overhead - SUMMARY_REQUEST_SAFETY_CHARS);
+    }
+    if (inputLimit < MIN_SUMMARY_INPUT_CHARS) {
+      this.lastCompactionError =
+        `context window is too small for a safe summary (${Math.max(0, inputLimit)} chars left for history, ` +
+        `minimum ${MIN_SUMMARY_INPUT_CHARS})`;
+    }
     const canAskModel = this.summaryFailuresThisRun < MAX_SUMMARY_FAILURES_PER_RUN && !this.budgetExhausted();
-    if (canAskModel) {
+    if (canAskModel && inputLimit >= MIN_SUMMARY_INPUT_CHARS) {
+      const history = buildSummaryInput(removed, archivePath, inputLimit);
+      // 摘要请求直接打给 llm.chat()，不经过 prepareRequest()：辅助请求绝不递归触发压缩。
+      const summaryMessages = buildSummaryMessages(previousSummary, history, outputChars);
+      if (this.contextWindowTokens !== undefined) {
+        const size = this.sizeFromChars(requestChars(summaryMessages, []));
+        const limit = this.contextBudget().limit;
+        if (size > limit) {
+          this.lastCompactionError = `summary request would exceed the context window ` +
+            `(${size} > ${limit} tokens, estimated)`;
+          return allowFold ? this.foldSummary(removed) : undefined;
+        }
+      }
       this.stopIfCancelled();
       this.runSummaryRequests++;
       this.sessionSummaryRequests++;
       let response: ChatResponse;
       try {
-        response = await this.llm.chat(
-          buildSummaryMessages(this.compactedSummary, history, summaryBudget), [], {},
-        );
+        response = await this.llm.chat(summaryMessages, [], {});
       } catch (error) {
         this.recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
         this.summaryFailuresThisRun++;

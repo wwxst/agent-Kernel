@@ -41,6 +41,8 @@ import {
  * 摘要请求按系统提示里的标记识别，不消耗 `replies` 的下标 —— 否则「第几次业务请求回什么」
  * 会被摘要请求挤掉，测试就变成在数请求，而不是在验行为。
  * `failures[i]` 让第 i 次业务请求直接抛错，用来模拟上游错误。
+ * `maxRequestChars` 让假后端按字符数拒绝超窗请求（3 字符/token 的确定性口径），
+ * 用来复现「摘要请求自己先被窗口拒绝」。
  */
 function createModel(options = {}) {
   const requests = [];
@@ -56,6 +58,12 @@ function createModel(options = {}) {
       const isSummary = messages.length > 0 && messages[0].role === "system" &&
         String(messages[0].content ?? "").includes(SUMMARY_PROMPT_MARKER);
       requests.push(structuredClone({ messages, tools, summary: isSummary }));
+      if (options.maxRequestChars !== undefined) {
+        const size = JSON.stringify(messages).length + JSON.stringify(tools).length;
+        if (size > options.maxRequestChars) {
+          throw new ModelHttpError(400, `fake backend: request of ${size} chars exceeds ${options.maxRequestChars}`);
+        }
+      }
       if (isSummary) {
         summaryRequests.push(structuredClone({ messages, tools }));
         const content = typeof options.summary === "function"
@@ -658,6 +666,71 @@ test("历史摘要：摘要长度上限跟着被替换内容走，不是写死�
   assert.ok(requested !== null, "提示词里必须给出这次的长度上限");
   const limit = Number(requested[1]);
   assert.ok(limit > 0 && limit < 12_000, `上限应该由被替换内容算出（实际 ${limit}）`);
+});
+
+test("历史摘要：小窗口下摘要请求按可用窗口裁剪，成功后主请求继续", async () => {
+  await withWorkspace(async (root) => {
+    // 假后端按 3 字符/token 拒绝超窗请求，复现 Codex 报的「摘要自己先被拒」。
+    const windowTokens = 1_200;
+    const maxRequestChars = windowTokens * 3;
+    const replies = [];
+    for (let step = 1; step <= 2; step++) {
+      replies.push(callToolWithNotes(
+        `s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(1_400),
+      ));
+    }
+    // 第一轮攒下可折的旧轮次；摘要请求在第二轮开始时才发生。
+    replies.push(finalReply("first run done"));
+    replies.push(finalReply("done"));
+    const chat = createModel({ replies, summary: summaryWith("small-window"), maxRequestChars });
+    const agent = new Agent({
+      llm: chat,
+      tools: makeRegistry([echoTool()]),
+      systemPrompt: () => "x",
+      contextWindowTokens: windowTokens,
+      outputTokenReserve: 0,
+      contextArchiveDir: path.join(root, "archive"),
+    });
+
+    await agent.run("first task");
+    const reply = await agent.run("second task");
+
+    assert.equal(reply.content, "done", "摘要成功后主请求必须能继续");
+    assert.equal(agent.compactionStats.lastError, "");
+    assert.ok(chat.summaryRequests.length >= 1, "这段历史需要摘要才装得进小窗口");
+    for (const request of chat.summaryRequests) {
+      const size = JSON.stringify(request.messages).length + JSON.stringify(request.tools).length;
+      assert.ok(size <= maxRequestChars, `摘要请求自身不能超窗（${size} > ${maxRequestChars}）`);
+      assert.equal(request.tools.length, 0, "摘要请求不带工具，也不递归触发压缩");
+    }
+    assert.match(agent.transcript[0].content, /Archived originals removed by context compaction/);
+    const refs = [...agent.transcript[0].content.matchAll(/^- (.+?) \(\d+ chars\)$/gm)].map((match) => match[1]);
+    assert.ok(refs.length >= 1, "摘要输入可以缩短，但原文必须仍可定位");
+    const archived = await readFile(refs[0], "utf8");
+    assert.match(archived, /step 1/, "存档里是完整原文，不是给摘要看的预览");
+  });
+});
+
+test("历史摘要：窗口连摘要提示都装不下时明确失败，不发超窗摘要请求", async () => {
+  const chat = createModel({
+    replies: [finalReply("a".repeat(3_000)), finalReply("done")],
+    summary: summaryWith("never-sent"),
+  });
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    systemPrompt: () => "x",
+    contextWindowTokens: 1_500,
+    outputTokenReserve: 1_200,
+  });
+
+  await agent.run("first task");
+  await assert.rejects(() => agent.run("second task"), /context window is too small for this request/);
+
+  assert.match(agent.compactionStats.lastError, /too small for a safe summary/);
+  assert.equal(chat.summaryRequests.length, 0, "明知摘要请求会超窗就不能发出去");
+  assert.equal(chat.businessRequests.length, 1, "第一轮那次小请求之后立刻停手，不反复试");
+  assert.equal(agent.sessionStats.requests, 1, "不能为了压缩陷入请求循环");
 });
 
 test("历史摘要：压缩后 system 里留下可定位、可恢复的原文引用", async () => {
