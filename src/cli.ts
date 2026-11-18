@@ -69,28 +69,15 @@ function firstNonEmpty(...values: Array<string | undefined>): string {
   return "";
 }
 
-/** 读一个「正整数」环境变量；写错就抛错，由最外层的 catch 统一收尾。 */
-function positiveIntFromEnv(name: string, fallback: number): number {
+/** 读一个整数环境变量；低于 minimum 就抛错，由最外层的 catch 统一收尾。minimum 为 0 表示关闭这一项限制。 */
+function intFromEnv(name: string, fallback: number, minimum: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
 
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    // 中文对照：「{name} 的值 "{raw}" 不合法（需要一个正整数）」
-    throw new Error(`invalid ${name}: "${raw}" (expected a positive integer)`);
-  }
-  return value;
-}
-
-/** 读一个「非负整数」环境变量；0 表示关闭这一项限制。 */
-function nonNegativeIntFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) {
-    // 中文对照：「{name} 的值 "{raw}" 不合法（需要 0 或正整数）」
-    throw new Error(`invalid ${name}: "${raw}" (expected 0 or a positive integer)`);
+  if (!Number.isInteger(value) || value < minimum) {
+    // 中文对照：「{name} 的值 "{raw}" 不合法（需要 ≥ {minimum} 的整数）」
+    throw new Error(`invalid ${name}: "${raw}" (expected an integer >= ${minimum})`);
   }
   return value;
 }
@@ -160,16 +147,16 @@ function loadConfig(details: boolean, allowMissingModel = false, cwd?: string): 
     // 工作区根目录固定成绝对路径，后面所有相对路径都相对它解析。
     // 优先级：--cwd（显式打开的目录）> WORKDIR（环境变量）> 当前目录。
     root: path.resolve(cwd ?? process.env.WORKDIR ?? process.cwd()),
-    maxSteps: positiveIntFromEnv("MAX_STEPS", 30),
-    maxToolCalls: positiveIntFromEnv("MAX_TOOL_CALLS", 60),
-    maxTotalTokens: nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000),
-    maxOutputTokens: positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192),
+    maxSteps: intFromEnv("MAX_STEPS", 30, 1),
+    maxToolCalls: intFromEnv("MAX_TOOL_CALLS", 60, 1),
+    maxTotalTokens: intFromEnv("MAX_TOTAL_TOKENS", 500_000, 0),
+    maxOutputTokens: intFromEnv("MAX_OUTPUT_TOKENS", 8192, 1),
     // 0 是默认值：窗口大小是模型服务的属性，内核不按模型名字猜。没配就用字符预算，
     // 配了才按 token 估算 —— 压缩阈值必须建立在可信数字上。
-    contextWindowTokens: nonNegativeIntFromEnv("CONTEXT_WINDOW_TOKENS", 0),
+    contextWindowTokens: intFromEnv("CONTEXT_WINDOW_TOKENS", 0, 0),
     // 存档可能含敏感内容：默认落系统临时目录，宿主可以指到别处，但绝不默认写进项目仓库。
     contextArchiveDir: process.env.AGENT_CONTEXT_ARCHIVE?.trim() ?? "",
-    toolTimeoutMs: positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000),
+    toolTimeoutMs: intFromEnv("TOOL_TIMEOUT_MS", 120_000, 1),
     view: details ? "detailed" : viewFromEnv(),
     voice: voiceFromEnv(),
   };
