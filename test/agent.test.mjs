@@ -12,7 +12,7 @@
  *     工具失败折成 `ERROR` 后模型继续；空回复必须报错。
  *   - 观察回调：四种回调的顺序与次数、回调抛错或返回 rejected Promise 时异常隔离、
  *     `onToolCall` 能拿到已确认的正文、回调不能篡改执行参数。
- *   - 三个预算：步数上限（最后一批工具不执行）、工具调用预算（整批不执行、跨批累计）、
+ *   - 配置与三个预算：无效上限在构造期拒绝；步数上限（最后一批工具不执行）、工具调用预算（整批不执行、跨批累计）、
  *     token 预算（软预算，顶穿时最终答复仍成功但状态可见）。
  *   - 取消：开始前已 abort、中途 abort 后剩余调用留 `not run`、取消后仍返回的答案不提交。
  *   - 会话：第二个 Run 继承 transcript、长历史压缩、当前工具批次在模型读取前不被压缩、返回值不能篡改历史、预算按 Run 重算、并发被拒、失败后可继续。
@@ -34,6 +34,15 @@ import { callTool, createScriptedChat, echoTool, finalReply, makeRegistry } from
 function roles(messages) {
   return messages.map((message) => message.role);
 }
+
+test("Agent 配置：拒绝无效的循环与预算上限", () => {
+  const options = { llm: {}, tools: makeRegistry([]) };
+  assert.throws(() => new Agent({ ...options, maxSteps: 0 }), /invalid maxSteps/);
+  assert.throws(() => new Agent({ ...options, maxToolCalls: -1 }), /invalid maxToolCalls/);
+  assert.throws(() => new Agent({ ...options, maxTotalTokens: Number.NaN }), /invalid maxTotalTokens/);
+  assert.throws(() => new Agent({ ...options, maxModelRetries: 1.5 }), /invalid maxModelRetries/);
+  assert.throws(() => new Agent({ ...options, outputTokenReserve: -1 }), /invalid outputTokenReserve/);
+});
 
 test("会话：修改 run 返回值不能改写下一轮的 Transcript", async () => {
   const chat = createScriptedChat([finalReply("original"), finalReply("next")]);
@@ -1009,4 +1018,123 @@ test("工具清单契约：默认提示不再维护一份静态工具名", async
   assert.equal(chat.requests[0].tools[0].name, "echo");
   assert.doesNotMatch(chat.requests[0].messages[0].content, /Tools: read, write, edit/);
   assert.match(chat.requests[0].messages[0].content, /provided in this request/);
+});
+
+test("无进展循环：相同工具批次连续重复三次后停止并保留配对", async () => {
+  const chat = createScriptedChat([
+    callTool("c1", "echo", { value: "same" }),
+    callTool("c2", "echo", { value: "same" }),
+    callTool("c3", "echo", { value: "same" }),
+    callTool("c4", "echo", { value: "same" }),
+  ]);
+  let executions = 0;
+  const tool = { ...echoTool(), run: async () => { executions++; return "unchanged"; } };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  await assert.rejects(() => agent.run("完成任务"), /identical tool batches.*no progress/);
+  assert.equal(chat.requests.length, 4);
+  assert.equal(executions, 3);
+  const last = agent.transcript.filter((message) => message.role === "tool").at(-1);
+  assert.match(last.content, /repeated identical tool batch made no progress/);
+  const transcript = agent.transcript;
+  for (let index = 0; index < transcript.length; index++) {
+    const assistant = transcript[index];
+    if (assistant.role !== "assistant" || assistant.tool_calls === undefined) continue;
+    for (const call of assistant.tool_calls) {
+      assert.equal(transcript[++index]?.tool_call_id, call.id, "重复检测不能破坏 assistant / tool 配对");
+    }
+  }
+});
+
+test("无进展检测：工具结果变化时连续轮询不会被误判", async () => {
+  const chat = createScriptedChat([
+    callTool("poll-1", "echo", { value: "status" }),
+    callTool("poll-2", "echo", { value: "status" }),
+    callTool("poll-3", "echo", { value: "status" }),
+    finalReply("ready"),
+  ]);
+  let executions = 0;
+  const tool = {
+    ...echoTool(),
+    run: async () => {
+      executions++;
+      return executions < 3 ? "state-stable" : "state-ready";
+    },
+  };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  const reply = await agent.run("轮询直到状态变化");
+
+  assert.equal(reply.content, "ready");
+  assert.equal(executions, 3);
+  assert.equal(chat.requests.length, 4);
+});
+
+test("无进展检测：参数键顺序规范化且不依赖 tool_call_id", async () => {
+  const chat = createScriptedChat([
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "first", type: "function", function: {
+        name: "echo", arguments: JSON.stringify({ first: "a", second: "b" }),
+      } }],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "second", type: "function", function: {
+        name: "echo", arguments: JSON.stringify({ second: "b", first: "a" }),
+      } }],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "third", type: "function", function: {
+        name: "echo", arguments: JSON.stringify({ first: "a", second: "b" }),
+      } }],
+    },
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{ id: "fourth", type: "function", function: {
+        name: "echo", arguments: JSON.stringify({ second: "b", first: "a" }),
+      } }],
+    },
+  ]);
+  let executions = 0;
+  const tool = {
+    name: "echo",
+    description: "Echo the value back.",
+    parameters: {
+      type: "object",
+      properties: { first: { type: "string" }, second: { type: "string" } },
+      required: ["first", "second"],
+    },
+    run: async () => { executions++; return "unchanged"; },
+  };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  await assert.rejects(() => agent.run("停止重复调用"), /identical tool batches.*no progress/);
+
+  assert.equal(executions, 3);
+  assert.equal(chat.requests.length, 4);
+});
+
+test("无进展检测：每次 Run 重新计数，不继承上一轮的重复状态", async () => {
+  const chat = createScriptedChat([
+    callTool("run-1-a", "echo", { value: "same" }),
+    callTool("run-1-b", "echo", { value: "same" }),
+    finalReply("first done"),
+    callTool("run-2-a", "echo", { value: "same" }),
+    callTool("run-2-b", "echo", { value: "same" }),
+    finalReply("second done"),
+  ]);
+  let executions = 0;
+  const tool = { ...echoTool(), run: async () => { executions++; return "unchanged"; } };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  assert.equal((await agent.run("第一轮")).content, "first done");
+  assert.equal((await agent.run("第二轮")).content, "second done");
+  assert.equal(executions, 4);
+  assert.equal(chat.requests.length, 6);
 });

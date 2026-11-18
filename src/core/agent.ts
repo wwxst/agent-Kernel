@@ -107,6 +107,36 @@ function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
 
+/** 将 JSON 参数规范化，让对象键顺序不影响工具批次签名；数组顺序仍保留。 */
+function canonicalizeJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeJson);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+        .map(([key, child]) => [key, canonicalizeJson(child)]),
+    );
+  }
+  return value;
+}
+
+/** 参数不是合法 JSON 时保留原文，让坏参数仍能形成稳定签名并交给 ToolRegistry 报错。 */
+function canonicalizeArguments(argumentsText: string): string {
+  try {
+    return JSON.stringify(canonicalizeJson(JSON.parse(argumentsText)));
+  } catch {
+    return argumentsText;
+  }
+}
+
+/** 工具调用顺序有意义，所以只规范化每个调用的参数，不排序调用数组。 */
+function toolBatchSignature(calls: readonly ToolCall[]): string {
+  return JSON.stringify(calls.map((call) => [
+    call.function.name,
+    canonicalizeArguments(call.function.arguments),
+  ]));
+}
+
 /** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */function cancellationError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   const detail = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
@@ -117,6 +147,15 @@ function createToolResult(call: ToolCall, result: string): Message {
 function emptyUsage(): AgentUsage {
   return { promptTokens: 0, completionTokens: 0, totalTokens: 0, reported: 0, unknown: 0 };
 }
+
+/** 预算是跨模块的运行时输入，不能只依赖 TypeScript 的静态类型。 */
+function assertIntegerBudget(name: string, value: number, minimum: number): void {
+  if (!Number.isInteger(value) || value < minimum) {
+    // 配置 {name} 的值 {value} 不合法，需要一个不小于 {minimum} 的整数。
+    throw new Error(`invalid ${name}: ${String(value)} (expected an integer >= ${minimum})`);
+  }
+}
+
 /** 没有配置上下文窗口时的字符预算：兼容路径，明确是字符数，不是 token 估算。 */
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 120_000;
 
@@ -134,6 +173,9 @@ const CHAR_PATH_TARGET_RATIO = 0.85;
 
 /** 当前轮里保留几个「已完成批次」不折叠：模型刚跑完的上下文通常正是下一步要用的。 */
 const KEEP_RECENT_STEPS = 1;
+
+/** 连续三批完整相同才判定无进展，给轮询任务留出一次稳定状态的机会。 */
+const MAX_IDENTICAL_TOOL_BATCHES = 3;
 
 /**
  * 一个 Run 里最多试几次摘要。
@@ -353,6 +395,13 @@ export class Agent {
   /** 本次 Run 收到的 assistant 回复（按顺序）。压缩会改数组下标，这份列表不受影响。 */
   private runReplyLog: Message[] = [];
 
+  /** 最近一批已执行工具及其结果，用来识别模型没有推进任务的循环。 */
+  private lastToolBatchObservation?: {
+    signature: string;
+    resultSignature: string;
+    repetitions: number;
+  };
+
   /**
    * 每条工具结果**第一次**被裁剪时的存档引用，按消息对象本身索引。
    *
@@ -449,6 +498,10 @@ export class Agent {
     this.onRequestStart = options.onRequestStart;
     this.onRetry = options.onRetry;
     this.maxModelRetries = options.maxModelRetries ?? 0;
+    assertIntegerBudget("maxSteps", this.maxSteps, 1);
+    assertIntegerBudget("maxToolCalls", this.maxToolCalls, 0);
+    if (this.maxTotalTokens !== undefined) assertIntegerBudget("maxTotalTokens", this.maxTotalTokens, 0);
+    assertIntegerBudget("maxModelRetries", this.maxModelRetries, 0);
     this.maxTranscriptChars = Number.isFinite(options.maxTranscriptChars) && (options.maxTranscriptChars ?? 0) >= 1_024
       ? Math.floor(options.maxTranscriptChars!)
       : DEFAULT_MAX_TRANSCRIPT_CHARS;
@@ -458,6 +511,7 @@ export class Agent {
     // 是为了让「窗口比输出预留还小」这种配置错误在启动时就暴露，而不是跑到一半才炸。
     const windowTokens = options.contextWindowTokens;
     this.outputTokenReserve = options.outputTokenReserve ?? 8_192;
+    assertIntegerBudget("outputTokenReserve", this.outputTokenReserve, 0);
     if (windowTokens !== undefined) {
       if (!Number.isInteger(windowTokens) || windowTokens <= this.outputTokenReserve) {
         throw new Error(
@@ -1025,6 +1079,27 @@ export class Agent {
     }
   }
 
+  /** 只有调用和结果都重复时才累计无进展次数，避免误伤会返回新状态的轮询工具。 */
+  private recordToolBatchObservation(
+    signature: string,
+    results: readonly { content: string; isError: boolean }[],
+  ): void {
+    const resultSignature = JSON.stringify(results);
+    const previous = this.lastToolBatchObservation;
+    const repetitions = previous !== undefined && previous.signature === signature &&
+      previous.resultSignature === resultSignature
+      ? previous.repetitions + 1
+      : 1;
+    this.lastToolBatchObservation = { signature, resultSignature, repetitions };
+  }
+
+  /** 连续三批完整的相同调用与结果已经足够证明下一次仍无进展，先补配对再停止。 */
+  private shouldStopRepeatedToolBatch(signature: string): boolean {
+    const previous = this.lastToolBatchObservation;
+    return previous !== undefined && previous.signature === signature &&
+      previous.repetitions >= MAX_IDENTICAL_TOOL_BATCHES;
+  }
+
   /** 核心成员 stats（本次用量）：本次 Run 的用量快照。返回新对象：调用方改不到内部计数。 */
   get stats(): AgentStats {
     const limit = this.maxTotalTokens;
@@ -1149,6 +1224,7 @@ export class Agent {
     // 摘要失败配额按 Run 算：上个任务里摘要写坏了，不该让这个任务永远失去压缩能力。
     this.summaryFailuresThisRun = 0;
     this.runReplyLog = [];
+    this.lastToolBatchObservation = undefined;
     this.runUsage = emptyUsage();
     // 上一个 Run 已经结束：它留下的结果从此是普通历史，不再享有「模型还没读」的保护，
     // 否则一次失败的 Run 会把那些批次永久钉住，历史再也压不动。
@@ -1284,9 +1360,21 @@ export class Agent {
         );
       }
 
+      // 预算和最后一步的失败原因优先；只把「相同调用 + 相同结果」视为无进展，
+      // 轮询工具每次返回新状态时必须继续运行。
+      const batchSignature = toolBatchSignature(calls);
+      if (this.shouldStopRepeatedToolBatch(batchSignature)) {
+        this.skipCalls(calls, "repeated identical tool batch made no progress");
+        throw new Error(
+          `agent loop stopped after ${this.lastToolBatchObservation?.repetitions ?? MAX_IDENTICAL_TOOL_BATCHES} identical tool batches; ` +
+            "the model made no progress",
+        );
+      }
+
       // 8) 有工具调用就逐个执行，并把结果写回对话记录。
       //    这里刻意串行：简单，且消息顺序与模型给出的顺序一一对应。
       //    （并发执行能更快，但结果回灌顺序会乱，属于优化，不属于内核。）
+      const batchResults: { content: string; isError: boolean }[] = [];
       for (let index = 0; index < calls.length; index++) {
         // 取消可能正好发生在两次调用之间：剩下的调用不再启动，但每条都要留下结果。
         this.stopIfCancelled(calls.slice(index));
@@ -1312,6 +1400,7 @@ export class Agent {
           const failed = createToolResult(call, `ERROR: ${error.message}`);
           this.messages.push(failed);
           this.unconsumedResults.add(failed);
+          batchResults.push({ content: failed.content ?? "", isError: true });
           this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`, true);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
           // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作。
@@ -1324,7 +1413,12 @@ export class Agent {
         this.messages.push(toolMessage);
         // 这一批结果还没被任何成功响应读过：下一次请求前不能把它们折叠掉。
         this.unconsumedResults.add(toolMessage);
+        batchResults.push({ content: result, isError });
         this.notifyObserver(this.onToolResult, structuredClone(call), result, isError);
+      }
+
+      if (!this.processCleanupUnverified && batchResults.length === calls.length) {
+        this.recordToolBatchObservation(batchSignature, batchResults);
       }
 
       // 9) 回到循环顶部：模型现在能看到工具结果了，继续它的下一步。
