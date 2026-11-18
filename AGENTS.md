@@ -1,5 +1,7 @@
 # AGENTS.md
 
+agent-Kernel 的文档分工很简单：`README.md` 讲项目是什么和怎么开始；`docs/` 讲当前实现和设计；`AGENTS.md` 讲 AI / 开发者怎么改；`CODING_STANDARDS.md` 讲代码规范；`docs/adr/` 记录为什么这样设计；`eval/` 记录 Agent 实际能力。
+
 agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用跑掉，把结果发回去。
 给人看的介绍在 [README.md](./README.md)，领域词汇在 [GLOSSARY.md](./GLOSSARY.md)。
 **规范本体在 [CODING_STANDARDS.md](./CODING_STANDARDS.md)：写或改 `src/`、`test/` 之前先读它**（注释、模块形状、命名、错误处理、防御性编程、测试、提交）。
@@ -85,15 +87,48 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 ## 长期文档
 
-- [GLOSSARY.md](./GLOSSARY.md)：当前领域词汇及关系。
-- [docs/adr/](./docs/adr/)：最终架构决定、当初的理由、代价与不变量；被取代的 ADR 标明历史状态，不能当作现行行为。
-- [docs/design/display-layers.md](./docs/design/display-layers.md)：概览与详情的长期分层原则。
-- [docs/design/reliability-decisions.md](./docs/design/reliability-decisions.md)：跨模块稳定性结论和仍需注意的边界。
-- [docs/adr/0027-background-job-lifecycle.md](./docs/adr/0027-background-job-lifecycle.md)：后台任务输出与生命周期为什么这么做。
-- [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)：固定版本的跨天评测与可选诊断。
-- [docs/agents/domain.md](./docs/agents/domain.md)：探索代码前该读什么。
+先从 [docs/README.md](./docs/README.md) 找入口。
 
-长期文档不保存调试流水账、阶段计划、单次 PR 验收截图；一般修复由代码、测试与 Git 历史承载。
+- [docs/architecture.md](./docs/architecture.md)：当前真实架构，回答“现在到底怎么跑”。
+- [docs/configuration.md](./docs/configuration.md)：配置、命令行参数和运行边界。
+- [docs/tui.md](./docs/tui.md)：TUI 的当前行为和展示层边界。
+- [docs/design/](./docs/design/)：跨模块、可长期复用的设计原则。
+- [docs/contracts/](./docs/contracts/)：行为契约和验证口径。
+- [docs/adr/](./docs/adr/)：最终架构决定、理由、代价和不变量；被取代的 ADR 必须标明历史状态。
+- [docs/course/](./docs/course/)：17 课课程资料，定位是研究路线和设计参考，不代表当前实现。
+
+长期文档不保存调试流水账、阶段计划、单次 PR 验收截图；普通修复由代码、测试和 Git 历史承载。
+
+## 文档规则
+
+### 1. 不要把同一件事写三遍
+
+- README：项目入口，只写用户真正需要知道的内容。
+- 当前架构文档：详细解释现在的实现。
+- ADR：只记录为什么做这个选择，以及放弃了什么。
+- AGENTS：告诉 AI 改代码时应该遵守什么规则。
+- eval：记录 Agent 实际跑出来的结果。
+
+### 2. 课程不是实现
+
+`docs/course/` 里的课程内容只能作为研究和设计参考。
+
+课程里讲到一个能力，不代表 agent-Kernel 已经实现这个能力。真正进入当前项目必须经过：
+
+`设计 → ADR（必要时）→ 实现 → 测试 → eval 验证`
+
+当前代码和当前架构文档高于课程资料。
+
+### 3. 代码变了，按影响范围更新文档
+
+- 用户运行方式变了 → README / `docs/configuration.md`
+- 架构行为变了 → `docs/architecture.md`
+- TUI 行为变了 → `docs/tui.md`
+- 设计取舍变了 → 新增或更新 ADR
+- 评测口径变了 → `eval/README.md` / `eval/baseline.md`
+- 术语发生变化 → `GLOSSARY.md`
+
+不要为了“完整”把源码实现细节重新塞回 README。
 
 ## Agent skills
 
