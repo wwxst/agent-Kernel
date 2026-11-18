@@ -39,7 +39,9 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 | --- | --- |
 | `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
 | `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
-| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期 |
+| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期、上下文压缩的调度与提交门槛 |
+| `src/core/context-compact.ts` | 上下文压缩的纯计算：请求体积与 token 估算、头尾裁剪（Snip）、可移除历史段的切分、摘要提示词与合格性检查 |
+| `src/core/context-archive.ts` | 有损压缩前的原文存档：按会话落盘，交回能直接交给 `read` 的绝对路径 |
 | `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本；围着执行触发三个 Hook 事件 |
 | `src/core/tool-hooks.ts` | 工具执行的三个扩展事件（`PreToolUse` / `PostToolUse` / `PostToolUseFailure`）：登记顺序、阻止、故障隔离 |
 | `src/core/tool-log.ts` | 第一个真实 Hook 用户：每次调用追加一行 JSON 到 `AGENT_TOOL_LOG` 指定的文件 |
@@ -67,8 +69,9 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 每个外部接口一处缝，重构不该让任何用例变红：
 
-- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、两个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序。
+- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、三个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序，以及压缩发生在工具结果被消费之后而不是之前。
 - `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、参数类型错误，以及每个失败分支都折成文本；声明了 `strictArguments` 的工具会拒绝未声明的参数（默认仍忽略，`shell` 靠这一点让 Worker 包装层吞掉 `background`）；进程树清理未确认仍抛 `ProcessCleanupError`。
+- `test/context-compact.test.mjs`：上下文压缩这一层 —— 短对话不压、工具定义计入体积、字符路径与 token 路径分开、最新批次完整、旧结果先裁、超大结果先存档再预览、存档失败不做有损替换、旧轮次与单轮多步都能折叠、多次压缩是替换而非追加、摘要为空/不合格/失败/取消都不提交、摘要请求不带工具且单独计数、`reasoning_content` 不被删、溢出只恢复一次且不重跑工具、压不动就报错、两个 Agent 互不影响、长任务回放后配对完整且目标仍在。摘要请求的假答复由 `test/support/harness.mjs` 的 `CANNED_SUMMARY` 提供，不消耗脚本项。
 - `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行且异常时 fail-closed、后置 Hook 抛错不影响工具结果、Hook 拿到副本、九个工作区工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
 - `test/tool-log.test.mjs`：内置的工具调用日志 Hook —— 成功/失败各一行（`shell` 非零退出算失败）、超长截断、写失败只提醒一次、被拦下的调用不留记录。
 - `test/subagent.test.mjs`：委派这一层 —— 参数校验（空任务、超长、非法 mode、默认 explore）、结果格式（完成 / 失败 / 取消 / 预算提示 / 超长截断）、两种角色的工具清单、Worker 的 shell 是否真的只能前台、上下文隔离与「只回一条结果」、子 Agent 的两道预算、失败/取消的委派必须标记 `isError`（Hook 走 `PostToolUseFailure`、工具日志记 `ok:false`）、进程树未确认时必须抛 `ProcessCleanupError`。`cli.test.mjs` 的委派用例守着真实装配：子 Agent 的提示与工具表、`MAX_STEPS` 取较小值、execute 真的改到文件。
@@ -90,6 +93,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 - [docs/design/display-layers.md](./docs/design/display-layers.md)：概览与详情的长期分层原则。
 - [docs/design/reliability-decisions.md](./docs/design/reliability-decisions.md)：跨模块稳定性结论和仍需注意的边界。
 - [docs/adr/0027-background-job-lifecycle.md](./docs/adr/0027-background-job-lifecycle.md)：后台任务输出与生命周期为什么这么做。
+- [docs/adr/0029-context-compaction-is-bounded-and-recoverable.md](./docs/adr/0029-context-compaction-is-bounded-and-recoverable.md)：上下文压缩的边界、存档、摘要与溢出恢复为什么这么做。
 - [docs/eval-diagnostics.md](./docs/eval-diagnostics.md)：固定版本的跨天评测与可选诊断。
 - [docs/agents/domain.md](./docs/agents/domain.md)：探索代码前该读什么。
 
