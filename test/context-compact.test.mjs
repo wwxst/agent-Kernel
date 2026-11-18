@@ -13,6 +13,7 @@
  *   - 预算：短对话不压、工具定义计入体积、字符路径与 token 路径分开。
  *   - 工具结果：最新批次完整、旧结果先裁剪、超大结果先存档再预览、存档失败不替换。
  *   - 历史摘要：折叠旧轮次、单轮多步、多次替换、失败/不合格/取消都不提交。
+ *   - 摘要请求自己的预算：序列化后的真实体积、输出预留为 0 时的合法结构下限、装不下就不发。
  *   - 溢出：只认明确的上下文超限、最多重发一次、不重跑工具、压不动就报错。
  *   - 隔离与回放：子 Agent 互不影响、长任务多轮压缩后仍能完成。
  *
@@ -24,6 +25,9 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { Agent } from "../src/core/agent.ts";
+// 整个模块导入：这条用例要验证的正是「摘要长度下限与八节结构一致」。写成命名导入的话，
+// 旧版本缺这个导出时整个文件会加载失败，反而看不出是哪条断言不成立。
+import * as compact from "../src/core/context-compact.ts";
 import { ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
 import {
   CANNED_SUMMARY,
@@ -43,6 +47,7 @@ import {
  * `failures[i]` 让第 i 次业务请求直接抛错，用来模拟上游错误。
  * `maxRequestChars` 让假后端按字符数拒绝超窗请求（3 字符/token 的确定性口径），
  * 用来复现「摘要请求自己先被窗口拒绝」。
+ * `summary` 可以是函数：拿到 `(第几次摘要请求, 这次的消息)`，用来造「照提示词上限写摘要」的假模型。
  */
 function createModel(options = {}) {
   const requests = [];
@@ -67,7 +72,7 @@ function createModel(options = {}) {
       if (isSummary) {
         summaryRequests.push(structuredClone({ messages, tools }));
         const content = typeof options.summary === "function"
-          ? options.summary(summaryRequests.length)
+          ? options.summary(summaryRequests.length, messages)
           : (options.summary ?? CANNED_SUMMARY);
         if (content instanceof Error) throw content;
         if (options.beforeSummaryReply !== undefined) options.beforeSummaryReply(summaryRequests.length);
@@ -112,6 +117,39 @@ function summaryWith(tag) {
 /** 一条 assistant 消息：带工具调用，同时带一段正文（模型在解释自己要干什么）。 */
 function callToolWithNotes(id, name, args, notes) {
   return { ...callTool(id, name, args), content: notes };
+}
+
+/**
+ * 一份「刚好装得下八节结构」的摘要：每节一行标题 + 一句最短正文。
+ *
+ * 用来验证「摘要长度下限必须容得下合法八节」—— 比这更短就不可能八节齐全。
+ * 正文刻意留 24 字符：短到仍是合法结构，长到前 120 字符里塞不下四节。
+ */
+function compactEightSections() {
+  return [
+    "User goal",
+    "Requirements and constraints",
+    "Decisions and reasons",
+    "Completed work and verification",
+    "Current work and progress",
+    "Key files, commands, errors, findings",
+    "Open questions and todos",
+    "Next step",
+  ].map((section) => `## ${section}\n` + "b".repeat(24)).join("\n");
+}
+
+/**
+ * 照提示词写摘要的假模型：八节齐全，但一旦超出「under N characters」就截断
+ * （提示词明说更长的摘要会被丢弃）。
+ *
+ * 这就是真实模型的处境：上限小于八节结构本身时，它无论怎么写都不合格 ——
+ * 于是「摘要请求发出去了、回复也回来了，但永远提交不了」。
+ */
+function summaryWithinStatedLimit(_count, messages) {
+  const stated = /under (\d+) characters/.exec(String(messages[0].content ?? ""));
+  const limit = stated === null ? Number.POSITIVE_INFINITY : Number(stated[1]);
+  const full = compactEightSections();
+  return full.length <= limit ? full : full.slice(0, limit);
 }
 
 /**
@@ -709,6 +747,119 @@ test("历史摘要：小窗口下摘要请求按可用窗口裁剪，成功后�
     const archived = await readFile(refs[0], "utf8");
     assert.match(archived, /step 1/, "存档里是完整原文，不是给摘要看的预览");
   });
+});
+
+test("历史摘要：转义密集的历史按序列化后的真实体积裁剪，摘要仍能发出", async () => {
+  await withWorkspace(async (root) => {
+    const windowTokens = 1_700;
+    const maxRequestChars = windowTokens * 3;
+    // 反斜杠与换行在 JSON 里各占两个字符：原始 2 200 字符，序列化后接近 4 400。
+    // 按原始字符数估的预算会明显偏大，实测才知道真实体积。
+    const noise = "\\\n".repeat(1_100) + "END-OF-NOISE";
+    const replies = [
+      callToolWithNotes("s1", "echo", { value: "1" }, noise),
+      finalReply("first run done"),
+      finalReply("done"),
+    ];
+    const chat = createModel({ replies, summary: summaryWith("escaped"), maxRequestChars });
+    const agent = new Agent({
+      llm: chat,
+      tools: makeRegistry([echoTool()]),
+      systemPrompt: () => "x",
+      contextWindowTokens: windowTokens,
+      outputTokenReserve: 0,
+      contextArchiveDir: path.join(root, "archive"),
+    });
+
+    await agent.run("first task");
+    // 第二个任务足够长：不压缩就必然超窗，所以这条断言同时守着「摘要真的提交了」。
+    const reply = await agent.run("second task " + "q".repeat(880));
+
+    assert.equal(reply.content, "done", "缩短摘要输入后摘要必须能生成，主请求继续");
+    assert.equal(agent.compactionStats.lastError, "");
+    assert.equal(agent.compactionStats.compactions, 1);
+    assert.equal(chat.summaryRequests.length, 1, "第一次估算超窗时要缩短重试，不是直接放弃");
+    const sent = chat.summaryRequests[0];
+    const size = JSON.stringify(sent.messages).length + JSON.stringify(sent.tools).length;
+    assert.ok(size <= maxRequestChars, `摘要请求必须按序列化后的体积装进窗口（${size} > ${maxRequestChars}）`);
+
+    // 原文先存档：摘要输入被缩短，不代表原文丢了。
+    assert.match(agent.transcript[0].content, /Archived originals removed by context compaction/);
+    const refs = [...agent.transcript[0].content.matchAll(/^- (.+?) \(\d+ chars\)$/gm)].map((match) => match[1]);
+    assert.ok(refs.length >= 1, "摘要输入可以缩短，但原文必须仍可定位");
+    const archived = await readFile(refs[0], "utf8");
+    assert.match(archived, /END-OF-NOISE/, "存档里必须是完整原文，包括摘要输入被裁掉的那一段");
+    assert.ok(String(sent.messages[1].content).length < archived.length, "摘要输入确实被缩短了，不是原样塞进去");
+  });
+});
+
+test("摘要长度下限：容得下合法八节结构，又不是随手写的大数字", () => {
+  const minimal = compactEightSections();
+  assert.equal(compact.validateSummary(minimal), undefined, "这份八节摘要本身必须合格，否则下限无从谈起");
+  assert.ok(minimal.length <= compact.MIN_SUMMARY_STRUCTURE_CHARS,
+    `下限必须装得下合法八节结构（${minimal.length} > ${compact.MIN_SUMMARY_STRUCTURE_CHARS}）`);
+  assert.ok(compact.MIN_SUMMARY_STRUCTURE_CHARS - minimal.length <= 64,
+    `下限要跟着结构走，不能比它大出一截（${compact.MIN_SUMMARY_STRUCTURE_CHARS} vs ${minimal.length}）`);
+  assert.ok(compact.MIN_SUMMARY_STRUCTURE_CHARS >= compact.MIN_SUMMARY_CHARS, "结构下限不能低于摘要的合格下限");
+});
+
+test("历史摘要：输出预留为 0 时仍给合法八节摘要留够长度，压缩能提交", async () => {
+  // 输出预留为 0 是最容易写错的一档：摘要正文上限若退回 MIN_SUMMARY_CHARS，
+  // 提示词就变成「必须写满八节，但不超过 120 字符」—— 模型怎么写都不合格。
+  const chat = createModel({
+    replies: [finalReply("a".repeat(2_800)), finalReply("done")],
+    summary: summaryWithinStatedLimit,
+  });
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    systemPrompt: () => "x",
+    contextWindowTokens: 900,
+    outputTokenReserve: 0,
+  });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "done", "摘要提交之后主请求必须能继续");
+  assert.equal(agent.compactionStats.lastError, "");
+  assert.equal(agent.compactionStats.compactions, 1);
+  const system = chat.businessRequests.at(-1).messages[0].content;
+  for (const section of [
+    "User goal",
+    "Requirements and constraints",
+    "Decisions and reasons",
+    "Completed work and verification",
+    "Current work and progress",
+    "Key files, commands, errors, findings",
+    "Open questions and todos",
+    "Next step",
+  ]) {
+    assert.ok(system.includes(`## ${section}`), `提交的摘要必须保留小节「${section}」`);
+  }
+});
+
+test("历史摘要：窗口装不下最小合法摘要时不发摘要请求，明确失败", async () => {
+  // 窗口 660 token = 1 980 字符：装得下摘要系统提示，装不下「提示 + 一段像样的历史」。
+  // 这时候发出去的请求必然写不出合格摘要，只能明确失败。
+  const chat = createModel({
+    replies: [finalReply("a".repeat(2_800)), finalReply("done")],
+    summary: summaryWithinStatedLimit,
+  });
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    systemPrompt: () => "x",
+    contextWindowTokens: 660,
+    outputTokenReserve: 0,
+  });
+
+  await agent.run("first task");
+  await assert.rejects(() => agent.run("second task"), /context window is too small for this request/);
+
+  assert.match(agent.compactionStats.lastError, /too small for a safe summary/);
+  assert.equal(chat.summaryRequests.length, 0, "明知写不出合格摘要就不能把请求发出去");
+  assert.equal(chat.businessRequests.length, 1, "第一轮之后立刻停手，不反复试");
 });
 
 test("历史摘要：窗口连摘要提示都装不下时明确失败，不发超窗摘要请求", async () => {

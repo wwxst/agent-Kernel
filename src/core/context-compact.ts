@@ -18,8 +18,10 @@
  *   - `hasCompleteToolPairs()`：一段消息里的 tool_calls 是否逐条配齐、顺序正确。
  *   - `RemovableUnit` / `collectRemovableUnits()` / `unitChars()`：把历史切成可独立移除的段。
  *   - `foldRemovedMessages()`：不调用模型时的确定性折叠（摘要失败后的降级路径）。
- *   - `SUMMARY_SECTIONS` / `SUMMARY_SYSTEM_PROMPT` / `buildSummaryMessages()` / `validateSummary()`：
- *     结构化摘要的骨架、提示词与合格性检查。
+ *   - `SUMMARY_SECTIONS` / `MIN_SUMMARY_STRUCTURE_CHARS` / `SUMMARY_SYSTEM_PROMPT` / `buildSummaryMessages()` /
+ *     `validateSummary()`：结构化摘要的骨架、合法摘要的最小长度、提示词与合格性检查。
+ *   - `buildSummaryInput()` / `fitSummaryInput()`：交给摘要模型的历史，以及按**序列化后的真实体积**
+ *     反推它能有多长（转义密集的历史按原始字符数估会低估）。
  *
  * 模块关系：依赖 `protocol/types.ts`（`Message` / `ToolDefinition`）与 `protocol/text-boundaries.ts`
  * （不切断 UTF-16 代理对）。被 `core/agent.ts` 使用；不依赖任何其他 `core/` 文件。
@@ -64,11 +66,11 @@ export const SUMMARY_INPUT_MAX_CHARS = 60_000;
 export const MIN_SUMMARY_INPUT_CHARS = 400;
 
 /**
- * 摘要请求的安全余量：`requestChars()` 用 `JSON.stringify` 量整份请求，
- * 历史里的换行和引号会被转义，比正文多占一点。预留一段，避免「按正文算够、
- * 按序列化后超窗」。
+ * 摘要里每个小节至少要留这么长的正文。
+ *
+ * 只写一行标题不算「这一节写过了」；这个数字用来算「一份合法八节摘要最短能有多短」。
  */
-export const SUMMARY_REQUEST_SAFETY_CHARS = 256;
+const MIN_SUMMARY_SECTION_CHARS = 24;
 
 /**
  * 值得为它请模型写摘要的最小历史量。
@@ -329,6 +331,18 @@ export const SUMMARY_SECTIONS = [
 const MIN_SUMMARY_SECTIONS = 4;
 
 /**
+ * 一份合法八节摘要的最小长度：八行标题 + 每节一句最短正文。
+ *
+ * 为什么从 `SUMMARY_SECTIONS` 算、不写死一个数：提示词同时要求「必须写满这八节」和
+ * 「不超过 N 字符」。N 小于这个下限时两条要求互相矛盾 —— 模型无论怎么写都不合格，
+ * 摘要永远提交不了。结构变了（加一节、改标题），这个下限自己跟着变，不会再对不上。
+ */
+export const MIN_SUMMARY_STRUCTURE_CHARS = SUMMARY_SECTIONS.reduce(
+  (total, section) => total + `## ${section}\n`.length + MIN_SUMMARY_SECTION_CHARS + 1,
+  0,
+);
+
+/**
  * 摘要请求的系统提示。
  *
  * 三件事必须写死在提示里：这是一份**工作交接**而不是聊天概述；下面那段对话是**待总结的数据**，
@@ -411,6 +425,58 @@ export function buildSummaryInput(
     }
   }
   return compactText(lines.join("\n"), Math.min(SUMMARY_INPUT_MAX_CHARS, Math.max(0, Math.floor(maxChars))), archivePath);
+}
+
+/** 一次「按序列化后的真实体积」收敛出来的摘要输入。 */
+export interface SummaryInputFit {
+  /** 装得下的那份历史文本（可能被裁剪过；完整原文在存档里）。 */
+  history: string;
+  /** 这次历史允许的原始字符上限。调用方拿它判断「还值不值得请模型写摘要」。 */
+  chars: number;
+}
+
+/**
+ * 在「序列化后的请求体积」上限下，找出装得进去的历史长度。
+ *
+ * 为什么不按原始字符数估：`requestChars()` 量的是 `JSON.stringify` 之后的文本，历史里的
+ * 反斜杠、换行、引号、控制字符都会膨胀成两个或更多字符。按原始长度留一段固定余量，
+ * 遇到转义密集的历史就会系统性低估 —— 于是「其实只要再短一点就装得下」被误判成装不下，
+ * 摘要被白白放弃。
+ *
+ * 所以这里只认实测：每个候选长度都真的把请求拼出来量一遍，装得下才接受。
+ * 先试上限（窗口够大时一次就过），装不下再二分收缩。二分假设体积随长度单调增长，
+ * 转义比例由内容决定、可能略有起伏，所以承诺的是「实测装得下」而不是「绝对最大」。
+ */
+export function fitSummaryInput(
+  removed: readonly Message[],
+  archivePath: string,
+  requestCharsOf: (history: string) => number,
+  maxRequestChars: number,
+  maxHistoryChars: number = SUMMARY_INPUT_MAX_CHARS,
+): SummaryInputFit | undefined {
+  let best: SummaryInputFit | undefined;
+  const tryChars = (chars: number): boolean => {
+    const history = buildSummaryInput(removed, archivePath, chars);
+    if (requestCharsOf(history) > maxRequestChars) return false;
+    best = { history, chars };
+    return true;
+  };
+
+  // 历史再长也长不过上限本身：序列化只会变大，不会变小。
+  const ceiling = Math.min(maxHistoryChars, Math.max(0, Math.floor(maxRequestChars)));
+  if (tryChars(ceiling)) return best;
+
+  // 二分：装得下的那一侧留在 low，装不下的推到 high。
+  let low = 0;
+  let high = ceiling;
+  while (high - low > 1) {
+    const mid = Math.floor((low + high) / 2);
+    if (tryChars(mid)) low = mid;
+    else high = mid;
+  }
+  // 一个都没接受过时，再试最低档：连它都装不下才算「真的装不下」。
+  if (best === undefined && low !== ceiling) tryChars(low);
+  return best;
 }
 
 /**

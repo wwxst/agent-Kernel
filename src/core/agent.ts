@@ -45,11 +45,9 @@ import { ContextArchive } from "./context-archive.ts";
 import type { ContextArchiveRef } from "./context-archive.ts";
 import {
   MAX_SUMMARY_CHARS,
-  MIN_SUMMARY_CHARS,
   MIN_SUMMARY_INPUT_CHARS,
+  MIN_SUMMARY_STRUCTURE_CHARS,
   MIN_SUMMARY_WORTH_CHARS,
-  SUMMARY_REQUEST_SAFETY_CHARS,
-  SUMMARY_INPUT_MAX_CHARS,
   TOOL_RESULT_EMERGENCY_CHARS,
   TOOL_RESULT_SNIP_CHARS,
   TOOL_RESULT_SNIP_MARGIN,
@@ -59,6 +57,7 @@ import {
   collectRemovableUnits,
   compactText,
   contextSize,
+  fitSummaryInput,
   foldRemovedMessages,
   hasCompleteToolPairs,
   requestChars,
@@ -788,39 +787,47 @@ export class Agent {
     summaryBudget: number,
   ): Promise<string | undefined> {
     const previousSummary = this.compactedSummary.trim();
-    // 摘要请求也是一次真实请求，必须按同一个窗口预算来装：
-    //   可用输入 = 窗口 − 输出预留；其中还要先放下系统提示、旧摘要和序列化余量，
-    //   剩下的才轮到待压缩历史。没有窗口时沿用原来的固定字符上限。
-    // 输出预留为 0 时仍留一份合法摘要的最短长度，否则「摘要」从一开始就不可能合格。
-    const outputChars = Math.min(
-      summaryBudget,
-      Math.max(MIN_SUMMARY_CHARS, charsForTokens(this.outputTokenReserve, this.calibration)),
+    // 摘要请求也是一次真实请求，必须按同一个窗口预算来装。三件事要同时成立：
+    //   1. 请求本身（系统提示 + 旧摘要 + 待压缩历史）装得进可用窗口；
+    //   2. 摘要正文有地方写 —— 输出预留为 0 时也要给一份合法八节摘要留够长度，
+    //      否则提示词里「写满八节」和「不超过 N 字符」互相矛盾，写出来必然不合格；
+    //   3. 请求体积按**序列化之后**的真实字符量算，不按原始字符数估（见 fitSummaryInput）。
+    // 优先级是「结构下限 > 输出预留 > 被替换内容的一半」：前两条是能不能写出来，最后一条是值不值。
+    const reservedOutputChars = charsForTokens(this.outputTokenReserve, this.calibration);
+    const outputChars = Math.max(
+      MIN_SUMMARY_STRUCTURE_CHARS,
+      Math.min(summaryBudget, reservedOutputChars),
     );
-    let inputLimit = SUMMARY_INPUT_MAX_CHARS;
-    if (this.contextWindowTokens !== undefined) {
-      const usableChars = charsForTokens(this.contextBudget().limit, this.calibration);
-      const overhead = requestChars(buildSummaryMessages(previousSummary, "", outputChars), []);
-      inputLimit = Math.min(inputLimit, usableChars - overhead - SUMMARY_REQUEST_SAFETY_CHARS);
-    }
-    if (inputLimit < MIN_SUMMARY_INPUT_CHARS) {
-      this.lastCompactionError =
-        `context window is too small for a safe summary (${Math.max(0, inputLimit)} chars left for history, ` +
-        `minimum ${MIN_SUMMARY_INPUT_CHARS})`;
-    }
     const canAskModel = this.summaryFailuresThisRun < MAX_SUMMARY_FAILURES_PER_RUN && !this.budgetExhausted();
-    if (canAskModel && inputLimit >= MIN_SUMMARY_INPUT_CHARS) {
-      const history = buildSummaryInput(removed, archivePath, inputLimit);
-      // 摘要请求直接打给 llm.chat()，不经过 prepareRequest()：辅助请求绝不递归触发压缩。
-      const summaryMessages = buildSummaryMessages(previousSummary, history, outputChars);
-      if (this.contextWindowTokens !== undefined) {
-        const size = this.sizeFromChars(requestChars(summaryMessages, []));
-        const limit = this.contextBudget().limit;
-        if (size > limit) {
-          this.lastCompactionError = `summary request would exceed the context window ` +
-            `(${size} > ${limit} tokens, estimated)`;
-          return allowFold ? this.foldSummary(removed) : undefined;
+    let summaryMessages: Message[] | undefined;
+    if (canAskModel) {
+      if (this.contextWindowTokens === undefined) {
+        summaryMessages = buildSummaryMessages(
+          previousSummary, buildSummaryInput(removed, archivePath), outputChars,
+        );
+      } else {
+        // 输出预留没覆盖合法摘要结构时（典型是 outputTokenReserve = 0），差额要从输入侧让出来：
+        // 窗口要同时装下这份请求和它要求模型写出的那份摘要。
+        const outputShortfall = Math.max(0, outputChars - reservedOutputChars);
+        const requestLimit = charsForTokens(this.contextBudget().limit, this.calibration) - outputShortfall;
+        // 摘要直接打给 llm.chat()，不经过 prepareRequest()：辅助请求绝不递归触发压缩。
+        const fit = fitSummaryInput(
+          removed,
+          archivePath,
+          (history) => requestChars(buildSummaryMessages(previousSummary, history, outputChars), []),
+          requestLimit,
+        );
+        if (fit === undefined || fit.chars < MIN_SUMMARY_INPUT_CHARS) {
+          const fitChars = fit === undefined ? 0 : fit.chars;
+          this.lastCompactionError =
+            `context window is too small for a safe summary (${fitChars} chars fit for history, ` +
+            `minimum ${MIN_SUMMARY_INPUT_CHARS}; a legal summary needs ${outputChars} chars of output)`;
+        } else {
+          summaryMessages = buildSummaryMessages(previousSummary, fit.history, outputChars);
         }
       }
+    }
+    if (summaryMessages !== undefined) {
       this.stopIfCancelled();
       this.runSummaryRequests++;
       this.sessionSummaryRequests++;
