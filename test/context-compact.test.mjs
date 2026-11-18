@@ -64,7 +64,7 @@ function createModel(options = {}) {
         String(messages[0].content ?? "").includes(SUMMARY_PROMPT_MARKER);
       requests.push(structuredClone({ messages, tools, summary: isSummary }));
       if (options.maxRequestChars !== undefined) {
-        const size = JSON.stringify(messages).length + JSON.stringify(tools).length;
+        const size = compact.requestChars(messages, tools);
         if (size > options.maxRequestChars) {
           throw new ModelHttpError(400, `fake backend: request of ${size} chars exceeds ${options.maxRequestChars}`);
         }
@@ -190,6 +190,26 @@ test("预算：短对话不压缩，也不调用摘要模型", async () => {
   assert.equal(chat.summaryRequests.length, 0, "空间够就不该为压缩付一次模型调用");
   assert.equal(agent.stats.summaryRequests, 0);
   assert.equal(agent.compactionStats.compactions, 0);
+});
+
+test("预算：工具定义按实际发送给模型的包装结构计算", () => {
+  const message = { role: "user", content: "hello" };
+  const definition = {
+    name: "echo",
+    description: "Echo the value back.",
+    parameters: { type: "object", properties: { value: { type: "string" } } },
+  };
+  const wireTools = [{
+    type: "function",
+    function: {
+      name: definition.name,
+      description: definition.description,
+      parameters: definition.parameters,
+    },
+  }];
+  const expected = JSON.stringify([message]).length + JSON.stringify(wireTools).length;
+
+  assert.equal(compact.requestChars([message], [definition]), expected);
 });
 
 test("预算：工具定义与系统提示都算进请求体积", async () => {

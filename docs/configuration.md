@@ -32,10 +32,21 @@
 | `MAX_STEPS` | `30` | 一次 Run 最多请求模型多少次 |
 | `MAX_TOOL_CALLS` | `60` | 一次 Run 最多真正执行多少个 Tool call |
 | `MAX_TOTAL_TOKENS` | `500000` | 一次 Run 的 token 软预算；`0` 表示不限制 |
-| `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应的最大输出 token |
+| `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应的最大输出 token；同时从上下文窗口里预留给模型输出 |
+| `CONTEXT_WINDOW_TOKENS` | 未设置（或 `0`） | 模型上下文窗口总量，单位 token；设置后才启用 Token 估算。必须大于 `MAX_OUTPUT_TOKENS`，窗口大小由模型服务决定，内核不按模型名称猜 |
 | `TOOL_TIMEOUT_MS` | `120000` | 单条 Shell / 工具操作的默认超时 |
 
 Step 和 Tool call 必须分开看：一次模型回复可以要求多个 Tool。
+
+未配置上下文窗口时，Core 使用默认 120000 字符预算；配置后按窗口扣除输出预留，并用最近一次真实 prompt usage 校准估算。估算不是精确 Tokenizer。
+
+### 上下文原文存档
+
+| 配置 | 默认值 | 作用 |
+| --- | --- | --- |
+| `AGENT_CONTEXT_ARCHIVE` | 系统临时目录下的 `agent-kernel-context/` | 有损压缩前保存原文的根目录；每个 Agent 会话单独建子目录 |
+
+存档可能包含密钥、源代码和工具输出，不要指向项目仓库，也不要随意共享。当前不会自动清理，需由宿主或操作系统管理。
 
 ## 4. CLI 展示
 

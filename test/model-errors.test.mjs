@@ -8,7 +8,8 @@
  * 内容目录：
  *   - 用例一：八种错误各自的标题与建议；技术详情保留原文；未识别的错误返回 `undefined`。
  *   - 用例二：404 不能武断说成「模型名不存在」，建议里要同时提 `MODEL` 与 `BASE_URL`。
- *   - 用例三：可重试与不可重试两张清单，鉴权、404、SSE 残缺一律不许重放。
+ *   - 用例三：上下文溢出只认输入窗口超限，不把输出 Token 限制误判为压缩恢复信号。
+ *   - 用例四：可重试与不可重试两张清单，鉴权、404、SSE 残缺一律不许重放。
  *
  * 模块关系：依赖 `src/protocol/errors.ts` 与 `node:test`，由 `npm test` 启动。
  */
@@ -16,7 +17,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   ChatResponseError, ModelConfigError, ModelConnectionError, ModelHttpError,
-  isRetryableModelError, modelFailure,
+  isContextOverflowError, isRetryableModelError, modelFailure,
 } from "../src/protocol/errors.ts";
 
 test("模型错误分类：缺配置、鉴权、404、网络和 SSE 未完成各有对应建议", () => {
@@ -39,6 +40,25 @@ test("模型错误分类：缺配置、鉴权、404、网络和 SSE 未完成各
   assert.match(modelFailure(new ChatResponseError("bad stream"), "zh")?.advice ?? "", /已作废/);
   assert.match(modelFailure(new ChatResponseError("bad stream"), "en")?.advice ?? "", /discarded/);
   assert.equal(modelFailure(new Error("tool failed"), "zh"), undefined);
+});
+
+test("上下文溢出分类：只识别输入窗口超限，不把输出 Token 限制误判为上下文溢出", () => {
+  const overflowCases = [
+    new ModelHttpError(400, "This model's maximum context length is 8192 tokens."),
+    new ModelHttpError(413, "Input length exceeds the context length limit of 65536 tokens."),
+    new ModelHttpError(422, "The prompt is too long for this model."),
+    new ModelHttpError(400, "The prompt exceeds the maximum input token limit."),
+  ];
+  for (const error of overflowCases) assert.equal(isContextOverflowError(error), true, error.message);
+
+  const ordinaryCases = [
+    new ModelHttpError(400, "The requested output exceeds the maximum output tokens."),
+    new ModelHttpError(400, "Too many completion tokens."),
+    new ModelHttpError(400, "Invalid tool call arguments."),
+    new ModelHttpError(429, "context length exceeded"),
+    new Error("context window exceeded"),
+  ];
+  for (const error of ordinaryCases) assert.equal(isContextOverflowError(error), false, error.message);
 });
 
 test("404 不能武断判断一定是模型名不存在", () => {

@@ -135,9 +135,12 @@ export function charsForTokens(tokens: number, calibration?: TokenCalibration): 
  * 键名、引号、转义都会占 token。只数 `content` 会系统性低估，长工具 Schema 尤其明显。
  */
 export function requestChars(messages: readonly Message[], tools: readonly ToolDefinition[]): number {
-  let total = tools.length === 0 ? 0 : JSON.stringify(tools).length;
-  for (const message of messages) total += JSON.stringify(message).length;
-  return total;
+  // Llm.chat 会把每个 ToolDefinition 包成 { type: "function", function: ... }；测量必须和发送形状一致。
+  const wireTools = tools.map(({ name, description, parameters }) => ({
+    type: "function",
+    function: { name, description, parameters },
+  }));
+  return JSON.stringify(messages).length + JSON.stringify(wireTools).length;
 }
 
 /**

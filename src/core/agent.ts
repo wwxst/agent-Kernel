@@ -659,6 +659,7 @@ export class Agent {
         if (original.length <= limit + TOOL_RESULT_SNIP_MARGIN) continue;
         // 按消息对象找上一次的引用：同一个 id 可能是另一次调用，不能共用存档。
         let ref = this.prunedSources.get(message);
+        let savedNow = false;
         if (ref === undefined) {
           try {
             ref = await this.archive.save("tool", key, original);
@@ -669,12 +670,21 @@ export class Agent {
             continue;
           }
           this.prunedSources.set(message, ref);
-          this.archivedOriginals.push(ref);
+          savedNow = true;
         }
         // 第二刀传进来的 original 已经是预览，但标记里的来源仍是第一次那份完整原文。
+        // 体积按 JSON 序列化后的消息差值更新：换行、反斜杠会被转义，不能直接扣原文字符差。
+        const beforeChars = JSON.stringify(message).length;
         const preview = compactText(original, limit, ref.path);
-        chars -= original.length - preview.length;
         message.content = preview;
+        const afterChars = JSON.stringify(message).length;
+        if (afterChars >= beforeChars) {
+          message.content = original;
+          if (savedNow) this.prunedSources.delete(message);
+          continue;
+        }
+        if (savedNow) this.archivedOriginals.push(ref);
+        chars += afterChars - beforeChars;
         changed = true;
       }
     }
