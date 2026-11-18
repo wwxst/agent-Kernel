@@ -6,7 +6,7 @@
  * 同时只允许一个 Run，返回的消息与统计都是副本，宿主不能改写已确认的会话状态。
  *
  * 文件职责：负责循环、消息顺序与 id 配对、三类预算（步数 / 工具调用 / token）、
- * 构造期参数校验、无进展循环检测（连续三批「调用与结果都相同」就停手）、
+ * 构造期参数校验、无进展循环检测（稳定结果连续重复就停手，工具报告的等待状态交给步数闸门）、
  * 会话生命周期、用量记账，以及把事件通知给界面（观察者抛异常只计数，不打断任务）。
  * 每步委托 SessionContext 准备可发送的上下文，在服务端报告窗口超限时请求一次恢复。
  *
@@ -103,7 +103,7 @@ function assertIntegerBudget(name: string, value: number, minimum: number): void
   }
 }
 
-/** 连续三批完整相同才判定无进展，给轮询任务留出一次稳定状态的机会。 */
+/** 普通工具连续三批完整相同才判定无进展，避免把一次偶然的稳定结果当成死循环。 */
 const MAX_IDENTICAL_TOOL_BATCHES = 3;
 
 /**
@@ -237,22 +237,32 @@ class RunState {
   toolCalls = 0;
   readonly usage = emptyUsage();
   readonly replies: Message[] = [];
-  private lastToolBatch?: { signature: string; results: readonly ToolExecutionResult[]; repetitions: number };
+  private lastToolBatch?: {
+    signature: string;
+    results: readonly ToolExecutionResult[];
+    repetitions: number;
+    waiting: boolean;
+  };
 
   /** 只有完整批次才记录。直接比较文本和状态，避免把整批大结果再序列化一份。 */
-  recordToolBatch(signature: string, results: readonly ToolExecutionResult[]): void {
+  recordToolBatch(signature: string, results: readonly ToolExecutionResult[], waiting: boolean): void {
     const previous = this.lastToolBatch;
     // 签名包含有序调用列表，相同签名的完整批次必有同样数量的结果。
     const repeated = previous?.signature === signature && results.every((result, index) => {
       const last = previous.results[index];
-      return result.content === last.content && result.isError === last.isError;
+      return result.content === last.content && result.isError === last.isError && result.isWaiting === last.isWaiting;
     });
-    this.lastToolBatch = { signature, results, repetitions: repeated ? previous.repetitions + 1 : 1 };
+    this.lastToolBatch = {
+      signature,
+      results,
+      repetitions: repeated ? previous.repetitions + 1 : 1,
+      waiting,
+    };
   }
 
   shouldStopToolBatch(signature: string): boolean {
     const last = this.lastToolBatch;
-    return last?.signature === signature && last.repetitions >= MAX_IDENTICAL_TOOL_BATCHES;
+    return last?.signature === signature && !last.waiting && last.repetitions >= MAX_IDENTICAL_TOOL_BATCHES;
   }
 }
 
@@ -637,8 +647,9 @@ export class Agent {
       );
     }
 
-    // 预算和最后一步的失败原因优先；只把「相同调用 + 相同结果」视为无进展，
-    // 轮询工具每次返回新状态时必须继续运行。
+    // 预算和最后一步的失败原因优先；稳定结果重复才算无进展。
+    // 工具明确报告仍在等待时，重复调用是等待中的有效动作，
+    // 让它继续到状态变化或 maxSteps 兜底，避免第四次读取恰好早于任务完成。
     const batchSignature = toolBatchSignature(calls);
     if (this.currentRun.shouldStopToolBatch(batchSignature)) {
       this.skipCalls(calls, "repeated identical tool batch made no progress");
@@ -680,9 +691,10 @@ export class Agent {
         this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
         return;
       }
-      batchResults.push({ content: outcome.content, isError: outcome.isError });
+      batchResults.push(outcome);
     }
-    this.currentRun.recordToolBatch(batchSignature, batchResults);
+    const waitingForProgress = batchResults.every(result => !result.isError && result.isWaiting === true);
+    this.currentRun.recordToolBatch(batchSignature, batchResults, waitingForProgress);
   }
 
   private async runLoop(task: string): Promise<Message> {

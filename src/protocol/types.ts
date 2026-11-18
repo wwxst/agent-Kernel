@@ -78,6 +78,8 @@ export interface Message {
 export interface ToolExecutionResult {
   content: string;
   isError: boolean;
+  /** 工具明确表示当前结果是等待中的状态；Agent 会交给 maxSteps 兜底，而不判成死循环。 */
+  isWaiting?: boolean;
 }
 
 /**

@@ -2096,6 +2096,13 @@ const SEARCH_PATH_DESCRIPTION =
   "File or directory to search: a directory is searched recursively, a single file only itself. " +
   "Relative paths resolve from the workspace root; absolute paths and ../ are allowed. Defaults to the workspace root.";
 
+/** shell-output 的 running 状态允许 Agent 继续等待，最终状态仍由下一次读取确认。 */
+function isRunningJobOutput(content: string): boolean {
+  const newline = content.indexOf("\n");
+  const firstLine = newline === -1 ? content : content.slice(0, newline);
+  return /^job-[^\s]+ \(running, pid [^)]+\) ran: /.test(firstLine);
+}
+
 export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
@@ -2340,10 +2347,13 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         },
         required: ["job_id"],
       },
-      run: async (args) => workspace.readJobOutput(
-        String(args.job_id),
-        typeof args.wait === "number" ? Math.min(60_000, Math.max(0, args.wait)) : 0,
-      ),
+      run: async (args) => {
+        const content = await workspace.readJobOutput(
+          String(args.job_id),
+          typeof args.wait === "number" ? Math.min(60_000, Math.max(0, args.wait)) : 0,
+        );
+        return { content, isError: false, ...(isRunningJobOutput(content) ? { isWaiting: true } : {}) };
+      },
     },
     {
       name: "shell-kill",

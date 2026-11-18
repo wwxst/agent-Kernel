@@ -1096,6 +1096,39 @@ test("无进展检测：工具结果变化时连续轮询不会被误判", async
   assert.equal(chat.requests.length, 4);
 });
 
+test("无进展检测：后台任务仍在运行时允许继续轮询到完成", async () => {
+  const chat = createScriptedChat([
+    callTool("poll-1", "shell-output", { job_id: "job-1", wait: 1_000 }),
+    callTool("poll-2", "shell-output", { job_id: "job-1", wait: 1_000 }),
+    callTool("poll-3", "shell-output", { job_id: "job-1", wait: 1_000 }),
+    callTool("poll-4", "shell-output", { job_id: "job-1", wait: 1_000 }),
+    callTool("poll-5", "shell-output", { job_id: "job-1", wait: 1_000 }),
+    finalReply("ready"),
+  ]);
+  let executions = 0;
+  const tool = {
+    name: "shell-output",
+    description: "Read a background shell job.",
+    parameters: {
+      type: "object", properties: { job_id: { type: "string" }, wait: { type: "number" } },
+      required: ["job_id"],
+    },
+    run: async () => {
+      executions++;
+      return executions < 5
+        ? { content: "job-1 (running, pid 42) ran: node server.js\n(no new output)", isError: false, isWaiting: true }
+        : { content: "job-1 (exited with code 0, pid 42) ran: node server.js\nready", isError: false };
+    },
+  };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  const reply = await agent.run("等待后台任务完成");
+
+  assert.equal(reply.content, "ready");
+  assert.equal(executions, 5);
+  assert.equal(chat.requests.length, 6);
+});
+
 test("无进展检测：参数键顺序规范化且不依赖 tool_call_id", async () => {
   const chat = createScriptedChat([
     {

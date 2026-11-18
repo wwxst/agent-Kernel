@@ -279,8 +279,13 @@ export class ToolRegistry {
       const raw = await tool.run(args);
       let result: ToolExecutionResult;
       if (typeof raw === "string") result = { content: raw, isError: false };
-      else if (isRecord(raw) && typeof raw.content === "string" && typeof raw.isError === "boolean") {
-        result = { content: raw.content, isError: raw.isError };
+      else if (isRecord(raw) && typeof raw.content === "string" && typeof raw.isError === "boolean" &&
+          (raw.isWaiting === undefined || typeof raw.isWaiting === "boolean")) {
+        result = {
+          content: raw.content,
+          isError: raw.isError,
+          ...(raw.isWaiting === true ? { isWaiting: true } : {}),
+        };
       } else {
         throw new Error("tool returned an invalid execution result");
       }
