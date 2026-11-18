@@ -11,11 +11,12 @@
  * 不负责 Hook 的登记与执行顺序（那是 `core/tool-hooks.ts`）。
  *
  * 内容目录：
- *   - `ToolRegistry`：注册表本体，构造时挡掉重名与不支持的 Schema。
+ *   - `ToolRegistry`：注册表本体，构造时先挡掉形状不合格的工具，再挡掉重名与不支持的 Schema。
  *   - `ToolRegistry.definitions`：发给模型的说明书副本，没有执行函数，也不能改写注册后的校验规则。
  *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
  *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
- *   - 内部：`assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
+ *   - 内部：`assertToolShape()` 注册时先查基本形状（对象、非空名字、description、run）、
+ *     `assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
  *     共用的一套字段体检、`validateArguments()` 按 Schema 校验参数（并对声明了
  *     `strictArguments` 的工具额外拒绝未声明字段）、`findUnknownArguments()` 列出多传的字段、
  *     `SUPPORTED_PARAMETER_TYPES` 校验器真正认识的那几种类型。
@@ -38,19 +39,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** 注册是工具的外部接缝，先把基本形状错误变成可定位的装配错误。 */
 function assertToolShape(value: unknown, index: number): asserts value is Tool {
   if (!isRecord(value)) {
-    // 工具列表中的第 {index} 项必须是对象。
+    // 中文对照：工具列表中的第 {index} 项必须是对象。
     throw new Error(`tool at index ${index} must be an object`);
   }
   if (typeof value.name !== "string" || value.name.trim() === "") {
-    // 工具列表中的第 {index} 项必须有非空名称。
+    // 中文对照：工具列表中的第 {index} 项必须有非空名称。
     throw new Error(`tool at index ${index} must have a non-empty name`);
   }
   if (typeof value.description !== "string") {
-    // 工具 {name} 的 description 必须是字符串。
+    // 中文对照：工具 {name} 的 description 必须是字符串。
     throw new Error(`tool "${value.name}": description must be a string`);
   }
   if (typeof value.run !== "function") {
-    // 工具 {name} 的 run 必须是函数。
+    // 中文对照：工具 {name} 的 run 必须是函数。
     throw new Error(`tool "${value.name}": run must be a function`);
   }
 }
@@ -200,8 +201,6 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
 
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
-  /** 调用按名字查找，注册时建索引避免每次执行都扫描完整工具列表。 */
-  private readonly toolByName: ReadonlyMap<string, Tool>;
 
   /** 围着工具执行的那三个事件；不传就是空执行器，行为与没有 Hook 时完全一致。 */
   private readonly hooks: ToolHooks;
@@ -226,7 +225,6 @@ export class ToolRegistry {
       ...tool,
       parameters: structuredClone(tool.parameters),
     })));
-    this.toolByName = new Map(this.tools.map((tool) => [tool.name, tool]));
     this.hooks = hooks;
   }
 
@@ -254,7 +252,7 @@ export class ToolRegistry {
   async executeWithStatus(call: ToolCall): Promise<ToolExecutionResult> {
     const failed = (content: string): ToolExecutionResult => ({ content, isError: true });
     const name = call.function.name;
-    const tool = this.toolByName.get(name);
+    const tool = this.tools.find((candidate) => candidate.name === name);
     if (!tool) {
       const available = this.tools.map((candidate) => candidate.name).join(", ");
       return failed(`ERROR: unknown tool "${name}" (available: ${available})`);
