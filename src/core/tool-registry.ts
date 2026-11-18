@@ -35,6 +35,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** 注册是工具的外部接缝，先把基本形状错误变成可定位的装配错误。 */
+function assertToolShape(value: unknown, index: number): asserts value is Tool {
+  if (!isRecord(value)) {
+    // 工具列表中的第 {index} 项必须是对象。
+    throw new Error(`tool at index ${index} must be an object`);
+  }
+  if (typeof value.name !== "string" || value.name.trim() === "") {
+    // 工具列表中的第 {index} 项必须有非空名称。
+    throw new Error(`tool at index ${index} must have a non-empty name`);
+  }
+  if (typeof value.description !== "string") {
+    // 工具 {name} 的 description 必须是字符串。
+    throw new Error(`tool "${value.name}": description must be a string`);
+  }
+  if (typeof value.run !== "function") {
+    // 工具 {name} 的 run 必须是函数。
+    throw new Error(`tool "${value.name}": run must be a function`);
+  }
+}
+
 /**
  * 注册时的 Schema 体检：只接受「这个注册表真的会校验」的形状。
  *
@@ -180,6 +200,8 @@ function validateArguments(tool: Tool, args: Record<string, unknown>): string | 
 
 export class ToolRegistry {
   private readonly tools: readonly Tool[];
+  /** 调用按名字查找，注册时建索引避免每次执行都扫描完整工具列表。 */
+  private readonly toolByName: ReadonlyMap<string, Tool>;
 
   /** 围着工具执行的那三个事件；不传就是空执行器，行为与没有 Hook 时完全一致。 */
   private readonly hooks: ToolHooks;
@@ -190,7 +212,9 @@ export class ToolRegistry {
    */
   constructor(tools: readonly Tool[], hooks: ToolHooks = new ToolHooks()) {
     const seen = new Set<string>();
-    for (const tool of tools) {
+    for (let index = 0; index < tools.length; index++) {
+      const tool: unknown = tools[index];
+      assertToolShape(tool, index);
       if (seen.has(tool.name)) {
         throw new Error(`duplicate tool name "${tool.name}"`);
       }
@@ -202,6 +226,7 @@ export class ToolRegistry {
       ...tool,
       parameters: structuredClone(tool.parameters),
     })));
+    this.toolByName = new Map(this.tools.map((tool) => [tool.name, tool]));
     this.hooks = hooks;
   }
 
@@ -229,7 +254,7 @@ export class ToolRegistry {
   async executeWithStatus(call: ToolCall): Promise<ToolExecutionResult> {
     const failed = (content: string): ToolExecutionResult => ({ content, isError: true });
     const name = call.function.name;
-    const tool = this.tools.find((candidate) => candidate.name === name);
+    const tool = this.toolByName.get(name);
     if (!tool) {
       const available = this.tools.map((candidate) => candidate.name).join(", ");
       return failed(`ERROR: unknown tool "${name}" (available: ${available})`);
