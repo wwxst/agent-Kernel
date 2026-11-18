@@ -335,12 +335,16 @@ export class Agent {
   private calibration?: TokenCalibration;
 
   /**
-   * 已经产出、但还没有被任何一次**成功**响应读过的工具调用 id。
+   * 已经产出、但还没有被任何一次**成功**响应读过的工具结果消息（按消息对象身份）。
    *
    * 请求失败不算「读过」：那一批结果模型根本没看到，压掉它等于让它凭空消失。
-   * 每收到一次有效响应就清空；每个 Run 开始时也清空 —— 上一轮已结束，那些结果成为普通历史。
+   * 每收到一次有效响应就换一个新集合；每个 Run 开始时也换掉 —— 上一轮已结束，
+   * 那些结果成为普通历史。
+   *
+   * 为什么不用 `tool_call_id`：id 只保证一次响应内唯一，模型在后续响应里复用同一个 id 时，
+   * 按 id 判断会把早就读过的旧批次也当成「还没读」，那段历史就再也折不动（也没有任何提示）。
    */
-  private unconsumedToolCallIds = new Set<string>();
+  private unconsumedResults = new WeakSet<Message>();
 
   /** 本次 Run 收到的 assistant 回复（按顺序）。压缩会改数组下标，这份列表不受影响。 */
   private runReplyLog: Message[] = [];
@@ -645,7 +649,7 @@ export class Agent {
         if (this.sizeFromChars(chars) <= target) break;
         if (message.role !== "tool") continue;
         const key = message.tool_call_id ?? "result";
-        if (!includeUnconsumed && this.unconsumedToolCallIds.has(key)) continue;
+        if (!includeUnconsumed && this.unconsumedResults.has(message)) continue;
         const original = message.content ?? "";
         // 剪完几乎不省空间的结果不值得动：多一条噪声，少一份可读性。
         if (original.length <= limit + TOOL_RESULT_SNIP_MARGIN) continue;
@@ -685,7 +689,7 @@ export class Agent {
    * 一份标明降级的确定性折叠（原文已存档）比直接失败更有用。
    */
   private async compactHistory(target: number, keepRecentSteps: number, allowFold = false): Promise<boolean> {
-    const units = collectRemovableUnits(this.messages, this.unconsumedToolCallIds);
+    const units = collectRemovableUnits(this.messages, this.unconsumedResults);
     if (units.length === 0) return false;
 
     const stepStarts = units.filter((unit) => unit.kind === "step").map((unit) => unit.start);
@@ -963,9 +967,10 @@ export class Agent {
   /** 没有执行的调用也要留下一条结果：明确写「没跑」，而不是让它们凭空消失。 */
   private skipCalls(calls: readonly ToolCall[], reason: string): void {
     for (const call of calls) {
-      this.messages.push(createToolResult(call, `ERROR: not run: ${reason}`));
+      const result = createToolResult(call, `ERROR: not run: ${reason}`);
+      this.messages.push(result);
       // 这条结果同样还没被模型读过，压缩时不能被折叠掉。
-      this.unconsumedToolCallIds.add(call.id);
+      this.unconsumedResults.add(result);
     }
   }
 
@@ -1096,7 +1101,7 @@ export class Agent {
     this.runUsage = emptyUsage();
     // 上一个 Run 已经结束：它留下的结果从此是普通历史，不再享有「模型还没读」的保护，
     // 否则一次失败的 Run 会把那些批次永久钉住，历史再也压不动。
-    this.unconsumedToolCallIds.clear();
+    this.unconsumedResults = new WeakSet();
   }
 
   private async runLoop(task: string): Promise<Message> {
@@ -1181,7 +1186,7 @@ export class Agent {
         this.calibration = { chars: sentChars, tokens: response.usage.prompt_tokens };
       }
       // 这一次成功响应已经把上一批工具结果读给模型看了，保护可以解除。
-      this.unconsumedToolCallIds.clear();
+      this.unconsumedResults = new WeakSet();
       this.stopIfCancelled();
       const message = response.message;
       this.messages.push(message);
@@ -1253,8 +1258,9 @@ export class Agent {
           // 整棵进程树未确认停止：记录当前调用的错误并跳过整批剩余工具，不能继续写文件。
           this.runToolCalls++;
           this.sessionToolCalls++;
-          this.messages.push(createToolResult(call, `ERROR: ${error.message}`));
-          this.unconsumedToolCallIds.add(call.id);
+          const failed = createToolResult(call, `ERROR: ${error.message}`);
+          this.messages.push(failed);
+          this.unconsumedResults.add(failed);
           this.notifyObserver(this.onToolResult, structuredClone(call), `ERROR: ${error.message}`, true);
           this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
           // 不再让整轮任务失败：一次命令超时不该毁掉前面所有工作。
@@ -1263,9 +1269,10 @@ export class Agent {
         }
         this.runToolCalls++;
         this.sessionToolCalls++;
-        this.messages.push(createToolResult(call, result));
+        const toolMessage = createToolResult(call, result);
+        this.messages.push(toolMessage);
         // 这一批结果还没被任何成功响应读过：下一次请求前不能把它们折叠掉。
-        this.unconsumedToolCallIds.add(call.id);
+        this.unconsumedResults.add(toolMessage);
         this.notifyObserver(this.onToolResult, structuredClone(call), result, isError);
       }
 

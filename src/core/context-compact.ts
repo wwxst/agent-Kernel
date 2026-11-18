@@ -185,12 +185,16 @@ export interface RemovableUnit {
  * 规则：
  *   - 最后一个用户轮次之外的历史，整轮算一段；
  *   - 当前轮里，每个「assistant 带 tool_calls + 紧随其后的完整结果」算一段；
- *   - 尚未配齐的批次（还没跑完）、以及任何带保护 id 的段，一律不出现 ——
- *     模型还没读过的结果不能被折叠，否则它看到的就是自己没读过的内容被摘要掉了。
+ *   - 尚未配齐的批次（还没跑完）、以及任何含「还没被模型读过」的结果的段，一律不出现 ——
+ *     模型没读过的结果不能被折叠，否则它看到的就是自己没读过的内容被摘要掉了。
+ *
+ * 保护按**结果消息对象**判断，不按 `tool_call_id`：id 只保证一次响应内唯一，
+ * 后续响应复用同一个 id 时，按 id 判断会把早就读过的旧批次也当成「还没读」，那段历史
+ * 就再也折不动了。
  */
 export function collectRemovableUnits(
   messages: readonly Message[],
-  protectedToolCallIds: ReadonlySet<string> = new Set(),
+  protectedResults?: WeakSet<Message>,
 ): RemovableUnit[] {
   const units: RemovableUnit[] = [];
   const turnStarts: number[] = [];
@@ -205,7 +209,7 @@ export function collectRemovableUnits(
     const end = turnStarts[index + 1]!;
     const slice = messages.slice(start, end);
     if (!hasCompleteToolPairs(slice)) continue;
-    if (containsProtectedCall(slice, protectedToolCallIds)) continue;
+    if (containsProtectedResult(slice, protectedResults)) continue;
     units.push({ start, end, kind: "turn" });
   }
 
@@ -221,7 +225,7 @@ export function collectRemovableUnits(
       });
       if (!paired) break;
       const slice = messages.slice(index, end);
-      if (containsProtectedCall(slice, protectedToolCallIds)) break;
+      if (containsProtectedResult(slice, protectedResults)) break;
       units.push({ start: index, end, kind: "step" });
       index = end;
       continue;
@@ -232,15 +236,10 @@ export function collectRemovableUnits(
   return units;
 }
 
-/** 这一段里有任何一条调用在保护名单上，就不能动它。 */
-function containsProtectedCall(messages: readonly Message[], protectedToolCallIds: ReadonlySet<string>): boolean {
-  if (protectedToolCallIds.size === 0) return false;
-  for (const message of messages) {
-    for (const call of message.tool_calls ?? []) {
-      if (protectedToolCallIds.has(call.id)) return true;
-    }
-  }
-  return false;
+/** 这一段里有任何一条工具结果还没被模型读过，就不能动它。 */
+function containsProtectedResult(messages: readonly Message[], protectedResults?: WeakSet<Message>): boolean {
+  if (protectedResults === undefined) return false;
+  return messages.some((message) => message.role === "tool" && protectedResults.has(message));
 }
 
 /** 这一段序列化后占多少字符，用来估算移除它能省多少。 */

@@ -313,6 +313,28 @@ test("工具调用：同一轮里复用同一个调用 id 的完整配对仍可�
   assert.equal(agent.compactionStats.lastError, "");
 });
 
+test("工具调用：同一轮里复用 id 时，未消费保护不会锁住整段历史", async () => {
+  // 只有「刚跑完、还没被读过」的那一批该受保护；旧的同 id 批次必须照常可折叠。
+  const replies = [];
+  for (let step = 1; step <= 4; step++) {
+    replies.push({
+      ...callTool("same", "echo", { value: String(step) }),
+      content: "step " + step + " " + "n".repeat(1_500),
+    });
+  }
+  replies.push(finalReply("done"));
+  const chat = createModel({ replies, summary: summaryWith("reused-in-turn") });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 6_000 });
+
+  const reply = await agent.run("run four steps");
+
+  assert.equal(reply.content, "done");
+  assert.ok(agent.compactionStats.compactions >= 1,
+    "复用 id 的旧批次不该被当成「还没读」，否则这段历史永远折不动");
+  assert.ok(chat.summaryRequests.length >= 1);
+  assert.equal(agent.compactionStats.lastError, "");
+});
+
 test("进程树未确认后：请求按空工具表测量，模型仍能报告故障", async () => {
   const bulky = {
     name: "bulky",
