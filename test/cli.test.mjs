@@ -658,6 +658,8 @@ test("TUI：最后一步模型已确认说明但工具未执行，保留正文�
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
       assert.match(run.stdout, /turn failed: step limit 1 reached/);
       assert.match(run.stdout, /were not run/);
+      assert.equal(mock.requests[0].tools, undefined);
+      assert.equal(mock.requests[0].tool_choice, undefined);
       assert.equal(mock.requests.length, 1);
     } finally {
       await mock.close();
@@ -1419,7 +1421,8 @@ test("委派：子 Agent 在自己的装配路径上压缩，不污染父 Agent 
       // 1) 子 Agent 确实在自己的装配路径上发过摘要请求：不带工具，带摘要专用提示。
       const summaries = mock.summaryRequests();
       assert.ok(summaries.length >= 1, "子 Agent 应该触发过压缩");
-      assert.equal(summaries[0].tools.length, 0, "摘要请求不许调用工具");
+      assert.equal(summaries[0].tools, undefined, "摘要请求省略工具字段");
+      assert.equal(summaries[0].tool_choice, undefined);
       assert.match(summaries[0].messages[0].content, /handoff record/);
 
       // 2) 摘要落进了子 Agent 自己的上下文。

@@ -21,7 +21,7 @@
  * 与 `test/support/harness.mjs`。由 `package.json` 的 `test` 脚本执行。
  */
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 import { Agent } from "../src/core/agent.ts";
@@ -40,6 +40,19 @@ import {
 } from "./support/harness.mjs";
 
 /**
+ * 压缩用例只关心压缩机制，不关心默认系统提示写了什么。
+ *
+ * 长度刻意对齐默认提示（1086 字符）：这些用例的预算、触发线、
+ * 「先裁哪一刀」都是按那个体积调出来的，换成任意短提示会让压力消失，断言就不再测原来的东西。
+ * 显式传了 `systemPrompt` 的用例仍然用自己那份：展开顺序保证 options 覆盖默认值。
+ */
+const TEST_SYSTEM_PROMPT = "t".repeat(1_086);
+
+function makeAgent(options) {
+  return new Agent({ systemPrompt: TEST_SYSTEM_PROMPT, ...options });
+}
+
+/**
  * 独立模拟 Llm.chat 发出的请求体积。
  *
  * 不调用生产代码的 requestChars()：假后端必须有自己的测量逻辑，
@@ -50,7 +63,7 @@ function serializedWireRequestChars(messages, tools) {
     type: "function",
     function: { name, description, parameters },
   }));
-  return JSON.stringify(messages).length + JSON.stringify(wireTools).length;
+  return JSON.stringify(messages).length + (wireTools.length > 0 ? JSON.stringify(wireTools).length : 0);
 }
 
 /**
@@ -191,7 +204,7 @@ function longValidSummary(total) {
 
 test("预算：短对话不压缩，也不调用摘要模型", async () => {
   const chat = createModel({ replies: [finalReply("ok")] });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     contextWindowTokens: 8_000,
@@ -241,7 +254,7 @@ test("预算：工具定义与系统提示都算进请求体积", async () => {
 
   // 同样的对话、同样的预算，只差工具说明书的大小：只有大的那份该触发裁剪。
   const withBulky = createModel({ replies: script });
-  const bulkyAgent = new Agent({
+  const bulkyAgent = makeAgent({
     llm: withBulky,
     tools: makeRegistry([bigEcho, bulky]),
     contextWindowTokens: 8_000,
@@ -251,7 +264,7 @@ test("预算：工具定义与系统提示都算进请求体积", async () => {
   await bulkyAgent.run("second");
 
   const withTiny = createModel({ replies: script });
-  const tinyAgent = new Agent({
+  const tinyAgent = makeAgent({
     llm: withTiny,
     tools: makeRegistry([bigEcho, tiny]),
     contextWindowTokens: 8_000,
@@ -271,14 +284,14 @@ test("预算：没有窗口只按字符数，配了窗口才按 token 估算", a
   const script = [finalReply("answer " + "x".repeat(9_000))];
 
   const loose = createModel({ replies: script });
-  const looseAgent = new Agent({ llm: loose, tools: makeRegistry([]), maxTranscriptChars: 120_000 });
+  const looseAgent = makeAgent({ llm: loose, tools: makeRegistry([]), maxTranscriptChars: 120_000 });
   await looseAgent.run("first");
   await looseAgent.run("second");
   assert.equal(loose.summaryRequests.length, 0, "字符预算足够时不该压缩");
   assert.equal(loose.businessRequests.at(-1).messages.length, 4, "历史原样保留：system + 两轮 + 新的 user");
 
   const tight = createModel({ replies: script });
-  const tightAgent = new Agent({
+  const tightAgent = makeAgent({
     llm: tight,
     tools: makeRegistry([]),
     contextWindowTokens: 3_000,
@@ -299,7 +312,7 @@ test("工具结果：最新一批装不进窗口时，先存档再给可读预�
     const archiveRoot = path.join(root, "archive");
     const bigTool = { ...echoTool(), run: async () => "y".repeat(20_000) };
     const chat = createModel({ replies: [callTool("big-1", "echo", { value: "x" }), finalReply("done")] });
-    const agent = new Agent({
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([bigTool]),
       maxTranscriptChars: 4_000,
@@ -315,8 +328,40 @@ test("工具结果：最新一批装不进窗口时，先存档再给可读预�
 
     const archived = /full text: (.+?)\]/.exec(delivered.content)?.[1];
     assert.ok(archived !== undefined, "预览必须给出原文路径");
+    assert.ok(chat.businessRequests[1].messages[0].content.includes(archived), "收到预览的同一请求就要包含存档清单");
     assert.equal(await readFile(archived, "utf8"), "y".repeat(20_000), "存档必须是完整原文");
   });
+});
+
+test("工具结果：同批产生十三份存档时，当次请求列出最新十二份并报告余数", async () => {
+  await withWorkspace(async root => {
+    const calls = Array.from({ length: 13 }, (_, i) => callTool("c" + i, "echo", { value: String(i) }).tool_calls[0]);
+    const batch = { role: "assistant", content: null, tool_calls: calls };
+    const chat = createModel({ replies: [batch, finalReply("done")] });
+    const agent = makeAgent({
+      llm: chat, tools: makeRegistry([{ ...echoTool(), run: async () => "z".repeat(4_000) }]),
+      contextArchiveDir: root, maxTranscriptChars: 3_000,
+    });
+    await agent.run("read");
+    const sent = chat.businessRequests.at(-1).messages;
+    const listed = [...sent[0].content.matchAll(/^- (.+?) \(\d+ chars\)$/gm)].map(match => match[1]);
+    const paths = sent.filter(m => m.role === "tool").map(m => /full text: (.+?)\]/.exec(m.content)[1]);
+    assert.equal(listed.length, 12);
+    assert.deepEqual(listed, paths.slice(1));
+    assert.match(sent[0].content, /1 older archive\(s\) not listed/);
+    assert.equal(await readFile(paths[0], "utf8"), "z".repeat(4_000));
+  });
+});
+
+test("溢出降级：自定义客户端返回空工具数组时，折叠仍保留上一轮回答", async () => {
+  const chat = createModel({
+    replies: [finalReply("retain-this-answer " + "x".repeat(6_000)), finalReply("done")],
+    failures: [undefined, contextOverflowError()], summary: "invalid",
+  });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([]), maxTranscriptChars: 20_000 });
+  await agent.run("first");
+  await agent.run("next");
+  assert.match(chat.businessRequests.at(-1).messages[0].content, /Earlier assistant answer: retain-this-answer/);
 });
 
 test("工具结果：存档失败时不做有损替换", async () => {
@@ -326,7 +371,7 @@ test("工具结果：存档失败时不做有损替换", async () => {
     await writeFile(notADirectory, "x");
     const bigTool = { ...echoTool(), run: async () => "y".repeat(20_000) };
     const chat = createModel({ replies: [callTool("big-1", "echo", { value: "x" }), finalReply("done")] });
-    const agent = new Agent({
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([bigTool]),
       maxTranscriptChars: 4_000,
@@ -354,7 +399,7 @@ test("工具结果：模型复用同一个调用 id 时，两份原文各自存�
         finalReply("third"),
       ],
     });
-    const agent = new Agent({
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([tool]),
       maxTranscriptChars: 5_000,
@@ -384,7 +429,7 @@ test("工具调用：同一轮里复用同一个调用 id 的完整配对仍可�
     finalReply("second answer " + "d".repeat(1_500)),
   ];
   const chat = createModel({ replies, summary: summaryWith("reused-id") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 6_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 6_000 });
 
   await agent.run("first task");
   await agent.run("second task");
@@ -406,7 +451,7 @@ test("工具调用：同一轮里复用 id 时，未消费保护不会锁住整�
   }
   replies.push(finalReply("done"));
   const chat = createModel({ replies, summary: summaryWith("reused-in-turn") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 6_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 6_000 });
 
   const reply = await agent.run("run four steps");
 
@@ -433,7 +478,7 @@ test("进程树未确认后：请求按空工具表测量，模型仍能报告�
     ],
   });
   // 窗口按「带全部工具」算不够、按「空工具表」算够：准入必须跟真正发出去的东西一致。
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([bulky]),
     contextWindowTokens: 3_900,
@@ -457,7 +502,7 @@ test("工具结果：先裁剪最早的旧结果，够了就停", async () => {
   const chat = createModel({
     replies: [{ role: "assistant", content: null, tool_calls: calls }, finalReply("first"), finalReply("second")],
   });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxTranscriptChars: 7_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([tool]), maxTranscriptChars: 7_000 });
 
   await agent.run("first task");
   await agent.run("second task");
@@ -480,7 +525,7 @@ test("工具结果：第一刀不够时会再切一刀，但每份都留可读�
     const chat = createModel({
       replies: [{ role: "assistant", content: null, tool_calls: calls }, finalReply("first"), finalReply("second")],
     });
-    const agent = new Agent({
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([tool]),
       maxTranscriptChars: 5_000,
@@ -519,7 +564,7 @@ test("历史摘要：旧轮次折进摘要，当前任务与消息配对保留",
     finalReply("third answer"),
   ];
   const chat = createModel({ replies: script, summary: summaryWith("round-one") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
 
   await agent.run("first task");
   await agent.run("second task");
@@ -553,7 +598,7 @@ test("历史摘要：单轮任务里的已完成步骤也能折叠，当前目�
   }
   replies.push(finalReply("all steps done"));
   const chat = createModel({ replies, summary: summaryWith("steps") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   const reply = await agent.run("run all seven steps");
 
@@ -572,7 +617,7 @@ test("历史摘要：多次压缩是替换旧摘要，而不是不断追加", as
   }
   replies.push(finalReply("done"));
   const chat = createModel({ replies, summary: (round) => summaryWith(`round-${round}`) });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   await agent.run("run all steps");
 
@@ -602,7 +647,7 @@ test("历史摘要：摘要为空或不合格时不提交替换，原上下文�
 
   for (const summary of ["", "too short", "x".repeat(20_000)]) {
     const chat = createModel({ replies: script, summary });
-    const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
+    const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
     await agent.run("first task");
     await agent.run("second task");
     const before = agent.transcript.length;
@@ -615,6 +660,21 @@ test("历史摘要：摘要为空或不合格时不提交替换，原上下文�
   }
 });
 
+test("历史摘要：失败配额用完后不再为同一批历史重复写存档", async () => {
+  await withWorkspace(async root => {
+    const replies = Array.from({ length: 9 }, (_, step) =>
+      callToolWithNotes(String(step), "echo", { value: String(step) }, "n".repeat(2_500)));
+    const chat = createModel({ replies: [...replies, finalReply("done")], summary: "invalid" });
+    const agent = makeAgent({
+      llm: chat, tools: makeRegistry([echoTool()]), contextArchiveDir: root, maxTranscriptChars: 8_000,
+    });
+    await agent.run("task");
+    assert.equal(chat.summaryRequests.length, 2);
+    const [session] = await readdir(root);
+    assert.equal((await readdir(path.join(root, session))).length, 2);
+  });
+});
+
 test("历史摘要：摘要请求失败时不提交替换", async () => {
   const script = [
     callTool("c1", "echo", { value: "a" }),
@@ -624,7 +684,7 @@ test("历史摘要：摘要请求失败时不提交替换", async () => {
     finalReply("third answer"),
   ];
   const chat = createModel({ replies: script, summary: new ModelHttpError(500, "upstream exploded") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
 
   await agent.run("first task");
   await agent.run("second task");
@@ -651,7 +711,7 @@ test("历史摘要：压缩途中取消，不提交摘要也不继续发请求",
     // 摘要请求「返回」的同时用户按了 Ctrl-C：这时不能提交，也不能再发业务请求。
     beforeSummaryReply: () => controller.abort(),
   });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     maxTranscriptChars: 3_000,
@@ -675,7 +735,7 @@ test("历史摘要：摘要请求不带工具、单独计数，用量照记", as
     finalReply("third answer"),
   ];
   const chat = createModel({ replies: script, summary: summaryWith("counted") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 3_000 });
 
   await agent.run("first task");
   await agent.run("second task");
@@ -700,7 +760,7 @@ test("历史摘要：保留下来的调用仍带 reasoning_content，协议字�
   }
   replies.push(finalReply("done"));
   const chat = createModel({ replies, summary: summaryWith("kept-fields") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   await agent.run("run the steps");
 
@@ -715,7 +775,7 @@ test("历史摘要：保留下来的调用仍带 reasoning_content，协议字�
 test("历史摘要：可折范围太小时不请模型，并写明原因", async () => {
   // 一轮只有几百字符：一份合格摘要一定比它长，压缩只会让请求变大，所以干脆别开口。
   const chat = createModel({ replies: [callTool("c1", "echo", { value: "a" }), finalReply("short"), finalReply("second")] });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 1_024 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 1_024 });
 
   await agent.run("one");
   await agent.run("two");
@@ -732,7 +792,7 @@ test("历史摘要：摘要长度上限跟着被替换内容走，不是写死�
   }
   replies.push(finalReply("done"));
   const chat = createModel({ replies, summary: summaryWith("budget") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   await agent.run("run all seven steps");
 
@@ -756,8 +816,8 @@ test("历史摘要：小窗口下摘要请求按可用窗口裁剪，成功后�
     // 第一轮攒下可折的旧轮次；摘要请求在第二轮开始时才发生。
     replies.push(finalReply("first run done"));
     replies.push(finalReply("done"));
-    const chat = createModel({ replies, summary: summaryWith("small-window"), maxRequestChars });
-    const agent = new Agent({
+    const chat = createModel({ replies, summary: summaryWithinStatedLimit, maxRequestChars });
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([echoTool()]),
       systemPrompt: () => "x",
@@ -798,7 +858,7 @@ test("历史摘要：转义密集的历史按序列化后的真实体积裁剪�
       finalReply("done"),
     ];
     const chat = createModel({ replies, summary: summaryWith("escaped"), maxRequestChars });
-    const agent = new Agent({
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([echoTool()]),
       systemPrompt: () => "x",
@@ -846,7 +906,7 @@ test("历史摘要：输出预留为 0 时仍给合法八节摘要留够长度�
     replies: [finalReply("a".repeat(2_800)), finalReply("done")],
     summary: summaryWithinStatedLimit,
   });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     systemPrompt: () => "x",
@@ -882,7 +942,7 @@ test("历史摘要：窗口装不下最小合法摘要时不发摘要请求，�
     replies: [finalReply("a".repeat(2_800)), finalReply("done")],
     summary: summaryWithinStatedLimit,
   });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     systemPrompt: () => "x",
@@ -903,7 +963,7 @@ test("历史摘要：窗口连摘要提示都装不下时明确失败，不发�
     replies: [finalReply("a".repeat(3_000)), finalReply("done")],
     summary: summaryWith("never-sent"),
   });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     systemPrompt: () => "x",
@@ -928,7 +988,7 @@ test("历史摘要：压缩后 system 里留下可定位、可恢复的原文引
     }
     replies.push(finalReply("done"));
     const chat = createModel({ replies, summary: summaryWith("indexed") });
-    const agent = new Agent({
+    const agent = makeAgent({
       llm: chat,
       tools: makeRegistry([echoTool()]),
       maxTranscriptChars: 8_000,
@@ -958,7 +1018,7 @@ test("历史摘要：失败配额按 Run 重算，不会永久关闭压缩", asy
   }
   replies.push(finalReply("done"));
   const chat = createModel({ replies, summary: new Error("summary boom") });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   const perRun = [];
   for (const task of ["one", "two", "three", "four"]) {
@@ -982,7 +1042,7 @@ test("历史摘要：摘要花掉预算后，不再发业务请求", async () =>
   replies.push(finalReply("done"));
   const chat = createModel({ replies, summary: summaryWith("budget") });
   // 摘要一次 60 token，预算只给 50：摘要把额度用光之后，那一步的业务请求不能再发。
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     maxTranscriptChars: 8_000,
@@ -1009,7 +1069,7 @@ test("历史摘要：摘要返回后立刻取消，用量只记一次", async ()
     businessUsage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
     beforeSummaryReply: () => controller.abort(),
   });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     maxTranscriptChars: 8_000,
@@ -1035,7 +1095,7 @@ test("历史摘要：格式合格但没缩小的摘要也只给两次机会，�
   // 摘要八节齐全、长度也合法，但比被折叠的内容还长 —— 候选必然「没有缩小」。
   const oversized = longValidSummary(9_000);
   const chat = createModel({ replies, summary: oversized });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   await agent.run("run all six steps");
 
@@ -1066,7 +1126,7 @@ test("溢出：明确超限时做一次更强压缩并重发一次，不重跑�
   const script = [callTool("c1", "echo", { value: "a" }), finalReply("first"), finalReply("second")];
   // 第 3 次业务请求（第二个 Run 的第一次）被上游判为超限：估算没超，真实窗口超了。
   const chat = createModel({ replies: script, failures: [undefined, undefined, contextOverflowError()] });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([bigEcho]),
     contextWindowTokens: 8_000,
@@ -1087,10 +1147,71 @@ test("溢出：明确超限时做一次更强压缩并重发一次，不重跑�
     "超限重发也要计入「没有产生回复的请求」");
 });
 
+test("上游拒绝远小于本地预算的请求时，按被拒请求缩小未消费结果后重发", async () => {
+  const chat = createModel({
+    replies: [callTool("c1", "echo", { value: "read" }), finalReply("done")],
+    failures: [undefined, contextOverflowError()],
+  });
+  const agent = makeAgent({
+    llm: chat, tools: makeRegistry([{ ...echoTool(), run: async () => "x".repeat(8_000) }]),
+  });
+  assert.equal((await agent.run("read once")).content, "done");
+  const [first, rejected, retried] = chat.businessRequests;
+  assert.equal(first.messages.at(-1).role, "user");
+  assert.equal(rejected.messages.at(-1).content.length, 8_000);
+  assert.ok(retried.messages.at(-1).content.length < 2_000);
+  assert.equal(retried.messages.at(-1).tool_call_id, "c1");
+  assert.equal(agent.stats.toolCalls, 1);
+  assert.equal(agent.stats.summaryRequests, 0);
+});
+
+test("溢出：裁剪后仍高于上游真实窗口时，在唯一一次重发前折叠可移除的旧轮次", async () => {
+  const replies = createModel({ replies: [
+    finalReply("p".repeat(6_000)), callTool("c1", "echo", { value: "read" }), finalReply("done"),
+  ] });
+  const sizes = [];
+  const agent = makeAgent({
+    llm: { async chat(messages, tools) {
+      const size = serializedWireRequestChars(messages, tools);
+      sizes.push(size);
+      if (size > 6_500) throw contextOverflowError();
+      return replies.chat(messages, tools);
+    } },
+    tools: makeRegistry([{ ...echoTool(), run: async () => "r".repeat(14_000) }]),
+    systemPrompt: "s", maxTranscriptChars: 30_000,
+  });
+  await agent.run("old");
+  assert.equal((await agent.run("new")).content, "done");
+  assert.equal(sizes.filter(size => size > 6_500).length, 1);
+  assert.equal(agent.stats.overflowRetries, 1);
+  assert.equal(agent.stats.toolCalls, 1);
+});
+
+test("溢出恢复后遇到 429，仍可使用网络重试额度，已执行工具只跑一次", async () => {
+  const chat = createModel({
+    replies: [callTool("c1", "echo", { value: "a" }), finalReply("done")],
+    failures: [undefined, contextOverflowError(), new ModelHttpError(429, "busy")],
+  });
+  const retries = [];
+  let executions = 0;
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([{ ...echoTool(), run: async () => { executions++; return "z".repeat(100_000); } }]),
+    maxSteps: 2, maxTranscriptChars: 120_000, maxModelRetries: 1,
+    onRetry: (_error, attempt, limit) => retries.push([attempt, limit]),
+  });
+  assert.equal((await agent.run("use echo")).content, "done");
+  assert.equal(executions, 1);
+  assert.deepEqual(retries, [[1, 1]]);
+  assert.equal(agent.stats.requests, 4);
+  assert.equal(agent.retryAttempts, 2);
+  assert.deepEqual(chat.businessRequests.map(r => r.tools.length), [1, 0, 0, 0]);
+});
+
 test("溢出：压缩后仍装不下的请求不再发送", async () => {
   const chat = createModel({ replies: [finalReply("done")] });
   // 只有一条超长用户消息，没有可裁剪的结果、也没有可折叠的历史：压缩救不了。
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([]),
     contextWindowTokens: 2_000,
@@ -1118,7 +1239,7 @@ test("溢出：恢复用的摘要花掉预算后，不再重发业务请求", as
     // 第三次业务请求被上游判为超限：恢复会先压一次，而那次压缩要花一次摘要请求。
     failures: [undefined, undefined, contextOverflowError()],
   });
-  const agent = new Agent({
+  const agent = makeAgent({
     llm: chat,
     tools: makeRegistry([echoTool()]),
     contextWindowTokens: 4_000,
@@ -1132,7 +1253,7 @@ test("溢出：恢复用的摘要花掉预算后，不再重发业务请求", as
   assert.ok(summaryAt >= 0, "这个用例的前提是恢复时真的用摘要腾了空间");
   assert.equal(chat.requests.slice(summaryAt + 1).filter((request) => !request.summary).length, 0,
     "恢复用的摘要也会花钱：重发前必须重新过预算闸门");
-  assert.equal(agent.stats.overflowRetries, 1);
+  assert.equal(agent.stats.overflowRetries, 0, "没有发出恢复请求");
 });
 
 test("溢出：普通 400 不触发压缩恢复", async () => {
@@ -1140,7 +1261,7 @@ test("溢出：普通 400 不触发压缩恢复", async () => {
     replies: [finalReply("done")],
     failures: [new ModelHttpError(400, "invalid tool_call: missing function.name")],
   });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 20_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 20_000 });
 
   await assert.rejects(() => agent.run("task"), /invalid tool_call/);
   assert.equal(agent.stats.overflowRetries, 0);
@@ -1150,14 +1271,14 @@ test("溢出：普通 400 不触发压缩恢复", async () => {
 test("溢出：压不动时明确报错，不拿同一个请求反复发", async () => {
   const chat = createModel({ replies: [finalReply("done")], failures: [contextOverflowError()] });
   // 只有一条超长用户消息：没有工具结果可剪，也没有可折叠的旧轮次。
-  const agent = new Agent({ llm: chat, tools: makeRegistry([]), maxTranscriptChars: 20_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([]), maxTranscriptChars: 20_000 });
 
   await assert.rejects(
     () => agent.run("x".repeat(30_000)),
     /context window exceeded and could not be reduced/,
   );
   assert.equal(chat.businessRequests.length, 1, "没有实际缩减就不能重发");
-  assert.equal(agent.stats.overflowRetries, 1);
+  assert.equal(agent.stats.overflowRetries, 0, "没有发出恢复请求");
 });
 
 // ---------------------------------------------------------------------------
@@ -1175,8 +1296,8 @@ test("隔离：两个 Agent 的上下文与摘要互不影响", async () => {
   const chatA = createModel({ replies: script, summary: summaryWith("agent-a") });
   const chatB = createModel({ replies: script, summary: summaryWith("agent-b") });
   const tools = makeRegistry([echoTool()]);
-  const a = new Agent({ llm: chatA, tools, maxTranscriptChars: 3_000 });
-  const b = new Agent({ llm: chatB, tools, maxTranscriptChars: 3_000 });
+  const a = makeAgent({ llm: chatA, tools, maxTranscriptChars: 3_000 });
+  const b = makeAgent({ llm: chatB, tools, maxTranscriptChars: 3_000 });
 
   await a.run("first task");
   await a.run("second task");
@@ -1196,7 +1317,7 @@ test("长任务回放：多轮工具调用与多次压缩后仍能完成并保�
   }
   replies.push(finalReply("finished all twelve steps"));
   const chat = createModel({ replies, summary: (round) => summaryWith(`long-round-${round}`) });
-  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
 
   const reply = await agent.run("execute the twelve-step checklist");
 

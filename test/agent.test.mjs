@@ -137,6 +137,25 @@ test("步数上限：模型一直要调工具时抛错，最后一批工具不�
   assert.equal(agent.transcript.at(-1).content, "ERROR: not run: no model request left to verify the result");
 });
 
+test("最后一步按空工具表计算窗口，超大工具说明不妨碍收尾", async () => {
+  const chat = createScriptedChat([finalReply("done")]);
+  const agent = new Agent({
+    llm: chat, tools: makeRegistry([{ ...echoTool(), description: "x".repeat(60_000) }]),
+    maxSteps: 1, contextWindowTokens: 4_000, outputTokenReserve: 500,
+  });
+  assert.equal((await agent.run("finish")).content, "done");
+  assert.deepEqual(chat.requests[0].tools, []);
+});
+
+test("工具额度用尽后模型读结果收尾，下一次 Run 重新获得工具", async () => {
+  const chat = createScriptedChat([callTool("a", "echo", { value: "proof" }), finalReply("done"), finalReply("ok")]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxToolCalls: 1 });
+  await agent.run("first");
+  await agent.run("second");
+  assert.deepEqual(chat.requests.map(request => request.tools.map(tool => tool.name)), [["echo"], [], ["echo"]]);
+  assert.equal(chat.requests[1].messages.at(-1).content, "echo proof");
+});
+
 test("没有工具调用就立刻收尾，不会多发请求", async () => {
   const chat = createScriptedChat([finalReply("no tools needed")]);
   const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]) });

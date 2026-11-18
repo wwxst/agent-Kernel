@@ -4,11 +4,11 @@
  *
  * 为什么要单独一个文件：这些判断要能单独验证。放进 `agent.ts` 就会被循环、预算、事件通知
  * 缠在一起，改一个阈值要先读三百行循环。这里只做纯计算与文案拼装，不读文件、不发请求、
- * 不改 `Agent` 的任何状态 —— 什么时候用、结果往哪写，全部由 `core/agent.ts` 决定。
+ * 不改 `Agent` 的任何状态 —— 什么时候用、结果往哪写，全部由 `SessionContext` 决定。
  *
  * 文件职责：负责请求体积测量、token 估算、头尾裁剪（Snip）、可移除历史段的切分、
- * 摘要请求的提示词与输入、摘要合格性检查。不负责调用模型（归 `core/agent.ts`）、
- * 不负责存档（归 `core/context-archive.ts`）、不负责决定压缩时机。
+ * 摘要请求的提示词与输入、摘要合格性检查。不负责调用模型（由 Agent 发送）、
+ * 不负责存档（归 `core/context-archive.ts`）、不负责决定压缩时机（归 SessionContext）。
  *
  * 内容目录：
  *   - `TokenCalibration` / `estimatePromptTokens()` / `charsForTokens()` / `contextSize()`：把字符数换算成 token，
@@ -24,8 +24,9 @@
  *     反推它能有多长（转义密集的历史按原始字符数估会低估）。
  *
  * 模块关系：依赖 `protocol/types.ts`（`Message` / `ToolDefinition`）与 `protocol/text-boundaries.ts`
- * （不切断 UTF-16 代理对）。被 `core/agent.ts` 使用；不依赖任何其他 `core/` 文件。
+ * （不切断 UTF-16 代理对）。被 SessionContext 使用；不依赖任何其他 `core/` 文件。
  */
+import { encodeToolDefinitions } from "../protocol/chat-request.ts";
 import type { Message, ToolDefinition } from "../protocol/types.ts";
 import { takeUtf16Prefix, takeUtf16Suffix } from "../protocol/text-boundaries.ts";
 
@@ -135,12 +136,8 @@ export function charsForTokens(tokens: number, calibration?: TokenCalibration): 
  * 键名、引号、转义都会占 token。只数 `content` 会系统性低估，长工具 Schema 尤其明显。
  */
 export function requestChars(messages: readonly Message[], tools: readonly ToolDefinition[]): number {
-  // Llm.chat 会把每个 ToolDefinition 包成 { type: "function", function: ... }；测量必须和发送形状一致。
-  const wireTools = tools.map(({ name, description, parameters }) => ({
-    type: "function",
-    function: { name, description, parameters },
-  }));
-  return JSON.stringify(messages).length + JSON.stringify(wireTools).length;
+  const encoded = encodeToolDefinitions(tools);
+  return JSON.stringify(messages).length + (encoded === undefined ? 0 : JSON.stringify(encoded).length);
 }
 
 /**
@@ -179,9 +176,10 @@ export function compactText(text: string, limit: number, source?: string): strin
  * 结果是这段历史永远折叠不了、也没有任何提示。
  */
 export function hasCompleteToolPairs(messages: readonly Message[]): boolean {
-  let callCount = 0;
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
+    // 配对的结果已在内层循环消费。外层遇到 tool 即为孤立结果。
+    if (message.role === "tool") return false;
     if (message.role !== "assistant" || message.tool_calls === undefined) continue;
     const idsInThisResponse = new Set<string>();
     for (const call of message.tool_calls) {
@@ -190,11 +188,9 @@ export function hasCompleteToolPairs(messages: readonly Message[]): boolean {
       const result = messages[index + 1];
       if (result?.role !== "tool" || result.tool_call_id !== call.id) return false;
       index++;
-      callCount++;
     }
   }
-  // 每个 tool 结果都必须在上面被某次调用「领走」；数量对不上就说明有多余的结果消息。
-  return messages.filter((message) => message.role === "tool").length === callCount;
+  return true;
 }
 
 /**
@@ -250,13 +246,8 @@ export function collectRemovableUnits(
     const message = messages[index]!;
     if (message.role === "assistant" && message.tool_calls !== undefined && message.tool_calls.length > 0) {
       const end = index + 1 + message.tool_calls.length;
-      const paired = end <= messages.length && message.tool_calls.every((call, offset) => {
-        const result = messages[index + 1 + offset];
-        return result?.role === "tool" && result.tool_call_id === call.id;
-      });
-      if (!paired) break;
       const slice = messages.slice(index, end);
-      if (containsProtectedResult(slice, protectedResults)) break;
+      if (!hasCompleteToolPairs(slice) || containsProtectedResult(slice, protectedResults)) break;
       units.push({ start: index, end, kind: "step" });
       index = end;
       continue;
@@ -293,7 +284,7 @@ export function foldRemovedMessages(messages: readonly Message[]): string {
   if (user !== undefined) lines.push("Earlier user request: " + compactText(user.content ?? "(empty)", 360));
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!;
-    if (message.role === "assistant" && message.tool_calls !== undefined) {
+    if (message.role === "assistant" && message.tool_calls?.length) {
       for (const call of message.tool_calls) {
         const result = messages[index + 1];
         const preview = result?.role === "tool" && result.tool_call_id === call.id
@@ -409,6 +400,11 @@ export function buildSummaryInput(
   archivePath?: string,
   maxChars: number = SUMMARY_INPUT_MAX_CHARS,
 ): string {
+  return compactText(formatSummaryHistory(removed), Math.min(SUMMARY_INPUT_MAX_CHARS, Math.max(0, Math.floor(maxChars))), archivePath);
+}
+
+/** 同一段待摘要历史只排版一次，窗口拟合时复用这份文本。 */
+function formatSummaryHistory(removed: readonly Message[]): string {
   const lines: string[] = [];
   for (const message of removed) {
     if (message.role === "user") {
@@ -427,7 +423,7 @@ export function buildSummaryInput(
       }
     }
   }
-  return compactText(lines.join("\n"), Math.min(SUMMARY_INPUT_MAX_CHARS, Math.max(0, Math.floor(maxChars))), archivePath);
+  return lines.join("\n");
 }
 
 /** 一次「按序列化后的真实体积」收敛出来的摘要输入。 */
@@ -457,16 +453,17 @@ export function fitSummaryInput(
   maxRequestChars: number,
   maxHistoryChars: number = SUMMARY_INPUT_MAX_CHARS,
 ): SummaryInputFit | undefined {
+  const formatted = formatSummaryHistory(removed);
   let best: SummaryInputFit | undefined;
   const tryChars = (chars: number): boolean => {
-    const history = buildSummaryInput(removed, archivePath, chars);
+    const history = compactText(formatted, chars, archivePath);
     if (requestCharsOf(history) > maxRequestChars) return false;
     best = { history, chars };
     return true;
   };
 
   // 历史再长也长不过上限本身：序列化只会变大，不会变小。
-  const ceiling = Math.min(maxHistoryChars, Math.max(0, Math.floor(maxRequestChars)));
+  const ceiling = Math.min(SUMMARY_INPUT_MAX_CHARS, maxHistoryChars, Math.max(0, Math.floor(maxRequestChars)));
   if (tryChars(ceiling)) return best;
 
   // 二分：装得下的那一侧留在 low，装不下的推到 high。

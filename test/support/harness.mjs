@@ -119,6 +119,7 @@ export async function withWorkspace(fn) {
   try {
     return await fn(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    // Windows 上刚退出的子进程可能短暂占用目录。重试有界，持续占用仍会报错。
+    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }

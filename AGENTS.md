@@ -40,8 +40,11 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 | 文件 | 大概负责什么 |
 | --- | --- |
 | `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
+| `src/protocol/chat-request.ts` | 请求发送与窗口测量共用的工具编码和默认输出额度 |
 | `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
-| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、无进展检测、会话生命周期、上下文压缩的调度与提交门槛 |
+| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、无进展检测、会话生命周期与用量记账 |
+| `src/core/session-context.ts` | 当前 Transcript、请求准入、摘要提交与上下文超限恢复 |
+| `src/core/default-system-prompt.ts` | Agent 的默认系统提示 |
 | `src/core/context-compact.ts` | 上下文压缩的纯计算：请求体积与 token 估算、Snip、可移除历史段切分、摘要提示词与合格性检查 |
 | `src/core/context-archive.ts` | 有损压缩前保存原文，返回可供 `read` 使用的绝对路径 |
 | `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本；围着执行触发三个 Hook 事件 |
