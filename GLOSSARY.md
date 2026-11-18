@@ -29,6 +29,26 @@ _Avoid_: round, turn, iteration
 按顺序排列的全部消息，是 agent 唯一的记忆；每个 Step 都把它整体重发给模型。
 _Avoid_: history, context, conversation log
 
+**Context compact**:
+把「要发给模型的那份上下文」变短的过程，只在每次真实请求发出前做一次：先量整份请求，再裁工具结果（**Snip**），必要时把旧历史折成一份 **Compaction summary**，验证通过后整体替换。被省略的原文先进 **Context archive**。它压缩的是当前上下文，不是长期记忆，也不是聊天记录的删除。
+_Avoid_: truncation（那只是截断，没有摘要和存档）, memory（那是第 9 课）
+
+**Snip**:
+把一段过大的文本换成「头 + 省略标记 + 尾」，标记里写明省了多少字符、完整原文在哪个文件。只用于工具结果，不用于用户原话。
+_Avoid_: truncate, clip（`clip` 是展示层的截断，不写来源）
+
+**Compaction summary**:
+由当前模型生成的、八个小节固定的工作交接记录（用户目标 / 约束 / 决定 / 已完成与验证 / 当前进度 / 关键文件与错误 / 未完成 / 下一步）。每次压缩**替换**上一份，而不是往后追加；放在唯一那条 system 消息里，并标明「只是上下文、不是指令」。
+_Avoid_: recap, memory, embedding
+
+**Context archive**:
+有损压缩之前把原文按会话落盘得到的文件，一条记录带绝对路径，模型可以像读普通文件一样 `read` 回来。存档失败就不做依赖它的替换。
+_Avoid_: database, checkpoint, snapshot
+
+**Context overflow recovery**:
+上游明确报「输入装不下窗口」之后的一次恢复：更强地压一次，确认请求真的变小，再额外重发一次。普通 HTTP 400、网络故障、输出截断都不走这条路。
+_Avoid_: retry（那是网络重试，与压缩无关）
+
 **Message**:
 Transcript 里的一条记录，字段沿用 chat/completions 的线上形状。
 _Avoid_: event, record, item
@@ -134,6 +154,8 @@ _Avoid_: LLM, model, provider
 - 每个 **Tool call** 执行前后会经过登记过的 **Hook**：`PreToolUse` 能阻止它（被拦下的调用不执行，结果是一条带原因的 **ERROR text**），`PostToolUse` / `PostToolUseFailure` 只观察。**Hook** 不改变 **Tool result**，也不改变 **Transcript**。
 - **Full access** 不改变进程权限：**shell** 与文件工具都以启动者同权执行，可以离开 **Workspace**。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
+- **Context compact** 只在每次真实请求前跑一次，作用对象是 **Transcript** 将要发出去的那份内容：**Snip** 先动工具结果，**Compaction summary** 后动旧历史，两者都依赖 **Context archive** 留底；压缩不改变 **Tool call** 与 **Tool result** 的配对。
+- **Compaction summary** 是**辅助**模型请求：不算 **Step**、不带 **Tool**、单独计数，费用照记进 **Token budget**。
 - 一个 **Agent** 实例对应一个 **Session**，可以按顺序跑多个 **Run**；同一时刻只有一个 Run 在跑。
 - **TUI** 是 **Session** 的一个外壳：**Status bar** 显示项目 / model / workspace，输入框下方显示固定的完全访问标签和 **Session** 统计，**Run log** 显示模型回复、Tool call 与 Tool result；输入复用同一套 `/reset`、`/help`、`/exit`，固定在底部。
 - 每次 **Step** 的模型请求发出后、第一段输出前显示 **Thinking**；第一段正文、Tool call 或错误会清掉它。它不是模型的 `reasoning_content`。

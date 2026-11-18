@@ -17,6 +17,7 @@
  *   - `ModelConfigError`：环境变量不完整或仍是占位值，必须在发请求前拒绝。
  *   - `ModelHttpError` / `ModelConnectionError`：上游返回了状态码 / 连不上。
  *   - `isRetryableModelError()`：能不能重试。
+ *   - `isContextOverflowError()`：是不是「输入超过模型上下文窗口」，这是唯一允许做压缩恢复的错误。
  *   - `modelFailure()`：给展示层用的错误分类（标题 + 建议 + 详情），不改异常本体。
  *   - `ProcessCleanupError`：进程树没停干净，必须结束整轮，不能当普通失败重试。
  *
@@ -77,6 +78,30 @@ export function isRetryableModelError(error: unknown): boolean {
   return error instanceof ModelConnectionError ||
     (error instanceof ModelHttpError &&
       (error.status === 408 || error.status === 429 || (error.status >= 500 && error.status < 600)));
+}
+
+/**
+ * 错误工具 isContextOverflowError（是不是上下文超限）：只认「输入太长，模型装不下」这一种失败。
+ *
+ * 为什么要单独认：超限可以靠压缩救一次，而普通 400（消息顺序错、参数错）、网络故障、
+ * 输出被截断（`finish_reason: "length"`）都不能靠压缩救 —— 把它们混进来只会白花一次请求，
+ * 或者把「请求本身写错了」伪装成「上下文太大」。
+ *
+ * 判定依据只能是上游给的文字：这个协议没有统一的错误码。所以先卡状态码（400/413/422），
+ * 再看详情里有没有窗口相关的措辞。文案不匹配就当作普通失败 —— 宁可少恢复一次，
+ * 也不要对着无关错误反复压缩。
+ */
+export function isContextOverflowError(error: unknown): boolean {
+  if (!(error instanceof ModelHttpError)) return false;
+  if (error.status !== 400 && error.status !== 413 && error.status !== 422) return false;
+  const detail = error.message;
+  return /context[ _-]?(length|window|limit)/i.test(detail) ||
+    /maximum context/i.test(detail) ||
+    /context[ _-]?overflow/i.test(detail) ||
+    /too many tokens/i.test(detail) ||
+    /prompt is too long/i.test(detail) ||
+    /input is too long/i.test(detail) ||
+    /exceed(s|ed)?[^.]{0,40}(token|context)/i.test(detail);
 }
 
 /**

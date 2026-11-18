@@ -71,7 +71,7 @@ Agent 请求模型
 | TUI | 主屏追加 + transcript 视图的轻量终端界面 |
 | 预算 | Step、Tool call、Token 三种预算分开控制 |
 | 模型接口 | OpenAI 兼容的 `chat/completions`，支持 SSE 流式展示 |
-| 上下文控制 | Transcript 超过预算时，对旧轮次和旧 Tool Result 做有界压缩 |
+| 上下文控制 | 请求前检查上下文，优先裁剪旧工具结果，必要时归档并摘要旧历史，支持一次溢出恢复 |
 
 ## Full Access
 

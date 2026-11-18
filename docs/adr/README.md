@@ -29,6 +29,7 @@ ADR（Architecture Decision Record）只记录那些以后很可能会被问到�
 | [0025](./0025-subagent-uses-fresh-agent-instance.md) | Subagent 使用独立 Agent 实例和上下文 |
 | [0027](./0027-background-job-lifecycle.md) | 后台任务用独立日志文件管理生命周期 |
 | [0028](./0028-skills-are-files-read-on-demand.md) | Skill 目录进入提示，正文按需用 `read` 读取 |
+| [0029](./0029-context-compaction-is-bounded-and-recoverable.md) | 上下文压缩有界、可追溯，失败不提交 |
 
 目录里还有其他当前有效 ADR；上表只列最影响整体架构的决定。
 

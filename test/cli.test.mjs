@@ -35,7 +35,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { callTool, finalReply, withWorkspace } from "./support/harness.mjs";
+import { CANNED_SUMMARY, callTool, finalReply, withWorkspace } from "./support/harness.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const cliPath = path.join(projectRoot, "src", "cli.ts");
@@ -49,15 +49,38 @@ after(() => rmSync(isolatedHome, { recursive: true, force: true }));
 
 /** 启动 mock 服务，按脚本回放模型的响应；请求次数超出脚本时重复最后一条。 */
 async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [], httpStatus = 200,
-  httpErrorMessage = "mock provider rejected request" } = {}) {
+  httpErrorMessage = "mock provider rejected request", summary } = {}) {
   const requests = [];
+  const summaryIndexes = new Set();
   let turn = 0;
 
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", (chunk) => (body += chunk));
     request.on("end", () => {
-      requests.push(JSON.parse(body));
+      const requestBody = JSON.parse(body);
+      // 摘要请求（上下文压缩让模型写交接摘要）单独认：它带摘要专用的系统提示。
+      // 这类请求不消耗脚本项，否则「第几次业务请求回什么」会被它挤掉，测试就变成在数请求。
+      const isSummary = Array.isArray(requestBody.messages) && requestBody.messages[0]?.role === "system" &&
+        String(requestBody.messages[0].content ?? "").includes("You are writing a handoff record");
+      if (isSummary) summaryIndexes.add(requests.length);
+      requests.push(requestBody);
+      if (isSummary) {
+        const content = summary ?? CANNED_SUMMARY;
+        if (requestBody.stream === true) {
+          response.writeHead(200, { "content-type": "text/event-stream" });
+          response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content }, finish_reason: null }] })}\n\n`);
+          response.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`);
+          response.end("data: [DONE]\n\n");
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+          usage: { prompt_tokens: 40, completion_tokens: 20, total_tokens: 60 },
+        }));
+        return;
+      }
       const currentTurn = turn++;
       const message = script[Math.min(currentTurn, script.length - 1)];
 
@@ -110,6 +133,8 @@ async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [
   return {
     url: `http://127.0.0.1:${port}/v1`,
     requests,
+    /** 只挑出摘要请求：它的下标不算在脚本轮次里。 */
+    summaryRequests: () => requests.filter((_, index) => summaryIndexes.has(index)),
     close: () => new Promise((resolve) => server.close(resolve)),
   };
 }
@@ -1348,6 +1373,69 @@ test("委派：主 Agent 调用 run_subagent，子 Agent 用独立上下文只�
       assert.match(subResults[0].content, /tool_calls: 1/);
       assert.match(subResults[0].content, /AUTH_REPORT: auth lives in src\/auth\/index\.ts/);
       // 子 Agent 自己的统计不能混进父 Agent 的 [usage] 行，免得被当成合计。
+      assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1/);
+    } finally {
+      await mock.close();
+    }
+  });
+});
+
+test("委派：子 Agent 在自己的装配路径上压缩，不污染父 Agent 的上下文", async () => {
+  await withWorkspace(async (workdir) => {
+    for (const name of ["a", "b", "c", "d"]) {
+      await writeFile(path.join(workdir, `${name}.txt`), `content of ${name}.txt\n`);
+    }
+    // 子 Agent 每一步都带一段长正文、工具结果却很小：只有折叠历史才能腾出空间，
+    // 光剪工具结果是没用的。这样才真的会走到摘要那条路。
+    const childStep = (id, file) => ({
+      role: "assistant",
+      content: "child reasoning " + "n".repeat(2_500),
+      tool_calls: [{ id, type: "function", function: { name: "read", arguments: JSON.stringify({ path: file }) } }],
+    });
+    const mock = await startMock([
+      callTool("call-sub", "run_subagent", {
+        task: "Read the four notes and report one line.",
+        mode: "explore",
+      }),
+      childStep("child-1", "a.txt"),
+      childStep("child-2", "b.txt"),
+      childStep("child-3", "c.txt"),
+      childStep("child-4", "d.txt"),
+      finalReply("CHILD_DONE"),
+      finalReply("parent summary: CHILD_DONE"),
+    ]);
+    try {
+      const run = await runCli({
+        BASE_URL: mock.url,
+        MODEL: "mock-model",
+        WORKDIR: workdir,
+        // 窗口压小，子 Agent 几步之后就必须压缩；父 Agent 的历史短，碰不到这条线。
+        CONTEXT_WINDOW_TOKENS: "6000",
+        MAX_OUTPUT_TOKENS: "1000",
+      });
+      assert.equal(run.code, 0, run.stderr);
+      assert.match(run.stdout, /parent summary: CHILD_DONE/);
+
+      // 1) 子 Agent 确实在自己的装配路径上发过摘要请求：不带工具，带摘要专用提示。
+      const summaries = mock.summaryRequests();
+      assert.ok(summaries.length >= 1, "子 Agent 应该触发过压缩");
+      assert.equal(summaries[0].tools.length, 0, "摘要请求不许调用工具");
+      assert.match(summaries[0].messages[0].content, /handoff record/);
+
+      // 2) 摘要落进了子 Agent 自己的上下文。
+      const childAfterSummary = mock.requests.find((request) =>
+        String(request.messages[0]?.content ?? "").includes("independent exploration subagent") &&
+        String(request.messages[0]?.content ?? "").includes("conversation memory"));
+      assert.ok(childAfterSummary !== undefined, "子 Agent 的后续请求里应该能看到自己的摘要");
+
+      // 3) 父 Agent 完全没被污染：还是主提示、没有摘要、只有一条子任务结果。
+      const parentFinal = mock.requests.at(-1);
+      const parentSystem = String(parentFinal.messages[0].content);
+      assert.match(parentSystem, /You are a coding agent working on the developer's machine/);
+      assert.doesNotMatch(parentSystem, /independent exploration subagent/);
+      assert.doesNotMatch(parentSystem, /conversation memory/);
+      assert.equal(parentFinal.messages.length, 4, "父 Agent 只看到一条子任务结果");
+      // 子 Agent 的摘要请求与花销都不进父 Agent 的账单。
       assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1/);
     } finally {
       await mock.close();

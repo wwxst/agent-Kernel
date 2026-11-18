@@ -107,6 +107,10 @@ interface Config {
   maxToolCalls: number;
   maxTotalTokens: number;
   maxOutputTokens: number;
+  /** 模型上下文窗口（token）；0 = 未知，压缩退回字符预算。 */
+  contextWindowTokens: number;
+  /** 原文存档目录；空串 = 用系统临时目录下的默认位置。 */
+  contextArchiveDir: string;
   toolTimeoutMs: number;
   view: AgentView;
   voice: AgentVoice;
@@ -160,6 +164,11 @@ function loadConfig(details: boolean, allowMissingModel = false, cwd?: string): 
     maxToolCalls: positiveIntFromEnv("MAX_TOOL_CALLS", 60),
     maxTotalTokens: nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000),
     maxOutputTokens: positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192),
+    // 0 是默认值：窗口大小是模型服务的属性，内核不按模型名字猜。没配就用字符预算，
+    // 配了才按 token 估算 —— 压缩阈值必须建立在可信数字上。
+    contextWindowTokens: nonNegativeIntFromEnv("CONTEXT_WINDOW_TOKENS", 0),
+    // 存档可能含敏感内容：默认落系统临时目录，宿主可以指到别处，但绝不默认写进项目仓库。
+    contextArchiveDir: process.env.AGENT_CONTEXT_ARCHIVE?.trim() ?? "",
     toolTimeoutMs: positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000),
     view: details ? "detailed" : viewFromEnv(),
     voice: voiceFromEnv(),
@@ -453,6 +462,12 @@ function createAgent(
       : (config.maxTotalTokens === 0
         ? SUBAGENT_MAX_TOTAL_TOKENS
         : Math.min(config.maxTotalTokens, SUBAGENT_MAX_TOTAL_TOKENS)),
+    // 窗口未知（0）就不传：压缩退回字符预算，并明确它只是估算。
+    // 输出预留跟着 maxOutputTokens 走 —— 请求本身和这次要生成的回复必须同时装进窗口。
+    ...(config.contextWindowTokens === 0
+      ? {}
+      : { contextWindowTokens: config.contextWindowTokens, outputTokenReserve: config.maxOutputTokens }),
+    ...(config.contextArchiveDir === "" ? {} : { contextArchiveDir: config.contextArchiveDir }),
     signal,
     // 只在 TUI 启用有界暂时故障重试；其它 CLI/评测继续保持一次一请求。
     maxModelRetries: callbacks?.onRetry === undefined ? 0 : 5,
@@ -520,7 +535,6 @@ async function runTurn(agent: Agent, task: string, config: Config, signal: Abort
   const presenter = new RunPresenter(config.view, config.voice);
   activePresenter = presenter;
   presenter.start();
-  const transcriptStart = agent.transcript.length;
   try {
     const reply = await agent.run(task);
     presenter.finalAnswer(reply.content ?? "");
@@ -528,8 +542,9 @@ async function runTurn(agent: Agent, task: string, config: Config, signal: Abort
     printUsage(agent.stats, { failed: false });
   } catch (error) {
     // 预算阻断可能已经确认模型正文；请求中断时则必须明确宣布临时增量无效。
-    const confirmed = agent.transcript.slice(transcriptStart)
-      .filter((message) => message.role === "assistant");
+    // 用 Agent 记下的本轮回复，而不是 `transcript.slice(起点)`：压缩会改数组下标，
+    // 按旧起点切片会切到错的位置，把上一轮的正文当成本轮。
+    const confirmed = agent.runReplies;
     const latest = confirmed.length === agent.stats.requests - agent.retryAttempts ? confirmed.at(-1) : undefined;
     if (latest !== undefined) presenter.confirmAssistant(latest.content);
     else presenter.discardAssistantDraft(modelFailure(error, "en") === undefined);
@@ -552,8 +567,10 @@ function printUsage(stats: AgentStats, { failed }: { failed: boolean }): void {
   const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} request(s) without usage` : "";
   const overBudget = stats.tokenBudget.exceeded ? ` · budget exceeded (limit=${stats.tokenBudget.limit})` : "";
   const outcome = failed ? " · task failed" : "";
+  // 摘要请求单独列出来：它花的是真钱，但不是一个 Step，混进 requests 会让人算错账。
+  const summaries = stats.summaryRequests > 0 ? ` summaries=${stats.summaryRequests}` : "";
   console.log(
-    `\n[usage] requests=${stats.requests} tool_calls=${stats.toolCalls} ` +
+    `\n[usage] requests=${stats.requests}${summaries} tool_calls=${stats.toolCalls} ` +
       `tokens=${lower}${stats.usage.totalTokens} (prompt=${lower}${stats.usage.promptTokens} ` +
       `completion=${lower}${stats.usage.completionTokens})${unknown}${overBudget}${outcome}`,
   );
@@ -677,7 +694,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       return true;
     }
     // Transcript 跨多个 Run 累积；只检查当前 Run 的响应，不把先前的正式回复当成新草稿。
-    const transcriptStart = agent.transcript.length;
+    // 本轮回复由 Agent 单独记着（`runReplies`）：压缩会从数组前面删消息，下标不可靠。
     tui.beginTurn(task, showTask === undefined ? {} : { show: showTask });
     try {
       const reply = await agent.run(task);
@@ -690,8 +707,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       // 数量相等说明最后一次响应已写入 Transcript，预算后置失败不应抹去其真实正文。
       // 数量不等说明最新响应仍未确认，必须丢弃其临时增量，不能复用先前请求的正文。
       const failure = modelFailure(error, tui.uiText("en", "zh") === "zh" ? "zh" : "en");
-      const confirmed = agent.transcript.slice(transcriptStart)
-        .filter((message) => message.role === "assistant");
+      const confirmed = agent.runReplies;
       const latest = confirmed.length === agent.stats.requests - agent.retryAttempts ? confirmed.at(-1) : undefined;
       if (latest?.content?.trim()) {
         // onToolCall 已提交该段正文时不要重复提交；预算阻断的调用则还没有这一事件。

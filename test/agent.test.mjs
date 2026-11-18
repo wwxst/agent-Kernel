@@ -640,11 +640,12 @@ test("最后一步：模型仍要工具时不执行无法验证的副作用", as
   assert.equal(chat.requests.length, 1);
 });
 
-test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", async () => {
+test("会话：最新批次完整交给模型，被读过的旧结果才压缩，配对始终完整", async () => {
   const largeTool = {
     ...echoTool(),
     run: async () => "tool-output-" + "x".repeat(6_000),
   };
+  // 预算 9000：第一次请求约 8600 字符，这一批结果装得下，所以必须完整发送。
   const chat = createScriptedChat([
     callTool("compact-1", "echo", { value: "first" }),
     finalReply("first answer"),
@@ -655,7 +656,7 @@ test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", 
   const agent = new Agent({
     llm: chat,
     tools: makeRegistry([largeTool]),
-    maxTranscriptChars: 3_000,
+    maxTranscriptChars: 9_000,
   });
 
   await agent.run("first task with important context");
@@ -669,20 +670,20 @@ test("会话：长历史自动压缩，tool_call 与 tool_result 始终成对", 
   assert.equal(toolResult.content, "tool-output-" + "x".repeat(6_000),
     "当前批次结果必须先完整交给模型，不能在模型读取前压缩");
 
+  // 后面几轮把总量顶过预算：先裁剪已经读过的那份大结果，而不是急着请模型写摘要。
   await agent.run("second task");
-  const consumedToolResult = chat.requests[2].messages.find((message) =>
-    message.role === "tool" && message.tool_call_id === "compact-1");
-  assert.ok(consumedToolResult);
-  assert.match(consumedToolResult.content, /context compacted/);
-  assert.ok(consumedToolResult.content.length < 1_000,
-    "模型已经读取过的旧工具结果可以在后续 Run 压缩");
-
   await agent.run("third task");
   await agent.run("fourth task");
+  const consumedToolResult = chat.requests.at(-1).messages.find((message) =>
+    message.role === "tool" && message.tool_call_id === "compact-1");
+  assert.ok(consumedToolResult, "被裁剪的结果仍要留在上下文里，只是变短");
+  assert.match(consumedToolResult.content, /context compacted/);
+  assert.match(consumedToolResult.content, /full text: /, "预览必须给出可读原文的路径");
+  assert.ok(consumedToolResult.content.length < 1_500,
+    "模型已经读取过的旧工具结果可以在后续请求前压缩");
+  assert.equal(agent.compactionStats.archiveFailures, 0, "有损裁剪必须先成功存档");
 
   const transcript = agent.transcript;
-  assert.match(transcript[0].content, /conversation memory/i);
-  assert.ok(transcript.length < 10, "old completed turns should not accumulate indefinitely");
   for (let index = 1; index < transcript.length; index++) {
     const message = transcript[index];
     if (message.role !== "assistant" || message.tool_calls === undefined) continue;
@@ -709,7 +710,8 @@ test("会话：当前批次超过六个工具时，模型先看到每个工具�
     { role: "assistant", content: null, tool_calls: calls },
     finalReply("done"),
   ]);
-  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxTranscriptChars: 1_024 });
+  // 预算 20000：七条结果（约 8400 字符）装得下，就不该有任何一条被「只保留最近 N 条」误删。
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxTranscriptChars: 20_000 });
 
   await agent.run("执行这一批七个工具");
 
@@ -816,6 +818,8 @@ test("token 统计：累计 prompt / completion / total 与请求数", async () 
 
   assert.deepEqual(agent.stats, {
     requests: 2,
+    summaryRequests: 0,
+    overflowRetries: 0,
     toolCalls: 1,
     usage: { promptTokens: 150, completionTokens: 15, totalTokens: 165, reported: 2, unknown: 0 },
     tokenBudget: { limit: undefined, exceeded: false },
