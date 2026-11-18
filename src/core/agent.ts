@@ -139,7 +139,8 @@ function toolBatchSignature(calls: readonly ToolCall[]): string {
   ]));
 }
 
-/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */function cancellationError(signal: AbortSignal): Error {
+/** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */
+function cancellationError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   const detail = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
   return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
@@ -153,7 +154,7 @@ function emptyUsage(): AgentUsage {
 /** 预算是跨模块的运行时输入，不能只依赖 TypeScript 的静态类型。 */
 function assertIntegerBudget(name: string, value: number, minimum: number): void {
   if (!Number.isInteger(value) || value < minimum) {
-    // 配置 {name} 的值 {value} 不合法，需要一个不小于 {minimum} 的整数。
+    // 中文对照：配置 {name} 的值 {value} 不合法，需要一个不小于 {minimum} 的整数。
     throw new Error(`invalid ${name}: ${String(value)} (expected an integer >= ${minimum})`);
   }
 }
