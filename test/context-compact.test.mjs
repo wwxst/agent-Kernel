@@ -259,6 +259,40 @@ test("工具结果：存档失败时不做有损替换", async () => {
   });
 });
 
+test("工具结果：模型复用同一个调用 id 时，两份原文各自存档", async () => {
+  await withWorkspace(async (root) => {
+    const tool = { ...echoTool(), run: async (args) => String(args.value).repeat(12_000) };
+    // 两次响应都用 id `reused`：协议只要求一次响应内唯一，跨响应复用是合法的。
+    const chat = createModel({
+      replies: [
+        callTool("reused", "echo", { value: "A" }),
+        finalReply("first"),
+        callTool("reused", "echo", { value: "B" }),
+        finalReply("second"),
+        finalReply("third"),
+      ],
+    });
+    const agent = new Agent({
+      llm: chat,
+      tools: makeRegistry([tool]),
+      maxTranscriptChars: 5_000,
+      contextArchiveDir: path.join(root, "archive"),
+    });
+
+    await agent.run("first task");
+    await agent.run("second task");
+    await agent.run("third task");
+
+    const results = chat.businessRequests.at(-1).messages.filter((message) => message.role === "tool");
+    assert.equal(results.length, 2, "两份结果都要留在上下文里");
+    const files = results.map((message) => /full text: (.+?)\]/.exec(message.content)?.[1]);
+    assert.ok(files[0] !== undefined && files[1] !== undefined);
+    assert.notEqual(files[0], files[1], "同一个 id 的两次调用不能共用一份存档");
+    assert.match(await readFile(files[0], "utf8"), /^A{100}/, "第一份存档是自己的原文");
+    assert.match(await readFile(files[1], "utf8"), /^B{100}/, "第二份存档也必须是自己的原文");
+  });
+});
+
 test("工具结果：先裁剪最早的旧结果，够了就停", async () => {
   const calls = ["c1", "c2"].map((id, index) => ({
     id,

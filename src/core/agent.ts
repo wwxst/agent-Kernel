@@ -346,13 +346,18 @@ export class Agent {
   private runReplyLog: Message[] = [];
 
   /**
-   * 每条工具结果**第一次**被裁剪时的存档引用，按 tool_call_id 索引。
+   * 每条工具结果**第一次**被裁剪时的存档引用，按消息对象本身索引。
    *
    * 为什么要记着第一次：同一份结果可能被剪两刀（800 → 240）。第二刀如果拿「上一份预览」
    * 再存一次档，消息里的引用就指向一份预览而不是完整原文，追根溯源要跳两跳，
    * 中间那份一旦被清理就断了。所以第二刀复用第一次的引用，只换预览，不换来源。
+   *
+   * 为什么不能用 `tool_call_id` 当键：id 只保证**一次响应内**唯一（`Llm` 就是这么校验的），
+   * 模型完全可以在后续响应里复用同一个 id。按 id 索引会把第二份结果指到第一份的存档上，
+   * 第二份原文就再也没人存过。用消息对象做键才是「这一条结果」的身份；WeakMap 不会拖住
+   * 已经被压缩掉的消息。
    */
-  private readonly prunedSources = new Map<string, ContextArchiveRef>();
+  private readonly prunedSources = new WeakMap<Message, ContextArchiveRef>();
 
   /**
    * 已经被有损压缩省略、原文仍在磁盘上的存档引用。
@@ -634,7 +639,8 @@ export class Agent {
         const original = message.content ?? "";
         // 剪完几乎不省空间的结果不值得动：多一条噪声，少一份可读性。
         if (original.length <= limit + TOOL_RESULT_SNIP_MARGIN) continue;
-        let ref = this.prunedSources.get(key);
+        // 按消息对象找上一次的引用：同一个 id 可能是另一次调用，不能共用存档。
+        let ref = this.prunedSources.get(message);
         if (ref === undefined) {
           try {
             ref = await this.archive.save("tool", key, original);
@@ -644,7 +650,7 @@ export class Agent {
             this.lastCompactionError = `archive failed: ${describeError(error)}`;
             continue;
           }
-          this.prunedSources.set(key, ref);
+          this.prunedSources.set(message, ref);
           this.archivedOriginals.push(ref);
         }
         // 第二刀传进来的 original 已经是预览，但标记里的来源仍是第一次那份完整原文。
