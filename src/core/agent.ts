@@ -6,6 +6,7 @@
  * 同时只允许一个 Run，返回的消息与统计都是副本，宿主不能改写已确认的会话状态。
  *
  * 文件职责：负责循环、消息顺序与 id 配对、三类预算（步数 / 工具调用 / token）、
+ * 构造期参数校验、无进展循环检测（连续三批「调用与结果都相同」就停手）、
  * 会话生命周期、用量记账，以及把事件通知给界面（观察者抛异常只计数，不打断任务）。
  * 还负责**上下文压缩的调度**：每次真实业务请求前测量 → 先裁剪工具结果 → 再总结历史 →
  * 验证候选 → 一次性替换；上下文超限时做一次更强的压缩并重发一次。
@@ -23,7 +24,8 @@
  *   - 内部：`runLoop()` 主循环、`beginRun()` 重置本 Run 状态、`refreshSystemPrompt()`、
  *     `prepareRequest()` 请求准入与压缩调度、`pruneToolResults()` / `compactHistory()` /
  *     `recoverFromOverflow()` 三段压缩动作、`verifyCandidate()` 提交门槛、
- *     `stopIfCancelled()` / `stopIfBudgetExhausted()`、`recordUsage()`、`skipCalls()`。
+ *     `stopIfCancelled()` / `stopIfBudgetExhausted()`、`recordToolBatchObservation()` /
+ *     `shouldStopRepeatedToolBatch()` 无进展判定、`recordUsage()`、`skipCalls()`。
  *
  * 模块关系：依赖 `protocol/types.ts`、`protocol/errors.ts`、`core/tool-registry.ts`
  * （只通过注册表执行工具，不直接认识 `tools/`）、`core/context-compact.ts`（纯计算）、

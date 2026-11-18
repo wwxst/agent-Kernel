@@ -41,7 +41,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 | --- | --- |
 | `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
 | `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
-| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期、上下文压缩的调度与提交门槛 |
+| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、无进展检测、会话生命周期、上下文压缩的调度与提交门槛 |
 | `src/core/context-compact.ts` | 上下文压缩的纯计算：请求体积与 token 估算、Snip、可移除历史段切分、摘要提示词与合格性检查 |
 | `src/core/context-archive.ts` | 有损压缩前保存原文，返回可供 `read` 使用的绝对路径 |
 | `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本；围着执行触发三个 Hook 事件 |
@@ -71,7 +71,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 每个外部接口一处缝，重构不该让任何用例变红：
 
-- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、三个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序，以及压缩发生在工具结果被消费之后而不是之前。
+- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、三个预算、无进展循环检测（连续相同批次停止且配对完整、结果变化时继续、按 Run 重算）、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序，以及压缩发生在工具结果被消费之后而不是之前。
 - `test/context-compact.test.mjs`：上下文压缩这一层 —— 短对话不压、工具定义计入体积、字符路径与 token 路径分开、最新批次完整、旧结果先裁、两刀之后引用仍指向完整原文、超大结果先存档再预览、存档失败不做有损替换、旧轮次与单轮多步都能折叠、压缩后 system 里留下可读的存档清单、多次压缩是替换而非追加、摘要为空/不合格/失败/取消都不提交、失败配额按 Run 重算（不会永久关闭压缩）、摘要花掉预算后不再发业务请求、取消时用量只记一次、摘要请求不带工具且单独计数、摘要请求按**序列化后的真实体积**裁剪（转义密集的历史缩短后仍能发出、原文仍可读回）、输出预留为 0 时摘要长度下限仍容得下合法八节结构、连最小合法摘要都装不下时不发请求并明确失败、`reasoning_content` 不被删、溢出只恢复一次且不重跑工具、压缩后仍装不下的请求不再发送、两个 Agent 互不影响、长任务回放后配对完整且目标仍在。摘要请求的假答复由 `test/support/harness.mjs` 的 `CANNED_SUMMARY` 提供，不消耗脚本项。
 - `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、参数类型错误，以及每个失败分支都折成文本；声明了 `strictArguments` 的工具会拒绝未声明的参数（默认仍忽略，`shell` 靠这一点让 Worker 包装层吞掉 `background`）；进程树清理未确认仍抛 `ProcessCleanupError`。
 - `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行且异常时 fail-closed、后置 Hook 抛错不影响工具结果、Hook 拿到副本、九个工作区工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
