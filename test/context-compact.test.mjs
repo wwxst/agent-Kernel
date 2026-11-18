@@ -106,6 +106,25 @@ function callToolWithNotes(id, name, args, notes) {
   return { ...callTool(id, name, args), content: notes };
 }
 
+/**
+ * 一份「格式合格但特别长」的摘要：八节齐全、长度合法，但比被替换的内容还长。
+ * 用来验证「格式过了 ≠ 压缩成功」——候选没缩小必须算一次失败。
+ */
+function longValidSummary(total) {
+  const sections = [
+    "User goal",
+    "Requirements and constraints",
+    "Decisions and reasons",
+    "Completed work and verification",
+    "Current work and progress",
+    "Key files, commands, errors, findings",
+    "Open questions and todos",
+    "Next step",
+  ];
+  const per = Math.ceil(total / sections.length);
+  return sections.map((section) => `## ${section}\n` + "p".repeat(per)).join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // 预算：什么时候压、按什么尺子量
 // ---------------------------------------------------------------------------
@@ -641,6 +660,25 @@ test("历史摘要：摘要返回后立刻取消，用量只记一次", async ()
   assert.equal(agent.compactionStats.compactions, 0, "取消不提交摘要");
 });
 
+test("历史摘要：格式合格但没缩小的摘要也只给两次机会，不无限重试", async () => {
+  const replies = [];
+  for (let step = 1; step <= 6; step++) {
+    replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(2_500)));
+  }
+  replies.push(finalReply("done"));
+  // 摘要八节齐全、长度也合法，但比被折叠的内容还长 —— 候选必然「没有缩小」。
+  const oversized = longValidSummary(9_000);
+  const chat = createModel({ replies, summary: oversized });
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+
+  await agent.run("run all six steps");
+
+  assert.equal(agent.compactionStats.compactions, 0, "没缩小的候选不能提交");
+  assert.equal(chat.summaryRequests.length, 2,
+    "格式合格不算成功：候选被拒仍要计入失败配额，一个 Run 最多两次");
+  assert.match(agent.compactionStats.lastError, /did not shrink/);
+});
+
 // ---------------------------------------------------------------------------
 // 上下文溢出：只认明确超限，最多恢复一次
 // ---------------------------------------------------------------------------
@@ -699,6 +737,36 @@ test("溢出：压缩后仍装不下的请求不再发送", async () => {
   );
   assert.equal(chat.businessRequests.length, 0, "明知装不下就不要发出去白花钱");
   assert.equal(agent.stats.requests, 0);
+});
+
+test("溢出：恢复用的摘要花掉预算后，不再重发业务请求", async () => {
+  const replies = [];
+  for (let step = 1; step <= 4; step++) {
+    replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(2_500)));
+  }
+  replies.push(finalReply("done"));
+  const chat = createModel({
+    replies,
+    summary: summaryWith("recovered"),
+    businessUsage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+    // 第三次业务请求被上游判为超限：恢复会先压一次，而那次压缩要花一次摘要请求。
+    failures: [undefined, undefined, contextOverflowError()],
+  });
+  const agent = new Agent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    contextWindowTokens: 4_000,
+    outputTokenReserve: 1_000,
+    maxTotalTokens: 50,
+  });
+
+  await assert.rejects(() => agent.run("run all four steps"), /token budget 50 reached/);
+
+  const summaryAt = chat.requests.findIndex((request) => request.summary);
+  assert.ok(summaryAt >= 0, "这个用例的前提是恢复时真的用摘要腾了空间");
+  assert.equal(chat.requests.slice(summaryAt + 1).filter((request) => !request.summary).length, 0,
+    "恢复用的摘要也会花钱：重发前必须重新过预算闸门");
+  assert.equal(agent.stats.overflowRetries, 1);
 });
 
 test("溢出：普通 400 不触发压缩恢复", async () => {

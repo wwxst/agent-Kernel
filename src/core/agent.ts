@@ -736,6 +736,9 @@ export class Agent {
     this.compactedSummary = nextSummary;
     this.messages.splice(0, this.messages.length, ...candidate);
     this.compactions++;
+    // 只有整次替换真正提交了才算「这次摘要成功了」：格式合格但候选被拒（没缩小、
+    // 配对断了）仍是一次失败，计数必须留在失败那边，否则配额永远填不满。
+    this.summaryFailuresThisRun = 0;
     // 成功了就清掉上次的失败原因：诊断字段说的是「现在到底卡在哪」，不是历史。
     this.lastCompactionError = "";
     return true;
@@ -786,7 +789,8 @@ export class Agent {
       const text = (response.message.content ?? "").trim();
       const rejection = validateSummary(text);
       if (rejection === undefined) {
-        this.summaryFailuresThisRun = 0;
+        // 这里只判断「摘要本身合不合格」。成功计数要等候选真正提交之后才清
+        // （见 compactHistory）：格式合格但没缩小的摘要，仍是一次失败的尝试。
         return text;
       }
       this.summaryFailuresThisRun++;
@@ -1130,7 +1134,12 @@ export class Agent {
             overflowRecovered = true;
             this.runOverflowRetries++;
             const shrank = await this.recoverFromOverflow();
-            if (shrank) continue;
+            if (shrank) {
+              // 恢复本身可能刚花掉一次摘要请求：重发前必须重新过预算闸门，
+              // 否则「超限 → 摘要 → 重发」就绕过了 Run 的 token 预算。
+              this.stopIfBudgetExhausted();
+              continue;
+            }
             // 压不动了：不拿同一个必失败的请求反复发，明确停下并说清是什么装不下。
             throw new Error(
               `context window exceeded and could not be reduced: ${describeError(error)}. ` +
