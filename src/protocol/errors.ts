@@ -98,10 +98,8 @@ export function isContextOverflowError(error: unknown): boolean {
   return /context[ _-]?(length|window|limit)/i.test(detail) ||
     /maximum context/i.test(detail) ||
     /context[ _-]?overflow/i.test(detail) ||
-    /too many tokens/i.test(detail) ||
-    /prompt is too long/i.test(detail) ||
-    /input is too long/i.test(detail) ||
-    /exceed(s|ed)?[^.]{0,40}(token|context)/i.test(detail);
+    /(?:prompt|input)[^.]{0,80}(?:too long|too many tokens|exceed(?:s|ed)?[^.]{0,40}tokens?)/i.test(detail) ||
+    /exceed(s|ed)?[^.]{0,40}context/i.test(detail);
 }
 
 /**
