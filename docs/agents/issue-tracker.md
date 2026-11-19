@@ -10,6 +10,16 @@
 - 分诊状态写在文件顶部附近的 `Status:` 行，取值见 `triage-labels.md`
 - 讨论追加到文件末尾的 `## Comments` 标题下
 
+## Spec 约定
+
+- 模板保存在仓库内的 [spec-template.md](./spec-template.md)，这是受 Git 管理的模板；不要把模板本身放进被忽略的 `.scratch/`。
+- 开始一个功能或架构改造时，复制模板到 `.scratch/<feature-slug>/spec.md`，再按实际情况填写。
+- Spec 至少写清目标、现状证据、做与不做的范围、方案与备选方案、模块影响、验收标准、测试、风险和回滚方式。
+- 功能开发和架构重构在用户确认方案前，不开始编写功能代码；实施中若要改变关键方案或扩大范围，先重新确认。
+- Spec 的「状态」使用中文状态记录方案进度；实现工单顶部的 `Status:` 仍按 `triage-labels.md` 的分诊约定填写，两者不要混用。
+
+研发流程见 [development-workflow.md](../development-workflow.md)。
+
 ## 技能说「发布到 issue tracker」
 
 在 `.scratch/<feature-slug>/` 下建文件（目录不存在就建）。
