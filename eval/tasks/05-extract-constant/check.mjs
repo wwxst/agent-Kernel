@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { importTaskModule, readTaskFile } from "../../checker-helpers.mjs";
 
 export default async function check(root) {
-  const source = await readFile(path.join(root, "calc.mjs"), "utf8");
+  const source = await readTaskFile(path.join(root, "calc.mjs"), "calc.mjs");
   const parsed = ts.createSourceFile("calc.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   let declarationFound = false;
   let referenceCount = 0;
@@ -29,7 +29,7 @@ export default async function check(root) {
   assert.ok(referenceCount > 0, "计算逻辑必须真正使用 TAX_RATE，不能只声明一个没用的常量");
   assert.equal((source.match(/\b0\.2\b/g) ?? []).length, 1, "0.2 还散落在多处");
 
-  const { withTax, taxOf, discounted } = await import(pathToFileURL(path.join(root, "calc.mjs")).href);
+  const { withTax, taxOf, discounted } = await importTaskModule(pathToFileURL(path.join(root, "calc.mjs")).href, "calc.mjs");
   assert.equal(withTax(100), 120, "含税价变了");
   assert.equal(taxOf(100), 20, "税额变了");
   assert.equal(discounted(100), 108, "折后含税价变了");
