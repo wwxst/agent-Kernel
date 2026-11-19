@@ -82,6 +82,25 @@ test("Worktree：创建、从子工作区列出、删除目录但保留分支", 
   });
 });
 
+test("Worktree：从 linked worktree 创建时，默认 HEAD 使用调用者自己的提交", async () => {
+  await withRepository(async (root) => {
+    const parent = createdPath((await runTool(root, ["create", "feature/parent", "main"])).stdout);
+    await writeFile(path.join(parent, "child-only.txt"), "commit from child worktree\\n");
+    await runGit(parent, ["add", "child-only.txt"]);
+    await runGit(parent, ["commit", "-m", "commit only in child worktree"]);
+    const parentHead = (await runGit(parent, ["rev-parse", "HEAD"])).stdout.trim();
+
+    // 不传 base，默认 HEAD 必须指向当前调用者所在 Worktree 的提交，而不是主工作区的 HEAD。
+    const child = createdPath((await runTool(parent, ["create", "feature/from-child-head"])).stdout);
+    const childHead = (await runGit(child, ["rev-parse", "HEAD"])).stdout.trim();
+    assert.equal(childHead, parentHead);
+    await access(path.join(child, "child-only.txt"));
+
+    await runTool(root, ["remove", "feature/from-child-head"]);
+    await runTool(root, ["remove", "feature/parent"]);
+  });
+});
+
 test("Worktree：不能删除主工作区或当前正在使用的 linked worktree", async () => {
   await withRepository(async (root) => {
     await expectToolFailure(root, ["remove", "main"], /主工作区/);
