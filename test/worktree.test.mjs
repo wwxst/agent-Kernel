@@ -160,19 +160,23 @@ test("Worktree：脏工作区拒绝删除，清理后可以删除", async () => 
 test("Worktree：assume-unchanged 和 skip-worktree 文件不能被误删", async () => {
   await withRepository(async (root) => {
     const worktreePath = createdPath((await runTool(root, ["create", "feature/hidden-index-flags", "main"])).stdout);
-    const tracked = path.join(worktreePath, "README.md");
+    const tracked = path.join(worktreePath, "tracked.txt");
+    await writeFile(tracked, "tracked file\\n");
+    await runGit(worktreePath, ["add", "tracked.txt"]);
+    await runGit(worktreePath, ["commit", "-m", "add second tracked file"]);
 
-    await runGit(worktreePath, ["update-index", "--assume-unchanged", "README.md"]);
-    await writeFile(tracked, "# locally modified but hidden\\n");
+    // README.md 排在索引第一项；把隐藏标记放在第二个文件，确保 -z 输出被正确逐项解析。
+    await runGit(worktreePath, ["update-index", "--assume-unchanged", "tracked.txt"]);
+    await writeFile(tracked, "locally modified but hidden\\n");
     await expectToolFailure(root, ["remove", "feature/hidden-index-flags"], /特殊标记，拒绝删除/);
-    await runGit(worktreePath, ["update-index", "--no-assume-unchanged", "README.md"]);
-    await runGit(worktreePath, ["checkout", "--", "README.md"]);
+    await runGit(worktreePath, ["update-index", "--no-assume-unchanged", "tracked.txt"]);
+    await runGit(worktreePath, ["checkout", "--", "tracked.txt"]);
 
-    await runGit(worktreePath, ["update-index", "--skip-worktree", "README.md"]);
-    await writeFile(tracked, "# locally modified and skip-worktree\\n");
+    await runGit(worktreePath, ["update-index", "--skip-worktree", "tracked.txt"]);
+    await writeFile(tracked, "locally modified and skip-worktree\\n");
     await expectToolFailure(root, ["remove", "feature/hidden-index-flags"], /特殊标记，拒绝删除/);
-    await runGit(worktreePath, ["update-index", "--no-skip-worktree", "README.md"]);
-    await runGit(worktreePath, ["checkout", "--", "README.md"]);
+    await runGit(worktreePath, ["update-index", "--no-skip-worktree", "tracked.txt"]);
+    await runGit(worktreePath, ["checkout", "--", "tracked.txt"]);
 
     await runTool(root, ["remove", "feature/hidden-index-flags"]);
   });
