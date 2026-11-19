@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { readTaskFile, readTaskJson } from "../../checker-helpers.mjs";
 
 export default async function check(root) {
   let usage;
   try {
-    usage = await readFile(path.join(root, "docs", "usage.md"), "utf8");
+    usage = await readTaskFile(path.join(root, "docs", "usage.md"), "docs/usage.md");
   } catch (error) {
     if (error?.code === "ENOENT") assert.fail("docs/usage.md 不存在");
     throw error;
   }
   assert.equal(usage.split(/\r?\n/, 1)[0], "# 用法", "docs/usage.md 的第一行必须是 # 用法");
 
-  const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  const pkg = await readTaskJson(path.join(root, "package.json"), "package.json");
   const scripts = pkg.scripts ?? {};
   assert.match(usage, /^\|\s*命令\s*\|\s*(?:用途|说明)\s*\|/m, "正文必须有「命令 / 用途」表头");
 
@@ -30,7 +30,7 @@ export default async function check(root) {
   assert.deepEqual([...documented.keys()].sort(), Object.keys(scripts).sort(),
     "文档表格必须逐项列出 package.json 的全部 npm scripts");
 
-  const readme = (await readFile(path.join(root, "README.md"), "utf8")).replace(/\r\n/g, "\n");
+  const readme = (await readTaskFile(path.join(root, "README.md"), "README.md")).replace(/\r\n/g, "\n");
   assert.ok(
     readme.startsWith("# fixture\n\n一个用来练手的小仓库。"),
     "README 原有标题和介绍必须保留，不能只留下新链接",
