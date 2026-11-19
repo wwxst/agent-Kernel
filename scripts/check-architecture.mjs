@@ -109,6 +109,15 @@ function collectReferences(sourceFile) {
       }
     }
 
+    if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const expression = node.moduleReference.expression;
+      if (expression && ts.isStringLiteralLike(expression)) {
+        add(expression.text, expression);
+      } else {
+        uncheckable.push({ position: node.getStart(sourceFile), kind: "import = require" });
+      }
+    }
+
     if (ts.isCallExpression(node)) {
       const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
       const isRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
