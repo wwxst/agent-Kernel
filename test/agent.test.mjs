@@ -1172,6 +1172,28 @@ test("无进展检测：同一调用链出现普通结果后，等待豁免不�
   assert.equal(chat.requests.length, 6);
 });
 
+test("无进展检测：交替使用空串与空对象时，按实际工具结果重新计数", async () => {
+  const results = ["", "changed", "", "", "", ""];
+  const script = results.map((_, index) => {
+    const message = callTool(String(index), "poll", {});
+    message.tool_calls[0].function.arguments = index % 2 === 0 ? "" : "{}";
+    return message;
+  });
+  const chat = createScriptedChat([...script, finalReply("done")]);
+  let executions = 0;
+  const tool = {
+    name: "poll", description: "Poll for output.", parameters: { type: "object" },
+    run: () => results[executions++],
+  };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]) });
+
+  await assert.rejects(() => agent.run("poll"), /identical tool batches.*no progress/);
+  assert.equal(executions, 5);
+  assert.equal(chat.requests.length, 6);
+  assert.equal(agent.transcript.at(-1).tool_call_id, "5");
+  assert.match(agent.transcript.at(-1).content, /not run/);
+});
+
 test("无进展检测：参数键顺序规范化且不依赖 tool_call_id", async () => {
   const chat = createScriptedChat([
     {

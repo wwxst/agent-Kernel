@@ -69,6 +69,8 @@ function canonicalizeJson(value: unknown): unknown {
 
 /** 参数不是合法 JSON 时保留原文，让坏参数仍能形成稳定签名并交给 ToolRegistry 报错。 */
 function canonicalizeArguments(argumentsText: string): string {
+  // ToolRegistry 将空参数串作为空对象执行，两种写法必须共用重复计数。
+  if (argumentsText === "") return "{}";
   try {
     return JSON.stringify(canonicalizeJson(JSON.parse(argumentsText)));
   } catch {
