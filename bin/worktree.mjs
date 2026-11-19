@@ -116,7 +116,7 @@ async function createWorktree(root, branch, baseRef = "HEAD") {
     throw new Error(`基准引用不存在或不是 commit：${baseRef}`);
   }
 
-  const safeSlug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "worktree";
+  const safeSlug = (branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "worktree").slice(0, 60);
   const suffix = createHash("sha256").update(branch).digest("hex").slice(0, 8);
   const worktreesDir = path.join(root, ".worktrees");
   const target = path.join(worktreesDir, `${safeSlug}-${suffix}`);
@@ -165,6 +165,10 @@ async function removeWorktree(root, branch) {
   if (!entry) throw new Error(`没有找到分支 ${branch} 对应的 Worktree`);
 
   const target = path.resolve(entry.path);
+  const currentTopLevel = path.resolve((await git(["rev-parse", "--show-toplevel"], process.cwd())).stdout.trim());
+  if (target === currentTopLevel) {
+    throw new Error("不能删除当前正在使用的工作区，请从另一个 Worktree 执行");
+  }
   if (target === path.resolve(root)) {
     throw new Error("这是主工作区，不能通过 Worktree 工具删除");
   }
