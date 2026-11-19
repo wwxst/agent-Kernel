@@ -58,6 +58,20 @@ test("Agent 配置：字符预算低于下限或不是整数时明确拒绝，�
   assert.doesNotThrow(() => new Agent(options));
 });
 
+test("Agent 配置：非法 contextWindowTokens 在构造期拒绝，不留到第一次请求", () => {
+  const options = { llm: {}, tools: makeRegistry([]), outputTokenReserve: 100 };
+  // 三种坏值都必须当场拒绝：0 与非整数无法当窗口用；等于输出预留时输入空间为 0。
+  assert.throws(
+    () => new Agent({ ...options, contextWindowTokens: 0 }),
+    /contextWindowTokens \(0\) must be an integer larger than outputTokenReserve \(100\)/,
+  );
+  assert.throws(() => new Agent({ ...options, contextWindowTokens: 100.5 }), /must be an integer larger than/);
+  assert.throws(() => new Agent({ ...options, contextWindowTokens: 100 }), /must be an integer larger than/);
+  // 不传窗口是合法路径（退回字符预算）；比预留多一个也算够用。
+  assert.doesNotThrow(() => new Agent(options));
+  assert.doesNotThrow(() => new Agent({ ...options, contextWindowTokens: 101 }));
+});
+
 test("会话：修改 run 返回值不能改写下一轮的 Transcript", async () => {
   const chat = createScriptedChat([finalReply("original"), finalReply("next")]);
   const agent = new Agent({ llm: chat, tools: makeRegistry([]) });
@@ -645,6 +659,22 @@ test("工具预算：一批调用会超限时整批都不执行", async () => {
   assert.ok(toolMessages.every((message) => message.content === "ERROR: not run: tool call budget 2 would be exceeded"));
 });
 
+test("工具预算：maxToolCalls=0 只发一次空工具表请求，仍能拿到最终答复", async () => {
+  // 两个「0」语义不同，但都不该崩：
+  //   - 工具调用预算 0 = 这一轮不许用工具，模型仍可以只回一句话；
+  //   - token 预算 0 = 一分钱都不许花，所以连第一个请求都不发（见下一条用例）。
+  const chat = createScriptedChat([finalReply("answered without tools")]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([echoTool()]), maxToolCalls: 0 });
+
+  const reply = await agent.run("answer only");
+
+  assert.equal(reply.content, "answered without tools");
+  assert.equal(chat.requests.length, 1, "仍发一次请求：模型可以只给最终答复");
+  assert.equal(chat.requests[0].tools.length, 0, "预算为 0 时不把工具表发给模型");
+  assert.equal(agent.stats.toolCalls, 0);
+  assert.equal(agent.stats.requests, 1);
+});
+
 test("工具预算：跨批次累计，超限后不再启动新批次", async () => {
   const chat = createScriptedChat([
     callTool("c1", "echo", { value: "a" }),
@@ -818,6 +848,17 @@ test("会话：token 预算也只算本次 Run", async () => {
   assert.equal(agent.stats.usage.totalTokens, 70);
   assert.equal(agent.sessionStats.usage.totalTokens, 140);
   assert.equal(agent.stats.tokenBudget.exceeded, false);
+});
+
+test("token 预算：maxTotalTokens=0 时第一个请求都不发，直接报预算用尽", async () => {
+  const chat = createScriptedChat([finalReply("never sent")]);
+  const agent = new Agent({ llm: chat, tools: makeRegistry([]), maxTotalTokens: 0 });
+
+  await assert.rejects(() => agent.run("answer only"), /token budget 0 reached/);
+
+  assert.equal(chat.requests.length, 0, "预算为 0 时一次请求都不能发");
+  assert.equal(agent.stats.requests, 0);
+  assert.equal(agent.stats.tokenBudget.exceeded, true, "状态要说清是「预算已尽」，不是「任务失败」");
 });
 
 test("生命周期：并发 run() 时后一个立刻被拒绝", async () => {
@@ -1022,6 +1063,23 @@ test("TUI 级别的可恢复 HTTP 429 重试计入真实请求与未知成本，
   assert.equal(agent.stats.usage.reported, 1);
   assert.equal(agent.stats.usage.totalTokens, 5);
   assert.equal(agent.transcript.filter((m) => m.role === "assistant").length, 1);
+});
+
+test("重试：默认 maxModelRetries=0，可重试的故障也不额外发请求", async () => {
+  // 所有显式配了正数的用例，`>=` 写成 `>` 都能通过（它们本来就会重试）。
+  // 只有默认值这一档能区分：默认必须是「一次都不重试」，否则配置没写的人会静默多付一次钱。
+  let calls = 0;
+  const agent = new Agent({
+    llm: { chat: async () => { calls++; throw new ModelHttpError(503, "unavailable"); } },
+    tools: makeRegistry([]),
+  });
+
+  await assert.rejects(() => agent.run("hello"), /LLM HTTP 503: unavailable/);
+
+  assert.equal(calls, 1, "默认不重试：多打一次就是多花一次钱");
+  assert.equal(agent.stats.requests, 1);
+  assert.equal(agent.retryAttempts, 0);
+  assert.equal(agent.stats.usage.unknown, 1, "失败的那次仍然可能已经产生费用");
 });
 
 test("HTTP 401 不重试；收到取消时等待退避会立即停手", async () => {
