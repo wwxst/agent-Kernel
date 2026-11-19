@@ -75,11 +75,18 @@ export default async function check(root) {
   let ifCount = 0;
   let nestedIf = false;
   let hasElse = false;
+  let nonGuardIf = false;
+  function isGuardReturn(statement) {
+    return ts.isReturnStatement(statement) ||
+      (ts.isBlock(statement) && statement.statements.length === 1 &&
+        ts.isReturnStatement(statement.statements[0]));
+  }
   function visit(node, ifDepth = 0) {
     if (ts.isIfStatement(node)) {
       ifCount++;
       if (ifDepth > 0) nestedIf = true;
       if (node.elseStatement) hasElse = true;
+      if (!isGuardReturn(node.thenStatement)) nonGuardIf = true;
       ts.forEachChild(node, (child) => visit(child, ifDepth + 1));
       return;
     }
@@ -90,6 +97,7 @@ export default async function check(root) {
   assert.ok(ifCount > 0, "canEdit 应使用明确的 guard clause");
   assert.equal(nestedIf, false, "canEdit 不能再有嵌套 if");
   assert.equal(hasElse, false, "guard clause 应提前返回，不应保留 else 分支");
+  assert.equal(nonGuardIf, false, "canEdit 中的 if 必须提前 return，不能只把嵌套 if 摊平");
 
   const { canEdit } = await importTaskModule(pathToFileURL(path.join(root, "access.mjs")).href, "access.mjs");
 
