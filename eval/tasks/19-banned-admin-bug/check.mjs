@@ -4,13 +4,56 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import { importTaskModule, readTaskFile } from "../../checker-helpers.mjs";
 
+function isCallable(node) {
+  return ts.isFunctionDeclaration(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node);
+}
+
+function findLocalCallable(sourceFile, localName) {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === localName) {
+      return statement;
+    }
+    if (ts.isVariableStatement(statement)) {
+      const declaration = statement.declarationList.declarations.find(
+        (item) => ts.isIdentifier(item.name) && item.name.text === localName,
+      );
+      if (declaration?.initializer && isCallable(declaration.initializer)) {
+        return declaration.initializer;
+      }
+    }
+  }
+  return undefined;
+}
+
+function findCallableImplementation(sourceFile, exportedName) {
+  const direct = findLocalCallable(sourceFile, exportedName);
+  if (direct) return direct;
+
+  // 兼容先定义本地函数、再通过 export list 导出 canEdit 的写法。
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement) || !statement.exportClause ||
+        !ts.isNamedExports(statement.exportClause) || statement.moduleSpecifier) {
+      continue;
+    }
+    const specifier = statement.exportClause.elements.find((item) => item.name.text === exportedName);
+    if (specifier) {
+      const localName = specifier.propertyName?.text ?? specifier.name.text;
+      return findLocalCallable(sourceFile, localName);
+    }
+  }
+  return undefined;
+}
+
 export default async function check(root) {
   const source = await readTaskFile(path.join(root, "access.mjs"), "access.mjs");
   const parsed = ts.createSourceFile("access.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-  const declaration = parsed.statements.find(
-    (statement) => ts.isFunctionDeclaration(statement) && statement.name?.text === "canEdit",
-  );
-  assert.ok(declaration?.body, "canEdit 必须继续作为函数实现");
+  assert.equal(parsed.parseDiagnostics.length, 0, "access.mjs 必须是有效的 JavaScript");
+
+  const callable = findCallableImplementation(parsed, "canEdit");
+  const body = callable?.body;
+  assert.ok(body && ts.isBlock(body), "canEdit 必须继续作为带函数体的函数实现");
 
   let ifCount = 0;
   let nestedIf = false;
@@ -25,7 +68,7 @@ export default async function check(root) {
     }
     ts.forEachChild(node, (child) => visit(child, ifDepth));
   }
-  visit(declaration.body);
+  visit(body);
 
   assert.ok(ifCount > 0, "canEdit 应使用明确的 guard clause");
   assert.equal(nestedIf, false, "canEdit 不能再有嵌套 if");
