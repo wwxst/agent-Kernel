@@ -17,7 +17,8 @@ export default async function check(root) {
       const isExpectedValue = node.initializer && ts.isNumericLiteral(node.initializer) &&
         Number(node.initializer.text) === 0.2;
       declarationFound ||= isConst && isExpectedValue;
-    } else if (ts.isIdentifier(node) && node.text === "TAX_RATE") {
+    } else if (ts.isIdentifier(node) && node.text === "TAX_RATE" &&
+        !(ts.isVariableDeclaration(node.parent) && node.parent.name === node)) {
       referenceCount++;
     }
     ts.forEachChild(node, visit);
