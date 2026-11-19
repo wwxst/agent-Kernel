@@ -7,7 +7,7 @@
  * 内容目录：
  *   - 合法依赖：覆盖各层允许的方向和同层内部依赖。
  *   - 非法依赖：覆盖 core → tools、core → ui、protocol → model。
- *   - 导入语法：覆盖 export from、动态 import、import type 和 require。
+ *   - 导入语法：覆盖 export from、动态 import、import type、require 和 import = require。
  *   - 无法检查的路径：覆盖变量动态导入、无法解析的相对路径和未知模块目录。
  *
  * 模块关系：依赖 scripts/check-architecture.mjs 与 Node 内置模块；由 npm test 启动。
@@ -97,11 +97,12 @@ test("架构检查：同时检查 export from、动态 import、import type 和 
       'const loaded = import("../tools/workspace.ts");',
       'type Imported = import("../tools/workspace.ts").ToolType;',
       'const required = require("../tools/workspace.ts");',
+      'import Imported = require("../tools/workspace.ts");',
       "export type { Imported };",
     ].join("\n"),
   }, async (root) => {
     const result = await checkArchitecture(root);
-    assert.equal(result.violations.filter((item) => item.sourceLayer === "core" && item.targetLayer === "tools").length, 4);
+    assert.equal(result.violations.filter((item) => item.sourceLayer === "core" && item.targetLayer === "tools").length, 5);
   });
 });
 
