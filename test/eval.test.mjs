@@ -192,6 +192,42 @@ test("评测汇总：任务集合和通过数必须自洽，合法完整轮次�
   });
 });
 
+test("评测汇总：不同套件版本、模型和提交必须分组统计", async () => {
+  await withSummaryFixture(async (script, recordFile) => {
+    const makeRun = (suiteVersion, model, commit, passed) => ({
+      suiteVersion,
+      model,
+      commit,
+      total: 2,
+      passed,
+      elapsed: 2,
+      at: new Date().toISOString(),
+      infraErrors: [],
+      results: [
+        { name: "first", ok: true, requests: 1, seconds: 1 },
+        { name: "second", ok: passed === 2, requests: 1, seconds: 1 },
+      ],
+    });
+
+    const resultsDir = path.dirname(recordFile);
+    await writeFile(recordFile, JSON.stringify(makeRun(1, "old-model", "old-commit", 2)));
+    await writeFile(path.join(resultsDir, "2.json"), JSON.stringify(makeRun(2, "current-model", "old-commit", 2)));
+    await writeFile(path.join(resultsDir, "3.json"), JSON.stringify(makeRun(2, "other-model", "current-commit", 2)));
+    await writeFile(path.join(resultsDir, "4.json"), JSON.stringify(makeRun(2, "current-model", "current-commit", 2)));
+    await writeFile(path.join(resultsDir, "5.json"), JSON.stringify(makeRun(2, "current-model", "current-commit", 1)));
+
+    const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /评测版本：v2/);
+    assert.match(result.stdout, /模型：current-model/);
+    assert.match(result.stdout, /提交：current/);
+    assert.match(result.stdout, /最近 2 轮完整评测/);
+    assert.match(result.stdout, /合计：3\/4 个任务（75\.0%）/);
+    assert.match(result.stdout, /已跳过 3 轮不同评测版本、模型或代码提交的记录/);
+    assert.doesNotMatch(result.stdout, /old-model|other-model|old-commit/);
+  });
+});
+
 test("评测：模型连接失败记录为 environment，不污染任务能力成绩", async () => {
   await withRoundFixture(async (options, endpoint) => {
     const baseUrl = options.baseUrl;
