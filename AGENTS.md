@@ -13,6 +13,9 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm test` | 全部测试，不需要 API Key、不联网 |
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
+| `npm run worktree -- create <branch> [base]` | 创建独立分支和工作区；默认基于当前 HEAD |
+| `npm run worktree -- list` | 查看所有 Worktree |
+| `npm run worktree -- remove <branch>` | 删除干净的工作区，保留分支；有本地文件时拒绝删除 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
@@ -96,7 +99,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 接到任务先按 [docs/development-workflow.md](./docs/development-workflow.md) 判断类型。简单修复可以小步处理；功能开发和架构重构先复制 [Spec 模板](./docs/agents/spec-template.md) 到 `.scratch/<feature>/spec.md`，提交完整方案并得到用户确认后再写功能代码。
 
-并行开发必须使用独立分支或 Git Worktree，不能让多个 Agent 共用一个写入工作目录。Full Access 只说明内核不做运行时权限审批，不代表自动获得 commit、push、merge、rebase、reset、clean 或 stash 的授权；这些操作必须由当前任务明确授权。
+并行开发必须使用独立分支或 Git Worktree，不能让多个 Agent 共用一个写入工作目录。仓库提供 `npm run worktree -- create/list/remove` 管理命令；删除只处理干净的工作区，不会删除分支。Full Access 只说明内核不做运行时权限审批，不代表自动获得 commit、push、merge、rebase、reset、clean 或 stash 的授权；这些操作必须由当前任务明确授权。
 
 PR 使用 [.github/PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md)，研发流程细节见上面的文档。
 
