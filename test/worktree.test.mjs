@@ -157,6 +157,22 @@ test("Worktree：脏工作区拒绝删除，清理后可以删除", async () => 
   });
 });
 
+test("Worktree：被 .gitignore 忽略的本地文件也不能被误删", async () => {
+  await withRepository(async (root) => {
+    const worktreePath = createdPath((await runTool(root, ["create", "feature/ignored-local-file", "main"])).stdout);
+    await writeFile(path.join(worktreePath, ".gitignore"), ".env\\n");
+    await runGit(worktreePath, ["add", ".gitignore"]);
+    await runGit(worktreePath, ["commit", "-m", "ignore local env file"]);
+    const secret = path.join(worktreePath, ".env");
+    await writeFile(secret, "local secret must stay\\n");
+
+    await expectToolFailure(root, ["remove", "feature/ignored-local-file"], /被忽略的文件/);
+    await access(secret);
+    await rm(secret);
+    await runTool(root, ["remove", "feature/ignored-local-file"]);
+  });
+});
+
 test("Worktree：assume-unchanged 和 skip-worktree 文件不能被误删", async () => {
   await withRepository(async (root) => {
     const worktreePath = createdPath((await runTool(root, ["create", "feature/hidden-index-flags", "main"])).stdout);
