@@ -91,7 +91,7 @@ function displayBranch(entry) {
   return entry.detached ? "(detached HEAD)" : "(unknown)";
 }
 
-async function createWorktree(root, branch, baseRef = "HEAD") {
+async function createWorktree(root, branch, baseRef = "HEAD", baseCwd = root) {
   if (!branch) throw new Error("create 缺少分支名");
   if (branch.startsWith("-")) throw new Error("分支名不能以 - 开头");
 
@@ -111,7 +111,7 @@ async function createWorktree(root, branch, baseRef = "HEAD") {
   try {
     baseCommit = (await git([
       "rev-parse", "--verify", "--quiet", "--end-of-options", `${baseRef}^{commit}`,
-    ], root)).stdout.trim();
+    ], baseCwd)).stdout.trim();
   } catch {
     throw new Error(`基准引用不存在或不是 commit：${baseRef}`);
   }
@@ -196,11 +196,12 @@ async function main() {
     return;
   }
 
+  const invokingRoot = (await git(["rev-parse", "--show-toplevel"], process.cwd())).stdout.trim();
   const root = await findMainRepositoryRoot();
 
   if (command === "create") {
     if (args.length < 1 || args.length > 2) throw new Error("用法：create <branch> [base]");
-    await createWorktree(root, args[0], args[1] ?? "HEAD");
+    await createWorktree(root, args[0], args[1] ?? "HEAD", invokingRoot);
     return;
   }
   if (command === "list") {
