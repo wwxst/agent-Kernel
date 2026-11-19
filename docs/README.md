@@ -41,6 +41,10 @@
 
 - [docs/contracts/](./contracts/)：行为验证和长期契约。
 
+### 想回顾某次审查结论
+
+- [docs/reviews/](./reviews/)：某一时间点的审查结论与过程，是记录而不是规格。
+
 ### 想知道 Agent 到底好不好用
 
 - [eval/README.md](../eval/README.md)：评测方法。
@@ -61,6 +65,7 @@
 | `docs/design/` | 稳定设计原则 |
 | `docs/contracts/` | 行为契约 |
 | `docs/adr/` | 为什么这么设计 |
+| `docs/reviews/` | 某次审查的结论与过程（记录，不是规格） |
 | `docs/course/` | 研究课程，不代表当前实现 |
 | `AGENTS.md` | AI / 开发者怎么改 |
 | `CODING_STANDARDS.md` | 代码怎么写 |
