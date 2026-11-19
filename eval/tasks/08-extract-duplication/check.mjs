@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { importTaskModule, readTaskFile } from "../../checker-helpers.mjs";
 
 function hasExportModifier(node) {
   return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
@@ -51,7 +51,7 @@ function hasLocalHelper(sourceFile, name) {
 }
 
 export default async function check(root) {
-  const source = await readFile(path.join(root, "validate.mjs"), "utf8");
+  const source = await readTaskFile(path.join(root, "validate.mjs"), "validate.mjs");
   const parsed = ts.createSourceFile("validate.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   assert.equal(parsed.parseDiagnostics.length, 0, "validate.mjs 必须是有效的 JavaScript");
 
@@ -76,7 +76,7 @@ export default async function check(root) {
     titleCall.arguments[1].text === "title", "validateTitle 必须把 title 标签交给共享函数");
 
   const { validateName: checkName, validateTitle: checkTitle } =
-    await import(pathToFileURL(path.join(root, "validate.mjs")).href);
+    await importTaskModule(pathToFileURL(path.join(root, "validate.mjs")).href, "validate.mjs");
 
   assert.equal(checkName("ok"), null);
   assert.match(checkName(""), /name/);
