@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,8 +56,8 @@ test("评测题 02：正确修复通过，但改动原始测试文件会被拒�
     ].join("\n"));
 
     await assert.doesNotReject(() => checkFixFailingTest(root));
-    await writeFile(path.join(root, "sum.test.mjs"), (await import("node:fs/promises"))
-      .readFile(path.join(root, "sum.test.mjs"), "utf8").then((text) => text + "\n// test changed\n"));
+    const originalTests = await readFile(path.join(root, "sum.test.mjs"), "utf8");
+    await writeFile(path.join(root, "sum.test.mjs"), originalTests + "\\n// test changed\\n");
     await assert.rejects(() => checkFixFailingTest(root), /不要修改测试文件/);
   });
 });
@@ -114,7 +114,7 @@ test("评测题 05：TAX_RATE 必须是真正使用的 const，不能只放一�
     const unused = [
       "const TAX_RATE = 0.2;",
       "export function withTax(price) { return Math.round(price * 1.2 * 100) / 100; }",
-      "export function taxOf(price) { return Math.round(price * 0.2 * 100) / 100; }",
+      "export function taxOf(price) { return Math.round(price / 5 * 100) / 100; }",
       "export function discounted(price) { return Math.round(price * 0.9 * 1.2 * 100) / 100; }",
       "",
     ].join("\n");
