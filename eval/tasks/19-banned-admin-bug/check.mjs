@@ -37,12 +37,14 @@ export default async function check(root) {
   const owner = { id: 1, role: "member" };
   const admin = { id: 2, role: "admin" };
   const bannedAdmin = { id: 2, role: "admin", banned: true };
+  const bannedOwner = { id: 1, role: "member", banned: true };
   const stranger = { id: 3, role: "member" };
 
   assert.equal(canEdit(owner, doc), true, "作者能编辑");
   assert.equal(canEdit(admin, doc), true, "管理员能编辑");
   assert.equal(canEdit(stranger, doc), false, "无关用户不能编辑");
   assert.equal(canEdit(bannedAdmin, doc), false, "被 ban 的管理员不能编辑");
+  assert.equal(canEdit(bannedOwner, doc), false, "被 ban 的普通用户也不能编辑");
   assert.equal(canEdit(owner, null), false, "没有文档时不能编辑");
   assert.equal(canEdit(null, doc), false, "没有用户时不能编辑");
 }
