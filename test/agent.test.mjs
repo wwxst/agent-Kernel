@@ -44,6 +44,20 @@ test("Agent 配置：拒绝无效的循环与预算上限", () => {
   assert.throws(() => new Agent({ ...options, outputTokenReserve: -1 }), /invalid outputTokenReserve/);
 });
 
+test("Agent 配置：字符预算低于下限或不是整数时明确拒绝，不静默换成默认值", () => {
+  const options = { llm: {}, tools: makeRegistry([]) };
+  // 这三种输入以前都会被静默替换成默认的 120000 字符：配置写了，但等于没写。
+  assert.throws(
+    () => new Agent({ ...options, maxTranscriptChars: 500 }),
+    /invalid maxTranscriptChars: 500 \(expected an integer >= 1024\)/,
+  );
+  assert.throws(() => new Agent({ ...options, maxTranscriptChars: 2_048.5 }), /invalid maxTranscriptChars/);
+  assert.throws(() => new Agent({ ...options, maxTranscriptChars: Number.NaN }), /invalid maxTranscriptChars/);
+  // 下限本身和「不传」都必须继续可用。
+  assert.doesNotThrow(() => new Agent({ ...options, maxTranscriptChars: 1_024 }));
+  assert.doesNotThrow(() => new Agent(options));
+});
+
 test("会话：修改 run 返回值不能改写下一轮的 Transcript", async () => {
   const chat = createScriptedChat([finalReply("original"), finalReply("next")]);
   const agent = new Agent({ llm: chat, tools: makeRegistry([]) });

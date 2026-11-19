@@ -40,6 +40,14 @@ import type { RemovableUnit, TokenCalibration } from "./context-compact.ts";
 const DEFAULT_MAX_TRANSCRIPT_CHARS = 120_000;
 
 /**
+ * 字符预算的下限。
+ *
+ * 比这更小的预算连一条系统提示加一轮问答都装不下，压缩每步都会触发却压不出空间；
+ * 所以不接受到「静默换成默认值」这种半生效状态 —— 配错了要在构造期就报出来。
+ */
+const MIN_TRANSCRIPT_CHARS = 1_024;
+
+/**
  * 上下文压力的两条线（相对「可用窗口」的比例）。
  *
  * 80% 触发、70% 收手：两条线必须分开，否则刚压完就又触发，一次任务里反复为压缩付钱。
@@ -77,6 +85,8 @@ export interface ContextOptions {
    *
    * 它只在**没有配置 `contextWindowTokens`** 时生效，是兼容路径：字符数不等于 token 数，
    * 只能说「大概多长」，不能拿它和模型窗口比。配置了窗口就改用 token 估算。
+   *
+   * 传了就必须是不小于 1024 的整数：更小或不是整数的值会在构造期报错，而不是被悄悄换成默认值。
    */
   maxTranscriptChars?: number;
   /**
@@ -172,9 +182,16 @@ export class SessionContext {
   constructor(options: ContextOptions, systemPrompt: string | (() => string), host: ContextHost) {
     this.systemPrompt = typeof systemPrompt === "string" ? () => systemPrompt : systemPrompt;
     this.host = host;
-    this.maxTranscriptChars = Number.isFinite(options.maxTranscriptChars) && (options.maxTranscriptChars ?? 0) >= 1_024
-      ? Math.floor(options.maxTranscriptChars!)
-      : DEFAULT_MAX_TRANSCRIPT_CHARS;
+    // 预算同样是运行时输入：不合法就明确拒绝，不能退回默认值假装配置生效了。
+    const configuredChars = options.maxTranscriptChars;
+    if (configuredChars !== undefined &&
+        (!Number.isInteger(configuredChars) || configuredChars < MIN_TRANSCRIPT_CHARS)) {
+      // 中文对照：配置 maxTranscriptChars 的值 {value} 不合法，需要一个不小于 {minimum} 的整数。
+      throw new Error(
+        `invalid maxTranscriptChars: ${String(configuredChars)} (expected an integer >= ${MIN_TRANSCRIPT_CHARS})`,
+      );
+    }
+    this.maxTranscriptChars = configuredChars ?? DEFAULT_MAX_TRANSCRIPT_CHARS;
     // 窗口是可选能力：给了才用 token 尺子。校验放在这里而不是第一次请求时，
     // 是为了让「窗口比输出预留还小」这种配置错误在启动时就暴露，而不是跑到一半才炸。
     const windowTokens = options.contextWindowTokens;
