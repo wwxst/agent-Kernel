@@ -108,8 +108,8 @@ test("架构检查：同时检查 export from、动态 import、import type 和 
 
 test("架构检查：只有 src/cli.ts 是特权组装入口", async () => {
   await withProject({
-    "src/entry/feature.ts": 'import "../tools/workspace.ts";\\n',
-    "src/tools/workspace.ts": "export const workspace = true;\\n",
+    "src/entry/feature.ts": 'import "../tools/workspace.ts";\n',
+    "src/tools/workspace.ts": "export const workspace = true;\n",
   }, async (root) => {
     const result = await checkArchitecture(root);
     assert.equal(result.violations.length, 1);
@@ -120,9 +120,9 @@ test("架构检查：只有 src/cli.ts 是特权组装入口", async () => {
 
 test("架构检查：声明文件里的类型 re-export 也必须检查依赖方向", async () => {
   await withProject({
-    "src/core/agent.ts": 'import type { ToolType } from "./bridge.d.ts";\\nexport type AgentTool = ToolType;\\n',
-    "src/core/bridge.d.ts": 'export type { ToolType } from "../tools/workspace.ts";\\n',
-    "src/tools/workspace.ts": "export interface ToolType { name: string }\\n",
+    "src/core/agent.ts": 'import type { ToolType } from "./bridge.d.ts";\nexport type AgentTool = ToolType;\n',
+    "src/core/bridge.d.ts": 'export type { ToolType } from "../tools/workspace.ts";\n',
+    "src/tools/workspace.ts": "export interface ToolType { name: string }\n",
   }, async (root) => {
     const result = await checkArchitecture(root);
     assert.equal(result.violations.length, 1);
