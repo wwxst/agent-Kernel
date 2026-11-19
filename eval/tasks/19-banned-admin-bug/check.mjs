@@ -27,11 +27,28 @@ function findLocalCallable(sourceFile, localName) {
   return undefined;
 }
 
-function findCallableImplementation(sourceFile, exportedName) {
-  const direct = findLocalCallable(sourceFile, exportedName);
-  if (direct) return direct;
+function hasExportModifier(node) {
+  return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+}
 
-  // 兼容先定义本地函数、再通过 export list 导出 canEdit 的写法。
+function findExportedCallable(sourceFile, exportedName) {
+  // 形式一：export function canEdit() {} / export const canEdit = () => {}
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === exportedName &&
+        hasExportModifier(statement)) {
+      return statement;
+    }
+    if (ts.isVariableStatement(statement) && hasExportModifier(statement)) {
+      const declaration = statement.declarationList.declarations.find(
+        (item) => ts.isIdentifier(item.name) && item.name.text === exportedName,
+      );
+      if (declaration?.initializer && isCallable(declaration.initializer)) {
+        return declaration.initializer;
+      }
+    }
+  }
+
+  // 形式二：先定义本地函数，再通过 export list 导出 canEdit。
   for (const statement of sourceFile.statements) {
     if (!ts.isExportDeclaration(statement) || !statement.exportClause ||
         !ts.isNamedExports(statement.exportClause) || statement.moduleSpecifier) {
@@ -51,7 +68,7 @@ export default async function check(root) {
   const parsed = ts.createSourceFile("access.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
   assert.equal(parsed.parseDiagnostics.length, 0, "access.mjs 必须是有效的 JavaScript");
 
-  const callable = findCallableImplementation(parsed, "canEdit");
+  const callable = findExportedCallable(parsed, "canEdit");
   const body = callable?.body;
   assert.ok(body && ts.isBlock(body), "canEdit 必须继续作为带函数体的函数实现");
 
