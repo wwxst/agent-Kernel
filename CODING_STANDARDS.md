@@ -240,7 +240,8 @@ if (relative === ".." || relative.startsWith(`..${path.sep}`)) {
 | 本文件 | 人与 agent | 规范本身变了 |
 | `GLOSSARY.md` | 双方 | 领域词定下来时 |
 | `docs/adr/` | 双方 | 难反转 + 反直觉 + 真有取舍，三条都满足时 |
-| `docs/agents/` | agent | tracker、分诊、领域文档的约定变了 |
+| `docs/development-workflow.md` | 人与 agent | 研发流程发生变化时 |
+| `docs/agents/` | agent | tracker、Spec 模板、分诊、领域文档的约定变了 |
 
 ### 分层：文件内部看文件头，项目结构看 `AGENTS.md`
 
