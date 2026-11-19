@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { importTaskModule, readTaskFile } from "../../checker-helpers.mjs";
 
 async function listFiles(directory) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -20,11 +21,11 @@ export default async function check(root) {
     "legacy.mjs 还在（包括子目录）");
 
   for (const file of files) {
-    const text = await readFile(file, "utf8");
+    const text = await readTaskFile(file, path.relative(root, file));
     assert.equal(text.toLowerCase().includes("legacy"), false,
       `${path.relative(root, file)} 里还引用了 legacy`);
   }
 
-  const { render } = await import(pathToFileURL(path.join(root, "app.mjs")).href);
+  const { render } = await importTaskModule(pathToFileURL(path.join(root, "app.mjs")).href, "app.mjs");
   assert.equal(render("Ada"), "Hello, Ada", "app 的行为被改坏了");
 }
