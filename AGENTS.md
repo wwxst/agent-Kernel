@@ -15,7 +15,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
 | `npm run worktree -- create <branch> [base]` | 创建独立分支和工作区；默认基于当前 HEAD |
 | `npm run worktree -- list` | 查看所有 Worktree |
-| `npm run worktree -- remove <branch>` | 删除干净的工作区，保留分支；有本地文件时拒绝删除 |
+| `npm run worktree -- remove <branch>` | 删除干净的工作区，保留分支；有本地文件或特殊索引标记时拒绝删除 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
