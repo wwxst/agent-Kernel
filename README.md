@@ -277,6 +277,8 @@ npm run eval:check
 | `docs/architecture.md` | 当前真实架构 |
 | `docs/configuration.md` | 配置和命令行 |
 | `docs/tui.md` | TUI 使用和设计边界 |
+| `docs/development-workflow.md` | 研发流程 |
+| `docs/agents/spec-template.md` | 功能设计模板 |
 | `docs/design/` | 稳定的跨模块设计原则 |
 | `docs/contracts/` | 行为契约和验证口径 |
 | `docs/adr/` | 架构决策及历史原因 |
