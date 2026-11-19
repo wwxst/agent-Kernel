@@ -27,7 +27,13 @@ export default async function check(root) {
 
   assert.equal(declarationFound, true, "必须声明 const TAX_RATE = 0.2");
   assert.ok(referenceCount > 0, "计算逻辑必须真正使用 TAX_RATE，不能只声明一个没用的常量");
-  assert.equal((source.match(/\b0\.2\b/g) ?? []).length, 1, "0.2 还散落在多处");
+  let matchingRateLiterals = 0;
+  function countRateLiterals(node) {
+    if (ts.isNumericLiteral(node) && Number(node.text) === 0.2) matchingRateLiterals++;
+    ts.forEachChild(node, countRateLiterals);
+  }
+  countRateLiterals(parsed);
+  assert.equal(matchingRateLiterals, 1, "数值 0.2 还散落在多处");
 
   const { withTax, taxOf, discounted } = await importTaskModule(pathToFileURL(path.join(root, "calc.mjs")).href, "calc.mjs");
   assert.equal(withTax(100), 120, "含税价变了");
