@@ -30,7 +30,8 @@
 import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import * as path from "node:path";
-import { Agent, DEFAULT_SYSTEM_PROMPT } from "./core/agent.ts";
+import { DEFAULT_MAX_OUTPUT_TOKENS } from "./protocol/chat-request.ts";
+import { Agent, DEFAULT_MAX_STEPS, DEFAULT_MAX_TOOL_CALLS, DEFAULT_SYSTEM_PROMPT } from "./core/agent.ts";
 import type { AgentStats } from "./core/agent.ts";
 import { RunPresenter } from "./ui/cli-presenter.ts";
 import { escapeControlCharacters } from "./ui/text.ts";
@@ -69,28 +70,15 @@ function firstNonEmpty(...values: Array<string | undefined>): string {
   return "";
 }
 
-/** 读一个「正整数」环境变量；写错就抛错，由最外层的 catch 统一收尾。 */
-function positiveIntFromEnv(name: string, fallback: number): number {
+/** 读一个整数环境变量；低于 minimum 就抛错，由最外层的 catch 统一收尾。minimum 为 0 表示关闭这一项限制。 */
+function intFromEnv(name: string, fallback: number, minimum: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === "") return fallback;
 
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
-    // 中文对照：「{name} 的值 "{raw}" 不合法（需要一个正整数）」
-    throw new Error(`invalid ${name}: "${raw}" (expected a positive integer)`);
-  }
-  return value;
-}
-
-/** 读一个「非负整数」环境变量；0 表示关闭这一项限制。 */
-function nonNegativeIntFromEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === "") return fallback;
-
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 0) {
-    // 中文对照：「{name} 的值 "{raw}" 不合法（需要 0 或正整数）」
-    throw new Error(`invalid ${name}: "${raw}" (expected 0 or a positive integer)`);
+  if (!Number.isInteger(value) || value < minimum) {
+    // 中文对照：「{name} 的值 "{raw}" 不合法（需要 ≥ {minimum} 的整数）」
+    throw new Error(`invalid ${name}: "${raw}" (expected an integer >= ${minimum})`);
   }
   return value;
 }
@@ -160,16 +148,16 @@ function loadConfig(details: boolean, allowMissingModel = false, cwd?: string): 
     // 工作区根目录固定成绝对路径，后面所有相对路径都相对它解析。
     // 优先级：--cwd（显式打开的目录）> WORKDIR（环境变量）> 当前目录。
     root: path.resolve(cwd ?? process.env.WORKDIR ?? process.cwd()),
-    maxSteps: positiveIntFromEnv("MAX_STEPS", 30),
-    maxToolCalls: positiveIntFromEnv("MAX_TOOL_CALLS", 60),
-    maxTotalTokens: nonNegativeIntFromEnv("MAX_TOTAL_TOKENS", 500_000),
-    maxOutputTokens: positiveIntFromEnv("MAX_OUTPUT_TOKENS", 8192),
+    maxSteps: intFromEnv("MAX_STEPS", DEFAULT_MAX_STEPS, 1),
+    maxToolCalls: intFromEnv("MAX_TOOL_CALLS", DEFAULT_MAX_TOOL_CALLS, 1),
+    maxTotalTokens: intFromEnv("MAX_TOTAL_TOKENS", 500_000, 0),
+    maxOutputTokens: intFromEnv("MAX_OUTPUT_TOKENS", DEFAULT_MAX_OUTPUT_TOKENS, 1),
     // 0 是默认值：窗口大小是模型服务的属性，内核不按模型名字猜。没配就用字符预算，
     // 配了才按 token 估算 —— 压缩阈值必须建立在可信数字上。
-    contextWindowTokens: nonNegativeIntFromEnv("CONTEXT_WINDOW_TOKENS", 0),
+    contextWindowTokens: intFromEnv("CONTEXT_WINDOW_TOKENS", 0, 0),
     // 存档可能含敏感内容：默认落系统临时目录，宿主可以指到别处，但绝不默认写进项目仓库。
     contextArchiveDir: process.env.AGENT_CONTEXT_ARCHIVE?.trim() ?? "",
-    toolTimeoutMs: positiveIntFromEnv("TOOL_TIMEOUT_MS", 120_000),
+    toolTimeoutMs: intFromEnv("TOOL_TIMEOUT_MS", 120_000, 1),
     view: details ? "detailed" : viewFromEnv(),
     voice: voiceFromEnv(),
   };
@@ -287,6 +275,11 @@ function describeForUser(error: unknown): string {
     : `${failure.title}: ${failure.advice} [detail: ${failure.detail}]`;
 }
 
+/** 取消异常本身已经带有 `cancelled:`，展示层只保留一次状态前缀。 */
+function describeCancellation(error: unknown): string {
+  return describeError(error).replace(/^cancelled:\s*/i, "");
+}
+
 /** 一次只显示一个普通 CLI Run；TUI 通过 callbacks 走自己的展示层。 */
 let activePresenter: RunPresenter | undefined;
 
@@ -294,17 +287,24 @@ let activePresenter: RunPresenter | undefined;
  * 交互壳可以替换的三个显示回调。默认实现写 console / stdout（一次性任务）；
  * TUI 传入自己的版本，让同一份 Agent 装配逻辑不直接绑定输出方式。
  */
-/** 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。 */
+/**
+ * 只对聊天式 TUI 的可见进度说明提供轻量引导；不新增请求或修改 Agent 循环。
+ *
+ * 措辞沿用 Claude Code 后台任务提示词的两句（「动手前一句说明做法；每完成一批说清发生了什么、
+ * 下一步做什么」，见 ADR-0032），再加上本仓库原有的「别逐个工具播报、不暴露推理」。
+ */
 const TUI_PROGRESS_GUIDANCE = [
-  // 在重要的一组工具调用之前，向用户简短说明当前准备做什么。
-  "In this interactive TUI, briefly tell the user what you are doing before a meaningful group of tool calls.",
-  // 有实际结果以后，简短说明观察到的结果，以及已经明确的下一步。
-  "After a meaningful result, briefly explain the observed outcome and your next step if known.",
+  // 动手前用一句话说明你打算怎么做。
+  "One line on your approach before acting.",
+  // 每完成一批工作，说明发生了什么、下一步做什么。
+  "After each chunk: what happened, what's next.",
   // 用用户的语言，每次只说一句；合并相关操作，不逐个工具播报。
   "Keep each visible progress update to one short sentence in the user's language; group related operations instead of narrating every tool.",
+  // 工具已经打印过结果，也要用自己的话再说清结果。
+  "State results in your own text even if a tool already printed them.",
   // 只说有证据的事实和计划；不伪造结果，也不暴露模型内部推理。
   "Only describe verified facts and plans, never invent results or reveal private chain-of-thought.",
-  // 正式回答与临时进度说明分离。
+  // 正式回答与临时进度说明分开。
   "Keep the final response separate from these progress updates.",
 ].join(" ");
 
@@ -544,8 +544,7 @@ async function runTurn(agent: Agent, task: string, config: Config, signal: Abort
     // 预算阻断可能已经确认模型正文；请求中断时则必须明确宣布临时增量无效。
     // 用 Agent 记下的本轮回复，而不是 `transcript.slice(起点)`：压缩会改数组下标，
     // 按旧起点切片会切到错的位置，把上一轮的正文当成本轮。
-    const confirmed = agent.runReplies;
-    const latest = confirmed.length === agent.stats.requests - agent.retryAttempts ? confirmed.at(-1) : undefined;
+    const latest = agent.latestConfirmedReply;
     if (latest !== undefined) presenter.confirmAssistant(latest.content);
     else presenter.discardAssistantDraft(modelFailure(error, "en") === undefined);
     presenter.finish(agent.stats.toolCalls, signal.aborted, true);
@@ -707,8 +706,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       // 数量相等说明最后一次响应已写入 Transcript，预算后置失败不应抹去其真实正文。
       // 数量不等说明最新响应仍未确认，必须丢弃其临时增量，不能复用先前请求的正文。
       const failure = modelFailure(error, tui.uiText("en", "zh") === "zh" ? "zh" : "en");
-      const confirmed = agent.runReplies;
-      const latest = confirmed.length === agent.stats.requests - agent.retryAttempts ? confirmed.at(-1) : undefined;
+      const latest = agent.latestConfirmedReply;
       if (latest?.content?.trim()) {
         // onToolCall 已提交该段正文时不要重复提交；预算阻断的调用则还没有这一事件。
         if (!toolStartedInLatestResponse) tui.confirmAssistant(latest.content);
@@ -719,7 +717,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true, cancelled: signal.aborted });
       if (signal.aborted) {
-        tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeError(error)}`);
+        tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeCancellation(error)}`);
         return false;
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
@@ -819,7 +817,7 @@ if (cli.error !== undefined) {
     // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。
     const cancelled = controller.signal.aborted;
     // 中文对照：[agent] 已取消：{原因} ／ [agent] 致命错误：{原因}
-    console.error(escapeControlCharacters(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeError(error) : describeForUser(error)}`));
+    console.error(escapeControlCharacters(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeCancellation(error) : describeForUser(error)}`));
     // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
     // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
     process.exitCode = cancelled ? 130 : 1;

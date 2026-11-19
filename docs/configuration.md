@@ -29,7 +29,7 @@
 
 | 配置 | 默认值 | 作用 |
 | --- | ---: | --- |
-| `MAX_STEPS` | `30` | 一次 Run 最多请求模型多少次 |
+| `MAX_STEPS` | `30` | 一次 Run 的业务 Step 上限，最后一步用于收尾。网络重试、溢出重发与辅助摘要单独计数 |
 | `MAX_TOOL_CALLS` | `60` | 一次 Run 最多真正执行多少个 Tool call |
 | `MAX_TOTAL_TOKENS` | `500000` | 一次 Run 的 token 软预算；`0` 表示不限制 |
 | `MAX_OUTPUT_TOKENS` | `8192` | 单次模型响应的最大输出 token；同时从上下文窗口里预留给模型输出 |

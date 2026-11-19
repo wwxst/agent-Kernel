@@ -18,6 +18,7 @@
  * 模块关系：依赖 `protocol/types.ts`（协议词汇）与 `protocol/errors.ts`（错误类型与文案）。
  * 由 `cli.ts` 创建、`core/agent.ts` 通过 `ChatClient` 接口调用；`eval/run.mjs` 也直接用它。
  */
+import { DEFAULT_MAX_OUTPUT_TOKENS, encodeToolDefinitions } from "../protocol/chat-request.ts";
 import { ChatResponseError, ModelConnectionError, ModelHttpError, describeError } from "../protocol/errors.ts";
 import type { ChatClient, ChatOptions, ChatResponse, Message, TokenUsage, ToolCall, ToolDefinition } from "../protocol/types.ts";
 
@@ -69,7 +70,7 @@ export class Llm implements ChatClient {
     this.model = options.model;
     this.temperature = options.temperature ?? 0;
     this.timeoutMs = options.timeoutMs ?? 120_000;
-    this.maxOutputTokens = options.maxOutputTokens ?? 8192;
+    this.maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
     this.signal = options.signal;
     this.stream = options.stream ?? false;
   }
@@ -103,13 +104,9 @@ export class Llm implements ChatClient {
       body: JSON.stringify({
         model: this.model,
         messages,
-        // 工具定义要转成协议要求的嵌套结构：{ type: "function", function: {...} }
-        tools: tools.map(({ name, description, parameters }) => ({
-          type: "function",
-          function: { name, description, parameters },
-        })),
-        // auto：让模型自己决定这一轮是回答还是调工具。
-        tool_choice: "auto",
+        // 收尾和摘要都只生成文本。省去工具字段，兼容拒绝空工具表的端点。
+        tools: encodeToolDefinitions(tools),
+        tool_choice: tools.length === 0 ? undefined : "auto",
         temperature: this.temperature,
         // 单次输出去上限：不让一条跑飞的回复把上下文和账单一起撑爆。
         max_tokens: this.maxOutputTokens,

@@ -244,13 +244,13 @@ test("角色工具：Worker 的 shell 拿掉了 background，传了也按前台�
   });
 });
 
-test("提示词：Explorer 只描述只读角色与交付物，不给操作步骤", () => {
+test("提示词：Explorer 的身份、只读红线与交付物来自 Claude 的 Explore 提示词", () => {
   const prompt = createExplorerSystemPrompt();
 
-  assert.match(prompt, /^You are an independent exploration subagent/);
-  // 角色能力：四个只读工具，不能改文件、不能跑 shell、不能再委派。
-  assert.match(prompt, /read-only tools \(read, glob, grep, ls\)/);
-  assert.match(prompt, /You cannot modify files, run shell commands, or create another subagent\./);
+  // 身份与只读红线逐句沿用资料里的 Explore agent 提示词。
+  assert.match(prompt, /^You are a file search specialist\./);
+  assert.match(prompt, /=== CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===/);
+  assert.match(prompt, /You do NOT have access to file editing tools - attempting to edit files will fail\./);
   // 交付要求：结论 + 依据 + 建议，且只报核实过的。
   assert.match(prompt, /Return your conclusion, the key evidence behind it/);
   // 只读角色绝不能被告知「你可以改文件、跑命令」—— 那是默认编码提示里的话。
@@ -266,7 +266,7 @@ test("提示词：Worker 保留授权边界，但不规定执行步骤", () => {
   assert.match(WORKER_SUBAGENT_GUIDANCE, /Do not commit, push, merge, rebase, reset, clean, or stash/);
   assert.match(WORKER_SUBAGENT_GUIDANCE, /unless the task explicitly authorizes that exact action/);
   // 自主执行：不需要逐步确认。
-  assert.match(WORKER_SUBAGENT_GUIDANCE, /You do not need to ask for step-by-step confirmation/);
+  assert.match(WORKER_SUBAGENT_GUIDANCE, /do not need to ask for step-by-step confirmation/);
   // 不再规定先看 git status、跑哪个测试、重跑几次这类流程。
   assert.doesNotMatch(WORKER_SUBAGENT_GUIDANCE, /git status|git diff --check|narrowest relevant tests/);
 });

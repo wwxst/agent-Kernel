@@ -7,9 +7,22 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
+// 直接从 `node --test` 进程启动另一个 `node --test` 会被 Node 24 标记为递归并跳过。
+// 先启动普通 `node -e` 中转，再由中转进程启动测试，既保留 stdout/stderr，也绕开运行器上下文注入。
+const TEST_LAUNCHER = [
+  "const { spawnSync } = require('node:child_process');",
+  "const child = spawnSync(process.execPath, ['--test', 'slug.test.mjs'], { encoding: 'utf8' });",
+  "process.stdout.write(child.stdout ?? '');",
+  "process.stderr.write(child.stderr ?? '');",
+  "process.exit(child.status ?? 1);",
+].join(" ");
+
 async function runTests(directory) {
   try {
-    return await run(process.execPath, ["--test", "slug.test.mjs"], { cwd: directory });
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    delete env.NODE_TEST_WORKER_ID;
+    return await run(process.execPath, ["-e", TEST_LAUNCHER], { cwd: directory, env });
   } catch (error) {
     const output = `${error.stdout ?? ""}${error.stderr ?? ""}`.trim();
     assert.fail(`生成的测试没有全部通过：\n${output}`);
@@ -31,9 +44,9 @@ export default async function check(root) {
   assert.ok((source.match(/\btest\s*\(/g) ?? []).length >= 3, "至少三个用例");
 
   const result = await runTests(root);
-  const passed = /# pass (\d+)\b/.exec(result.stdout);
+  const passed = /(?:#|ℹ) pass (\d+)\b/.exec(result.stdout);
   assert.ok(passed !== null && Number(passed[1]) >= 3, "至少三个测试用例必须全部通过");
-  assert.match(result.stdout, /# fail 0\b/, "测试必须全部通过");
+  assert.match(result.stdout, /(?:#|ℹ) fail 0\b/, "测试必须全部通过");
 
   // Mutation testing：将正确实现分别替换为三个单点错误实现，测试必须能抓住每一种回归。
   const original = await readFile(path.join(root, "slug.mjs"), "utf8");
@@ -49,7 +62,9 @@ export default async function check(root) {
       await writeFile(path.join(temp, "slug.mjs"), mutants[index], "utf8");
       let rejected = false;
       try {
-        await run(process.execPath, ["--test", "slug.test.mjs"], { cwd: temp });
+        const env = { ...process.env };
+        delete env.NODE_TEST_CONTEXT;
+        await run(process.execPath, ["-e", TEST_LAUNCHER], { cwd: temp, env });
       } catch {
         rejected = true;
       }

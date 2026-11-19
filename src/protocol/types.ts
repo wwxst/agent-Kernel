@@ -78,6 +78,15 @@ export interface Message {
 export interface ToolExecutionResult {
   content: string;
   isError: boolean;
+  /**
+   * 工具明确表示本次调用是**有效等待**：它真的等待过、没有拿到新输出、任务仍在运行。
+   *
+   * 三个条件缺一不可 —— `wait: 0` 的立即读取、拿到新输出的读取、任务已结束的读取都不算。
+   * 整批结果都是有效等待时，Agent 才豁免重复批次检测（仍受 `maxSteps` 约束）。
+   * 这个标记必须来自工具的结构化状态，不能靠解析 `content` 文本推断：
+   * 文本是给模型看的，格式和内容都会变，不能同时充当行为契约。
+   */
+  isWaiting?: boolean;
 }
 
 /**

@@ -11,11 +11,12 @@
  * 不负责 Hook 的登记与执行顺序（那是 `core/tool-hooks.ts`）。
  *
  * 内容目录：
- *   - `ToolRegistry`：注册表本体，构造时挡掉重名与不支持的 Schema。
+ *   - `ToolRegistry`：注册表本体，构造时先挡掉形状不合格的工具，再挡掉重名与不支持的 Schema。
  *   - `ToolRegistry.definitions`：发给模型的说明书副本，没有执行函数，也不能改写注册后的校验规则。
  *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
  *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
- *   - 内部：`assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
+ *   - 内部：`assertToolShape()` 注册时先查基本形状（对象、非空名字、description、run）、
+ *     `assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
  *     共用的一套字段体检、`validateArguments()` 按 Schema 校验参数（并对声明了
  *     `strictArguments` 的工具额外拒绝未声明字段）、`findUnknownArguments()` 列出多传的字段、
  *     `SUPPORTED_PARAMETER_TYPES` 校验器真正认识的那几种类型。
@@ -33,6 +34,26 @@ const SUPPORTED_PARAMETER_TYPES = new Set(["string", "number", "boolean", "array
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** 注册是工具的外部接缝，先把基本形状错误变成可定位的装配错误。 */
+function assertToolShape(value: unknown, index: number): asserts value is Tool {
+  if (!isRecord(value)) {
+    // 中文对照：工具列表中的第 {index} 项必须是对象。
+    throw new Error(`tool at index ${index} must be an object`);
+  }
+  if (typeof value.name !== "string" || value.name.trim() === "") {
+    // 中文对照：工具列表中的第 {index} 项必须有非空名称。
+    throw new Error(`tool at index ${index} must have a non-empty name`);
+  }
+  if (typeof value.description !== "string") {
+    // 中文对照：工具 {name} 的 description 必须是字符串。
+    throw new Error(`tool "${value.name}": description must be a string`);
+  }
+  if (typeof value.run !== "function") {
+    // 中文对照：工具 {name} 的 run 必须是函数。
+    throw new Error(`tool "${value.name}": run must be a function`);
+  }
 }
 
 /**
@@ -190,7 +211,9 @@ export class ToolRegistry {
    */
   constructor(tools: readonly Tool[], hooks: ToolHooks = new ToolHooks()) {
     const seen = new Set<string>();
-    for (const tool of tools) {
+    for (let index = 0; index < tools.length; index++) {
+      const tool: unknown = tools[index];
+      assertToolShape(tool, index);
       if (seen.has(tool.name)) {
         throw new Error(`duplicate tool name "${tool.name}"`);
       }
@@ -256,8 +279,13 @@ export class ToolRegistry {
       const raw = await tool.run(args);
       let result: ToolExecutionResult;
       if (typeof raw === "string") result = { content: raw, isError: false };
-      else if (isRecord(raw) && typeof raw.content === "string" && typeof raw.isError === "boolean") {
-        result = { content: raw.content, isError: raw.isError };
+      else if (isRecord(raw) && typeof raw.content === "string" && typeof raw.isError === "boolean" &&
+          (raw.isWaiting === undefined || typeof raw.isWaiting === "boolean")) {
+        result = {
+          content: raw.content,
+          isError: raw.isError,
+          ...(raw.isWaiting === true ? { isWaiting: true } : {}),
+        };
       } else {
         throw new Error("tool returned an invalid execution result");
       }

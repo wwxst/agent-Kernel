@@ -40,8 +40,11 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 | 文件 | 大概负责什么 |
 | --- | --- |
 | `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
+| `src/protocol/chat-request.ts` | 请求发送与窗口测量共用的工具编码和默认输出额度 |
 | `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
-| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期、上下文压缩的调度与提交门槛 |
+| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、无进展检测、会话生命周期与用量记账 |
+| `src/core/session-context.ts` | 当前 Transcript、请求准入、摘要提交与上下文超限恢复 |
+| `src/core/default-system-prompt.ts` | Agent 的默认系统提示 |
 | `src/core/context-compact.ts` | 上下文压缩的纯计算：请求体积与 token 估算、Snip、可移除历史段切分、摘要提示词与合格性检查 |
 | `src/core/context-archive.ts` | 有损压缩前保存原文，返回可供 `read` 使用的绝对路径 |
 | `src/core/tool-registry.ts` | 工具注册表：查工具、校验参数、执行、把失败折成 `ERROR` 文本；围着执行触发三个 Hook 事件 |
@@ -71,14 +74,15 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 每个外部接口一处缝，重构不该让任何用例变红：
 
-- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、三个预算、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序，以及压缩发生在工具结果被消费之后而不是之前。
-- `test/context-compact.test.mjs`：上下文压缩这一层 —— 短对话不压、工具定义计入体积、字符路径与 token 路径分开、最新批次完整、旧结果先裁、两刀之后引用仍指向完整原文、超大结果先存档再预览、存档失败不做有损替换、旧轮次与单轮多步都能折叠、压缩后 system 里留下可读的存档清单、多次压缩是替换而非追加、摘要为空/不合格/失败/取消都不提交、失败配额按 Run 重算（不会永久关闭压缩）、摘要花掉预算后不再发业务请求、取消时用量只记一次、摘要请求不带工具且单独计数、摘要请求按**序列化后的真实体积**裁剪（转义密集的历史缩短后仍能发出、原文仍可读回）、输出预留为 0 时摘要长度下限仍容得下合法八节结构、连最小合法摘要都装不下时不发请求并明确失败、`reasoning_content` 不被删、溢出只恢复一次且不重跑工具、压缩后仍装不下的请求不再发送、两个 Agent 互不影响、长任务回放后配对完整且目标仍在。摘要请求的假答复由 `test/support/harness.mjs` 的 `CANNED_SUMMARY` 提供，不消耗脚本项。
+- `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、三个预算、无进展循环检测（连续相同批次停止且配对完整、结果变化时继续、按 Run 重算）、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序，以及压缩发生在工具结果被消费之后而不是之前。
+- `test/background-wait.test.mjs`：后台等待这条链的真实装配（真实 Workspace + 真实 shell + 真实 `createWorkspaceTools` / `ToolRegistry` / `Agent`，只有模型是假的）—— `wait: 0` 立即返回不构成等待、重复轮询仍被拦下；真的等到预算用完且没有新输出时才豁免；拿到新输出与任务已结束都不豁免；一批里混进普通工具时整批不豁免；整批都在等待时才继续；有效等待不绕过 `maxSteps`；等待期间取消及时结束且 assistant / tool 配对完整。
+- `test/context-compact.test.mjs`：上下文压缩这一层 —— 短对话不压、工具定义计入体积、字符路径与 token 路径分开、最新批次完整、旧结果先裁、两刀之后引用仍指向完整原文、超大结果先存档再预览、存档失败不做有损替换、旧轮次与单轮多步都能折叠、压缩后 system 里留下可读的存档清单、多次压缩是替换而非追加、摘要为空/不合格/失败/取消都不提交、失败配额按 Run 重算（不会永久关闭压缩）、摘要花掉预算后不再发业务请求、取消时用量只记一次、摘要请求不带工具且单独计数、摘要请求按**序列化后的真实体积**裁剪（转义密集的历史缩短后仍能发出、原文仍可读回）、输出预留为 0 时摘要长度下限仍容得下合法摘要结构、连最小合法摘要都装不下时不发请求并明确失败、`reasoning_content` 不被删、溢出只恢复一次且不重跑工具、压缩后仍装不下的请求不再发送、两个 Agent 互不影响、长任务回放后配对完整且目标仍在。摘要请求的假答复由 `test/support/harness.mjs` 的 `CANNED_SUMMARY` 提供，不消耗脚本项。
 - `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、参数类型错误，以及每个失败分支都折成文本；声明了 `strictArguments` 的工具会拒绝未声明的参数（默认仍忽略，`shell` 靠这一点让 Worker 包装层吞掉 `background`）；进程树清理未确认仍抛 `ProcessCleanupError`。
 - `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行且异常时 fail-closed、后置 Hook 抛错不影响工具结果、Hook 拿到副本、九个工作区工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
 - `test/tool-log.test.mjs`：内置的工具调用日志 Hook —— 成功/失败各一行（`shell` 非零退出算失败）、超长截断、写失败只提醒一次、被拦下的调用不留记录。
 - `test/subagent.test.mjs`：委派这一层 —— 参数校验（空任务、超长、非法 mode、默认 explore）、结果格式（完成 / 失败 / 取消 / 预算提示 / 超长截断）、两种角色的工具清单、Worker 的 shell 是否真的只能前台、上下文隔离与「只回一条结果」、子 Agent 的两道预算、失败/取消的委派必须标记 `isError`（Hook 走 `PostToolUseFailure`、工具日志记 `ok:false`）、进程树未确认时必须抛 `ProcessCleanupError`。`cli.test.mjs` 的委派用例守着真实装配：子 Agent 的提示与工具表、`MAX_STEPS` 取较小值、execute 真的改到文件。
 - `test/skills.test.mjs`：技能目录这一层 —— 两级发现与同名覆盖、换项目只发现目标项目的技能、坏技能逐个跳过并写明原因、长描述裁剪、控制字符不能伪造出目录项、超预算与超扫描上限都要写明（只说「没读完」，不编剩余数量）、两级共享扫描预算、普通文件与隐藏目录不算技能、条目枚举有上限（1023/1024/1025 三档边界，恰好 1024 条算读完）、两种上限同时触发时两种原因都写出来、目录不存在与「读不了」分开（`ENOENT`/`ENOTDIR` 归 absent，其余 errno 归 unreadable；分类表直接压，端到端用真实 ELOOP 链接验证 errno 保留、不连累另一级、提示里那句原因不带路径）、FIFO 不阻塞、符号链接按设计处理、名称规则、frontmatter 支持的子集（引号、行内注释、块标量、非法 YAML 拒绝、中文与 Emoji）。`cli.test.mjs` 的技能用例守着真实装配：目录进系统提示且不带正文、目录里写的路径真能被 `read` 打开、`--cwd` 换项目、长文件读出来报告截断、增删改后下一轮就更新、三种角色都发现技能且子 Agent 不继承父 Agent 读过的正文。
-- `Workspace` 的九个方法：工作区外读写（绝对路径、`../`、符号链接）、有界读取、`read` 的 `offset` / `limit` 行窗口（跨块不切行、CRLF 原样、越界明确报错、可取消）、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、`grep` 的 `path` 可以是单个文件、工作区外 shell、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项。
+- `Workspace` 的九个方法：工作区外读写（绝对路径、`../`、符号链接）、有界读取、`read` 的 `offset` / `limit` 行窗口（跨块不切行、CRLF 原样、越界明确报错、可取消）、扫描预算、exit code、`edit` 唯一命中、`glob` 模式、`grep` 正则与 `fixed` 模式（含灾难性回溯必须被超时打断）、`grep` 的 `path` 可以是单个文件、工作区外 shell、取消进程树；Windows taskkill 注入错误、非零退出、卡住时有界结束并显式报告未确认。写/改采用临时文件+rename 原子替换，测试取消前提交、权限保留和 grep 链接换向；不保证父目录 TOCTOU 全部消除。后台任务单独覆盖：立即返回编号、增量输出不重复、exit code 状态、单次 8k 上限与「还有」提示、被切断的多字节字符不变成替换字符、`shell-kill` 后进程真的消失、未知编号报错并列出已知项；`readJobOutput` 的结构化结果区分「立即返回 / 有效等待 / 有新输出 / 已结束」，只有真的等过且没有新输出时 `isWaiting` 才为真。
 - `Llm.chat`（对着假 HTTP 端点）：合法响应归一化、非法形状必须报错，不能变成「空成功」；usage 与 `max_tokens`；SSE 流式的正文 / tool_calls 拼装与坏 chunk。
 - `test/tui.test.mjs` + `test/tui-image.test.mjs`：主视图只追加（历史留在 scrollback）、`Ctrl+T` transcript 视图、折叠层次、真实提交的 Diff、读图缩略图、状态栏固定完全访问、`Shift+Tab` 不再是快捷键、thinking、颜色、resize、中文宽度、复杂输入与关闭清理；假终端覆盖跨平台，`test/cli-pty.test.mjs` 额外在 Linux PTY 验证真实终端输入、不捕获鼠标与不进备用屏。
 - `test/cli.test.mjs`：端到端验证组装 —— 环境变量、退出码、stdout、请求体形状、取消、TUI 布局/命令/统计，且占位 Key 不发请求、SSE 未完成友好提示/去重、HTTP 鉴权分类；循环细节留在单元层。

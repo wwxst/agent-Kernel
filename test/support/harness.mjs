@@ -75,26 +75,32 @@ export function createScriptedChat(script, options = {}) {
   };
 }
 
-/** 摘要请求的识别标记：来自 `SUMMARY_SYSTEM_PROMPT` 的第一句。 */
-export const SUMMARY_PROMPT_MARKER = "You are writing a handoff record for a coding session.";
+/**
+ * 摘要请求的识别标记：来自 `SUMMARY_SYSTEM_PROMPT` 的第一句。
+ *
+ * 刻意不带句末标点：提示词第一句后面的逗号会一直变，标记只取能稳定匹配的那一截。
+ */
+export const SUMMARY_PROMPT_MARKER = "Your task is to create a detailed summary of the conversation so far";
 
-/** 默认的假摘要：八个标题齐全、长度过门槛，形状上和真摘要一样合格。 */
+/** 默认的假摘要：九个标题齐全、长度过门槛，形状上和真摘要一样合格。 */
 export const CANNED_SUMMARY = [
-  "## User goal",
+  "## Primary Request and Intent",
   "Finish the current task.",
-  "## Requirements and constraints",
-  "Keep changes small.",
-  "## Decisions and reasons",
+  "## Key Technical Concepts",
   "None yet.",
-  "## Completed work and verification",
-  "Earlier tool calls were executed.",
-  "## Current work and progress",
-  "Continuing the task.",
-  "## Key files, commands, errors, findings",
-  "None recorded.",
-  "## Open questions and todos",
+  "## Files and Code Sections",
+  "src/core/agent.ts",
+  "## Errors and fixes",
   "None.",
-  "## Next step",
+  "## Problem Solving",
+  "None yet.",
+  "## All user messages",
+  "Carry on.",
+  "## Pending Tasks",
+  "Finish the current task.",
+  "## Current Work",
+  "Continuing the task.",
+  "## Optional Next Step",
   "Continue.",
 ].join("\n");
 
@@ -119,6 +125,7 @@ export async function withWorkspace(fn) {
   try {
     return await fn(root);
   } finally {
-    await rm(root, { recursive: true, force: true });
+    // Windows 上刚退出的子进程可能短暂占用目录。重试有界，持续占用仍会报错。
+    await rm(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
   }
 }

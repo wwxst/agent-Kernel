@@ -78,9 +78,11 @@ export function createTodoTool(manager: TodoManager): Tool {
   return {
     name: "todo_write",
     // 写入当前任务计划的完整列表，状态用 pending、in_progress 或 done 表示。
-    // 最多 20 项，同一时刻最多一项处于 in_progress。
-    // 每次调用都会替换整个列表。
-    description: "Write the full task plan with pending, in_progress, or done statuses. " +
+    // 最多 20 项，同一时刻最多一项处于 in_progress；每次调用都会替换整个列表。
+    // 措辞沿用 Claude Code 的 task 工具说明（见 ADR-0032）：它帮模型规划工作、也帮用户看到进度。
+    description: "Use this tool to plan and track work; it helps the user follow your progress. " +
+      "Write the full task plan with pending, in_progress, or done statuses. " +
+      "Mark each task completed as soon as it's done; don't batch up multiple tasks before marking them completed. " +
       "At most 20 tasks and at most one in_progress. Each call replaces the whole list.",
     parameters: {
       type: "object",
@@ -106,12 +108,22 @@ export function createTodoTool(manager: TodoManager): Tool {
   };
 }
 
-/** 只装进实际提供了 todo_write 的 CLI Agent 提示词，避免影响独立的 Agent 单元测试。 */
+/**
+ * 只装进实际提供了 todo_write 的 CLI Agent 提示词，避免影响独立的 Agent 单元测试。
+ *
+ * 资料包里没有 TodoWrite 的独立提示词（2.1.304 已换成 task 工具），所以这里复用
+ * Claude Code「Using your tools」一节里关于计划工具的几句话（见 ADR-0032），
+ * 再加上本仓库「同一时刻最多一项进行中」的约束。
+ */
 export const TODO_PLANNING_GUIDANCE = [
-  // 对于有多个步骤的任务，开始操作前使用 todo_write 列出简明且可验证的计划。
-  "For multi-step tasks, call todo_write to create a concise, verifiable plan before doing the work.",
-  // 每完成一个步骤，就更新完整列表中的状态；同一时刻最多只有一个正在进行。
-  "Update the full plan as steps finish; keep no more than one item in_progress.",
-  // 不要未经验证就把步骤标为完成；简单的单步任务不需要计划。
-  "Mark a step done only after verifying it; skip the plan for simple single-step requests.",
+  // 用 todo_write 计划和跟踪工作，它帮用户看清进行到哪一步。
+  "Use todo_write to plan and track your work; it helps the user follow your progress.",
+  // 多步骤任务在动手前先列一份简明、可验证的计划。
+  "For multi-step tasks, break the work into a concise, verifiable plan before doing it.",
+  // 每完成一步立刻把状态改成 done，不要攒一批再改。
+  "Mark each task completed as soon as it's done; don't batch up multiple tasks before marking them completed.",
+  // 同一时刻最多一项进行中；没验证过的一步不要标 done。
+  "Keep no more than one item in_progress, and mark a step done only after verifying it.",
+  // 简单的单步请求不需要计划。
+  "Skip the plan for simple single-step requests.",
 ].join("\n");

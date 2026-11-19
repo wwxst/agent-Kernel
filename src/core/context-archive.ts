@@ -4,7 +4,7 @@
  * 事后没人知道中间那 9000 行里写了什么，只能重新跑一遍可能带副作用的命令。
  *
  * 文件职责：负责建会话目录、写存档文件、交回一条能直接交给 `read` 的绝对路径。
- * 不负责决定「什么时候压缩」（那是 `core/agent.ts`）、不负责摘要（那是 `core/context-compact.ts`）、
+ * 不负责决定「什么时候压缩」（那是 `core/session-context.ts`）、不负责摘要（那是 `core/context-compact.ts`）、
  * 不负责清理过期存档（本课不做自动清理，见下方「已知边界」）。
  *
  * 内容目录：
@@ -13,7 +13,7 @@
  *   - 目录布局：`<root>/<时间戳>-<短随机>/<序号>-<kind>-<id>.txt`。
  *
  * 模块关系：只依赖 Node 内置模块（`node:fs/promises`、`node:path`、`node:crypto`），
- * 不认识 `Message`、不认识模型。由 `core/agent.ts` 在真正要裁剪之前调用，
+ * 不认识 `Message`、不认识模型。由 `core/session-context.ts` 在真正要裁剪之前调用，
  * 拿到的 `path` 会被写进给模型看的预览标记里。
  *
  * 已知边界：

@@ -62,7 +62,7 @@ async function startMock(script, { usage, interruptAtTurn, incompleteAtTurns = [
       // 摘要请求（上下文压缩让模型写交接摘要）单独认：它带摘要专用的系统提示。
       // 这类请求不消耗脚本项，否则「第几次业务请求回什么」会被它挤掉，测试就变成在数请求。
       const isSummary = Array.isArray(requestBody.messages) && requestBody.messages[0]?.role === "system" &&
-        String(requestBody.messages[0].content ?? "").includes("You are writing a handoff record");
+        String(requestBody.messages[0].content ?? "").includes("create a detailed summary of the conversation so far");
       if (isSummary) summaryIndexes.add(requests.length);
       requests.push(requestBody);
       if (isSummary) {
@@ -586,7 +586,7 @@ test("TUI 过程概述：仅交互式 TUI 给模型可见进度指导，不新�
       const tui = await runCli(env, { args: ["--tui", "inspect"], input: "/exit\n" });
       assert.equal(tui.code, 0, tui.stderr);
       assert.equal(mock.requests.length, 1);
-      assert.match(mock.requests[0].messages[0].content, /briefly tell the user what you are doing/);
+      assert.match(mock.requests[0].messages[0].content, /One line on your approach before acting/);
       assert.match(mock.requests[0].messages[0].content, /never invent results/);
       assert.match(tui.stdout, /model: finished/);
 
@@ -658,6 +658,8 @@ test("TUI：最后一步模型已确认说明但工具未执行，保留正文�
       assert.doesNotMatch(run.stdout, /unconfirmed text discarded/);
       assert.match(run.stdout, /turn failed: step limit 1 reached/);
       assert.match(run.stdout, /were not run/);
+      assert.equal(mock.requests[0].tools, undefined);
+      assert.equal(mock.requests[0].tool_choice, undefined);
       assert.equal(mock.requests.length, 1);
     } finally {
       await mock.close();
@@ -785,6 +787,7 @@ test(
 
       assert.equal(code, 130);
       assert.match(stderr, /\[agent\] cancelled: received SIGINT/);
+      assert.doesNotMatch(stderr, /\[agent\] cancelled: cancelled:/);
     } finally {
       child.kill();
       server.closeAllConnections?.();
@@ -933,7 +936,7 @@ test("CLI TodoWrite：模型拿到结构化计划工具，更新结果进入下�
       const result = mock.requests[1].messages.find((message) => message.role === "tool");
       assert.equal(result.tool_call_id, "plan-1");
       assert.ok(result.content.startsWith("Todo list (1/2 done):"));
-      assert.match(mock.requests[0].messages[0].content, /For multi-step tasks, call todo_write/);
+      assert.match(mock.requests[0].messages[0].content, /For multi-step tasks, break the work into a concise, verifiable plan/);
     } finally {
       await mock.close();
     }
@@ -1348,7 +1351,7 @@ test("委派：主 Agent 调用 run_subagent，子 Agent 用独立上下文只�
       // 父 Agent 的任务原文、工具历史都不能被复制过去。
       assert.doesNotMatch(JSON.stringify(childFirst.messages), /do the task/);
       // 只读角色拿到的是调查提示，不是「你可以改文件、跑命令」的默认提示。
-      assert.match(childFirst.messages[0].content, /independent exploration subagent/);
+      assert.match(childFirst.messages[0].content, /file search specialist/);
       assert.doesNotMatch(childFirst.messages[0].content, /You may read, create, modify, and delete files/);
       // 真实工作区根目录必须写进提示：这是防「凭空猜 /workspace 路径」的那道防线。
       assert.match(childFirst.messages[0].content, /The workspace root for this task is "/);
@@ -1389,7 +1392,7 @@ test("委派：子 Agent 在自己的装配路径上压缩，不污染父 Agent 
     // 光剪工具结果是没用的。这样才真的会走到摘要那条路。
     const childStep = (id, file) => ({
       role: "assistant",
-      content: "child reasoning " + "n".repeat(2_500),
+      content: "child reasoning " + "n".repeat(6_000),
       tool_calls: [{ id, type: "function", function: { name: "read", arguments: JSON.stringify({ path: file }) } }],
     });
     const mock = await startMock([
@@ -1410,7 +1413,8 @@ test("委派：子 Agent 在自己的装配路径上压缩，不污染父 Agent 
         MODEL: "mock-model",
         WORKDIR: workdir,
         // 窗口压小，子 Agent 几步之后就必须压缩；父 Agent 的历史短，碰不到这条线。
-        CONTEXT_WINDOW_TOKENS: "6000",
+        // 8000 是「装得下主 Agent 的新默认提示与工具表」的下限，再小的话主请求一开始就超窗。
+        CONTEXT_WINDOW_TOKENS: "8000",
         MAX_OUTPUT_TOKENS: "1000",
       });
       assert.equal(run.code, 0, run.stderr);
@@ -1419,20 +1423,21 @@ test("委派：子 Agent 在自己的装配路径上压缩，不污染父 Agent 
       // 1) 子 Agent 确实在自己的装配路径上发过摘要请求：不带工具，带摘要专用提示。
       const summaries = mock.summaryRequests();
       assert.ok(summaries.length >= 1, "子 Agent 应该触发过压缩");
-      assert.equal(summaries[0].tools.length, 0, "摘要请求不许调用工具");
-      assert.match(summaries[0].messages[0].content, /handoff record/);
+      assert.equal(summaries[0].tools, undefined, "摘要请求省略工具字段");
+      assert.equal(summaries[0].tool_choice, undefined);
+      assert.match(summaries[0].messages[0].content, /detailed summary of the conversation/);
 
       // 2) 摘要落进了子 Agent 自己的上下文。
       const childAfterSummary = mock.requests.find((request) =>
-        String(request.messages[0]?.content ?? "").includes("independent exploration subagent") &&
+        String(request.messages[0]?.content ?? "").includes("file search specialist") &&
         String(request.messages[0]?.content ?? "").includes("conversation memory"));
       assert.ok(childAfterSummary !== undefined, "子 Agent 的后续请求里应该能看到自己的摘要");
 
       // 3) 父 Agent 完全没被污染：还是主提示、没有摘要、只有一条子任务结果。
       const parentFinal = mock.requests.at(-1);
       const parentSystem = String(parentFinal.messages[0].content);
-      assert.match(parentSystem, /You are a coding agent working on the developer's machine/);
-      assert.doesNotMatch(parentSystem, /independent exploration subagent/);
+      assert.match(parentSystem, /You are an agent working with the user toward their goals/);
+      assert.doesNotMatch(parentSystem, /file search specialist/);
       assert.doesNotMatch(parentSystem, /conversation memory/);
       assert.equal(parentFinal.messages.length, 4, "父 Agent 只看到一条子任务结果");
       // 子 Agent 的摘要请求与花销都不进父 Agent 的账单。
@@ -1461,7 +1466,7 @@ test("委派：execute 模式的子 Agent 能改文件、能前台跑命令，�
       assert.equal(await readFile(path.join(workdir, "out.txt"), "utf8"), "written-by-child\n");
 
       const childFirst = mock.requests[1];
-      assert.match(childFirst.messages[0].content, /independent execution subagent/);
+      assert.match(childFirst.messages[0].content, /worker agent executing a task assigned by the parent agent/);
       // Worker 同样要拿到真实工作区路径，否则它也会去猜路径。
       assert.match(childFirst.messages[0].content, /The workspace root for this task is "/);
       assert.ok(childFirst.messages[0].content.includes(path.basename(workdir)));

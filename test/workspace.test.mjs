@@ -1193,7 +1193,7 @@ test("edit：写回时保留文件开头的 UTF-8 BOM", async () => {
  * 正文断言如果连状态行一起匹配，就会因为命令里的字样而假通过或假失败。
  */
 function body(output) {
-  return output.slice(output.indexOf("\n") + 1);
+  return output.content.slice(output.content.indexOf("\n") + 1);
 }
 
 /**
@@ -1276,11 +1276,13 @@ test("shell-output：读到输出后，第二次只返回新增的部分", async
     await workspace.run(`node -e "${script}"`, { background: true });
 
     const first = await workspace.readJobOutput("job-1", 5000);
-    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    const pid = Number(/pid (\d+)/.exec(first.content)?.[1]);
     try {
-      assert.match(first, /^job-1 \(running, pid \d+\) ran: /, "第一行必须是状态");
+      assert.match(first.content, /^job-1 \(running, pid \d+\) ran: /, "第一行必须是状态");
       assert.match(body(first), /first/);
       assert.doesNotMatch(body(first), /second/, "还没产生的内容不能提前出现");
+      assert.equal(first.hasNewOutput, true);
+      assert.equal(first.isWaiting, false, "拿到新输出是进展，不是等待");
 
       await workspace.write("go.txt", "");
       const second = await workspace.readJobOutput("job-1", 5000);
@@ -1292,20 +1294,62 @@ test("shell-output：读到输出后，第二次只返回新增的部分", async
   });
 });
 
+test("shell-output：wait=0 对仍在运行且没有输出的任务立即返回", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "setTimeout(()=>{},30000)"', { background: true });
+    const started = Date.now();
+    try {
+      const output = await workspace.readJobOutput("job-1", 0);
+      assert.ok(Date.now() - started < 1000, "wait=0 不能进入轮询等待");
+      assert.match(output.content, /^job-1 \(running, pid \d+\)/);
+      assert.match(output.content, /\(no new output\)/);
+      // 立即返回不是等待：进程还在跑也不能标记成有效等待，否则重复轮询会绕过无进展检测。
+      assert.equal(output.status, "running");
+      assert.equal(output.hasNewOutput, false);
+      assert.equal(output.waitedMs, 0);
+      assert.equal(output.isWaiting, false);
+    } finally {
+      await stopJob(workspace);
+    }
+  });
+});
+
+test("shell-output：真的等到预算用完、没有新输出且仍在运行时才算有效等待", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "setTimeout(()=>{},30000)"', { background: true });
+    try {
+      const output = await workspace.readJobOutput("job-1", 300);
+      assert.match(output.content, /^job-1 \(running, pid \d+\)/);
+      assert.match(output.content, /\(no new output\)/);
+      assert.equal(output.hasNewOutput, false);
+      assert.equal(output.isWaiting, true);
+      assert.ok(output.waitedMs >= 300, `必须真的等过，实际 ${output.waitedMs}ms`);
+    } finally {
+      await stopJob(workspace);
+    }
+  });
+});
+
 test("shell-output：进程自己退出时报告 exit code，且没有新输出时明确说没有", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
     await workspace.run('node -e "console.log(\'bye\');process.exit(3)"', { background: true });
 
     const output = await workspace.readJobOutput("job-1", 5000);
-    const pid = Number(/pid (\d+)/.exec(output)?.[1]);
+    const pid = Number(/pid (\d+)/.exec(output.content)?.[1]);
     try {
-      assert.match(output, /bye/);
+      assert.match(output.content, /bye/);
 
       // 第二次没有新字节，等到进程退场再返回：状态行必须换成 exit code。
       const after = await workspace.readJobOutput("job-1", 5000);
-      assert.match(after, /^job-1 \(exited with code 3, pid \d+\)/);
-      assert.match(after, /\(no new output\)/);
+      assert.match(after.content, /^job-1 \(exited with code 3, pid \d+\)/);
+      assert.match(after.content, /\(no new output\)/);
+      // 任务结束不是等待：Agent 必须照常走循环，不能凭「没有新输出」继续豁免。
+      assert.equal(after.status, "exited");
+      assert.equal(after.hasNewOutput, false);
+      assert.equal(after.isWaiting, false);
     } finally {
       await stopJob(workspace, pid);
     }
@@ -1316,7 +1360,7 @@ test("shell-kill：停掉后台任务，进程真的不在了", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });
     await workspace.run('node -e "setInterval(()=>{},1000)"', { background: true });
-    const pid = Number(/pid (\d+)/.exec(await workspace.readJobOutput("job-1", 3000))?.[1]);
+    const pid = Number(/pid (\d+)/.exec((await workspace.readJobOutput("job-1", 3000)).content)?.[1]);
     try {
       assert.ok(Number.isInteger(pid), "状态行里必须带 pid");
 
@@ -1337,10 +1381,10 @@ test("shell-kill：命令启动的后台后代仍属于同一任务，可通过�
     await workspace.run('node -e "setInterval(()=>{},1000)" & echo $! > child.pid; echo ready', { background: true });
 
     const output = await workspace.readJobOutput("job-1", 5000);
-    const shellPid = Number(/pid (\d+)/.exec(output)?.[1]);
+    const shellPid = Number(/pid (\d+)/.exec(output.content)?.[1]);
     const childPid = Number((await readFile(path.join(dir, "child.pid"), "utf8")).trim());
     try {
-      assert.match(output, /ready/);
+      assert.match(output.content, /ready/);
       assert.ok(Number.isInteger(childPid), "命令启动的后台子进程必须有 pid");
       assert.match(await workspace.killJob("job-1"), /stopped job-1/);
       assert.equal(await waitGone(childPid), true, "shell-kill 必须停止 shell 已启动的后台后代");
@@ -1356,7 +1400,7 @@ test("shell-output：未知任务编号报错，并列出已知编号", async ()
     await assert.rejects(() => workspace.readJobOutput("job-9"), /unknown background job "job-9" \(known: none\)/);
 
     await workspace.run("node -e \"setTimeout(()=>{},5000)\"", { background: true });
-    const pid = Number(/pid (\d+)/.exec(await workspace.readJobOutput("job-1", 0))?.[1]);
+    const pid = Number(/pid (\d+)/.exec((await workspace.readJobOutput("job-1", 0)).content)?.[1]);
     try {
       await assert.rejects(() => workspace.readJobOutput("job-9"), /unknown background job "job-9" \(known: job-1\)/);
     } finally {
@@ -1411,15 +1455,15 @@ test("shell-output：单次最多 8000 字符，剩下的明确说还有并留�
     await workspace.run('node -e "process.stdout.write(\'x\'.repeat(9000))"', { background: true });
 
     const first = await workspace.readJobOutput("job-1", 5000);
-    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    const pid = Number(/pid (\d+)/.exec(first.content)?.[1]);
     try {
-      assert.match(first, /1000 chars not shown; call shell-output again/);
+      assert.match(first.content, /1000 chars not shown; call shell-output again/);
       // 只数正文那一行：状态行里的命令本身也带 x，整段数会多数两个。
-      assert.equal(first.split("\n")[1].length, 8000, "一次只能给 8000 个字符");
+      assert.equal(first.content.split("\n")[1].length, 8000, "一次只能给 8000 个字符");
 
       const second = await workspace.readJobOutput("job-1", 5000);
-      assert.match(second, /x{1000}/);
-      assert.doesNotMatch(second, /not shown/, "读完就不该再提示还有");
+      assert.match(second.content, /x{1000}/);
+      assert.doesNotMatch(second.content, /not shown/, "读完就不该再提示还有");
     } finally {
       await stopJob(workspace, pid);
     }
@@ -1437,14 +1481,14 @@ test("shell-output：截断边界不切开 emoji 代理对，后续读取不损�
     await workspace.run(`node -e "process.stdout.write(require('fs').readFileSync('payload.txt'))"`, { background: true });
 
     const first = await workspace.readJobOutput("job-1", 5000);
-    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    const pid = Number(/pid (\d+)/.exec(first.content)?.[1]);
     try {
       assert.equal(body(first).split("\n")[0], expectedFirst, "第一次只能在完整 emoji 之后截断");
-      assert.match(first, /1 chars not shown/);
+      assert.match(first.content, /1 chars not shown/);
 
       const second = await workspace.readJobOutput("job-1", 5000);
       assert.equal(body(second), "Z", "第二次从正确的 UTF-8 字节偏移继续");
-      assert.doesNotMatch(second, /\uFFFD/);
+      assert.doesNotMatch(second.content, /\uFFFD/);
     } finally {
       await stopJob(workspace, pid);
     }
@@ -1464,15 +1508,18 @@ test("shell-output：被切断的多字节字符不会读成替换字符，补�
     await workspace.run(`node -e "${script}"`, { background: true });
 
     const first = await workspace.readJobOutput("job-1", 1500);
-    const pid = Number(/pid (\d+)/.exec(first)?.[1]);
+    const pid = Number(/pid (\d+)/.exec(first.content)?.[1]);
     try {
-      assert.doesNotMatch(first, /\uFFFD/, "半个字符不能变成替换字符");
-      assert.doesNotMatch(first, /中/, "只有两个字节时还不能算读到这个字");
+      assert.doesNotMatch(first.content, /\uFFFD/, "半个字符不能变成替换字符");
+      assert.doesNotMatch(first.content, /中/, "只有两个字节时还不能算读到这个字");
+      // 半个字符不算「新输出」：这一轮仍然算有效等待，Agent 不该把它当进展或死循环。
+      assert.equal(first.hasNewOutput, false);
+      assert.equal(first.isWaiting, true);
 
       await workspace.write("go.txt", "");
       const second = await workspace.readJobOutput("job-1", 5000);
-      assert.match(second, /中/, "补齐之后才能读出完整字符");
-      assert.doesNotMatch(second, /\uFFFD/);
+      assert.match(second.content, /中/, "补齐之后才能读出完整字符");
+      assert.doesNotMatch(second.content, /\uFFFD/);
     } finally {
       await stopJob(workspace, pid);
     }

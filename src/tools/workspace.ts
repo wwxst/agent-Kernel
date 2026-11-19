@@ -17,8 +17,8 @@
  *     内部有原子替换、路径解析、输出截断、进程树清理。
  *   - `createWorkspaceTools()`：把上面这些方法翻译成模型能调用的九个工具（含英文说明书）；
  *     文件类工具声明 `strictArguments`，参数写错直接报错而不是被静默忽略。
- *   - `WorkspaceOptions` / `ReadOptions` / `GrepOptions` / `BackgroundJob`：构造参数、read 的行窗口、
- *     grep 选项、后台任务登记。
+ *   - `WorkspaceOptions` / `ReadOptions` / `GrepOptions` / `BackgroundJob` / `JobOutput`：构造参数、
+ *     read 的行窗口、grep 选项、后台任务登记、一次后台读取的结构化结果（含「是否有效等待」）。
  *   - `RegexGrep`：grep 的正则匹配线程客户端，超时或取消就 terminate。
  *   - 导出的小工具：`fillBuffer()` 读满缓冲区、`terminateTree()` 收进程树。
  *   - 常量区：各类上限（读、输出、扫描、行宽、结果数）、超时、后台任务日志目录与轮询间隔。
@@ -315,6 +315,34 @@ export interface ReadOptions {
   limitBytes?: number;
 }
 
+/** 后台任务的生命周期状态。`unverified` 表示停过，但无法确认整棵进程树已经退出。 */
+export type JobStatus = "running" | "exited" | "killed" | "unverified";
+
+/**
+ * 一次后台读取的结果，交给 `shell-output` 转成宿主侧状态。
+ *
+ * 为什么不是一个字符串：调用方需要知道「这次到底算不算一次等待」，
+ * 而这件事只有读取现场知道。让调用方去解析状态行文本，会把命令内容、
+ * 文案格式都变成隐式契约 —— 命令里碰巧出现同样的字样就会误判。
+ */
+export interface JobOutput {
+  /** 给模型的文本：状态行 + 本次新输出（或「没有新输出」）。 */
+  content: string;
+  /** 读取时的任务状态。 */
+  status: JobStatus;
+  /** 本次是否拿到了新输出。 */
+  hasNewOutput: boolean;
+  /** 本次真正进入轮询等待的毫秒数；`wait: 0` 恒为 0。 */
+  waitedMs: number;
+  /**
+   * 有效等待：本次确实等待过、没有新输出、任务仍在运行。
+   *
+   * 三个条件缺一不可：没等过（`wait: 0`）不是等待，拿到新输出是进展，
+   * 任务已经结束则不该再等。只有这种结果才允许 Agent 豁免重复批次检测。
+   */
+  isWaiting: boolean;
+}
+
 /**
  * 一个后台任务：进程本身、它的日志文件、以及「已经交给模型多少字节」。
  *
@@ -329,7 +357,7 @@ interface BackgroundJob {
   logPath: string;
   /** 已返回给模型的字节偏移。 */
   cursor: number;
-  status: "running" | "exited" | "killed" | "unverified";
+  status: JobStatus;
   exitCode: number | null;
   error?: string;
 }
@@ -1107,14 +1135,21 @@ ${command}`;
    *   - **带状态**：第一行永远是「还在跑 / 退出了，exit N / 被我停了」，否则模型会把
    *     「服务已经崩了」看成「服务还没输出」。
    *
+   * 除了文本，还返回结构化状态（`isWaiting` / `hasNewOutput` / `status`）：
+   * 「这次算不算一次有效等待」由读取现场决定，调用方不用读文本猜。
+   *
    * wait 期间只能轮询：日志是普通文件，没有事件可订阅。
    */
-  async readJobOutput(jobId: string, waitMs = 0): Promise<string> {
+  async readJobOutput(jobId: string, waitMs = 0): Promise<JobOutput> {
     const job = this.job(jobId);
     const budget = Math.min(Math.max(waitMs, 0), MAX_JOB_WAIT_MS);
+    const shouldWait = budget > 0;
     const deadline = Date.now() + budget;
+    const startedAt = Date.now();
 
     let text = "";
+    // 只有真的睡过轮询间隔才算「等待过」：`wait: 0` 立即返回，不能冒充等待。
+    let waited = false;
     for (;;) {
       if (this.signal?.aborted) throw new Error("cancelled by signal");
       const size = await this.jobLogSize(job);
@@ -1125,13 +1160,21 @@ ${command}`;
         if (text !== "") break;
       }
       // 进程已经不在了就没什么可等的；再等下去只是把 Step 拖长。
-      if (job.status !== "running") break;
+      if (!shouldWait || job.status !== "running") break;
       if (Date.now() >= deadline) break;
+      waited = true;
       await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
     }
 
     const header = this.jobHeader(job);
-    if (text === "") return `${header}\n(no new output)`;
+    const hasNewOutput = text !== "";
+    // 三个条件缺一不可：等过、没新输出、还在跑。任务结束或有新输出都是「该继续走循环」的信号。
+    const isWaiting = waited && !hasNewOutput && job.status === "running";
+    const waitedMs = waited ? Date.now() - startedAt : 0;
+
+    if (!hasNewOutput) {
+      return { content: `${header}\n(no new output)`, status: job.status, hasNewOutput, waitedMs, isWaiting };
+    }
 
     const characters = Array.from(text);
     let shown = text;
@@ -1145,7 +1188,7 @@ ${command}`;
     }
     job.cursor += Buffer.byteLength(shown);
 
-    return `${header}\n${shown}${tail}`;
+    return { content: `${header}\n${shown}${tail}`, status: job.status, hasNewOutput, waitedMs, isWaiting };
   }
 
   /** 从 cursor 开始读到 size，只返回完整的 UTF-8 字符；末尾被切断的那截不消费。 */
@@ -2100,14 +2143,25 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
       name: "read",
-      // 读工具 read：把一个文本文件的内容读出来。
-      // 一次最多读 8000 个字符；文件比这更大时，只读到前面这一截，
-      // 并且明确告诉你被截断了，不会假装已经读完。
-      // 想看中间或后半段可按行号读取；行号过深或者单行过长时，改用字节位置续读。
+      // 读工具 read：从一个文本文件里读内容，按 cat -n 的样式返回，每行前面带行号。
+      // 一次最多读 8000 个字符；文件比这更大时，只读到前面这一截，并明确告诉你被截断了。
+      // 已经知道要看哪一段时只读那一段，大文件尤其如此。
+      // 行窗口用 offset / limit；行号过深或单行过长时改用 offsetBytes / limitBytes 续读。
       // 字节游标按实际交出的 UTF-8 字节计算，不会在字符中间截断。
-      description: "Read a UTF-8 text file, with up to 8000 output chars. " +
-        "Use offset and limit for line ranges, or offsetBytes and limitBytes for byte ranges and long lines. " +
-        "Follow the returned continuation offset to read more.",
+      // 这个工具只能读文件，不能列目录 —— 列目录用 ls。
+      // 刚改过的文件不要再读回来验证：改失败的话 edit/write 自己会报错。
+      description:
+        "Reads a file from the local filesystem. You can access any file directly by using this tool. " +
+        "Assume this tool is able to read all files on the machine. If the User provides a path to a file assume that path is valid. " +
+        "It is okay to read a file that does not exist; an error will be returned. " +
+        "Usage: - The path may be absolute or relative to the workspace root. " +
+        "- Results are returned using cat -n format, with line numbers starting at 1. " +
+        "- By default, it reads up to 8000 characters starting from the beginning of the file. " +
+        "- When you already know which part of the file you need, only read that part. This can be important for larger files. " +
+        "- Use offset and limit for line ranges, or offsetBytes and limitBytes for byte ranges and long lines. " +
+        "- Follow the returned continuation offset to read more. " +
+        "- This tool can only read files, not directories. To list files in a directory, use ls. " +
+        "- Do NOT re-read a file you just edited to verify - edit or write would have errored if the change failed.",
       // 行号写错必须报错：静默忽略 offset 会让模型以为读到了后面，实际还是开头。
       strictArguments: true,
       parameters: {
@@ -2141,11 +2195,17 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "write",
-      // 写工具 write：新建一个文件，或者把已有文件整个覆盖掉。
-      // 文件所在的目录不存在时，会先自动建好。
-      // 如果只是想改文件里的一小段，别用这个——用下面的改工具，它不会动其他地方。
+      // 写工具 write：新建一个文件，或者把已有文件整个覆盖掉；父目录不存在会自动建好。
+      // 只改文件里的一小段就别用它 —— 用 edit，它只发 diff。
+      // 除非用户明确要求，否则不要创建文档文件（*.md）或 README。
+      // 只有用户明确要求时才往文件里写 Emoji。
       description:
-        "Create or overwrite a whole UTF-8 file; parent directories are created. Prefer edit for changing part of an existing file.",
+        "Writes a file to the local filesystem. " +
+        "Usage: - This tool will overwrite the existing file if there is one at the provided path. " +
+        "- Prefer edit for modifying existing files - it only sends the diff. Only use this tool to create new files or for complete rewrites. " +
+        "- Parent directories are created as needed. " +
+        "- NEVER create documentation files (*.md) or README files unless explicitly requested by the User. " +
+        "- Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.",
       // 参数写错必须让模型知道：多传一个 content 拼错成 body，静默忽略会把文件清空。
       strictArguments: true,
       parameters: {
@@ -2162,12 +2222,17 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "edit",
-      // 改工具 edit：把文件里的一段文字换成另一段。
-      // 要求「要找的那段原文」在文件里只出现一次——出现两次以上会被拒绝，
-      // 因为分不清你想改哪一个。拿不准的时候，先用读工具看一眼。
-      // 新内容留空，就等于把那段删掉。
+      // 改工具 edit：在文件里做精确字符串替换。
+      // old_string 必须和文件内容完全一致（包括缩进），而且只能出现一次，否则这次编辑失败。
+      // 从 read 的输出里复制内容时，先把行号前缀去掉。
+      // new_string 留空就等于把那段删掉。
+      // 优先改已有文件；除非确实必要，不要新建文件。
       description:
-        "Replace exactly one occurrence of old_string with new_string in an existing file. old_string must appear exactly once; read the file first when unsure.",
+        "Performs exact string replacements in files. " +
+        "Usage: - old_string must match the file exactly, including indentation, and be unique. The edit fails otherwise. " +
+        "- Strip the line prefix from read output before matching. " +
+        "- An empty new_string deletes the match. " +
+        "- ALWAYS prefer editing existing files in the codebase. NEVER write new files unless explicitly required.",
       strictArguments: true,
       parameters: {
         type: "object",
@@ -2186,14 +2251,14 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "glob",
-      // 找文件工具 glob：按文件名找，支持通配符——* 代表任意几个字符，
-      // ** 代表可以跨目录，? 代表一个字符。
-      // 例如 "src/**/*.ts" 的意思是「src 下面所有层级里的 .ts 文件」。
-      // 从哪个目录开始找可以指定，默认从工作区根目录开始。
+      // 找文件工具 glob：按文件名模式匹配，适合在任何大小的代码库里找文件。
+      // 支持 "**/*.js"、"src/**/*.ts" 这样的模式；返回匹配的文件路径。
+      // pattern 可以相对搜索根目录，也可以是绝对路径；搜索根在工作区外时结果返回绝对路径。
       description:
-        'Find files by glob pattern (supports *, ** and ?). The pattern may be relative to the search root or absolute. ' +
-        'Results are relative to the workspace root, or absolute when the search root is outside it. ' +
-        'Example: "src/**/*.ts".',
+        "Fast file pattern matching tool that works with any codebase size. " +
+        'Usage: - Supports glob patterns like "**/*.js" or "src/**/*.ts". ' +
+        "- Returns matching file paths. Use this tool when you need to find files by name patterns. " +
+        "- Results are relative to the workspace root, or absolute when the search root is outside it.",
       strictArguments: true,
       parameters: {
         type: "object",
@@ -2209,13 +2274,16 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "grep",
-      // 搜内容工具 grep：按文字内容找，每条结果给出「文件路径:行号: 那一行的内容」。
-      // 默认按「正则表达式」匹配——一种写查找规则的方式，比如 ^import 表示「以 import 开头」。
-      // 如果只想搜一段普通文字，把 fixed 设成 true，就不用管正则里那些符号了。
+      // 搜内容工具 grep：按 JavaScript 正则逐行匹配文件内容，每条命中给出「文件:行号: 那一行」。
+      // 搜内容一律用它，不要用 shell 里的 grep 或 rg。
+      // 只想搜一段普通文字就把 fixed 设成 true，不用管正则里那些符号。
       // path 可以是一个目录（递归搜），也可以是一个文件（只搜它自己）。
       description:
-        "Search file contents by JavaScript regular expression; returns one file:line: match line per hit. " +
-        "Set fixed=true to search a literal string. The path may be a directory or a single file.",
+        "Search file contents by JavaScript regular expression, matched line by line; returns one file:line: match line per hit. " +
+        "Usage: - ALWAYS use this tool for content search. NEVER run grep or rg as a shell command. " +
+        "- Supports full regular expression syntax (e.g. \"log.*Error\", \"function\\s+\\w+\"). " +
+        "- Set fixed=true to search a literal string instead of a regular expression. " +
+        "- The path may be a directory (searched recursively) or a single file.",
       strictArguments: true,
       parameters: {
         type: "object",
@@ -2239,9 +2307,9 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "ls",
-      // 列目录工具 ls：看看一个目录里有什么。
-      // 每一项会给出三样东西：它是文件还是目录、有多大（字节数）、叫什么名字。
-      description: "List a directory: entry type, size in bytes, and name.",
+      // 列目录工具 ls：列出一个目录里的条目 —— 类型、字节大小、名字。
+      // 要列目录就用它，不要用 shell 里的 ls。
+      description: "List a directory: entry type, size in bytes, and name. Use this tool instead of ls in a shell command.",
       strictArguments: true,
       parameters: {
         type: "object",
@@ -2255,13 +2323,17 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
     },
     {
       name: "shell",
-      // 跑命令工具 shell：执行一条系统命令，返回三样东西——退出码、正常输出、错误输出。
-      // 命令默认在工作区根目录下执行，命令里面也可以自己切换目录、用绝对路径。
-      // 如果这条命令不会自己结束（比如启动一个服务），必须把 background 设成 true，
-      // 否则会一直卡着，直到超时。
-      description: "Run a shell command; returns exit code plus stdout/stderr. " +
-        "The working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
-        "Use background:true for servers or anything that never exits - a foreground call blocks until it times out.",
+      // 跑命令工具 shell：执行一条命令，返回退出码、stdout、stderr。
+      // 每次调用都是新 shell：状态不跨调用保留，工作目录默认工作区根目录，命令里可以 cd 或用绝对路径。
+      // 专用工具能干的事不要用 shell 干：找文件 glob、搜内容 grep、读 read、改 edit、写 write。
+      // 含空格的路径要用双引号括起来；要新建目录或文件前，先用 ls 确认父目录存在且位置正确。
+      // 不会自己结束的命令（服务、监听）必须把 background 设成 true，否则会一直卡到超时。
+      description: "Executes a given shell command and returns its output: exit code plus stdout/stderr. " +
+        "Each call starts a fresh shell; state does not persist between calls. The working directory defaults to the workspace root, and the command may cd anywhere or use absolute paths. " +
+        "File search: use glob (NOT find or ls). Content search: use grep (NOT grep or rg). Read files: use read (NOT cat/head/tail). Edit files: use edit (NOT sed/awk). Write files: use write (NOT echo >/cat <<EOF). " +
+        "Always quote file paths that contain spaces with double quotes in your command. " +
+        "If your command will create new directories or files, first use ls to verify the parent directory exists and is the correct location. " +
+        "Use background:true for servers or anything that never exits - a foreground call blocks until it times out. Read it with shell-output and stop it with shell-kill; do not poll it in a loop.",
       parameters: {
         type: "object",
         properties: {
@@ -2311,10 +2383,15 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         },
         required: ["job_id"],
       },
-      run: async (args) => workspace.readJobOutput(
-        String(args.job_id),
-        typeof args.wait === "number" ? Math.min(60_000, Math.max(0, args.wait)) : 0,
-      ),
+      run: async (args) => {
+        const output = await workspace.readJobOutput(
+          String(args.job_id),
+          typeof args.wait === "number" ? Math.min(60_000, Math.max(0, args.wait)) : 0,
+        );
+        // 等待状态来自读取现场的结构化结果，不从文本里猜：
+        // wait: 0 立即返回、拿到新输出、任务已结束，三种情况都不是有效等待。
+        return { content: output.content, isError: false, ...(output.isWaiting ? { isWaiting: true } : {}) };
+      },
     },
     {
       name: "shell-kill",
