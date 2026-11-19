@@ -355,6 +355,18 @@ test("评测题 19：行为正确之外，还必须把嵌套 if 改成 guard cla
     ].join("\n"));
     await assert.doesNotReject(() => checkBannedAdminBug(root));
 
+    // 只把嵌套 if 摊平、但没有提前 return，不算完成 guard clause 重构。
+    await writeFile(path.join(root, "access.mjs"), [
+      "export function canEdit(user, doc) {",
+      "  if (user && user.banned === true) user = null;",
+      "  if (!user || !doc) return false;",
+      '  if (user.role === "admin") return true;',
+      "  return doc.ownerId === user.id;",
+      "}",
+      "",
+    ].join("\n"));
+    await assert.rejects(() => checkBannedAdminBug(root), /每个 if 必须提前 return/);
+
     await writeFile(path.join(root, "access.mjs"), [
       "export function canEdit(user, doc) {",
       "  if (user) {",
