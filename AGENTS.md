@@ -13,6 +13,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm test` | 全部测试，不需要 API Key、不联网 |
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
+| `npm run architecture:check` | 检查 `src/` 模块依赖方向，不需要 API Key |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
