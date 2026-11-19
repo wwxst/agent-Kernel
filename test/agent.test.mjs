@@ -1144,6 +1144,34 @@ test("无进展检测：后台任务仍在运行时允许继续轮询到完成",
   assert.equal(chat.requests.length, 6);
 });
 
+test("无进展检测：同一调用链出现普通结果后，等待豁免不会因后续结果变化恢复", async () => {
+  const chat = createScriptedChat(Array.from({ length: 6 }, (_, index) =>
+    callTool(`poll-${index + 1}`, "shell-output", { job_id: "job-1", wait: 1_000 }),
+  ));
+  let executions = 0;
+  const tool = {
+    name: "shell-output",
+    description: "Read a background shell job.",
+    parameters: {
+      type: "object", properties: { job_id: { type: "string" }, wait: { type: "number" } },
+      required: ["job_id"],
+    },
+    run: async () => {
+      executions++;
+      // 先有效等待，再出现普通结果，随后又回到等待；后半段不能重新获得豁免。
+      return executions === 2
+        ? { content: "stable", isError: false }
+        : { content: "stable", isError: false, isWaiting: true };
+    },
+  };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  await assert.rejects(() => agent.run("轮询后台任务"), /identical tool batches.*no progress/);
+
+  assert.equal(executions, 5, "第六批必须在执行前被拦下");
+  assert.equal(chat.requests.length, 6);
+});
+
 test("无进展检测：参数键顺序规范化且不依赖 tool_call_id", async () => {
   const chat = createScriptedChat([
     {

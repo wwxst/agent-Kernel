@@ -268,16 +268,18 @@ class RunState {
   /** 只有完整批次才记录。直接比较文本和状态，避免把整批大结果再序列化一份。 */
   recordToolBatch(signature: string, results: readonly ToolExecutionResult[], waiting: boolean): void {
     const previous = this.lastToolBatch;
-    if (previous !== undefined && previous.signature === signature && sameToolResults(previous.results, results)) {
-      this.lastToolBatch = {
-        signature,
-        results,
-        repetitions: waiting ? previous.repetitions : previous.repetitions + 1,
-        allWaiting: previous.allWaiting && waiting,
-      };
+    if (previous === undefined || previous.signature !== signature) {
+      this.lastToolBatch = { signature, results, repetitions: waiting ? 0 : 1, allWaiting: waiting };
       return;
     }
-    this.lastToolBatch = { signature, results, repetitions: waiting ? 0 : 1, allWaiting: waiting };
+
+    // 结果变化只重置重复次数；同一签名的等待链一旦遇到普通批次，就不能再恢复豁免。
+    const allWaiting = previous.allWaiting && waiting;
+    const sameResults = sameToolResults(previous.results, results);
+    const repetitions = sameResults
+      ? (allWaiting ? previous.repetitions : previous.repetitions + 1)
+      : (allWaiting ? 0 : 1);
+    this.lastToolBatch = { signature, results, repetitions, allWaiting };
   }
 
   /**
@@ -566,10 +568,10 @@ export class Agent {
       throw new Error("agent.run() is already running: await the current Run before starting another");
     }
     this.running = true;
-    this.currentRun = new RunState();
-    this.context.beginRun();
-    this.runCount++;
     try {
+      this.currentRun = new RunState();
+      this.context.beginRun();
+      this.runCount++;
       // 压缩不在 Run 的开始和结束各做一遍：统一放在每次真实请求前（见 SessionContext.prepareRequest）。
       return await this.runLoop(task);
     } finally {
@@ -638,7 +640,13 @@ export class Agent {
         // 退避期间取消时 sleep 抛的是裸 AbortError（"The operation was aborted"），
         // signal 上的原因会丢；先过取消出口，CLI 才说得出是被什么停掉的。
         try {
+          try {
           await sleep(Math.min(100 * 2 ** (networkRetries - 1), 800), undefined, { signal: this.signal });
+        } catch (error) {
+          // 退避期间取消也走统一的取消错误，不把 Node 的 AbortError 原样漏给上层。
+          this.stopIfCancelled();
+          throw error;
+        }
         } catch (error) {
           this.stopIfCancelled();
           throw error;
