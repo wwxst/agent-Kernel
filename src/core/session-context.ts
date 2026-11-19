@@ -415,6 +415,8 @@ export class SessionContext {
    *   - 先动**最早、已经被模型读过**的结果；`includeUnconsumed` 为 false 时，最新一批
    *     （模型还没看到）一律不碰 —— 那等于让它凭空少看一段输出；
    *   - 裁剪之前先存档，存不下就跳过这一条，绝不用预览覆盖唯一一份原文；
+   *   - 存档只有在这次替换真正提交之后才保留：取消、异常、换完不省空间，都会把刚写的
+   *     那份删掉（复用旧引用时永远不删，那是已经提交过的原文）；
    *   - 同一份结果被剪第二刀时**复用第一次的引用**：预览可以再剪，来源只有一个。
    *
    * 两刀：先 800 字符，还不够再 240。每一刀之后都重新判断，达到目标就停。
@@ -434,39 +436,51 @@ export class SessionContext {
         if (original.length <= limit + TOOL_RESULT_SNIP_MARGIN) continue;
         // 按消息对象找上一次的引用：同一个 id 可能是另一次调用，不能共用存档。
         let ref = this.prunedSources.get(message);
+        // 这次新写的存档在提交之前谁都不引用 —— 没进 prunedSources、没进存档清单、tool 消息也还没换。
+        // 所以取消、异常、发现不划算，都必须把它删掉。复用旧引用（savedNow 为 false）时绝不能删：
+        // 那份原文已经正式提交过，还有别的消息指着它。
         let savedNow = false;
-        if (ref === undefined) {
-          try {
-            ref = await this.archive.save("tool", key, original);
-          } catch (error) {
-            // 存档失败 = 这份原文没有第二份。宁可让它继续占地方，也不能只留预览。
-            this.archiveFailures++;
-            this.lastCompactionError = `archive failed: ${describeError(error)}`;
-            continue;
+        let kept = false;
+        try {
+          if (ref === undefined) {
+            try {
+              ref = await this.archive.save("tool", key, original);
+            } catch (error) {
+              // 存档失败 = 这份原文没有第二份。宁可让它继续占地方，也不能只留预览。
+              this.archiveFailures++;
+              this.lastCompactionError = `archive failed: ${describeError(error)}`;
+              continue;
+            }
+            // 文件已经落盘，从这一行起它归这次调用负责：下面任何一条退出路径都要回滚它。
+            // 所以先置 savedNow 再检查取消 —— 反过来的话，取消正好落在两步之间就会漏掉这份文件。
+            savedNow = true;
+            this.host.checkCancelled();
           }
-          this.host.checkCancelled();
-          savedNow = true;
+          // 第二刀传进来的 original 已经是预览，但标记里的来源仍是第一次那份完整原文。
+          // 体积按 JSON 序列化后的消息差值更新：换行、反斜杠会被转义，不能直接扣原文字符差。
+          const preview = compactText(original, limit, ref.path);
+          const system = this.messages[0]!;
+          const nextSystem = savedNow ? this.composeSystemPrompt(ref) : system.content;
+          let delta = JSON.stringify(preview).length - JSON.stringify(original).length;
+          if (savedNow) delta += JSON.stringify(nextSystem).length - JSON.stringify(system.content).length;
+          // 换了预览却没省下空间：这次不动这条消息，刚写的存档也就没人引用，回滚掉。
+          if (delta >= 0) continue;
+          if (savedNow) {
+            // 先登记存档，再让消息引用它。rememberArchive() 里那次 push 是这两步中唯一可能失败的：
+            // 排在前面，它失败时 prunedSources 还没写，不会留下一条指向「马上会被 finally 删掉」
+            // 的文件的引用 —— 那种引用下一次裁剪会拿它当来源，预览里就会写出一个不存在的路径。
+            this.rememberArchive(ref);
+            this.prunedSources.set(message, ref);
+            system.content = nextSystem;
+          }
+          message.content = preview;
+          chars += delta;
+          changed = true;
+          kept = true;
+        } finally {
+          // 只有「这次刚写的」才允许回滚；复用旧引用时 savedNow 为 false，永远走不到 discard。
+          if (savedNow && !kept && ref !== undefined) await this.archive.discard(ref);
         }
-        // 第二刀传进来的 original 已经是预览，但标记里的来源仍是第一次那份完整原文。
-        // 体积按 JSON 序列化后的消息差值更新：换行、反斜杠会被转义，不能直接扣原文字符差。
-        const preview = compactText(original, limit, ref.path);
-        const system = this.messages[0]!;
-        const nextSystem = savedNow ? this.composeSystemPrompt(ref) : system.content;
-        let delta = JSON.stringify(preview).length - JSON.stringify(original).length;
-        if (savedNow) delta += JSON.stringify(nextSystem).length - JSON.stringify(system.content).length;
-        // 换了预览却没省下空间：这次不动这条消息，刚写的存档也就没人引用，回滚掉。
-        if (delta >= 0) {
-          if (savedNow) await this.archive.discard(ref);
-          continue;
-        }
-        if (savedNow) {
-          this.prunedSources.set(message, ref);
-          this.rememberArchive(ref);
-          system.content = nextSystem;
-        }
-        message.content = preview;
-        chars += delta;
-        changed = true;
       }
     }
     return changed;

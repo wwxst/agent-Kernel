@@ -12,7 +12,7 @@
  *   - `summaryWith()`：造一份形状合格、带标记的摘要，用来验证「替换而不是追加」。
  *   - 预算：短对话不压、工具定义计入体积、字符路径与 token 路径分开。
  *   - 工具结果：最新批次完整、旧结果先裁剪、超大结果先存档再预览、存档失败不替换、
- *     换了预览却没省空间时回滚刚写的存档。
+ *     换了预览却没省空间、存档成功后立刻取消、登记存档时抛错，都回滚刚写的存档。
  *   - 历史摘要：折叠旧轮次、单轮多步、多次替换、失败/不合格/取消都不提交；
  *     摘要以 system 之后的一条 user 消息承载（不抬高指令等级、不被当成用户轮次）；
  *     存档失败与候选被拒都回滚存档，不留孤儿文件。
@@ -394,6 +394,88 @@ test("工具结果：存档失败时不做有损替换", async () => {
     const delivered = chat.businessRequests[1].messages.find((message) => message.role === "tool");
     assert.equal(delivered.content, "y".repeat(20_000), "没有存档就不许把原文换成预览");
     assert.ok(agent.compactionStats.archiveFailures > 0, "存档失败要计数，不能无声吞掉");
+  });
+});
+
+test("工具结果：存档成功后立刻取消，刚写的 archive 被回滚，原结果保持完整", async () => {
+  await withWorkspace(async (root) => {
+    const controller = new AbortController();
+    const bigTool = { ...echoTool(), run: async () => "y".repeat(20_000) };
+    const chat = createModel({
+      replies: [callTool("big-1", "echo", { value: "x" }), finalReply("first"), finalReply("second")],
+    });
+    const agent = makeAgent({
+      llm: chat,
+      tools: makeRegistry([bigTool]),
+      maxTranscriptChars: 4_000,
+      contextArchiveDir: path.join(root, "archive"),
+      signal: controller.signal,
+    });
+
+    // 20000 字符的结果一进来就超过硬上限，下一次请求前必须走「先存档、再给预览」。
+    // 在「文件已经写盘、还没走到 checkCancelled()」之间按下 Ctrl-C：这个窗口没有别的外部入口，
+    // 只能在真实 save 外面包一层。包装只作用于这个实例，不影响其他用例。
+    const archive = agent.context.archive;
+    const realSave = archive.save.bind(archive);
+    archive.save = async (...args) => {
+      const ref = await realSave(...args);
+      controller.abort();
+      return ref;
+    };
+
+    await assert.rejects(() => agent.run("read the big thing"), /cancelled/);
+
+    // 原结果没有被换成预览，配对也没变。
+    const results = agent.transcript.filter((message) => message.role === "tool");
+    assert.equal(results.length, 1);
+    assert.equal(results[0].tool_call_id, "big-1");
+    assert.equal(results[0].content, "y".repeat(20_000), "取消时不能提交预览");
+    // 存档清单与登记表都没有新增引用。
+    assert.doesNotMatch(agent.transcript[0].content, /Archived originals/);
+    assert.equal(agent.context.archivedOriginals.length, 0, "取消的存档不能进登记表");
+    assert.equal(agent.context.archiveCount, 0);
+    // 刚写的文件必须删掉，否则就是没人引用的孤儿。
+    assert.deepEqual(await readdir(archive.directory), [], "存档成功后取消，文件要被回滚");
+    // 取消不是存档写入失败，不能算进 archiveFailures。
+    assert.equal(agent.compactionStats.archiveFailures, 0);
+  });
+});
+
+test("工具结果：登记存档时抛错，文件被回滚且 prunedSources 不留悬空引用", async () => {
+  await withWorkspace(async (root) => {
+    const bigTool = { ...echoTool(), run: async () => "y".repeat(20_000) };
+    const chat = createModel({
+      replies: [callTool("big-1", "echo", { value: "x" }), finalReply("done")],
+    });
+    const agent = makeAgent({
+      llm: chat,
+      tools: makeRegistry([bigTool]),
+      maxTranscriptChars: 4_000,
+      contextArchiveDir: path.join(root, "archive"),
+    });
+
+    // 让登记存档那一步的 push 抛错 —— 它是裁剪提交里唯一可能失败的语句。
+    // 白盒注入：这个失败点没有别的外部入口。
+    const context = agent.context;
+    context.archivedOriginals.push = () => { throw new Error("prune boom"); };
+
+    await assert.rejects(() => agent.run("read the big thing"), /prune boom/);
+
+    // 用内部消息对象核对 prunedSources：transcript 是深拷贝，拿它查 WeakMap 永远是 undefined，
+    // 那样这条断言就白写了。
+    const tool = context.messages.find((message) => message.role === "tool");
+    assert.equal(tool.content, "y".repeat(20_000), "没提交就不能把原文换成预览");
+    assert.equal(tool.tool_call_id, "big-1", "配对不变");
+    // system 清单没有新增引用，登记表与计数也没动。
+    assert.doesNotMatch(context.messages[0].content, /Archived originals/);
+    assert.equal(context.archivedOriginals.length, 0);
+    assert.equal(context.archiveCount, 0);
+    // 最要紧的一条：登记失败时不能先写 prunedSources，否则会留下指向已删除文件的引用。
+    assert.equal(context.prunedSources.get(tool), undefined,
+      "prunedSources 不能留下指向已删除文件的引用");
+    // 刚写的文件被回滚，不留孤儿。
+    assert.deepEqual(await readdir(context.archive.directory), []);
+    assert.equal(agent.compactionStats.archiveFailures, 0, "这不是存档写入失败");
   });
 });
 
