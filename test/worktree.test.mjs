@@ -14,7 +14,7 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -101,6 +101,33 @@ test("Worktree：从 linked worktree 创建时，默认 HEAD 使用调用者自�
   });
 });
 
+test("Worktree：兼容 separate-git-dir 仓库", async () => {
+  const sandbox = await mkdtemp(path.join(tmpdir(), "agent-separate-git-dir-"));
+  try {
+    const project = path.join(sandbox, "project");
+    const metadata = path.join(sandbox, "metadata");
+    await mkdir(project);
+    await exec("git", ["init", "-b", "main", "--separate-git-dir", metadata, project], {
+      cwd: sandbox,
+      encoding: "utf8",
+    });
+    await runGit(project, ["config", "user.name", "Agent Kernel Test"]);
+    await runGit(project, ["config", "user.email", "agent-kernel-test@example.com"]);
+    await writeFile(path.join(project, "README.md"), "# separate git dir\\n");
+    await runGit(project, ["add", "README.md"]);
+    await runGit(project, ["commit", "-m", "initial commit"]);
+
+    const listed = await runTool(project, ["list"]);
+    assert.match(listed.stdout, /main/);
+
+    const created = createdPath((await runTool(project, ["create", "feature/separate-git-dir"])).stdout);
+    await access(created);
+    await runTool(project, ["remove", "feature/separate-git-dir"]);
+  } finally {
+    await rm(sandbox, { recursive: true, force: true });
+  }
+});
+
 test("Worktree：不能删除主工作区或当前正在使用的 linked worktree", async () => {
   await withRepository(async (root) => {
     await expectToolFailure(root, ["remove", "main"], /主工作区/);
@@ -127,6 +154,27 @@ test("Worktree：脏工作区拒绝删除，清理后可以删除", async () => 
 
     await runTool(root, ["remove", "feature/dirty"]);
     await assert.rejects(() => access(worktreePath));
+  });
+});
+
+test("Worktree：assume-unchanged 和 skip-worktree 文件不能被误删", async () => {
+  await withRepository(async (root) => {
+    const worktreePath = createdPath((await runTool(root, ["create", "feature/hidden-index-flags", "main"])).stdout);
+    const tracked = path.join(worktreePath, "README.md");
+
+    await runGit(worktreePath, ["update-index", "--assume-unchanged", "README.md"]);
+    await writeFile(tracked, "# locally modified but hidden\\n");
+    await expectToolFailure(root, ["remove", "feature/hidden-index-flags"], /特殊标记，拒绝删除/);
+    await runGit(worktreePath, ["update-index", "--no-assume-unchanged", "README.md"]);
+    await runGit(worktreePath, ["checkout", "--", "README.md"]);
+
+    await runGit(worktreePath, ["update-index", "--skip-worktree", "README.md"]);
+    await writeFile(tracked, "# locally modified and skip-worktree\\n");
+    await expectToolFailure(root, ["remove", "feature/hidden-index-flags"], /特殊标记，拒绝删除/);
+    await runGit(worktreePath, ["update-index", "--no-skip-worktree", "README.md"]);
+    await runGit(worktreePath, ["checkout", "--", "README.md"]);
+
+    await runTool(root, ["remove", "feature/hidden-index-flags"]);
   });
 });
 
