@@ -170,6 +170,21 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
     ].join("\n"));
     await assert.doesNotReject(() => checkExtractDuplication(root));
 
+    // 合法写法：先定义本地函数，再通过 export list 保留原来的公开名称。
+    await writeFile(path.join(root, "validate.mjs"), [
+      "function validateText(label, value) {",
+      '  if (typeof value !== "string") return `${label} must be a string`;',
+      '  if (value.trim() === "") return `${label} must not be empty`;',
+      '  if (value.length > 40) return `${label} must be at most 40 chars`;',
+      "  return null;",
+      "}",
+      'function checkName(name) { return validateText("name", name); }',
+      'function checkTitle(title) { return validateText("title", title); }',
+      "export { checkName as validateName, checkTitle as validateTitle };",
+      "",
+    ].join("\\n"));
+    await assert.doesNotReject(() => checkExtractDuplication(root));
+
     await writeFile(path.join(root, "validate.mjs"), [
       "function validateText() { return null; }",
       'export function validateName(name) { if (typeof name !== "string") return "name must be a string"; if (name.trim() === "") return "name must not be empty"; if (name.length > 40) return "name must be at most 40 chars"; return null; }',
