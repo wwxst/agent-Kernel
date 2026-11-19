@@ -71,13 +71,14 @@ if (runs.length === 0) {
 
 // 只汇总最近一条记录所属的同一配置组，避免把不同套件、模型或代码提交混成一个成绩。
 const latest = runs.at(-1);
-const selectedSuiteVersion = latest.suiteVersion ?? "legacy";
-const selectedModel = latest.model ?? "unknown";
-const selectedCommit = latest.commit ?? "unknown";
+const selectedSuiteVersion =
+  typeof latest.suiteVersion === "string" && latest.suiteVersion.length > 0 ? latest.suiteVersion : "legacy";
+const selectedModel = typeof latest.model === "string" && latest.model.length > 0 ? latest.model : "unknown";
+const selectedCommit = typeof latest.commit === "string" && latest.commit.length > 0 ? latest.commit : "unknown";
 const sameConfiguration = (run) =>
-  String(run.suiteVersion ?? "legacy") === String(selectedSuiteVersion) &&
-  (run.model ?? "unknown") === selectedModel &&
-  (run.commit ?? "unknown") === selectedCommit;
+  (typeof run.suiteVersion === "string" && run.suiteVersion.length > 0 ? run.suiteVersion : "legacy") === selectedSuiteVersion &&
+  (typeof run.model === "string" && run.model.length > 0 ? run.model : "unknown") === selectedModel &&
+  (typeof run.commit === "string" && run.commit.length > 0 ? run.commit : "unknown") === selectedCommit;
 const matchingRuns = runs.filter(sameConfiguration);
 const skippedConfigurations = runs.length - matchingRuns.length;
 if (skippedConfigurations > 0) {
