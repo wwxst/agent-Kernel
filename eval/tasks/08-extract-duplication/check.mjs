@@ -37,6 +37,11 @@ function returnedHelperCall(callable) {
   return statement.expression;
 }
 
+function firstParameterName(callable) {
+  const parameter = callable.parameters?.[0];
+  return parameter && ts.isIdentifier(parameter.name) ? parameter.name.text : undefined;
+}
+
 function hasLocalHelper(sourceFile, name) {
   return sourceFile.statements.some((statement) => {
     if (ts.isFunctionDeclaration(statement)) return statement.name?.text === name;
@@ -70,10 +75,17 @@ export default async function check(root) {
   assert.notEqual(helperName, "validateName");
   assert.notEqual(helperName, "validateTitle");
   assert.ok(hasLocalHelper(parsed, helperName), "共享校验函数必须在 validate.mjs 中真实定义");
-  assert.ok(nameCall.arguments.length >= 2 && ts.isStringLiteral(nameCall.arguments[1]) &&
-    nameCall.arguments[1].text === "name", "validateName 必须把 name 标签交给共享函数");
-  assert.ok(titleCall.arguments.length >= 2 && ts.isStringLiteral(titleCall.arguments[1]) &&
-    titleCall.arguments[1].text === "title", "validateTitle 必须把 title 标签交给共享函数");
+  const nameParameter = firstParameterName(validateName);
+  const titleParameter = firstParameterName(validateTitle);
+  assert.ok(nameParameter && titleParameter, "两个导出函数都必须接收待校验的值");
+  assert.ok(nameCall.arguments.some((argument) => ts.isIdentifier(argument) && argument.text === nameParameter),
+    "共享函数必须收到 validateName 的原始参数");
+  assert.ok(nameCall.arguments.some((argument) => ts.isStringLiteralLike(argument) && argument.text === "name"),
+    "validateName 必须把 name 标签交给共享函数");
+  assert.ok(titleCall.arguments.some((argument) => ts.isIdentifier(argument) && argument.text === titleParameter),
+    "共享函数必须收到 validateTitle 的原始参数");
+  assert.ok(titleCall.arguments.some((argument) => ts.isStringLiteralLike(argument) && argument.text === "title"),
+    "validateTitle 必须把 title 标签交给共享函数");
 
   const { validateName: checkName, validateTitle: checkTitle } =
     await importTaskModule(pathToFileURL(path.join(root, "validate.mjs")).href, "validate.mjs");
