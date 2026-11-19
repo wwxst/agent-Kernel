@@ -9,7 +9,7 @@
  *   - Task 17：允许额外测试，同时用变异实现验证测试确实能抓住回归。
  *   - Task 19：验证 guard clause 结构和权限判断行为。
  *
- * 模块关系：依赖 eval/tasks/*/check.mjs、TypeScript AST 与 Node 内置模块；由 npm test 启动。
+ * 模块关系：依赖 eval/tasks/<task>/check.mjs、TypeScript AST 与 Node 内置模块；由 npm test 启动。
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
