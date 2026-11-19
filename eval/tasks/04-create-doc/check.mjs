@@ -3,13 +3,7 @@ import path from "node:path";
 import { readTaskFile, readTaskJson } from "../../checker-helpers.mjs";
 
 export default async function check(root) {
-  let usage;
-  try {
-    usage = await readTaskFile(path.join(root, "docs", "usage.md"), "docs/usage.md");
-  } catch (error) {
-    if (error?.code === "ENOENT") assert.fail("docs/usage.md 不存在");
-    throw error;
-  }
+  const usage = await readTaskFile(path.join(root, "docs", "usage.md"), "docs/usage.md");
   assert.equal(usage.split(/\r?\n/, 1)[0], "# 用法", "docs/usage.md 的第一行必须是 # 用法");
 
   const pkg = await readTaskJson(path.join(root, "package.json"), "package.json");
