@@ -30,7 +30,7 @@
 1. 复现问题，找到真正负责的模块和已有测试缝。
 2. 说明问题原因、准备改哪些地方，以及明确不改哪些地方。
 3. 先补回归测试，再做最小修改；如果现有测试已经准确覆盖问题，不重复造测试。
-4. 运行相关测试，再运行 `npm run check` 和 `npm run eval:check`（涉及代码时）。
+4. 运行相关测试，再运行 `npm run check`、`npm run architecture:check` 和 `npm run eval:check`（涉及代码时）。
 5. 检查完整 diff、相邻功能和文档影响。
 6. 汇报原因、修改、验证结果，以及没有验证的部分。
 
@@ -71,6 +71,7 @@
 | --- | --- | --- |
 | 相关单元 / 集成测试 | 本次涉及的行为符合预期 | 每次代码修改 |
 | `npm run check` | TypeScript 检查和全部确定性测试通过 | 代码修改完成后 |
+| `npm run architecture:check` | `src/` 的模块依赖没有违反架构边界 | 每次代码修改及 PR |
 | `npm run eval:check` | 评测任务初始状态有效，检查器没有明显失效 | 修改评测或 Agent 能力后；常规代码交付也应执行 |
 | `npm run eval` | 真实模型完成任务的情况、请求数、工具调用、Token 和耗时 | 提示词、工具说明、模型交互或 Agent 能力发生变化时，按需执行 |
 | GitHub Actions | Linux、Windows、macOS 上的自动化检查 | PR 自动执行 |
