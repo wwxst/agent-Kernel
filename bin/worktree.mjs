@@ -16,7 +16,7 @@
  * 模块关系：只依赖 Node.js 内置模块和 Git CLI；由 package.json 的 worktree script 启动。
  */
 import { createHash } from "node:crypto";
-import { lstat, mkdir } from "node:fs/promises";
+import { lstat, mkdir, realpath } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -78,6 +78,31 @@ async function listWorktrees(root) {
   return parseWorktrees(result.stdout);
 }
 
+async function ensureWorktreesDirectory(root) {
+  const directory = path.join(root, ".worktrees");
+
+  // 不跟随符号链接，避免用户把 .worktrees 指向仓库外部后意外在外部创建目录。
+  try {
+    await mkdir(directory);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
+  }
+
+  const info = await lstat(directory);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`.worktrees 必须是当前工作区内的普通目录，拒绝使用：${directory}`);
+  }
+
+  const realRoot = await realpath(root);
+  const realDirectory = await realpath(directory);
+  const relative = path.relative(realRoot, realDirectory);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`.worktrees 解析到了当前工作区之外，拒绝创建：${realDirectory}`);
+  }
+
+  return directory;
+}
+
 function displayBranch(entry) {
   if (entry.branch?.startsWith("refs/heads/")) return entry.branch.slice("refs/heads/".length);
   return entry.detached ? "(detached HEAD)" : "(unknown)";
@@ -110,10 +135,9 @@ async function createWorktree(root, branch, baseRef = "HEAD") {
 
   const safeSlug = (branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "worktree").slice(0, 60);
   const suffix = createHash("sha256").update(branch).digest("hex").slice(0, 8);
-  const worktreesDir = path.join(root, ".worktrees");
+  const worktreesDir = await ensureWorktreesDirectory(root);
   const target = path.join(worktreesDir, `${safeSlug}-${suffix}`);
 
-  await mkdir(worktreesDir, { recursive: true });
   try {
     await lstat(target);
     throw new Error(`目标目录已存在，不会覆盖：${target}`);
