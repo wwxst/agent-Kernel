@@ -9,7 +9,7 @@
  *
  * 安全边界：
  *   - 所有新工作区放在当前调用者 Worktree 根目录的 .worktrees/ 下。
- *   - 以 Git common-dir 定位主仓库，所以从任一 linked worktree 调用也会放到同一个位置。
+ *   - 以调用命令的 Worktree 根目录作为创建位置和默认 HEAD 来源，不猜测 Git 元数据目录的父目录。
  *   - 有未提交、未跟踪或被忽略的文件时拒绝删除，避免丢失 .env / node_modules 等本地数据。
  *   - 不执行 branch -D、reset、clean、stash、rebase 或自动合并。
  *
