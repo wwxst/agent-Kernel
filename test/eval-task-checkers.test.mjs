@@ -144,6 +144,10 @@ test("评测题 05：TAX_RATE 必须是真正使用的 const，不能只放一�
     await writeFile(path.join(root, "calc.mjs"), good);
     await assert.doesNotReject(() => checkExtractConstant(root));
 
+    // 0.20 与 0.2 数值相同，不应因为小数写法不同而误判。
+    await writeFile(path.join(root, "calc.mjs"), good.replace("TAX_RATE = 0.2", "TAX_RATE = 0.20"));
+    await assert.doesNotReject(() => checkExtractConstant(root));
+
     const unused = [
       "const TAX_RATE = 0.2;",
       "export function withTax(price) { return Math.round(price * 1.2 * 100) / 100; }",
