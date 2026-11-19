@@ -48,6 +48,9 @@ const resultsDir = path.join(here, "results");
 /** 未处理的 rejection 最多等这么久再结算；检查器里的后台任务通常在这之前就会炸。 */
 const INFRA_SETTLE_MS = 20;
 
+// 修改任务提示、夹具或检查器的验收语义时递增；不同版本的成绩不能直接混算。
+export const EVAL_SUITE_VERSION = 2;
+
 /** 直接运行检测比较真实路径，避免 macOS 的 /var 与 /private/var 等符号链接别名造成漏判。 */
 function sameFilePath(left, right) {
   try {
@@ -163,6 +166,7 @@ export function summarize({ results, elapsed, model, commit, infra }) {
 
   return {
     at: new Date().toISOString(),
+    suiteVersion: EVAL_SUITE_VERSION,
     model,
     commit,
     ok: infra.length === 0 && passed === results.length,
