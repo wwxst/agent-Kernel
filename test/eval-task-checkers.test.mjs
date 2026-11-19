@@ -365,7 +365,7 @@ test("评测题 19：行为正确之外，还必须把嵌套 if 改成 guard cla
       "}",
       "",
     ].join("\n"));
-    await assert.rejects(() => checkBannedAdminBug(root), /每个 if 必须提前 return/);
+    await assert.rejects(() => checkBannedAdminBug(root), /每个 if 都必须提前 return/);
 
     await writeFile(path.join(root, "access.mjs"), [
       "export function canEdit(user, doc) {",
