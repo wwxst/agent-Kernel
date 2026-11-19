@@ -158,16 +158,12 @@ async function removeWorktree(root, branch) {
 
   const target = path.resolve(entry.path);
   if (target === path.resolve(root)) {
-    throw new Error("这是主工作区，不能通过 Worktree 工具删除");
-  }
-  const currentTopLevel = path.resolve((await git(["rev-parse", "--show-toplevel"], process.cwd())).stdout.trim());
-  if (target === currentTopLevel) {
-    throw new Error("不能删除当前正在使用的工作区，请从另一个 Worktree 执行");
+    throw new Error("这是当前正在使用的工作区（主工作区或 linked worktree），不能删除");
   }
 
   // assume-unchanged / skip-worktree 会让普通 git status 隐藏 tracked file 的本地修改。
   // 为避免误删这类文件，遇到任何非普通 H 索引标记时保守拒绝删除。
-  const indexEntries = (await git(["ls-files", "-v", "-z"], target)).stdout.split("\\0").filter(Boolean);
+  const indexEntries = (await git(["ls-files", "-v", "-z"], target)).stdout.split(String.fromCharCode(0)).filter(Boolean);
   const specialIndexEntries = indexEntries.filter((entry) => entry[0] !== "H");
   if (specialIndexEntries.length > 0) {
     throw new Error(`索引中存在 assume-unchanged、skip-worktree 或其他特殊标记，拒绝删除：${target}`);
