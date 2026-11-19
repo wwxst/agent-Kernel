@@ -182,7 +182,7 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
       'function checkTitle(title) { return validateText("title", title); }',
       "export { checkName as validateName, checkTitle as validateTitle };",
       "",
-    ].join("\\n"));
+    ].join("\n"));
     await assert.doesNotReject(() => checkExtractDuplication(root));
 
     await writeFile(path.join(root, "validate.mjs"), [
