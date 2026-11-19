@@ -17,8 +17,8 @@
  *     内部有原子替换、路径解析、输出截断、进程树清理。
  *   - `createWorkspaceTools()`：把上面这些方法翻译成模型能调用的九个工具（含英文说明书）；
  *     文件类工具声明 `strictArguments`，参数写错直接报错而不是被静默忽略。
- *   - `WorkspaceOptions` / `ReadOptions` / `GrepOptions` / `BackgroundJob`：构造参数、read 的行窗口、
- *     grep 选项、后台任务登记。
+ *   - `WorkspaceOptions` / `ReadOptions` / `GrepOptions` / `BackgroundJob` / `JobOutput`：构造参数、
+ *     read 的行窗口、grep 选项、后台任务登记、一次后台读取的结构化结果（含「是否有效等待」）。
  *   - `RegexGrep`：grep 的正则匹配线程客户端，超时或取消就 terminate。
  *   - 导出的小工具：`fillBuffer()` 读满缓冲区、`terminateTree()` 收进程树。
  *   - 常量区：各类上限（读、输出、扫描、行宽、结果数）、超时、后台任务日志目录与轮询间隔。
@@ -315,6 +315,34 @@ export interface ReadOptions {
   limitBytes?: number;
 }
 
+/** 后台任务的生命周期状态。`unverified` 表示停过，但无法确认整棵进程树已经退出。 */
+export type JobStatus = "running" | "exited" | "killed" | "unverified";
+
+/**
+ * 一次后台读取的结果，交给 `shell-output` 转成宿主侧状态。
+ *
+ * 为什么不是一个字符串：调用方需要知道「这次到底算不算一次等待」，
+ * 而这件事只有读取现场知道。让调用方去解析状态行文本，会把命令内容、
+ * 文案格式都变成隐式契约 —— 命令里碰巧出现同样的字样就会误判。
+ */
+export interface JobOutput {
+  /** 给模型的文本：状态行 + 本次新输出（或「没有新输出」）。 */
+  content: string;
+  /** 读取时的任务状态。 */
+  status: JobStatus;
+  /** 本次是否拿到了新输出。 */
+  hasNewOutput: boolean;
+  /** 本次真正进入轮询等待的毫秒数；`wait: 0` 恒为 0。 */
+  waitedMs: number;
+  /**
+   * 有效等待：本次确实等待过、没有新输出、任务仍在运行。
+   *
+   * 三个条件缺一不可：没等过（`wait: 0`）不是等待，拿到新输出是进展，
+   * 任务已经结束则不该再等。只有这种结果才允许 Agent 豁免重复批次检测。
+   */
+  isWaiting: boolean;
+}
+
 /**
  * 一个后台任务：进程本身、它的日志文件、以及「已经交给模型多少字节」。
  *
@@ -329,7 +357,7 @@ interface BackgroundJob {
   logPath: string;
   /** 已返回给模型的字节偏移。 */
   cursor: number;
-  status: "running" | "exited" | "killed" | "unverified";
+  status: JobStatus;
   exitCode: number | null;
   error?: string;
 }
@@ -1107,15 +1135,21 @@ ${command}`;
    *   - **带状态**：第一行永远是「还在跑 / 退出了，exit N / 被我停了」，否则模型会把
    *     「服务已经崩了」看成「服务还没输出」。
    *
+   * 除了文本，还返回结构化状态（`isWaiting` / `hasNewOutput` / `status`）：
+   * 「这次算不算一次有效等待」由读取现场决定，调用方不用读文本猜。
+   *
    * wait 期间只能轮询：日志是普通文件，没有事件可订阅。
    */
-  async readJobOutput(jobId: string, waitMs = 0): Promise<string> {
+  async readJobOutput(jobId: string, waitMs = 0): Promise<JobOutput> {
     const job = this.job(jobId);
     const budget = Math.min(Math.max(waitMs, 0), MAX_JOB_WAIT_MS);
     const shouldWait = budget > 0;
     const deadline = Date.now() + budget;
+    const startedAt = Date.now();
 
     let text = "";
+    // 只有真的睡过轮询间隔才算「等待过」：`wait: 0` 立即返回，不能冒充等待。
+    let waited = false;
     for (;;) {
       if (this.signal?.aborted) throw new Error("cancelled by signal");
       const size = await this.jobLogSize(job);
@@ -1128,11 +1162,19 @@ ${command}`;
       // 进程已经不在了就没什么可等的；再等下去只是把 Step 拖长。
       if (!shouldWait || job.status !== "running") break;
       if (Date.now() >= deadline) break;
+      waited = true;
       await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
     }
 
     const header = this.jobHeader(job);
-    if (text === "") return `${header}\n(no new output)`;
+    const hasNewOutput = text !== "";
+    // 三个条件缺一不可：等过、没新输出、还在跑。任务结束或有新输出都是「该继续走循环」的信号。
+    const isWaiting = waited && !hasNewOutput && job.status === "running";
+    const waitedMs = waited ? Date.now() - startedAt : 0;
+
+    if (!hasNewOutput) {
+      return { content: `${header}\n(no new output)`, status: job.status, hasNewOutput, waitedMs, isWaiting };
+    }
 
     const characters = Array.from(text);
     let shown = text;
@@ -1146,7 +1188,7 @@ ${command}`;
     }
     job.cursor += Buffer.byteLength(shown);
 
-    return `${header}\n${shown}${tail}`;
+    return { content: `${header}\n${shown}${tail}`, status: job.status, hasNewOutput, waitedMs, isWaiting };
   }
 
   /** 从 cursor 开始读到 size，只返回完整的 UTF-8 字符；末尾被切断的那截不消费。 */
@@ -2097,13 +2139,6 @@ const SEARCH_PATH_DESCRIPTION =
   "File or directory to search: a directory is searched recursively, a single file only itself. " +
   "Relative paths resolve from the workspace root; absolute paths and ../ are allowed. Defaults to the workspace root.";
 
-/** shell-output 的 running 状态允许 Agent 继续等待，最终状态仍由下一次读取确认。 */
-function isRunningJobOutput(content: string): boolean {
-  const newline = content.indexOf("\n");
-  const firstLine = newline === -1 ? content : content.slice(0, newline);
-  return /^job-[^\s]+ \(running, pid [^)]+\) ran: /.test(firstLine);
-}
-
 export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
@@ -2349,11 +2384,13 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         required: ["job_id"],
       },
       run: async (args) => {
-        const content = await workspace.readJobOutput(
+        const output = await workspace.readJobOutput(
           String(args.job_id),
           typeof args.wait === "number" ? Math.min(60_000, Math.max(0, args.wait)) : 0,
         );
-        return { content, isError: false, ...(isRunningJobOutput(content) ? { isWaiting: true } : {}) };
+        // 等待状态来自读取现场的结构化结果，不从文本里猜：
+        // wait: 0 立即返回、拿到新输出、任务已结束，三种情况都不是有效等待。
+        return { content: output.content, isError: false, ...(output.isWaiting ? { isWaiting: true } : {}) };
       },
     },
     {

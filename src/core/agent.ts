@@ -6,7 +6,8 @@
  * 同时只允许一个 Run，返回的消息与统计都是副本，宿主不能改写已确认的会话状态。
  *
  * 文件职责：负责循环、消息顺序与 id 配对、三类预算（步数 / 工具调用 / token）、
- * 构造期参数校验、无进展循环检测（稳定结果连续重复就停手，工具报告的等待状态交给步数闸门）、
+ * 构造期参数校验、无进展循环检测（稳定结果连续重复就停手；只有整批都是「有效等待」才豁免，
+ * 且最终仍由步数闸门兜底）、
  * 会话生命周期、用量记账，以及把事件通知给界面（观察者抛异常只计数，不打断任务）。
  * 每步委托 SessionContext 准备可发送的上下文，在服务端报告窗口超限时请求一次恢复。
  *
@@ -81,6 +82,18 @@ function toolBatchSignature(calls: readonly ToolCall[]): string {
     call.function.name,
     canonicalizeArguments(call.function.arguments),
   ]));
+}
+
+/**
+ * 两批工具结果是否逐条相同：内容、错误状态、等待状态都一致才算「没有进展」。
+ *
+ * 比较的是宿主侧结果，不是模型看到的文本：只有这里才知道一次读取是「有效等待」还是「普通稳定输出」。
+ */
+function sameToolResults(left: readonly ToolExecutionResult[], right: readonly ToolExecutionResult[]): boolean {
+  return left.length === right.length && left.every((result, index) => {
+    const other = right[index];
+    return result.content === other.content && result.isError === other.isError && result.isWaiting === other.isWaiting;
+  });
 }
 
 /** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */
@@ -240,29 +253,44 @@ class RunState {
   private lastToolBatch?: {
     signature: string;
     results: readonly ToolExecutionResult[];
+    /**
+     * 连续相同批次里「没有进展」的次数。有效等待的批次不计数 ——
+     * 等后台任务不是原地打转，但也不能把之前的计数清零。
+     */
     repetitions: number;
-    waiting: boolean;
+    /**
+     * 这串连续相同批次是否每一批都是有效等待。一旦混进非等待批次就永久为 false，
+     * 豁免随即失效，不会因为后面又出现一次等待而恢复。
+     */
+    allWaiting: boolean;
   };
 
   /** 只有完整批次才记录。直接比较文本和状态，避免把整批大结果再序列化一份。 */
   recordToolBatch(signature: string, results: readonly ToolExecutionResult[], waiting: boolean): void {
     const previous = this.lastToolBatch;
-    // 签名包含有序调用列表，相同签名的完整批次必有同样数量的结果。
-    const repeated = previous?.signature === signature && results.every((result, index) => {
-      const last = previous.results[index];
-      return result.content === last.content && result.isError === last.isError && result.isWaiting === last.isWaiting;
-    });
-    this.lastToolBatch = {
-      signature,
-      results,
-      repetitions: repeated ? previous.repetitions + 1 : 1,
-      waiting,
-    };
+    if (previous !== undefined && previous.signature === signature && sameToolResults(previous.results, results)) {
+      this.lastToolBatch = {
+        signature,
+        results,
+        repetitions: waiting ? previous.repetitions : previous.repetitions + 1,
+        allWaiting: previous.allWaiting && waiting,
+      };
+      return;
+    }
+    this.lastToolBatch = { signature, results, repetitions: waiting ? 0 : 1, allWaiting: waiting };
   }
 
+  /**
+   * 是否该在执行前拦下这一批：上一批同签名、同结果，且不构成有效等待。
+   *
+   * 有效等待的重复是正常轮询（后台任务还没输出），交给 maxSteps 兜底；
+   * 只要链上出现过普通批次，豁免就失效，重复三次仍然会被拦下。
+   */
   shouldStopToolBatch(signature: string): boolean {
     const last = this.lastToolBatch;
-    return last?.signature === signature && !last.waiting && last.repetitions >= MAX_IDENTICAL_TOOL_BATCHES;
+    if (last === undefined || last.signature !== signature) return false;
+    if (last.allWaiting) return false;
+    return last.repetitions >= MAX_IDENTICAL_TOOL_BATCHES;
   }
 }
 
@@ -648,8 +676,9 @@ export class Agent {
     }
 
     // 预算和最后一步的失败原因优先；稳定结果重复才算无进展。
-    // 工具明确报告仍在等待时，重复调用是等待中的有效动作，
+    // 整批都是「有效等待」（真的等过、没有新输出、任务仍在运行）时，重复调用是等待中的有效动作，
     // 让它继续到状态变化或 maxSteps 兜底，避免第四次读取恰好早于任务完成。
+    // 判定用的是工具给出的结构化状态，不是结果文本 —— 文本里出现同样的字样不能换来豁免。
     const batchSignature = toolBatchSignature(calls);
     if (this.currentRun.shouldStopToolBatch(batchSignature)) {
       this.skipCalls(calls, "repeated identical tool batch made no progress");
@@ -693,8 +722,11 @@ export class Agent {
       }
       batchResults.push(outcome);
     }
-    const waitingForProgress = batchResults.every(result => !result.isError && result.isWaiting === true);
-    this.currentRun.recordToolBatch(batchSignature, batchResults, waitingForProgress);
+    // 只有整批都是有效等待才豁免：任何一个工具是普通结果（包括 wait: 0 的立即读取、
+    // 拿到新输出、任务已结束），这一批就按普通结果参与无进展判定。
+    const allWaiting = batchResults.length > 0 &&
+      batchResults.every(result => !result.isError && result.isWaiting === true);
+    this.currentRun.recordToolBatch(batchSignature, batchResults, allWaiting);
   }
 
   private async runLoop(task: string): Promise<Message> {
