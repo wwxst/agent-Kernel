@@ -1030,7 +1030,8 @@ test("HTTP 401 不重试；收到取消时等待退避会立即停手", async ()
     maxModelRetries: 5,
     onRetry: () => controller.abort(new Error("stop during backoff")),
   });
-  await assert.rejects(interrupted.run("hello"));
+  // 退避期间取消也要走同一个取消出口：带上 signal 上的原因，而不是裸的 AbortError。
+  await assert.rejects(interrupted.run("hello"), /cancelled: stop during backoff/);
   assert.equal(networkCalls, 1, "取消后不得发起第二次请求");
   assert.equal(interrupted.stats.requests, 1);
   assert.equal(interrupted.retryAttempts, 0, "等待期间取消尚未发出的重试不得计数");

@@ -635,7 +635,14 @@ export class Agent {
         networkRetries++;
         this.notifyObserver(this.onRetry, error, networkRetries, this.maxModelRetries);
         // Ctrl-C 必须能中断退避，不再发新的模型请求。
-        await sleep(Math.min(100 * 2 ** (networkRetries - 1), 800), undefined, { signal: this.signal });
+        // 退避期间取消时 sleep 抛的是裸 AbortError（"The operation was aborted"），
+        // signal 上的原因会丢；先过取消出口，CLI 才说得出是被什么停掉的。
+        try {
+          await sleep(Math.min(100 * 2 ** (networkRetries - 1), 800), undefined, { signal: this.signal });
+        } catch (error) {
+          this.stopIfCancelled();
+          throw error;
+        }
       }
     }
 
