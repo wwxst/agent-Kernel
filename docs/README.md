@@ -30,6 +30,9 @@
 
 ### 想改代码
 
+- [研发流程](./development-workflow.md)：任务分类、方案确认、实现、验证、Review 和交付。
+- [Spec 模板](./agents/spec-template.md)：新功能和架构改造的设计、范围与验收模板。
+- [本地任务管理](./agents/issue-tracker.md)：`.scratch/` 的 Spec 和任务拆分约定。
 - [AGENTS.md](../AGENTS.md)：AI / 开发者执行规则。
 - [CODING_STANDARDS.md](../CODING_STANDARDS.md)：编码规范。
 - [GLOSSARY.md](../GLOSSARY.md)：统一术语。
@@ -53,6 +56,8 @@
 | `docs/architecture.md` | 当前真实架构 |
 | `docs/configuration.md` | 配置和启动 |
 | `docs/tui.md` | TUI 使用和设计边界 |
+| `docs/development-workflow.md` | 研发流程 |
+| `docs/agents/spec-template.md` | 功能设计模板 |
 | `docs/design/` | 稳定设计原则 |
 | `docs/contracts/` | 行为契约 |
 | `docs/adr/` | 为什么这么设计 |
