@@ -28,6 +28,7 @@ async function withProject(files, run) {
         module: "NodeNext",
         moduleResolution: "NodeNext",
         target: "ES2023",
+        noEmit: true,
         allowImportingTsExtensions: true,
       },
     }));
