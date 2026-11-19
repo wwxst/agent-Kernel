@@ -217,6 +217,25 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
     ].join("\n"));
     await assert.doesNotReject(() => checkExtractDuplication(root));
 
+    // 反例：虽然两个导出函数调用了同一个 helper，但 helper 内部仍按 name/title 复制了两套校验。
+    await writeFile(path.join(root, "validate.mjs"), [
+      "function validateText(value, label) {",
+      '  if (label === "name") {',
+      '    if (typeof value !== "string") return "name must be a string";',
+      '    if (value.trim() === "") return "name must not be empty";',
+      '    if (value.length > 40) return "name must be at most 40 chars";',
+      "  }",
+      '  if (typeof value !== "string") return "title must be a string";',
+      '  if (value.trim() === "") return "title must not be empty";',
+      '  if (value.length > 40) return "title must be at most 40 chars";',
+      "  return null;",
+      "}",
+      'export function validateName(name) { return validateText(name, "name"); }',
+      'export function validateTitle(title) { return validateText(title, "title"); }',
+      "",
+    ].join("\n"));
+    await assert.rejects(() => checkExtractDuplication(root), /类型检查必须只实现一次/);
+
     await writeFile(path.join(root, "validate.mjs"), [
       "function validateText() { return null; }",
       'export function validateName(name) { if (typeof name !== "string") return "name must be a string"; if (name.trim() === "") return "name must not be empty"; if (name.length > 40) return "name must be at most 40 chars"; return null; }',
@@ -245,6 +264,20 @@ test("评测题 09：命令表必须在命令章节内，并保留 README 原有
     ].join("\n");
     await writeFile(path.join(root, "README.md"), good);
     await assert.doesNotReject(() => checkUpdateReadme(root));
+
+    // 反例：不能通过删掉 package.json 里的脚本，再同步删掉 README 表格行来缩小任务。
+    const packagePath = path.join(root, "package.json");
+    const originalPackage = await readFile(packagePath, "utf8");
+    const reducedPackage = JSON.parse(originalPackage);
+    delete reducedPackage.scripts.lint;
+    delete reducedPackage.scripts.build;
+    await writeFile(packagePath, JSON.stringify(reducedPackage, null, 2));
+    await writeFile(path.join(root, "README.md"), good
+      .replace("| `npm run lint` | 检查代码 |\n", "")
+      .replace("| `npm run build` | 构建项目 |\n", ""));
+    await assert.rejects(() => checkUpdateReadme(root), /原有 npm script 被删除/);
+    await writeFile(packagePath, originalPackage);
+    await writeFile(path.join(root, "README.md"), good);
 
     await writeFile(path.join(root, "README.md"), good.replace("一个用来练手的小仓库。", "fixture"));
     await assert.rejects(() => checkUpdateReadme(root), /README 原有标题和介绍/);
