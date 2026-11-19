@@ -234,7 +234,7 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
       'export function validateTitle(title) { return validateText(title, "title"); }',
       "",
     ].join("\n"));
-    await assert.rejects(() => checkExtractDuplication(root), /类型检查必须只实现一次/);
+    await assert.rejects(() => checkExtractDuplication(root), /三种规则都必须只实现一次/);
 
     await writeFile(path.join(root, "validate.mjs"), [
       "function validateText() { return null; }",
