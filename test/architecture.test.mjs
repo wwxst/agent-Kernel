@@ -60,11 +60,11 @@ test("架构检查：允许各模块依赖 protocol、模块内部依赖和 UI �
       "export const render = (message: Message) => agent(message);",
     ].join("\n"),
     "src/cli.ts": [
-      'import "../core/agent.ts";',
-      'import "../tools/workspace.ts";',
-      'import "../model/llm.ts";',
-      'import "../ui/tui.ts";',
-      'import "../protocol/types.ts";',
+      'import "./core/agent.ts";',
+      'import "./tools/workspace.ts";',
+      'import "./model/llm.ts";',
+      'import "./ui/tui.ts";',
+      'import "./protocol/types.ts";',
     ].join("\n"),
   }, async (root) => {
     const result = await checkArchitecture(root);
