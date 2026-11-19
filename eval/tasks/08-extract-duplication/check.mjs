@@ -4,25 +4,60 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 import { importTaskModule, readTaskFile } from "../../checker-helpers.mjs";
 
-function hasExportModifier(node) {
-  return node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+function isCallable(node) {
+  return ts.isFunctionDeclaration(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isFunctionExpression(node);
 }
 
-function findExportedCallable(sourceFile, name) {
+function findLocalCallable(sourceFile, localName) {
   for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name && hasExportModifier(statement)) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === localName) {
       return statement;
     }
-    if (ts.isVariableStatement(statement) && hasExportModifier(statement)) {
+    if (ts.isVariableStatement(statement)) {
       const declaration = statement.declarationList.declarations.find(
-        (item) => ts.isIdentifier(item.name) && item.name.text === name,
+        (item) => ts.isIdentifier(item.name) && item.name.text === localName,
       );
-      if (declaration?.initializer &&
-          (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))) {
+      if (declaration?.initializer && isCallable(declaration.initializer)) {
         return declaration.initializer;
       }
     }
   }
+  return undefined;
+}
+
+function findExportedCallable(sourceFile, exportedName) {
+  // 形式一：export function validateName() {} / export const validateName = () => {}
+  const inline = findLocalCallable(sourceFile, exportedName);
+  if (inline) {
+    const declaration = sourceFile.statements.find((statement) =>
+      (ts.isFunctionDeclaration(statement) && statement.name?.text === exportedName) ||
+      (ts.isVariableStatement(statement) &&
+        statement.declarationList.declarations.some(
+          (item) => ts.isIdentifier(item.name) && item.name.text === exportedName,
+        )),
+    );
+    if (declaration?.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+      return inline;
+    }
+  }
+
+  // 形式二：function validateName() {} ; export { validateName }
+  // 同时支持 export { localName as validateName }，但最终导出的名字必须保持不变。
+  for (const statement of sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement) || !statement.exportClause ||
+        !ts.isNamedExports(statement.exportClause) || statement.moduleSpecifier) {
+      continue;
+    }
+    const specifier = statement.exportClause.elements.find(
+      (item) => item.name.text === exportedName,
+    );
+    if (!specifier) continue;
+    const localName = specifier.propertyName?.text ?? specifier.name.text;
+    return findLocalCallable(sourceFile, localName);
+  }
+
   return undefined;
 }
 
@@ -43,16 +78,7 @@ function firstParameterName(callable) {
 }
 
 function hasLocalHelper(sourceFile, name) {
-  return sourceFile.statements.some((statement) => {
-    if (ts.isFunctionDeclaration(statement)) return statement.name?.text === name;
-    if (ts.isVariableStatement(statement)) {
-      return statement.declarationList.declarations.some(
-        (item) => ts.isIdentifier(item.name) && item.name.text === name &&
-          item.initializer && (ts.isArrowFunction(item.initializer) || ts.isFunctionExpression(item.initializer)),
-      );
-    }
-    return false;
-  });
+  return Boolean(findLocalCallable(sourceFile, name));
 }
 
 export default async function check(root) {
