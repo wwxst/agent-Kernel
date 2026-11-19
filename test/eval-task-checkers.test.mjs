@@ -16,7 +16,7 @@ import { spawnSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { test } from "node:test";
 import checkFixFailingTest from "../eval/tasks/02-fix-failing-test/check.mjs";
 import checkRenameFunction from "../eval/tasks/03-rename-function/check.mjs";
@@ -27,6 +27,7 @@ import checkUpdateReadme from "../eval/tasks/09-update-readme/check.mjs";
 import checkDeleteDeadCode from "../eval/tasks/10-delete-dead-code/check.mjs";
 import checkWriteMissingTest from "../eval/tasks/17-write-missing-test/check.mjs";
 import checkBannedAdminBug from "../eval/tasks/19-banned-admin-bug/check.mjs";
+import { importTaskModule, readTaskFile, readTaskJson } from "../eval/checker-helpers.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 
@@ -45,6 +46,24 @@ async function withTaskFiles(name, run) {
     return run(root);
   });
 }
+
+test("评测辅助函数：缺失文件、坏 JSON 和模块加载错误都归为任务断言失败", async () => {
+  await withTempRoot("agent-checker-helper-", async (root) => {
+    await assert.rejects(
+      () => readTaskFile(path.join(root, "missing.txt")),
+      (error) => error?.name === "AssertionError" && error?.code === "ERR_ASSERTION",
+    );
+
+    const invalidJson = path.join(root, "bad.json");
+    await writeFile(invalidJson, "{bad json", "utf8");
+    await assert.rejects(() => readTaskJson(invalidJson), /不是有效 JSON/);
+
+    await assert.rejects(
+      () => importTaskModule(pathToFileURL(path.join(root, "missing.mjs")).href, "missing.mjs"),
+      /无法加载/,
+    );
+  });
+});
 
 test("评测题 02：正确修复通过，但改动原始测试文件会被拒绝", async () => {
   await withTaskFiles("02-fix-failing-test", async (root) => {
