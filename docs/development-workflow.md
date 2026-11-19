@@ -30,7 +30,7 @@
 1. 复现问题，找到真正负责的模块和已有测试缝。
 2. 说明问题原因、准备改哪些地方，以及明确不改哪些地方。
 3. 先补回归测试，再做最小修改；如果现有测试已经准确覆盖问题，不重复造测试。
-4. 运行相关测试，再运行 `npm run check` 和 `npm run eval:check`（涉及代码时）。
+4. 运行相关测试，再运行 `npm run check`、`npm run architecture:check` 和 `npm run eval:check`（涉及代码时）。
 5. 检查完整 diff、相邻功能和文档影响。
 6. 汇报原因、修改、验证结果，以及没有验证的部分。
 
@@ -71,6 +71,7 @@
 | --- | --- | --- |
 | 相关单元 / 集成测试 | 本次涉及的行为符合预期 | 每次代码修改 |
 | `npm run check` | TypeScript 检查和全部确定性测试通过 | 代码修改完成后 |
+| `npm run architecture:check` | `src/` 的模块依赖没有违反架构边界 | 每次代码修改及 PR |
 | `npm run eval:check` | 评测任务初始状态有效，检查器没有明显失效 | 修改评测或 Agent 能力后；常规代码交付也应执行 |
 | `npm run eval` | 真实模型完成任务的情况、请求数、工具调用、Token 和耗时 | 提示词、工具说明、模型交互或 Agent 能力发生变化时，按需执行 |
 | GitHub Actions | Linux、Windows、macOS 上的自动化检查 | PR 自动执行 |
@@ -106,6 +107,7 @@ Reviewer 只检查，不顺手改代码；重点检查：
 ## 8. 分支、并行开发和 Git 操作
 
 - 一个独立任务使用一个分支；需要并行开发时，优先使用独立 Git Worktree。
+- 仓库提供 Worktree 管理命令：`npm run worktree -- create <branch> [base]` 创建，`npm run worktree -- list` 查看，`npm run worktree -- remove <branch>` 删除干净的工作区。新工作区放在**执行命令的当前 Worktree** 的 `.worktrees/` 目录中；默认从当前 Worktree 的 HEAD 创建。删除不会删分支；有未提交、未跟踪、被忽略文件或特殊索引标记时拒绝删除。
 - 多个 Agent 或开发会话不能同时修改同一个工作目录。共享只读资料可以，共享写入目录不可以。
 - 开始前检查工作区状态；发现其他会话的未提交修改时，先保护现场，不覆盖、不清理、不擅自暂存或提交。
 - 不用强制推送、重置、清理或变基来“解决”不清楚的状态。出现冲突先查明归属，再制定方案。

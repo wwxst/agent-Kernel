@@ -13,6 +13,10 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm test` | 全部测试，不需要 API Key、不联网 |
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
+| `npm run architecture:check` | 检查 `src/` 模块依赖方向，不需要 API Key |
+| `npm run worktree -- create <branch> [base]` | 创建独立分支和工作区；默认基于当前 HEAD |
+| `npm run worktree -- list` | 查看所有 Worktree |
+| `npm run worktree -- remove <branch>` | 删除干净的工作区，保留分支；有本地文件或特殊索引标记时拒绝删除 |
 | `npm run agent -- "<task>"` | 真跑一次，需要 `.env` |
 | `npm run agent -- --cwd <dir> "<task>"` | 工作区指向别的目录（等于先 `cd` 再启动），项目本身不用复制过去；优先于 `WORKDIR` |
 | `npm link` → `agent --tui` | 装一次全局命令（同时注册 `agent` 与 `agent-kernel`），之后在任意目录直接开；工作区 = 当前目录，`.env` 从本仓库读（入口 `bin/agent.mjs`） |
@@ -20,7 +24,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- --tui ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色，`AGENT_TUI_THEME=dark/light/ansi` 选配色方案；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
-| `npm run eval:summary` | 汇总最近 3 轮完整评测的通过率、请求数、耗时中位数；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
+| `npm run eval:summary` | 汇总最近 3 轮同一评测套件、模型和 Commit 的完整评测；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
 
 **任务参数是多行文本时，别走 `npm run`。** Windows 上 npm 经 `cmd.exe` 转发参数，内容会断在第一个换行处，而且不报错 —— 模型只收到第一行，看起来像它没听懂你的要求。多行任务直接跑入口：
@@ -76,7 +80,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 - `Agent.run`（用 `test/support/harness.mjs` 里的脚本化 `ChatClient`）：消息顺序、id 配对、三个预算、无进展循环检测（连续相同批次停止且配对完整、结果变化时继续、按 Run 重算）、最后一步、会话生命周期（多 Run、预算按 Run 重算）、取消、token 统计、system 提示动态刷新、`onRequestStart` / `onToolCall` / `onToolResult` 的顺序，以及压缩发生在工具结果被消费之后而不是之前。
 - `test/background-wait.test.mjs`：后台等待这条链的真实装配（真实 Workspace + 真实 shell + 真实 `createWorkspaceTools` / `ToolRegistry` / `Agent`，只有模型是假的）—— `wait: 0` 立即返回不构成等待、重复轮询仍被拦下；真的等到预算用完且没有新输出时才豁免；拿到新输出与任务已结束都不豁免；一批里混进普通工具时整批不豁免；整批都在等待时才继续；有效等待不绕过 `maxSteps`；等待期间取消及时结束且 assistant / tool 配对完整。
-- `test/context-compact.test.mjs`：上下文压缩这一层 —— 短对话不压、工具定义计入体积、字符路径与 token 路径分开、最新批次完整、旧结果先裁、两刀之后引用仍指向完整原文、超大结果先存档再预览、存档失败不做有损替换、旧轮次与单轮多步都能折叠、压缩后 system 里留下可读的存档清单、多次压缩是替换而非追加、摘要为空/不合格/失败/取消都不提交、失败配额按 Run 重算（不会永久关闭压缩）、摘要花掉预算后不再发业务请求、取消时用量只记一次、摘要请求不带工具且单独计数、摘要请求按**序列化后的真实体积**裁剪（转义密集的历史缩短后仍能发出、原文仍可读回）、输出预留为 0 时摘要长度下限仍容得下合法摘要结构、连最小合法摘要都装不下时不发请求并明确失败、`reasoning_content` 不被删、溢出只恢复一次且不重跑工具、压缩后仍装不下的请求不再发送、两个 Agent 互不影响、长任务回放后配对完整且目标仍在。摘要请求的假答复由 `test/support/harness.mjs` 的 `CANNED_SUMMARY` 提供，不消耗脚本项。
+- `test/context-compact.test.mjs`：上下文压缩这一层 —— 短对话不压、工具定义计入体积、字符路径与 token 路径分开、最新批次完整、旧结果先裁、两刀之后引用仍指向完整原文、超大结果先存档再预览、存档失败不做有损替换、没省下空间或存档后立刻取消时回滚刚写的存档、提交阶段抛异常时全不提交且清单与磁盘文件一致、旧轮次与单轮多步都能折叠、压缩后 system 里留下可读的存档清单、摘要以 system 之后的一条 user 消息承载（不进 system、不被当成用户轮次）、多次压缩是替换而非追加、摘要为空/不合格/失败/取消都不提交、失败配额按 Run 重算（不会永久关闭压缩）、摘要花掉预算后不再发业务请求、取消时用量只记一次、摘要请求不带工具且单独计数、摘要请求按**序列化后的真实体积**裁剪（转义密集的历史缩短后仍能发出、原文仍可读回）、输出预留为 0 时摘要长度下限仍容得下合法摘要结构、连最小合法摘要都装不下时不发请求并明确失败、`reasoning_content` 不被删、溢出只恢复一次且不重跑工具、压缩后仍装不下的请求不再发送、两个 Agent 互不影响、长任务回放后配对完整且目标仍在。摘要请求的假答复由 `test/support/harness.mjs` 的 `CANNED_SUMMARY` 提供，不消耗脚本项。
 - `ToolRegistry`：Schema 注册校验、未知工具、坏 JSON、参数类型错误，以及每个失败分支都折成文本；声明了 `strictArguments` 的工具会拒绝未声明的参数（默认仍忽略，`shell` 靠这一点让 Worker 包装层吞掉 `background`）；进程树清理未确认仍抛 `ProcessCleanupError`。
 - `ToolHooks`（`test/tool-hooks.test.mjs`）：三个事件的时机与顺序、前置 Hook 阻止执行且异常时 fail-closed、后置 Hook 抛错不影响工具结果、Hook 拿到副本、九个工作区工具全部经过同一个入口。新增工具不需要在这里加用例 —— 它们走的是同一个 `execute`。
 - `test/tool-log.test.mjs`：内置的工具调用日志 Hook —— 成功/失败各一行（`shell` 非零退出算失败）、超长截断、写失败只提醒一次、被拦下的调用不留记录。
@@ -96,7 +100,7 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 接到任务先按 [docs/development-workflow.md](./docs/development-workflow.md) 判断类型。简单修复可以小步处理；功能开发和架构重构先复制 [Spec 模板](./docs/agents/spec-template.md) 到 `.scratch/<feature>/spec.md`，提交完整方案并得到用户确认后再写功能代码。
 
-并行开发必须使用独立分支或 Git Worktree，不能让多个 Agent 共用一个写入工作目录。Full Access 只说明内核不做运行时权限审批，不代表自动获得 commit、push、merge、rebase、reset、clean 或 stash 的授权；这些操作必须由当前任务明确授权。
+并行开发必须使用独立分支或 Git Worktree，不能让多个 Agent 共用一个写入工作目录。仓库提供 `npm run worktree -- create/list/remove` 管理命令；新 Worktree 放在当前调用工作区的 `.worktrees/` 中，默认基于当前 Worktree 的 HEAD；删除只处理干净且没有特殊索引标记的工作区，不会删除分支。Full Access 只说明内核不做运行时权限审批，不代表自动获得 commit、push、merge、rebase、reset、clean 或 stash 的授权；这些操作必须由当前任务明确授权。
 
 PR 使用 [.github/PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md)，研发流程细节见上面的文档。
 

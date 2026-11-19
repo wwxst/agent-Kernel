@@ -244,7 +244,7 @@ function makeTui({ interactive = false, tty = false, columns = 80, rows = 24, co
 }
 
 const usage = { promptTokens: 10, completionTokens: 2, totalTokens: 12, reported: 2, unknown: 0 };
-const session = { runs: 1, requests: 2, toolCalls: 2, usage };
+const session = { runs: 1, requests: 2, summaryRequests: 0, toolCalls: 2, usage };
 
 test("TUI 配色模式：默认 mono，只保留用户消息任务条的颜色", async (t) => {
   assert.equal(parseTuiColorMode(undefined), "mono");
@@ -927,6 +927,43 @@ test("TUI：状态栏、运行记录、成功/拒绝分类和统计", async (t) 
   assert.match(text, /✗ shell \[failed\] exit 1 …/);
   assert.match(text, /\[stats\] requests=2 tool_calls=2 tokens=12 · task failed/);
   assert.match(text, /\[session\] runs=1 requests=2 tool_calls=2 tokens=12/);
+});
+
+test("TUI：摘要请求单独报数，和 requests 不混在一个数里", async (t) => {
+  // 摘要请求花的是真钱，但不是一个 Step：混进 requests 会让人算错账。
+  // CLI 的 [usage] 早就单独列了 summaries，TUI 这两行不能漏。
+  const ui = makeTui();
+  t.after(() => ui.cleanup());
+
+  const withSummaries = { ...session, requests: 3, summaryRequests: 2, toolCalls: 0 };
+  ui.tui.start();
+  ui.tui.beginTurn("do it");
+  ui.tui.finishAssistant("done");
+  ui.tui.finishTurn(
+    { requests: 3, summaryRequests: 2, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
+    withSummaries,
+    { failed: false },
+  );
+  ui.tui.sessionSummary(withSummaries);
+  await tick();
+
+  const text = ui.text();
+  assert.match(text, /\[stats\] requests=3 summaries=2 tool_calls=0/);
+  assert.match(text, /\[session\] runs=1 requests=3 summaries=2 tool_calls=0/);
+
+  // 为 0 时不显示这个字段：每行都挂一个「summaries=0」只是噪声。
+  const quiet = makeTui();
+  t.after(() => quiet.cleanup());
+  quiet.tui.start();
+  quiet.tui.beginTurn("do it");
+  quiet.tui.finishAssistant("done");
+  quiet.tui.finishTurn(
+    { requests: 1, summaryRequests: 0, toolCalls: 0, usage, tokenBudget: { exceeded: false } },
+    { ...session, requests: 1, summaryRequests: 0 },
+    { failed: false },
+  );
+  await tick();
+  assert.doesNotMatch(quiet.text(), /summaries=/);
 });
 
 test("TUI：模型请求期间显示 thinking，第一段正文前整帧重绘掉", async (t) => {

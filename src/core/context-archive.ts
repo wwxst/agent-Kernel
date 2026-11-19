@@ -9,7 +9,8 @@
  *
  * 内容目录：
  *   - `ContextArchiveRef`：一条存档的引用 —— 编号、绝对路径、字符数。
- *   - `ContextArchive`：一个会话一个实例；`save()` 写入一份原文并返回引用，失败就抛异常。
+ *   - `ContextArchive`：一个会话一个实例；`save()` 写入一份原文并返回引用，失败就抛异常；
+ *     `discard()` 撤回一份没被提交的存档。
  *   - 目录布局：`<root>/<时间戳>-<短随机>/<序号>-<kind>-<id>.txt`。
  *
  * 模块关系：只依赖 Node 内置模块（`node:fs/promises`、`node:path`、`node:crypto`），
@@ -23,7 +24,7 @@
  *   - 单份存档上限由调用方决定；这里不做二次截断 —— 存档的意义就是「完整」。
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import * as path from "node:path";
 
 /** 一条存档的引用。`path` 是绝对路径，模型可以直接 `read` 它，必要时用 offset/limit 分段读。 */
@@ -72,6 +73,24 @@ export class ContextArchive {
     const file = path.join(this.directory, label);
     await writeFile(file, text, { encoding: "utf8", flag: "wx", mode: 0o600 });
     return { id: label, path: file, chars: text.length };
+  }
+
+  /**
+   * 撤回一份刚写下、但最终没有任何消息引用的存档。
+   *
+   * 只在「已经落盘、后来决定不提交」时用：那份原文还在 Transcript 里，存档是多余的副本。
+   * 留着它就成了既不在 system 清单里、也没人指向的孤儿文件 —— 内容却是完整历史
+   * （可能含密钥与源码），按清单清理的人也不会发现它。
+   *
+   * 删除失败不抛：它只是清理。一次「不提交」不该因为清理不成功而变成一次异常。
+   * 序号不回退：编号只要唯一，跳号无妨。
+   */
+  async discard(ref: ContextArchiveRef): Promise<void> {
+    try {
+      await unlink(ref.path);
+    } catch {
+      // 文件已经被清掉、目录被删、权限不足 —— 都只留下一个多余文件，不影响本次决定。
+    }
   }
 
   private async ensureDirectory(): Promise<void> {

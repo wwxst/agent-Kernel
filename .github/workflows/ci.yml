@@ -30,6 +30,9 @@ jobs:
       - name: Run checks
         run: npm run check
 
+      - name: Check architecture boundaries
+        run: npm run architecture:check
+
       # 评测自检也不调用模型：验证每个任务的初始夹具确实会让检查失败。
       - name: Self-check the evaluation set
         run: npm run eval:check
@@ -57,6 +60,9 @@ jobs:
       - name: Run checks
         run: npm run check
 
+      - name: Check architecture boundaries
+        run: npm run architecture:check
+
       - name: Self-check the evaluation set
         run: npm run eval:check
 
@@ -82,6 +88,9 @@ jobs:
 
       - name: Run checks
         run: npm run check
+
+      - name: Check architecture boundaries
+        run: npm run architecture:check
 
       - name: Self-check the evaluation set
         run: npm run eval:check

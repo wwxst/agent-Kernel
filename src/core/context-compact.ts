@@ -214,6 +214,8 @@ export interface RemovableUnit {
  *   - 当前轮里，每个「assistant 带 tool_calls + 紧随其后的完整结果」算一段；
  *   - 尚未配齐的批次（还没跑完）、以及任何含「还没被模型读过」的结果的段，一律不出现 ——
  *     模型没读过的结果不能被折叠，否则它看到的就是自己没读过的内容被摘要掉了。
+ *   - `hostContext` 是宿主注入的上下文（当前就是那份历史摘要）：它不是一轮真实用户发言，
+ *     既不能当成轮次边界，也不能被折进下一份摘要 —— 那会把摘要正文误标成用户原话。
  *
  * 保护按**结果消息对象**判断，不按 `tool_call_id`：id 只保证一次响应内唯一，
  * 后续响应复用同一个 id 时，按 id 判断会把早就读过的旧批次也当成「还没读」，那段历史
@@ -222,11 +224,14 @@ export interface RemovableUnit {
 export function collectRemovableUnits(
   messages: readonly Message[],
   protectedResults?: WeakSet<Message>,
+  hostContext?: Message,
 ): RemovableUnit[] {
   const units: RemovableUnit[] = [];
   const turnStarts: number[] = [];
   for (let index = 1; index < messages.length; index++) {
-    if (messages[index]!.role === "user") turnStarts.push(index);
+    const message = messages[index]!;
+    if (message.role !== "user" || message === hostContext) continue;
+    turnStarts.push(index);
   }
   const currentTurnStart = turnStarts.length === 0 ? 1 : turnStarts[turnStarts.length - 1]!;
 
