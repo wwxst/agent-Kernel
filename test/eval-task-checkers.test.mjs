@@ -170,6 +170,20 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
     ].join("\n"));
     await assert.doesNotReject(() => checkExtractDuplication(root));
 
+    // 合法写法：helper 结果先保存到局部变量，再返回该结果。
+    await writeFile(path.join(root, "validate.mjs"), [
+      "function validateText(value, label) {",
+      '  if (typeof value !== "string") return `${label} must be a string`;',
+      '  if (value.trim() === "") return `${label} must not be empty`;',
+      '  if (value.length > 40) return `${label} must be at most 40 chars`;',
+      "  return null;",
+      "}",
+      'export function validateName(name) { const result = validateText(name, "name"); return result; }',
+      'export function validateTitle(title) { const result = validateText(title, "title"); return result; }',
+      "",
+    ].join("\n"));
+    await assert.doesNotReject(() => checkExtractDuplication(root));
+
     // 合法写法：先定义本地函数，再通过 export list 保留原来的公开名称。
     await writeFile(path.join(root, "validate.mjs"), [
       "function validateText(label, value) {",
@@ -296,6 +310,17 @@ test("评测题 19：行为正确之外，还必须把嵌套 if 改成 guard cla
       "  if (doc.ownerId === user.id) return true;",
       "  return false;",
       "}",
+      "",
+    ].join("\n"));
+    await assert.doesNotReject(() => checkBannedAdminBug(root));
+
+    // 合法写法：公开 API 是 const + arrow function，而不是 function declaration。
+    await writeFile(path.join(root, "access.mjs"), [
+      "export const canEdit = (user, doc) => {",
+      "  if (!user || !doc || user.banned === true) return false;",
+      '  if (user.role === "admin") return true;',
+      "  return doc.ownerId === user.id;",
+      "};",
       "",
     ].join("\n"));
     await assert.doesNotReject(() => checkBannedAdminBug(root));
