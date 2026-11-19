@@ -1832,12 +1832,13 @@ export class Tui {
     this.logLine(`${this.uiText("[stats]", "[统计]")} ${formatStats(session, this.uiLanguage)}${overBudget}${outcome}`);
   }
 
-  /** 进程级总账：跨 Run 累计，和每轮的 [stats] 是两个口径。 */
+  /** 本实例总账：跨 Run 累计，和每轮的 [stats] 是两个口径（子 Agent 的花销不在这里）。 */
   sessionSummary(session: AgentSessionStats): void {
     const lower = session.usage.unknown > 0 ? this.uiText("at least ", "至少 ") : "";
+    const summaries = formatSummaryRequests(session, this.uiLanguage);
     const text = this.uiLanguage === "zh"
-      ? `[会话] ${session.runs} 轮 · ${session.requests} 次请求 · ${session.toolCalls} 次工具调用 · tokens=${lower}${session.usage.totalTokens} (prompt=${lower}${session.usage.promptTokens} completion=${lower}${session.usage.completionTokens})`
-      : `[session] runs=${session.runs} requests=${session.requests} tool_calls=${session.toolCalls} ` +
+      ? `[会话] ${session.runs} 轮 · ${session.requests} 次请求${summaries} · ${session.toolCalls} 次工具调用 · tokens=${lower}${session.usage.totalTokens} (prompt=${lower}${session.usage.promptTokens} completion=${lower}${session.usage.completionTokens})`
+      : `[session] runs=${session.runs} requests=${session.requests}${summaries} tool_calls=${session.toolCalls} ` +
         `tokens=${lower}${session.usage.totalTokens} (prompt=${lower}${session.usage.promptTokens} ` +
         `completion=${lower}${session.usage.completionTokens})`;
     if (this.layout) {
@@ -3265,13 +3266,25 @@ function formatTokens(stats: AgentSessionStats): string {
   return `${stats.usage.unknown > 0 ? "at least " : ""}${stats.usage.totalTokens}`;
 }
 
+/**
+ * 摘要请求单独列出来：它花的是真钱，但不是一个 Step，混进 `requests` 会让人算错账。
+ *
+ * 为 0 时不显示，避免每行都挂一个没用的字段。和 `cli.ts` 的 `[usage]` 同一个口径。
+ */
+function formatSummaryRequests(stats: AgentSessionStats, language: UiLanguage): string {
+  if (!(stats.summaryRequests > 0)) return "";
+  return language === "zh" ? ` 摘要请求=${stats.summaryRequests}` : ` summaries=${stats.summaryRequests}`;
+}
+
 function formatStats(stats: AgentSessionStats, language: UiLanguage = "en"): string {
   if (language === "zh") {
     const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} 次请求缺少用量数据` : "";
-    return `请求=${stats.requests} 工具调用=${stats.toolCalls} tokens=${formatTokens(stats)}${unknown}`;
+    return `请求=${stats.requests}${formatSummaryRequests(stats, language)} 工具调用=${stats.toolCalls} ` +
+      `tokens=${formatTokens(stats)}${unknown}`;
   }
   const unknown = stats.usage.unknown > 0 ? ` · ${stats.usage.unknown} request(s) without usage` : "";
-  return `requests=${stats.requests} tool_calls=${stats.toolCalls} tokens=${formatTokens(stats)}${unknown}`;
+  return `requests=${stats.requests}${formatSummaryRequests(stats, language)} tool_calls=${stats.toolCalls} ` +
+    `tokens=${formatTokens(stats)}${unknown}`;
 }
 
 /**
