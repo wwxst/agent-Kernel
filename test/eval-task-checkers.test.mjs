@@ -76,7 +76,7 @@ test("评测题 02：正确修复通过，但改动原始测试文件会被拒�
 
     await assert.doesNotReject(() => checkFixFailingTest(root));
     const originalTests = await readFile(path.join(root, "sum.test.mjs"), "utf8");
-    await writeFile(path.join(root, "sum.test.mjs"), originalTests + "\\n// test changed\\n");
+    await writeFile(path.join(root, "sum.test.mjs"), originalTests + "\n// test changed\n");
     await assert.rejects(() => checkFixFailingTest(root), /不要修改测试文件/);
   });
 });
