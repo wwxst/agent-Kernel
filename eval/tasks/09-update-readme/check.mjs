@@ -12,7 +12,7 @@ export default async function check(root) {
   const sectionStart = sectionMatch.index + sectionMatch[0].length;
   const nextSection = readme.slice(sectionStart).search(/^##\s+/m);
   const section = readme.slice(sectionStart, nextSection < 0 ? undefined : sectionStart + nextSection);
-  assert.match(section, /^\|\s*[^|]+\|\s*[^|]+\|\s*$/m, "「命令」一节必须包含 Markdown 表格");
+  assert.match(section, /^\|\s*命令\s*\|\s*(?:用途|说明)\s*\|/m, "「命令」一节必须有命令和用途表头");
 
   const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
   const scripts = pkg.scripts ?? {};
