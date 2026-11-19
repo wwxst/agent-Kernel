@@ -182,6 +182,13 @@ test("Worktree：assume-unchanged 和 skip-worktree 文件不能被误删", asyn
   });
 });
 
+test("Worktree：拒绝把普通文件当作 .worktrees 目录", async () => {
+  await withRepository(async (root) => {
+    await writeFile(path.join(root, ".worktrees"), "this is a file\\n");
+    await expectToolFailure(root, ["create", "feature/invalid-worktree-dir"], /普通目录/);
+  });
+});
+
 test("Worktree：不覆盖已有分支，也拒绝非法分支名", async () => {
   await withRepository(async (root) => {
     const created = await runTool(root, ["create", "feature/existing", "main"]);
