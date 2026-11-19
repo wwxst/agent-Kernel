@@ -2,7 +2,7 @@
  * 文件目的：自动保护 src/ 内已经确定的模块依赖方向。
  *
  * 文件职责：读取 TypeScript AST，检查静态 import / export、动态 import、
- * import type 和 require 是否违反架构边界。不负责检查 npm 包依赖，
+ * import type、require 和 import = require 是否违反架构边界。不负责检查 npm 包依赖，
  * 也不替代 TypeScript 类型检查。
  *
  * 依赖规则：
@@ -169,7 +169,8 @@ export async function checkArchitecture(root = projectRoot) {
     }
 
     const sourceText = await readFile(file, "utf8");
-    const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const scriptKind = path.extname(file) === ".tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+    const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, scriptKind);
 
     for (const diagnostic of sourceFile.parseDiagnostics) {
       const location = sourceFile.getLineAndCharacterOfPosition(diagnostic.start ?? 0);
