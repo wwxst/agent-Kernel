@@ -710,7 +710,9 @@ export class Agent {
       // 「要跑了」先于「跑完了」：TUI 靠这个回调把工具调用写进运行记录，
       // 长命令执行期间也看得见它在干什么。这里没有 await，不会给取消留出新的缝隙。
       // 观察者只收到副本：改动工具名、JSON 参数或 id 都不能改变真实调用和消息配对。
-      this.notifyObserver(this.onToolCall, structuredClone(call), message.content);
+      if (this.onToolCall !== undefined) {
+        this.notifyObserver(this.onToolCall, structuredClone(call), message.content);
+      }
       // 同步回调若触发取消，也不能在同一个事件循环内继续启动工具。
       this.stopIfCancelled(calls, index);
       let outcome: ToolExecutionResult;
@@ -726,7 +728,9 @@ export class Agent {
       this.sessionToolCalls++;
       const result = createToolResult(call, outcome.content);
       this.context.append(result);
-      this.notifyObserver(this.onToolResult, structuredClone(call), outcome.content, outcome.isError);
+      if (this.onToolResult !== undefined) {
+        this.notifyObserver(this.onToolResult, structuredClone(call), outcome.content, outcome.isError);
+      }
       if (this.processCleanupUnverified) {
         this.skipCalls(calls.slice(index + 1), "process tree cleanup unverified");
         return;
