@@ -235,7 +235,7 @@ test("评测汇总：不同套件版本、模型和提交必须分组统计", as
 
     const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
     assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /评测版本：v2/);
+    assert.match(result.stdout, /评测套件：2026-11-19-checkers-v2/);
     assert.match(result.stdout, /模型：current-model/);
     assert.match(result.stdout, /提交：current/);
     assert.match(result.stdout, /最近 2 轮完整评测/);
