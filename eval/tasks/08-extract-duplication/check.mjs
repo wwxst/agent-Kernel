@@ -123,6 +123,37 @@ export default async function check(root) {
   assert.notEqual(helperName, "validateName");
   assert.notEqual(helperName, "validateTitle");
   assert.ok(hasLocalHelper(parsed, helperName), "共享校验函数必须在 validate.mjs 中真实定义");
+
+  // 不能只把原来的两套校验搬进一个 helper 的 name/title 分支；
+  // 类型、空字符串、最大长度这三条规则都必须只实现一次。
+  const helper = findLocalCallable(parsed, helperName);
+  const helperParameter = helper && firstParameterName(helper);
+  assert.ok(helper && helperParameter, "共享校验函数必须接收待校验的值");
+  let typeChecks = 0;
+  let trimChecks = 0;
+  let lengthChecks = 0;
+  function countValidationRules(node) {
+    if (ts.isTypeOfExpression(node) &&
+        ts.isIdentifier(node.expression) && node.expression.text === helperParameter) {
+      typeChecks++;
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "trim" &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === helperParameter) {
+      trimChecks++;
+    }
+    if (ts.isPropertyAccessExpression(node) && node.name.text === "length" &&
+        ts.isIdentifier(node.expression) && node.expression.text === helperParameter) {
+      lengthChecks++;
+    }
+    ts.forEachChild(node, countValidationRules);
+  }
+  countValidationRules(helper.body);
+  assert.equal(typeChecks, 1, "共享校验中的类型检查必须只实现一次");
+  assert.equal(trimChecks, 1, "共享校验中的空字符串检查必须只实现一次");
+  assert.equal(lengthChecks, 1, "共享校验中的最大长度检查必须只实现一次");
+
   const nameParameter = firstParameterName(validateName);
   const titleParameter = firstParameterName(validateTitle);
   assert.ok(nameParameter && titleParameter, "两个导出函数都必须接收待校验的值");
