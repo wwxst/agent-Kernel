@@ -207,7 +207,7 @@ test("评测题 09：命令表必须在命令章节内，并保留 README 原有
       "| `npm run build` | 构建项目 |",
       "",
     ].join("\n"));
-    await assert.rejects(() => checkUpdateReadme(root), /必须包含 Markdown 表格/);
+    await assert.rejects(() => checkUpdateReadme(root), /命令和用途表头/);
   });
 });
 
