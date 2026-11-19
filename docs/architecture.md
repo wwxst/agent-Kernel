@@ -275,7 +275,7 @@ ui    ──→ core / protocol
 
 ### 自动边界检查
 
-运行 `npm run architecture:check` 可以用 TypeScript AST 检查 `src/` 内的静态导入、导出、类型导入、动态导入和 `require`：
+运行 `npm run architecture:check` 可以用 TypeScript AST 检查 `src/` 内的静态导入、导出、类型导入、动态导入、`require` 和 `import = require`：
 
 - `protocol` 只依赖自身；
 - `core`、`tools`、`model` 只依赖自身和 `protocol`；
