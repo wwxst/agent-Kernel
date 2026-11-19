@@ -228,10 +228,10 @@ test("评测汇总：不同套件版本、模型和提交必须分组统计", as
 
     const resultsDir = path.dirname(recordFile);
     await writeFile(recordFile, JSON.stringify(makeRun(1, "old-model", "old-commit", 2)));
-    await writeFile(path.join(resultsDir, "2.json"), JSON.stringify(makeRun(2, "current-model", "old-commit", 2)));
-    await writeFile(path.join(resultsDir, "3.json"), JSON.stringify(makeRun(2, "other-model", "current-commit", 2)));
-    await writeFile(path.join(resultsDir, "4.json"), JSON.stringify(makeRun(2, "current-model", "current-commit", 2)));
-    await writeFile(path.join(resultsDir, "5.json"), JSON.stringify(makeRun(2, "current-model", "current-commit", 1)));
+    await writeFile(path.join(resultsDir, "2.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "current-model", "old-commit", 2)));
+    await writeFile(path.join(resultsDir, "3.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "other-model", "current-commit", 2)));
+    await writeFile(path.join(resultsDir, "4.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "current-model", "current-commit", 2)));
+    await writeFile(path.join(resultsDir, "5.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "current-model", "current-commit", 1)));
 
     const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
     assert.equal(result.status, 0, result.stderr);
