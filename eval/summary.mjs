@@ -84,8 +84,8 @@ if (skippedConfigurations > 0) {
   console.log(`已跳过 ${skippedConfigurations} 轮不同评测版本、模型或代码提交的记录`);
 }
 const recent = matchingRuns.slice(-wanted);
-const suiteLabel = selectedSuiteVersion === "legacy" ? "legacy（旧记录，无版本标记）" : `v${selectedSuiteVersion}`;
-console.log(`评测版本：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)}`);
+const suiteLabel = selectedSuiteVersion === "legacy" ? "legacy（旧记录，无版本标记）" : selectedSuiteVersion;
+console.log(`评测套件：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)}`);
 
 const average = (values) => values.reduce((total, value) => total + value, 0) / values.length;
 const median = (values) => {
