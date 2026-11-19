@@ -12,3 +12,6 @@ eval/results/
 # 旧权限规则的本地层。审批机制已随 ADR-0019 删除，这些文件不再被读取；
 # 保留忽略规则只是为了历史残留文件不被误提交，不代表它们还有作用。
 .agent-kernel/permissions.local.json
+
+# 本地独立 Git Worktree，不进主仓库版本控制
+.worktrees/
