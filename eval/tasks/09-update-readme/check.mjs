@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { readTaskFile, readTaskJson } from "../../checker-helpers.mjs";
 
 export default async function check(root) {
-  const readme = (await readFile(path.join(root, "README.md"), "utf8")).replace(/\r\n/g, "\n");
+  const readme = (await readTaskFile(path.join(root, "README.md"), "README.md")).replace(/\r\n/g, "\n");
   const originalIntro = "# fixture\n\n一个用来练手的小仓库。";
   assert.ok(readme.startsWith(originalIntro), "README 原有标题和介绍必须保留，不能只留下命令表格");
 
@@ -14,7 +14,7 @@ export default async function check(root) {
   const section = readme.slice(sectionStart, nextSection < 0 ? undefined : sectionStart + nextSection);
   assert.match(section, /^\|\s*命令\s*\|\s*(?:用途|说明)\s*\|/m, "「命令」一节必须有命令和用途表头");
 
-  const pkg = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+  const pkg = await readTaskJson(path.join(root, "package.json"), "package.json");
   const scripts = pkg.scripts ?? {};
   const rows = [...section.matchAll(/^\|\s*([^|]+)\|\s*([^|]+)\|\s*$/gm)];
   const documented = new Map();
