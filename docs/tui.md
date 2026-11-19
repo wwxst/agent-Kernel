@@ -63,7 +63,7 @@ TUI 观察 Agent 事件，不修改 Agent 内部状态。
 - Tool result：实际执行结果。
 - Tool error：工具失败原因。
 - 最终回答。
-- Session 的 requests / tool calls / tokens。
+- Session 的 requests / 摘要请求 / tool calls / tokens（摘要请求为 0 时不显示，避免每行都挂一个空字段）。
 
 展示层的角色台词也不写进 Transcript。
 

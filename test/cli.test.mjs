@@ -1427,18 +1427,19 @@ test("委派：子 Agent 在自己的装配路径上压缩，不污染父 Agent 
       assert.equal(summaries[0].tool_choice, undefined);
       assert.match(summaries[0].messages[0].content, /detailed summary of the conversation/);
 
-      // 2) 摘要落进了子 Agent 自己的上下文。
+      // 2) 摘要落进了子 Agent 自己的上下文，而且是 system 之后那条 user 消息。
       const childAfterSummary = mock.requests.find((request) =>
         String(request.messages[0]?.content ?? "").includes("file search specialist") &&
-        String(request.messages[0]?.content ?? "").includes("conversation memory"));
+        String(request.messages[1]?.content ?? "").includes("conversation memory"));
       assert.ok(childAfterSummary !== undefined, "子 Agent 的后续请求里应该能看到自己的摘要");
+      assert.equal(childAfterSummary.messages[1].role, "user", "摘要不能挤进 system 消息");
 
       // 3) 父 Agent 完全没被污染：还是主提示、没有摘要、只有一条子任务结果。
       const parentFinal = mock.requests.at(-1);
       const parentSystem = String(parentFinal.messages[0].content);
       assert.match(parentSystem, /You are an agent working with the user toward their goals/);
       assert.doesNotMatch(parentSystem, /file search specialist/);
-      assert.doesNotMatch(parentSystem, /conversation memory/);
+      assert.doesNotMatch(JSON.stringify(parentFinal.messages), /conversation memory/);
       assert.equal(parentFinal.messages.length, 4, "父 Agent 只看到一条子任务结果");
       // 子 Agent 的摘要请求与花销都不进父 Agent 的账单。
       assert.match(run.stdout, /\[usage\] requests=2 tool_calls=1/);
