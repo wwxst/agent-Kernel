@@ -64,12 +64,34 @@ function findExportedCallable(sourceFile, exportedName) {
 function returnedHelperCall(callable) {
   if (ts.isArrowFunction(callable) && ts.isCallExpression(callable.body)) return callable.body;
   const body = callable.body;
-  if (!body || !ts.isBlock(body) || body.statements.length !== 1) return undefined;
-  const [statement] = body.statements;
-  if (!ts.isReturnStatement(statement) || !statement.expression || !ts.isCallExpression(statement.expression)) {
+  if (!body || !ts.isBlock(body)) return undefined;
+
+  if (body.statements.length === 1) {
+    const [statement] = body.statements;
+    if (ts.isReturnStatement(statement) && statement.expression && ts.isCallExpression(statement.expression)) {
+      return statement.expression;
+    }
     return undefined;
   }
-  return statement.expression;
+
+  // 也接受 const result = sharedValidator(...); return result;
+  // 不能只因为实现把 helper 结果存入局部变量，就把正确重构误判为失败。
+  if (body.statements.length === 2) {
+    const [declaration, returnStatement] = body.statements;
+    if (!ts.isVariableStatement(declaration) || !ts.isReturnStatement(returnStatement) ||
+        !returnStatement.expression || !ts.isIdentifier(returnStatement.expression) ||
+        declaration.declarationList.declarations.length !== 1) {
+      return undefined;
+    }
+    const [item] = declaration.declarationList.declarations;
+    if (!ts.isIdentifier(item.name) || !item.initializer || !ts.isCallExpression(item.initializer) ||
+        item.name.text !== returnStatement.expression.text) {
+      return undefined;
+    }
+    return item.initializer;
+  }
+
+  return undefined;
 }
 
 function firstParameterName(callable) {
