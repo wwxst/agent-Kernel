@@ -158,6 +158,19 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
     await assert.doesNotReject(() => checkExtractDuplication(root));
 
     await writeFile(path.join(root, "validate.mjs"), [
+      'function validateText(label, value) {',
+      '  if (typeof value !== "string") return `${label} must be a string`;',
+      '  if (value.trim() === "") return `${label} must not be empty`;',
+      '  if (value.length > 40) return `${label} must be at most 40 chars`;',
+      "  return null;",
+      "}",
+      'export function validateName(name) { return validateText("name", name); }',
+      'export function validateTitle(title) { return validateText("title", title); }',
+      "",
+    ].join("\n"));
+    await assert.doesNotReject(() => checkExtractDuplication(root));
+
+    await writeFile(path.join(root, "validate.mjs"), [
       "function validateText() { return null; }",
       'export function validateName(name) { if (typeof name !== "string") return "name must be a string"; if (name.trim() === "") return "name must not be empty"; if (name.length > 40) return "name must be at most 40 chars"; return null; }',
       'export function validateTitle(title) { if (typeof title !== "string") return "title must be a string"; if (title.trim() === "") return "title must not be empty"; if (title.length > 40) return "title must be at most 40 chars"; return null; }',
@@ -208,6 +221,10 @@ test("评测题 09：命令表必须在命令章节内，并保留 README 原有
       "",
     ].join("\n"));
     await assert.rejects(() => checkUpdateReadme(root), /命令和用途表头/);
+
+    const noDelimiter = good.replace("| --- | --- |", "");
+    await writeFile(path.join(root, "README.md"), noDelimiter);
+    await assert.rejects(() => checkUpdateReadme(root), /Markdown 表格分隔线/);
   });
 });
 
