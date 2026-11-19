@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { runRound } from "../eval/run.mjs";
+import { EVAL_SUITE_VERSION, runRound, summarize } from "../eval/run.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const fixture = path.join(projectRoot, "test", "support", "eval-floating-check.mjs");
@@ -59,6 +59,23 @@ async function withRoundFixture(run) {
     await rm(tasksDir, { recursive: true, force: true });
   }
 }
+
+test("评测记录：每轮都写入当前评测套件版本", () => {
+  const record = summarize({
+    results: [{
+      ok: true,
+      requests: 2,
+      toolCalls: 3,
+      tokens: { total: 10, unknownResponses: 0 },
+    }],
+    elapsed: 1.25,
+    model: "test-model",
+    commit: "test-commit",
+    infra: [],
+  });
+  assert.equal(record.suiteVersion, EVAL_SUITE_VERSION);
+  assert.equal(record.suiteVersion, "2026-11-19-checkers-v2");
+});
 
 test("评测：并发任务报错后停止领取，等待已经启动的任务收尾再拒绝", async () => {
   await withRoundFixture(async (options, endpoint) => {
@@ -189,6 +206,42 @@ test("评测汇总：任务集合和通过数必须自洽，合法完整轮次�
     const result = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 5000 });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /合计：1\/2 个任务（50.0%）/);
+  });
+});
+
+test("评测汇总：不同套件版本、模型和提交必须分组统计", async () => {
+  await withSummaryFixture(async (script, recordFile) => {
+    const makeRun = (suiteVersion, model, commit, passed) => ({
+      suiteVersion,
+      model,
+      commit,
+      total: 2,
+      passed,
+      elapsed: 2,
+      at: new Date().toISOString(),
+      infraErrors: [],
+      results: [
+        { name: "first", ok: true, requests: 1, seconds: 1 },
+        { name: "second", ok: passed === 2, requests: 1, seconds: 1 },
+      ],
+    });
+
+    const resultsDir = path.dirname(recordFile);
+    await writeFile(recordFile, JSON.stringify(makeRun(1, "old-model", "old-commit", 2)));
+    await writeFile(path.join(resultsDir, "2.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "current-model", "old-commit", 2)));
+    await writeFile(path.join(resultsDir, "3.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "other-model", "current-commit", 2)));
+    await writeFile(path.join(resultsDir, "4.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "current-model", "current-commit", 2)));
+    await writeFile(path.join(resultsDir, "5.json"), JSON.stringify(makeRun("2026-11-19-checkers-v2", "current-model", "current-commit", 1)));
+
+    const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /评测套件：2026-11-19-checkers-v2/);
+    assert.match(result.stdout, /模型：current-model/);
+    assert.match(result.stdout, /提交：current/);
+    assert.match(result.stdout, /最近 2 轮完整评测/);
+    assert.match(result.stdout, /合计：3\/4 个任务（75\.0%）/);
+    assert.match(result.stdout, /已跳过 3 轮不同评测版本、模型或代码提交的记录/);
+    assert.doesNotMatch(result.stdout, /old-model|other-model|old-commit/);
   });
 });
 

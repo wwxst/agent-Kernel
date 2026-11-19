@@ -69,7 +69,25 @@ if (runs.length === 0) {
   process.exit(0);
 }
 
-const recent = runs.slice(-wanted);
+// 只汇总最近一条记录所属的同一配置组，避免把不同套件、模型或代码提交混成一个成绩。
+const latest = runs.at(-1);
+const selectedSuiteVersion =
+  typeof latest.suiteVersion === "string" && latest.suiteVersion.length > 0 ? latest.suiteVersion : "legacy";
+const selectedModel = typeof latest.model === "string" && latest.model.length > 0 ? latest.model : "unknown";
+const selectedCommit = typeof latest.commit === "string" && latest.commit.length > 0 ? latest.commit : "unknown";
+const sameConfiguration = (run) =>
+  (typeof run.suiteVersion === "string" && run.suiteVersion.length > 0 ? run.suiteVersion : "legacy") === selectedSuiteVersion &&
+  (typeof run.model === "string" && run.model.length > 0 ? run.model : "unknown") === selectedModel &&
+  (typeof run.commit === "string" && run.commit.length > 0 ? run.commit : "unknown") === selectedCommit;
+const matchingRuns = runs.filter(sameConfiguration);
+const skippedConfigurations = runs.length - matchingRuns.length;
+if (skippedConfigurations > 0) {
+  console.log(`已跳过 ${skippedConfigurations} 轮不同评测版本、模型或代码提交的记录`);
+}
+const recent = matchingRuns.slice(-wanted);
+const suiteLabel = selectedSuiteVersion === "legacy" ? "legacy（旧记录，无版本标记）" : selectedSuiteVersion;
+console.log(`评测套件：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)}`);
+
 const average = (values) => values.reduce((total, value) => total + value, 0) / values.length;
 const median = (values) => {
   const sorted = [...values].sort((a, b) => a - b);
@@ -100,11 +118,6 @@ const totalSeconds = recent.map((run) => run.elapsed ?? run.results.reduce((tota
 // 不描述总通过量。两个口径都打印，避免把典型轮次误读成整体成功率。
 const aggregatePassed = recent.reduce((total, run) => total + run.passed, 0);
 const aggregateTotal = recent.reduce((total, run) => total + run.total, 0);
-const models = [...new Set(recent.map((run) => run.model).filter((model) => model !== undefined))];
-const commits = [...new Set(recent.map((run) => (run.commit ?? "unknown").slice(0, 7)))];
-console.log(
-  `\n模型：${models.length > 0 ? models.join(", ") : "unknown"} · 提交：${commits.join(", ")}`,
-);
 console.log(
   `按轮中位数：通过率 ${median(passRates).toFixed(0)}% · 平均 ${median(averageRequests).toFixed(1)} 次请求 · ` +
     `合计 ${Math.round(median(totalSeconds))}s`,
