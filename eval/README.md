@@ -100,6 +100,8 @@ tasks/01-add-health-route/
 
 `test/eval-task-checkers.test.mjs` 专门测试检查器本身：既验证正确实现能通过，也验证删内容、漏检查、把表格放错位置、留下嵌套旧引用等不完整实现会被拒绝。
 
+`eval/checker-helpers.mjs` 把任务工作区里缺失文件、模块加载失败和无效 JSON 转成断言失败，避免把 Agent 没完成任务误报成评测基础设施故障。
+
 ### 评测汇总口径
 
 `npm run eval:summary` 只统计最近一条完整记录所属的同一组：
