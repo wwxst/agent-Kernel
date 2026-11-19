@@ -97,7 +97,7 @@ export default async function check(root) {
   assert.ok(ifCount > 0, "canEdit 应使用明确的 guard clause");
   assert.equal(nestedIf, false, "canEdit 不能再有嵌套 if");
   assert.equal(hasElse, false, "guard clause 应提前返回，不应保留 else 分支");
-  assert.equal(nonGuardIf, false, "canEdit 中的 if 必须提前 return，不能只把嵌套 if 摊平");
+  assert.equal(nonGuardIf, false, "canEdit 中的每个 if 都必须提前 return，不能只把嵌套 if 摊平");
 
   const { canEdit } = await importTaskModule(pathToFileURL(path.join(root, "access.mjs")).href, "access.mjs");
 
