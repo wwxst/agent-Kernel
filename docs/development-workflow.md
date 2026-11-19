@@ -106,7 +106,7 @@ Reviewer 只检查，不顺手改代码；重点检查：
 ## 8. 分支、并行开发和 Git 操作
 
 - 一个独立任务使用一个分支；需要并行开发时，优先使用独立 Git Worktree。
-- 仓库提供 Worktree 管理命令：`npm run worktree -- create <branch> [base]` 创建，`npm run worktree -- list` 查看，`npm run worktree -- remove <branch>` 删除干净的工作区。新工作区放在 `.worktrees/`，删除不会删分支；有未提交、未跟踪或被忽略文件时拒绝删除。
+- 仓库提供 Worktree 管理命令：`npm run worktree -- create <branch> [base]` 创建，`npm run worktree -- list` 查看，`npm run worktree -- remove <branch>` 删除干净的工作区。新工作区放在**执行命令的当前 Worktree** 的 `.worktrees/` 目录中；默认从当前 Worktree 的 HEAD 创建。删除不会删分支；有未提交、未跟踪、被忽略文件或特殊索引标记时拒绝删除。
 - 多个 Agent 或开发会话不能同时修改同一个工作目录。共享只读资料可以，共享写入目录不可以。
 - 开始前检查工作区状态；发现其他会话的未提交修改时，先保护现场，不覆盖、不清理、不擅自暂存或提交。
 - 不用强制推送、重置、清理或变基来“解决”不清楚的状态。出现冲突先查明归属，再制定方案。
