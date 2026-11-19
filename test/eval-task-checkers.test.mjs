@@ -343,6 +343,18 @@ test("评测题 19：行为正确之外，还必须把嵌套 if 改成 guard cla
     ].join("\n"));
     await assert.doesNotReject(() => checkBannedAdminBug(root));
 
+    // 也允许先定义实现，再通过 export list 保留 canEdit 这个公开名字。
+    await writeFile(path.join(root, "access.mjs"), [
+      "const canEditImpl = (user, doc) => {",
+      "  if (!user || !doc || user.banned === true) return false;",
+      '  if (user.role === "admin") return true;',
+      "  return doc.ownerId === user.id;",
+      "};",
+      "export { canEditImpl as canEdit };",
+      "",
+    ].join("\n"));
+    await assert.doesNotReject(() => checkBannedAdminBug(root));
+
     await writeFile(path.join(root, "access.mjs"), [
       "export function canEdit(user, doc) {",
       "  if (user) {",
