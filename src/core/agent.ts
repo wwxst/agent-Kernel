@@ -170,13 +170,16 @@ export interface AgentStats {
 /**
  * 整个 Session 的累计用量：跨 Run 求和，用来回答「这轮对话一共花了多少」。
  *
- * 和 `stats` 分开是有意的：预算按 Run 算（一轮任务的花销），账单按 Session 算（整个进程）。
- * 两个数字混在一起，就没有办法既限制单轮、又看清总量。
+ * 和 `stats` 分开是有意的：预算按 Run 算（一轮任务的花销），账单按 Session 算
+ * （**这一个 Agent 实例**从创建到销毁的合计）。
+ *
+ * 它不是「整个进程」的总账：子 Agent 是独立的 Agent 实例，花销不进父 Agent 这里
+ * （ADR-0025 明确这是有意的）。宿主若要报总花费，得自己把各实例的 `sessionStats` 相加。
  */
 export interface AgentSessionStats {
   /** 已经开始的 Run 数；失败或取消的 Run 也算一次。 */
   runs: number;
-  /** 业务模型请求数；辅助摘要请求另计 `summaryRequests`，两者相加才是这个进程发出的全部请求。 */
+  /** 业务模型请求数；辅助摘要请求另计 `summaryRequests`，两者相加才是这个实例发出的全部请求。 */
   requests: number;
   /** 整个会话为压缩历史发出的摘要请求数。 */
   summaryRequests: number;
@@ -256,8 +259,9 @@ class RunState {
     signature: string;
     results: readonly ToolExecutionResult[];
     /**
-     * 连续相同批次里「没有进展」的次数。有效等待的批次不计数 ——
-     * 等后台任务不是原地打转，但也不能把之前的计数清零。
+     * 连续相同批次里「没有进展」的次数。只有整串连续相同批次都是有效等待时才不计数 ——
+     * 等后台任务不是原地打转；但一旦这串里出现过普通批次，后续的等待批次就照普通规则计数，
+     * 也不会把之前的计数清零（见 ADR-0030 的不变量）。
      */
     repetitions: number;
     /**
