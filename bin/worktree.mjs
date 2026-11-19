@@ -48,14 +48,6 @@ async function git(args, cwd) {
   }
 }
 
-/** 从 Git common-dir 找到主仓库根目录，避免在 linked worktree 内创建嵌套工作区。 */
-async function findMainRepositoryRoot() {
-  const current = process.cwd();
-  const topLevel = (await git(["rev-parse", "--show-toplevel"], current)).stdout.trim();
-  const commonDir = (await git(["rev-parse", "--git-common-dir"], topLevel)).stdout.trim();
-  return path.dirname(path.resolve(topLevel, commonDir));
-}
-
 function parseWorktrees(output) {
   const entries = [];
   let current;
@@ -91,7 +83,7 @@ function displayBranch(entry) {
   return entry.detached ? "(detached HEAD)" : "(unknown)";
 }
 
-async function createWorktree(root, branch, baseRef = "HEAD", baseCwd = root) {
+async function createWorktree(root, branch, baseRef = "HEAD") {
   if (!branch) throw new Error("create 缺少分支名");
   if (branch.startsWith("-")) throw new Error("分支名不能以 - 开头");
 
@@ -111,7 +103,7 @@ async function createWorktree(root, branch, baseRef = "HEAD", baseCwd = root) {
   try {
     baseCommit = (await git([
       "rev-parse", "--verify", "--quiet", "--end-of-options", `${baseRef}^{commit}`,
-    ], baseCwd)).stdout.trim();
+    ], root)).stdout.trim();
   } catch {
     throw new Error(`基准引用不存在或不是 commit：${baseRef}`);
   }
@@ -173,6 +165,14 @@ async function removeWorktree(root, branch) {
     throw new Error("不能删除当前正在使用的工作区，请从另一个 Worktree 执行");
   }
 
+  // assume-unchanged / skip-worktree 会让普通 git status 隐藏 tracked file 的本地修改。
+  // 为避免误删这类文件，遇到任何非普通 H 索引标记时保守拒绝删除。
+  const indexEntries = (await git(["ls-files", "-v", "-z"], target)).stdout.split("\\0").filter(Boolean);
+  const specialIndexEntries = indexEntries.filter((entry) => entry[0] !== "H");
+  if (specialIndexEntries.length > 0) {
+    throw new Error(`索引中存在 assume-unchanged、skip-worktree 或其他特殊标记，拒绝删除：${target}`);
+  }
+
   // --ignored 也检查 .env、node_modules 等被忽略的本地文件，防止删除时一起丢失。
   const status = await git(["status", "--porcelain", "--ignored", "--untracked-files=all"], target);
   if (status.stdout.trim() !== "") {
@@ -196,12 +196,13 @@ async function main() {
     return;
   }
 
-  const invokingRoot = (await git(["rev-parse", "--show-toplevel"], process.cwd())).stdout.trim();
-  const root = await findMainRepositoryRoot();
+  // 直接使用调用者所在 Worktree 的根目录，不从 common-dir 推算路径。
+  // 这样既能正确处理 linked worktree，也兼容 --separate-git-dir。
+  const root = (await git(["rev-parse", "--show-toplevel"], process.cwd())).stdout.trim();
 
   if (command === "create") {
     if (args.length < 1 || args.length > 2) throw new Error("用法：create <branch> [base]");
-    await createWorktree(root, args[0], args[1] ?? "HEAD", invokingRoot);
+    await createWorktree(root, args[0], args[1] ?? "HEAD");
     return;
   }
   if (command === "list") {
