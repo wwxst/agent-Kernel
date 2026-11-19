@@ -263,7 +263,7 @@ test("评测题 09：命令表必须在命令章节内，并保留 README 原有
       "| `npm run build` | 构建项目 |",
       "",
     ].join("\n"));
-    await assert.rejects(() => checkUpdateReadme(root), /命令和用途表头/);
+    await assert.rejects(() => checkUpdateReadme(root), /命令列和说明列/);
 
     const noDelimiter = good.replace("| --- | --- |", "");
     await writeFile(path.join(root, "README.md"), noDelimiter);
