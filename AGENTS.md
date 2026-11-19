@@ -92,6 +92,14 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 
 写法规范见 [CODING_STANDARDS.md](./CODING_STANDARDS.md) 第 7 节。
 
+## 研发流程
+
+接到任务先按 [docs/development-workflow.md](./docs/development-workflow.md) 判断类型。简单修复可以小步处理；功能开发和架构重构先复制 [Spec 模板](./docs/agents/spec-template.md) 到 `.scratch/<feature>/spec.md`，提交完整方案并得到用户确认后再写功能代码。
+
+并行开发必须使用独立分支或 Git Worktree，不能让多个 Agent 共用一个写入工作目录。Full Access 只说明内核不做运行时权限审批，不代表自动获得 commit、push、merge、rebase、reset、clean 或 stash 的授权；这些操作必须由当前任务明确授权。
+
+PR 使用 [.github/PULL_REQUEST_TEMPLATE.md](./.github/PULL_REQUEST_TEMPLATE.md)，研发流程细节见上面的文档。
+
 ## 长期文档
 
 先从 [docs/README.md](./docs/README.md) 找入口。
