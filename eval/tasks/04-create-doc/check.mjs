@@ -8,7 +8,8 @@ export default async function check(root) {
 
   const pkg = await readTaskJson(path.join(root, "package.json"), "package.json");
   const scripts = pkg.scripts ?? {};
-  assert.match(usage, /^\|\s*命令\s*\|\s*(?:用途|说明)\s*\|/m, "正文必须有「命令 / 用途」表头");
+  assert.match(usage, /^\|\s*命令\s*\|\s*[^|]+\s*\|/m, "正文表格必须有命令列和说明列");
+  assert.match(usage, /^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|\s*$/m, "正文必须有 Markdown 表格分隔线");
 
   const rows = [...usage.matchAll(/^\|\s*([^|]+)\|\s*([^|]+)\|\s*$/gm)];
   const documented = new Map();
