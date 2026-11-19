@@ -165,12 +165,12 @@ async function removeWorktree(root, branch) {
   if (!entry) throw new Error(`没有找到分支 ${branch} 对应的 Worktree`);
 
   const target = path.resolve(entry.path);
+  if (target === path.resolve(root)) {
+    throw new Error("这是主工作区，不能通过 Worktree 工具删除");
+  }
   const currentTopLevel = path.resolve((await git(["rev-parse", "--show-toplevel"], process.cwd())).stdout.trim());
   if (target === currentTopLevel) {
     throw new Error("不能删除当前正在使用的工作区，请从另一个 Worktree 执行");
-  }
-  if (target === path.resolve(root)) {
-    throw new Error("这是主工作区，不能通过 Worktree 工具删除");
   }
 
   // --ignored 也检查 .env、node_modules 等被忽略的本地文件，防止删除时一起丢失。
