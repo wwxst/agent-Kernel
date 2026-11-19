@@ -273,6 +273,17 @@ ui    ──→ core / protocol
 
 `protocol` 是最底层词汇。Core 不应该反过来认识具体 Tool 或 UI。
 
+### 自动边界检查
+
+运行 `npm run architecture:check` 可以用 TypeScript AST 检查 `src/` 内的静态导入、导出、类型导入、动态导入、`require` 和 `import = require`，包括 `.d.ts` 等声明文件：
+
+- `protocol` 只依赖自身；
+- `core`、`tools`、`model` 只依赖自身和 `protocol`；
+- `ui` 可以依赖自身、`core` 和 `protocol`；
+- 只有 `src/cli.ts` 是唯一组装入口，可以依赖所有模块；不能通过新建 `src/entry/` 等目录增加特权入口。
+
+检查器无法静态判断的动态路径、无法解析的项目内相对路径，以及没有声明边界的新模块，都会让检查失败。该检查已接入 Linux、Windows、macOS 的 GitHub Actions；它只保护 `src/` 的模块依赖，不替代 TypeScript 类型检查和代码 Review。
+
 ## 15. 当前刻意没有的层
 
 下面这些不是当前 Core 的一部分：
