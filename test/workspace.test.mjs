@@ -1292,6 +1292,22 @@ test("shell-output：读到输出后，第二次只返回新增的部分", async
   });
 });
 
+test("shell-output：wait=0 对仍在运行且没有输出的任务立即返回", async () => {
+  await withWorkspace(async (dir) => {
+    const workspace = new Workspace({ root: dir });
+    await workspace.run('node -e "setTimeout(()=>{},30000)"', { background: true });
+    const started = Date.now();
+    try {
+      const output = await workspace.readJobOutput("job-1", 0);
+      assert.ok(Date.now() - started < 1000, "wait=0 不能进入轮询等待");
+      assert.match(output, /^job-1 \(running, pid \d+\)/);
+      assert.match(output, /\(no new output\)/);
+    } finally {
+      await stopJob(workspace);
+    }
+  });
+});
+
 test("shell-output：进程自己退出时报告 exit code，且没有新输出时明确说没有", async () => {
   await withWorkspace(async (dir) => {
     const workspace = new Workspace({ root: dir });

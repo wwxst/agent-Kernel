@@ -1112,6 +1112,7 @@ ${command}`;
   async readJobOutput(jobId: string, waitMs = 0): Promise<string> {
     const job = this.job(jobId);
     const budget = Math.min(Math.max(waitMs, 0), MAX_JOB_WAIT_MS);
+    const shouldWait = budget > 0;
     const deadline = Date.now() + budget;
 
     let text = "";
@@ -1125,7 +1126,7 @@ ${command}`;
         if (text !== "") break;
       }
       // 进程已经不在了就没什么可等的；再等下去只是把 Step 拖长。
-      if (job.status !== "running") break;
+      if (!shouldWait || job.status !== "running") break;
       if (Date.now() >= deadline) break;
       await new Promise((resolve) => setTimeout(resolve, JOB_POLL_MS));
     }

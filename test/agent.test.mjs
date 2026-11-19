@@ -1197,3 +1197,26 @@ test("无进展检测：每次 Run 重新计数，不继承上一轮的重复状
   assert.equal(executions, 4);
   assert.equal(chat.requests.length, 6);
 });
+
+test("无进展检测：shell-output 的 wait 为 0 时立即读取，重复调用会停止", async () => {
+  const chat = createScriptedChat([
+    ...Array.from({ length: 4 }, (_, index) => callTool(`output-${index + 1}`, "shell-output", {
+      job_id: "job-1", wait: 0,
+    })),
+  ]);
+  let executions = 0;
+  const tool = {
+    name: "shell-output",
+    description: "Read background output.",
+    parameters: { type: "object", properties: {}, additionalProperties: true },
+    run: async () => {
+      executions++;
+      return "job-1 (running, pid 123) ran: command\n(no new output)";
+    },
+  };
+  const agent = new Agent({ llm: chat, tools: makeRegistry([tool]), maxSteps: 10 });
+
+  await assert.rejects(() => agent.run("检查后台任务"), /identical tool batches.*no progress/);
+  assert.equal(executions, 3);
+  assert.equal(chat.requests.length, 4);
+});

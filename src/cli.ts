@@ -275,6 +275,11 @@ function describeForUser(error: unknown): string {
     : `${failure.title}: ${failure.advice} [detail: ${failure.detail}]`;
 }
 
+/** 取消异常本身已经带有 `cancelled:`，展示层只保留一次状态前缀。 */
+function describeCancellation(error: unknown): string {
+  return describeError(error).replace(/^cancelled:\s*/i, "");
+}
+
 /** 一次只显示一个普通 CLI Run；TUI 通过 callbacks 走自己的展示层。 */
 let activePresenter: RunPresenter | undefined;
 
@@ -712,7 +717,7 @@ async function tuiSession(config: Config, controller: AbortController, initialTa
       // 失败的任务同样花了 token：先结账，再把错误写进运行记录。
       tui.finishTurn(agent.stats, agent.sessionStats, { failed: true, cancelled: signal.aborted });
       if (signal.aborted) {
-        tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeError(error)}`);
+        tui.logError(`${tui.uiText("[agent] cancelled:", "[agent] 已取消：")} ${describeCancellation(error)}`);
         return false;
       }
       // 一轮失败不等于会话失败：继续等下一行输入。
@@ -812,7 +817,7 @@ if (cli.error !== undefined) {
     // 取消不是「内核出错」：它有自己的退出码（130 = 被 SIGINT 打断），日志也要分开。
     const cancelled = controller.signal.aborted;
     // 中文对照：[agent] 已取消：{原因} ／ [agent] 致命错误：{原因}
-    console.error(escapeControlCharacters(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeError(error) : describeForUser(error)}`));
+    console.error(escapeControlCharacters(`[agent] ${cancelled ? "cancelled" : "fatal"}: ${cancelled ? describeCancellation(error) : describeForUser(error)}`));
     // 不用 process.exit(1)：Windows 上 fetch 的 keep-alive 连接还在关闭时强退，
     // 会触发 libuv 断言（退出码 0xC0000409）。设置退出码后让进程自然结束即可。
     process.exitCode = cancelled ? 130 : 1;

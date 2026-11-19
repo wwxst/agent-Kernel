@@ -787,6 +787,7 @@ test(
 
       assert.equal(code, 130);
       assert.match(stderr, /\[agent\] cancelled: received SIGINT/);
+      assert.doesNotMatch(stderr, /\[agent\] cancelled: cancelled:/);
     } finally {
       child.kill();
       server.closeAllConnections?.();
