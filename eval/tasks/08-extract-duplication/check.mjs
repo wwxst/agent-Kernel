@@ -127,32 +127,37 @@ export default async function check(root) {
   // 不能只把原来的两套校验搬进一个 helper 的 name/title 分支；
   // 类型、空字符串、最大长度这三条规则都必须只实现一次。
   const helper = findLocalCallable(parsed, helperName);
-  const helperParameter = helper && firstParameterName(helper);
-  assert.ok(helper && helperParameter, "共享校验函数必须接收待校验的值");
-  let typeChecks = 0;
-  let trimChecks = 0;
-  let lengthChecks = 0;
+  const parameterChecks = new Map(
+    (helper?.parameters ?? [])
+      .filter((parameter) => ts.isIdentifier(parameter.name))
+      .map((parameter) => [parameter.name.text, { type: 0, trim: 0, length: 0 }]),
+  );
+  assert.ok(helper && parameterChecks.size > 0, "共享校验函数必须接收待校验的值");
+
   function countValidationRules(node) {
-    if (ts.isTypeOfExpression(node) &&
-        ts.isIdentifier(node.expression) && node.expression.text === helperParameter) {
-      typeChecks++;
+    if (ts.isTypeOfExpression(node) && ts.isIdentifier(node.expression)) {
+      const counts = parameterChecks.get(node.expression.text);
+      if (counts) counts.type++;
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
         node.expression.name.text === "trim" &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === helperParameter) {
-      trimChecks++;
+        ts.isIdentifier(node.expression.expression)) {
+      const counts = parameterChecks.get(node.expression.expression.text);
+      if (counts) counts.trim++;
     }
     if (ts.isPropertyAccessExpression(node) && node.name.text === "length" &&
-        ts.isIdentifier(node.expression) && node.expression.text === helperParameter) {
-      lengthChecks++;
+        ts.isIdentifier(node.expression)) {
+      const counts = parameterChecks.get(node.expression.text);
+      if (counts) counts.length++;
     }
     ts.forEachChild(node, countValidationRules);
   }
   countValidationRules(helper.body);
-  assert.equal(typeChecks, 1, "共享校验中的类型检查必须只实现一次");
-  assert.equal(trimChecks, 1, "共享校验中的空字符串检查必须只实现一次");
-  assert.equal(lengthChecks, 1, "共享校验中的最大长度检查必须只实现一次");
+  const validatedParameters = [...parameterChecks.values()].filter(
+    (counts) => counts.type === 1 && counts.trim === 1 && counts.length === 1,
+  );
+  assert.equal(validatedParameters.length, 1,
+    "共享校验中的类型、空字符串、最大长度三种规则都必须只实现一次");
 
   const nameParameter = firstParameterName(validateName);
   const titleParameter = firstParameterName(validateTitle);
