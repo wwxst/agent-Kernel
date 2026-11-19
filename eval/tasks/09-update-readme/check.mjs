@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { readTaskFile, readTaskJson } from "../../checker-helpers.mjs";
 
 export default async function check(root) {
@@ -16,7 +17,15 @@ export default async function check(root) {
   assert.match(section, /^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|\s*$/m, "「命令」一节必须有 Markdown 表格分隔线");
 
   const pkg = await readTaskJson(path.join(root, "package.json"), "package.json");
+  const originalPkg = await readTaskJson(
+    fileURLToPath(new URL("./files/package.json", import.meta.url)),
+    "原始 package.json",
+  );
   const scripts = pkg.scripts ?? {};
+  const requiredScripts = Object.keys(originalPkg.scripts ?? {});
+  for (const name of requiredScripts) {
+    assert.ok(Object.hasOwn(scripts, name), `package.json 原有 npm script 被删除: ${name}`);
+  }
   const rows = [...section.matchAll(/^\|\s*([^|]+)\|\s*([^|]+)\|\s*$/gm)];
   const documented = new Map();
 
