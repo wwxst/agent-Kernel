@@ -104,7 +104,7 @@ test("评测题 04：文档表格完整且保留 README 原内容才通过", asy
     await writeFile(path.join(root, "docs", "usage.md"), [
       "# 用法",
       "",
-      "| 命令 | 用途 |",
+      "| 命令 | 描述 |",
       "| --- | --- |",
       "| `npm test` | 运行测试 |",
       "| `npm run lint` | 检查代码 |",
@@ -112,6 +112,20 @@ test("评测题 04：文档表格完整且保留 README 原内容才通过", asy
     ].join("\n"));
     await writeFile(path.join(root, "README.md"), "# fixture\n\n一个用来练手的小仓库。\n\n[用法](docs/usage.md)\n");
     await assert.doesNotReject(() => checkCreateDoc(root));
+
+    const noUsageDelimiter = (await readFile(path.join(root, "docs", "usage.md"), "utf8"))
+      .replace("| --- | --- |", "");
+    await writeFile(path.join(root, "docs", "usage.md"), noUsageDelimiter);
+    await assert.rejects(() => checkCreateDoc(root), /Markdown 表格分隔线/);
+    await writeFile(path.join(root, "docs", "usage.md"), [
+      "# 用法",
+      "",
+      "| 命令 | 描述 |",
+      "| --- | --- |",
+      "| `npm test` | 运行测试 |",
+      "| `npm run lint` | 检查代码 |",
+      "",
+    ].join("\n"));
 
     await writeFile(path.join(root, "README.md"), "[用法](docs/usage.md)\n");
     await assert.rejects(() => checkCreateDoc(root), /README 原有标题和介绍/);
