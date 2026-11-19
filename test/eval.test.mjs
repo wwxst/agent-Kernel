@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { runRound } from "../eval/run.mjs";
+import { EVAL_SUITE_VERSION, runRound, summarize } from "../eval/run.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const fixture = path.join(projectRoot, "test", "support", "eval-floating-check.mjs");
@@ -59,6 +59,23 @@ async function withRoundFixture(run) {
     await rm(tasksDir, { recursive: true, force: true });
   }
 }
+
+test("评测记录：每轮都写入当前评测套件版本", () => {
+  const record = summarize({
+    results: [{
+      ok: true,
+      requests: 2,
+      toolCalls: 3,
+      tokens: { total: 10, unknownResponses: 0 },
+    }],
+    elapsed: 1.25,
+    model: "test-model",
+    commit: "test-commit",
+    infra: [],
+  });
+  assert.equal(record.suiteVersion, EVAL_SUITE_VERSION);
+  assert.equal(record.suiteVersion, 2);
+});
 
 test("评测：并发任务报错后停止领取，等待已经启动的任务收尾再拒绝", async () => {
   await withRoundFixture(async (options, endpoint) => {
