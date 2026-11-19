@@ -11,8 +11,13 @@
  *   - `createModel()`：记录每次请求的假客户端；可注入业务请求失败、可控制摘要正文。
  *   - `summaryWith()`：造一份形状合格、带标记的摘要，用来验证「替换而不是追加」。
  *   - 预算：短对话不压、工具定义计入体积、字符路径与 token 路径分开。
- *   - 工具结果：最新批次完整、旧结果先裁剪、超大结果先存档再预览、存档失败不替换。
- *   - 历史摘要：折叠旧轮次、单轮多步、多次替换、失败/不合格/取消都不提交。
+ *   - 工具结果：最新批次完整、旧结果先裁剪、超大结果先存档再预览、存档失败不替换、
+ *     换了预览却没省空间时回滚刚写的存档。
+ *   - 历史摘要：折叠旧轮次、单轮多步、多次替换、失败/不合格/取消都不提交；
+ *     摘要以 system 之后的一条 user 消息承载（不抬高指令等级、不被当成用户轮次）；
+ *     存档失败与候选被拒都回滚存档，不留孤儿文件。
+ *   - 提交原子性：在提交块唯一的失败点注入异常，验证「要么全提交、要么全不提交」，
+ *     以及成功提交后存档清单、摘要消息、上下文与磁盘文件一一对应。
  *   - 摘要请求自己的预算：序列化后的真实体积、输出预留为 0 时的合法结构下限、装不下就不发。
  *   - 溢出：只认明确的上下文超限、最多重发一次、不重跑工具、压不动就报错。
  *   - 隔离与回放：子 Agent 互不影响、长任务多轮压缩后仍能完成。
@@ -146,6 +151,25 @@ function summaryWith(tag) {
 /** 一条 assistant 消息：带工具调用，同时带一段正文（模型在解释自己要干什么）。 */
 function callToolWithNotes(id, name, args, notes) {
   return { ...callTool(id, name, args), content: notes };
+}
+
+/**
+ * 取出摘要消息，并断言它确实按「上下文数据」的方式承载。
+ *
+ * 位置与角色都是契约的一部分：system 之后一条 user 消息。摘要来自历史（含工具输出），
+ * 放进 system 就等于把工具输出里的祈使句抬到系统规则之上（设计文档 §8.4）。
+ */
+function memoryMessage(messages) {
+  const [system, memory] = messages;
+  assert.equal(system?.role, "system");
+  assert.equal(memory?.role, "user", "摘要必须以 user 角色承载，不能进 system");
+  assert.match(String(memory?.content ?? ""), /conversation memory/i);
+  return memory;
+}
+
+/** 整个 Transcript 里有没有摘要消息 —— 用来断言「这次没有提交摘要」。 */
+function hasMemoryMessage(messages) {
+  return messages.some((message) => /conversation memory/i.test(String(message.content ?? "")));
 }
 
 /**
@@ -284,7 +308,9 @@ test("预算：没有窗口只按字符数，配了窗口才按 token 估算", a
   await tightAgent.run("first");
   await tightAgent.run("second");
   assert.equal(tight.summaryRequests.length, 1, "窗口 3000 装不下 9000 字符的历史");
-  assert.match(tightAgent.transcript[0].content, /conversation memory/i);
+  // 摘要以 user 角色跟在 system 后面；宿主生成的存档清单仍然留在 system 里。
+  assert.equal(tightAgent.transcript[1].role, "user");
+  assert.match(tightAgent.transcript[0].content, /Archived originals/);
 });
 
 // ---------------------------------------------------------------------------
@@ -345,7 +371,8 @@ test("溢出降级：自定义客户端返回空工具数组时，折叠仍保�
   const agent = makeAgent({ llm: chat, tools: makeRegistry([]), maxTranscriptChars: 20_000 });
   await agent.run("first");
   await agent.run("next");
-  assert.match(chat.businessRequests.at(-1).messages[0].content, /Earlier assistant answer: retain-this-answer/);
+  assert.match(memoryMessage(chat.businessRequests.at(-1).messages).content,
+    /Earlier assistant answer: retain-this-answer/);
 });
 
 test("工具结果：存档失败时不做有损替换", async () => {
@@ -367,6 +394,40 @@ test("工具结果：存档失败时不做有损替换", async () => {
     const delivered = chat.businessRequests[1].messages.find((message) => message.role === "tool");
     assert.equal(delivered.content, "y".repeat(20_000), "没有存档就不许把原文换成预览");
     assert.ok(agent.compactionStats.archiveFailures > 0, "存档失败要计数，不能无声吞掉");
+  });
+});
+
+test("历史压缩：存档失败时不提交替换，原始历史与请求都保持完整", async () => {
+  await withWorkspace(async (root) => {
+    // 把一个普通文件当存档目录：建目录会失败，历史压缩的存档也就失败。
+    const notADirectory = path.join(root, "not-a-directory");
+    await writeFile(notADirectory, "x");
+    // 刻意不放工具结果：这样存档目录里唯一可能出现的写入就是这次历史压缩，
+    // 失败一定来自 `compactHistory`，不会被「工具结果裁剪」那条路径先挡下来。
+    const chat = createModel({
+      replies: [finalReply("first answer " + "a".repeat(3_000)), finalReply("done")],
+    });
+    const agent = makeAgent({
+      llm: chat,
+      tools: makeRegistry([]),
+      maxTranscriptChars: 3_000,
+      contextArchiveDir: notADirectory,
+    });
+
+    await agent.run("first task");
+    const before = agent.transcript.length;
+    await agent.run("second task");
+
+    assert.equal(agent.compactionStats.compactions, 0, "原文没有第二份，就不能提交有损替换");
+    assert.equal(agent.compactionStats.archiveFailures, 1, "存档失败要计数，且只该发生这一次");
+    assert.match(agent.compactionStats.lastError, /archive failed/);
+    // 存档没成功就不该再花钱请模型写摘要：那份摘要将没有任何原文可追溯。
+    assert.equal(chat.summaryRequests.length, 0, "存档失败后不能发摘要请求");
+    // 原始历史必须原样留在上下文里，并且照常发给模型。
+    assert.equal(agent.transcript.length, before + 2, "旧轮次一条都不能少（只多了新的一问一答）");
+    assert.ok(agent.transcript.some((message) => message.content === "first task"));
+    assert.ok(chat.businessRequests.at(-1).messages.some((message) =>
+      String(message.content ?? "").startsWith("first answer ")));
   });
 });
 
@@ -556,10 +617,9 @@ test("历史摘要：旧轮次折进摘要，当前任务与消息配对保留",
 
   assert.equal(chat.summaryRequests.length, 1);
   const transcript = agent.transcript;
-  assert.match(transcript[0].content, /conversation memory/i);
-  assert.match(transcript[0].content, /round-one/, "摘要正文要进 system 消息");
-  assert.equal(transcript[1].role, "user");
-  assert.equal(transcript[1].content, "third task", "当前任务必须留在原始消息里");
+  const memory = memoryMessage(transcript);
+  assert.match(memory.content, /round-one/, "摘要正文要进那条摘要消息");
+  assert.equal(transcript[2].content, "third task", "当前任务必须留在原始消息里");
   assert.ok(!transcript.some((message) => message.content === "first task"), "旧轮次被折进摘要");
 
   // 保留的调用与结果必须完整配对、顺序正确。
@@ -589,9 +649,9 @@ test("历史摘要：单轮任务里的已完成步骤也能折叠，当前目�
   assert.equal(reply.content, "all steps done");
   assert.ok(agent.compactionStats.compactions >= 1, "长单轮任务也必须能压，否则调用参数与推理会一直累积");
   const transcript = agent.transcript;
-  assert.equal(transcript[1].role, "user");
-  assert.equal(transcript[1].content, "run all seven steps", "当前目标不能被折叠");
-  assert.match(transcript[0].content, /steps/);
+  const memory = memoryMessage(transcript);
+  assert.equal(transcript[2].content, "run all seven steps", "当前目标不能被折叠");
+  assert.match(memory.content, /steps/);
 });
 
 test("历史摘要：多次压缩是替换旧摘要，而不是不断追加", async () => {
@@ -606,18 +666,51 @@ test("历史摘要：多次压缩是替换旧摘要，而不是不断追加", as
   await agent.run("run all steps");
 
   assert.ok(chat.summaryRequests.length >= 2, "长任务应该发生多次压缩");
-  const system = agent.transcript[0].content;
+  const transcript = agent.transcript;
+  const memory = memoryMessage(transcript).content;
   const lastTag = `round-${chat.summaryRequests.length}`;
   // 只允许出现一个轮次标记：出现两个就说明旧摘要是被追加而不是被替换。
-  assert.deepEqual([...new Set(system.match(/round-\d+/g) ?? [])], [lastTag], "旧摘要被替换，不是拼在后面");
-  assert.equal((system.match(/conversation memory/gi) ?? []).length, 1, "只有一块摘要，不重复");
-  assert.ok(system.length < 20_000, "摘要不能随压缩次数无限增长");
+  assert.deepEqual([...new Set(memory.match(/round-\d+/g) ?? [])], [lastTag], "旧摘要被替换，不是拼在后面");
+  assert.equal((memory.match(/conversation memory/gi) ?? []).length, 1, "只有一块摘要，不重复");
+  assert.ok(memory.length < 20_000, "摘要不能随压缩次数无限增长");
+  assert.equal(transcript.filter((message) => /conversation memory/i.test(String(message.content ?? ""))).length, 1,
+    "Transcript 里只能有一条摘要消息：替换，不是往后追加");
 
   // 第二次摘要请求必须带上上一份摘要，才能把旧结论合并进来。
   const secondRequest = chat.summaryRequests[1];
   const summaryInput = secondRequest.messages[1].content;
   assert.match(summaryInput, /round-1/, "摘要请求要带上上一份摘要");
   assert.match(summaryInput, /Previous summary/, "并且明确要求合并成一份新的");
+});
+
+test("历史摘要：摘要以 user 角色承载，既不抬高指令等级，也不被当成用户轮次", async () => {
+  // 摘要的内容来自历史（用户要求、助手动作、工具输出），它是数据。
+  // 放进 system 就等于把工具输出里的祈使句抬到系统规则那一档（设计文档 §8.4）。
+  const replies = [];
+  for (let step = 1; step <= 12; step++) {
+    replies.push(callToolWithNotes(`s${step}`, "echo", { value: String(step) }, "step " + step + " " + "n".repeat(1_400)));
+  }
+  replies.push(finalReply("done"));
+  const chat = createModel({ replies, summary: (round) => summaryWith(`role-${round}`) });
+  const agent = makeAgent({ llm: chat, tools: makeRegistry([echoTool()]), maxTranscriptChars: 8_000 });
+
+  await agent.run("run the steps");
+
+  assert.ok(agent.compactionStats.compactions >= 2, "这个用例要看到多次压缩");
+  const transcript = agent.transcript;
+  // 1) 摘要不在 system 消息里。
+  assert.ok(!transcript[0].content.includes("conversation memory"), "摘要不能进 system");
+  assert.ok(!transcript[0].content.includes("role-1"), "摘要正文不能出现在 system 里");
+  // 2) 它以 user 角色紧跟 system，且正文按 JSON 字符串承载 —— 摘要里的换行伪造不出新的对话边界。
+  assert.equal(transcript[1].role, "user");
+  assert.match(transcript[1].content, /role-\d+/);
+  const encoded = transcript[1].content.split("\n").slice(1).join("\n");
+  assert.equal(typeof JSON.parse(encoded), "string", "摘要正文要以 JSON 字符串承载");
+
+  // 3) 它不会被当成一轮用户发言交给摘要模型：那会把模型写的摘要误标成用户原话。
+  const laterInput = chat.summaryRequests.at(-1).messages[1].content;
+  assert.doesNotMatch(laterInput, /USER: Untrusted conversation memory/);
+  assert.match(laterInput, /Previous summary of even older history/, "旧摘要走「上一份摘要」这一路，不是 USER 轮次");
 });
 
 test("历史摘要：摘要为空或不合格时不提交替换，原上下文保持不变", async () => {
@@ -638,7 +731,7 @@ test("历史摘要：摘要为空或不合格时不提交替换，原上下文�
     await agent.run("third task");
 
     assert.equal(agent.compactionStats.compactions, 0, `不合格摘要不能提交：${summary.slice(0, 12)}`);
-    assert.ok(!agent.transcript[0].content.includes("conversation memory"));
+    assert.ok(!hasMemoryMessage(agent.transcript), "没提交就不该留下摘要消息");
     assert.ok(agent.transcript.length >= before, "旧历史必须还在");
     assert.ok(agent.compactionStats.lastError.length > 0, "失败原因要留下，不能静默");
   }
@@ -661,7 +754,7 @@ test("历史摘要：缺少后四节或超过本次限长时，原始回答仍�
   }
 });
 
-test("历史摘要：失败配额用完后不再为同一批历史重复写存档", async () => {
+test("历史摘要：失败配额用完后不再重复写存档，失败的那份被回滚", async () => {
   await withWorkspace(async root => {
     const replies = Array.from({ length: 9 }, (_, step) =>
       callToolWithNotes(String(step), "echo", { value: String(step) }, "n".repeat(2_500)));
@@ -670,9 +763,11 @@ test("历史摘要：失败配额用完后不再为同一批历史重复写存�
       llm: chat, tools: makeRegistry([echoTool()]), contextArchiveDir: root, maxTranscriptChars: 8_000,
     });
     await agent.run("task");
+    // 配额只给两次：不能为同一批历史反复写存档、反复付费。
     assert.equal(chat.summaryRequests.length, 2);
+    // 两次都没提交，刚写的两份存档也就没有引用者：必须回滚，不能留下孤儿文件。
     const [session] = await readdir(root);
-    assert.equal((await readdir(path.join(root, session))).length, 2);
+    assert.deepEqual(await readdir(path.join(root, session)), []);
   });
 });
 
@@ -724,7 +819,45 @@ test("历史摘要：压缩途中取消，不提交摘要也不继续发请求",
   await assert.rejects(() => agent.run("third task"), /cancelled/);
 
   assert.equal(agent.compactionStats.compactions, 0);
-  assert.ok(!agent.transcript[0].content.includes("conversation memory"));
+  assert.ok(!hasMemoryMessage(agent.transcript));
+});
+
+test("历史摘要：摘要请求报错的同时用户取消，取消不被降级成「摘要失败，继续跑」", async () => {
+  const controller = new AbortController();
+  const chat = createModel({
+    replies: [finalReply("first answer " + "a".repeat(3_000)), finalReply("done")],
+    // 两个信号同时到：摘要请求失败，用户也按了 Ctrl-C。
+    summary: () => {
+      controller.abort();
+      return new ModelHttpError(500, "summary exploded");
+    },
+  });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([]),
+    // 窗口刻意配得很紧：压不动就必然超硬上限。没有取消出口的话，这次 Run 会被
+    // 误报成「context window is too small」，而不是「用户按了 Ctrl-C」。
+    contextWindowTokens: 1_400,
+    outputTokenReserve: 100,
+    signal: controller.signal,
+  });
+
+  await agent.run("first task");
+  await assert.rejects(
+    () => agent.run("second task"),
+    (error) => {
+      // 取消要往上抛，而不是被 catch 当成「摘要失败，接着发业务请求」。
+      assert.match(error.message, /cancelled/);
+      assert.doesNotMatch(error.message, /context window is too small/);
+      return true;
+    },
+  );
+
+  assert.equal(chat.summaryRequests.length, 1, "取消前那次摘要请求确实发出过");
+  assert.equal(agent.compactionStats.compactions, 0, "取消不提交摘要");
+  assert.equal(agent.stats.summaryRequests, 1);
+  assert.match(agent.compactionStats.lastError, /summary exploded/, "失败原因要留下，不能因为取消就丢掉");
+  assert.equal(chat.businessRequests.length, 1, "取消之后不能再发业务请求");
 });
 
 test("历史摘要：摘要请求不带工具、单独计数，用量照记", async () => {
@@ -921,7 +1054,7 @@ test("历史摘要：输出预留为 0 时仍给合法九节摘要留够长度�
   assert.equal(reply.content, "done", "摘要提交之后主请求必须能继续");
   assert.equal(agent.compactionStats.lastError, "");
   assert.equal(agent.compactionStats.compactions, 1);
-  const system = chat.businessRequests.at(-1).messages[0].content;
+  const memory = memoryMessage(chat.businessRequests.at(-1).messages);
   for (const section of [
     "Primary Request and Intent",
     "Key Technical Concepts",
@@ -933,7 +1066,7 @@ test("历史摘要：输出预留为 0 时仍给合法九节摘要留够长度�
     "Current Work",
     "Optional Next Step",
   ]) {
-    assert.ok(system.includes(`## ${section}`), `提交的摘要必须保留小节「${section}」`);
+    assert.ok(memory.content.includes(`## ${section}`), `提交的摘要必须保留小节「${section}」`);
   }
 });
 
@@ -1010,6 +1143,92 @@ test("历史摘要：压缩后 system 里留下可定位、可恢复的原文引
     const body = await readFile(listed[0], "utf8");
     assert.match(body, /step 1 /, "存档里要有被折叠的原始步骤");
     assert.match(body, /"role": "tool"/, "存档是完整的消息序列，不是预览");
+  });
+});
+
+test("历史压缩：候选被拒时，刚写的历史存档被回滚，不留孤儿文件", async () => {
+  await withWorkspace(async (root) => {
+    // 同样不放工具结果：存档目录里只可能出现这次历史压缩写的那一份。
+    const chat = createModel({
+      replies: [finalReply("first answer " + "a".repeat(3_000)), finalReply("done")],
+      // 摘要长度合规，但控制字符序列化后每个占六个字符，候选反而变大 —— 提交校验会拒绝它。
+      summary: (_round, messages) => {
+        const limit = Number(/under (\d+) characters/.exec(messages[0].content)[1]);
+        return compactNineSections().padEnd(limit, "\u0001");
+      },
+    });
+    const agent = makeAgent({
+      llm: chat,
+      tools: makeRegistry([]),
+      maxTranscriptChars: 3_000,
+      contextArchiveDir: root,
+    });
+
+    await agent.run("first task");
+    await agent.run("second task");
+
+    assert.equal(agent.compactionStats.compactions, 0, "候选没通过验证就不能提交");
+    assert.match(agent.compactionStats.lastError, /did not shrink/);
+    // 没提交就没有引用者：那份完整历史既不在 system 清单里，也没有消息指向它。
+    const [session] = await readdir(root);
+    assert.deepEqual(await readdir(path.join(root, session)), [],
+      "候选被拒后不能留下无人引用的存档");
+  });
+});
+
+test("提交原子性：提交阶段抛异常时什么都没提交，恢复后四份状态互相对得上", async () => {
+  await withWorkspace(async (root) => {
+    const chat = createModel({
+      replies: [finalReply("first answer " + "a".repeat(3_000)), finalReply("done")],
+      summary: summaryWith("atomic"),
+    });
+    const agent = makeAgent({
+      llm: chat,
+      tools: makeRegistry([]),
+      maxTranscriptChars: 3_000,
+      contextArchiveDir: root,
+    });
+    await agent.run("first task");
+
+    // 提交块里唯一可能抛异常的语句，是 rememberArchive() 里那次 push（其余都是普通字段赋值）。
+    // 在实例上换掉它，就能在「存档已经写盘、会话状态还没提交」的那一刻注入一次失败。
+    // 这是刻意的白盒故障注入：这个失败点没有别的外部入口。
+    const context = agent.context;
+    const archives = context.archivedOriginals;
+    const before = agent.transcript.length;
+    archives.push = () => { throw new Error("commit boom"); };
+    try {
+      await assert.rejects(() => agent.run("second task"), /commit boom/);
+    } finally {
+      delete archives.push;
+    }
+
+    // ① 什么都没提交：摘要、上下文、计数都不动，刚写的存档被回滚。
+    assert.equal(agent.compactionStats.compactions, 0, "提交没走完就不算压缩成功");
+    assert.equal(agent.compactionStats.archiveFailures, 0, "存档本身是成功的，失败发生在提交阶段");
+    assert.ok(!hasMemoryMessage(agent.transcript), "不能留下半份摘要");
+    assert.equal(agent.transcript.length, before + 1, "只多了这次任务的 user 消息，历史一条都没少");
+    const [session] = await readdir(root);
+    assert.deepEqual(await readdir(path.join(root, session)), [],
+      "没登记就没有引用者：存档必须回滚，不能留下孤儿文件");
+
+    // ② 恢复之后照常提交：清单、摘要、上下文、磁盘文件必须一一对应。
+    await agent.run("third task");
+    assert.equal(agent.compactionStats.compactions, 1);
+
+    const transcript = agent.transcript;
+    assert.match(memoryMessage(transcript).content, /atomic/);
+    const system = transcript[0].content;
+    const listed = [...system.matchAll(/^- (.+?) \(\d+ chars\)$/gm)].map((match) => match[1]);
+    const hidden = Number(/(\d+) older archive\(s\) not listed/.exec(system)?.[1] ?? 0);
+    assert.ok(listed.length >= 1, "提交成功后清单里必须有这次压缩的存档");
+    for (const file of listed) {
+      assert.match(await readFile(file, "utf8"), /first answer/,
+        "清单里写出的路径必须真的可读 —— 不允许出现指向不存在文件的存档索引");
+    }
+    const files = await readdir(path.join(root, session));
+    assert.equal(files.length, listed.length + hidden,
+      "磁盘文件数 = 列出的 + 声明未列出的：多了是孤儿，少了是悬空引用");
   });
 });
 
@@ -1308,8 +1527,8 @@ test("隔离：两个 Agent 的上下文与摘要互不影响", async () => {
   await a.run("third task");
   await b.run("only one task");
 
-  assert.match(a.transcript[0].content, /agent-a/);
-  assert.ok(!b.transcript[0].content.includes("conversation memory"), "子会话不该继承别人的摘要");
+  assert.match(memoryMessage(a.transcript).content, /agent-a/);
+  assert.ok(!hasMemoryMessage(b.transcript), "子会话不该继承别人的摘要");
   assert.equal(b.compactionStats.compactions, 0);
 });
 
@@ -1330,8 +1549,8 @@ test("长任务回放：多轮工具调用与多次压缩后仍能完成并保�
   assert.equal(agent.stats.toolCalls, 12, "压缩不能吃掉工具调用");
 
   const transcript = agent.transcript;
-  assert.equal(transcript[1].content, "execute the twelve-step checklist", "用户目标必须原样保留");
-  assert.ok(transcript[0].content.includes(`long-round-${chat.summaryRequests.length}`));
+  assert.equal(transcript[2].content, "execute the twelve-step checklist", "用户目标必须原样保留");
+  assert.ok(memoryMessage(transcript).content.includes(`long-round-${chat.summaryRequests.length}`));
   assert.ok(JSON.stringify(transcript).length < 40_000, "压缩后总量要有界");
 
   // 每次请求的配对都完整：断一条，下一次请求就会被 API 拒绝。
