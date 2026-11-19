@@ -1,0 +1,50 @@
+{
+  "suiteVersion": "2026-11-19-checkers-v2",
+  "model": "hy3",
+  "baseUrl": "http://127.0.0.1:8788/v1",
+  "tasks": 20,
+  "jobs": 4,
+  "command": "npm run eval -- --jobs 4",
+  "commits": [
+    "76a024a496a424614c47ebc6660c2b94ae6c347d"
+  ],
+  "rounds": 1,
+  "generatedAt": "2026-11-19T14:55:58.706Z",
+  "overall": {
+    "taskAttempts": 20,
+    "taskPasses": 19,
+    "passRate": 95
+  },
+  "medians": {
+    "requests": 132,
+    "toolCalls": 138,
+    "prompt": 528968,
+    "completion": 13547,
+    "tokens": 542515,
+    "elapsed": 91.8
+  },
+  "tokenRange": {
+    "min": 542515,
+    "max": 542515
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-19T14:54:26.850Z",
+      "commit": "76a024a496a424614c47ebc6660c2b94ae6c347d",
+      "passed": 19,
+      "total": 20,
+      "requests": 132,
+      "toolCalls": 138,
+      "prompt": 528968,
+      "completion": 13547,
+      "tokens": 542515,
+      "unknown": 0,
+      "elapsed": 91.8,
+      "busy": 326.7,
+      "failures": [
+        "04-create-doc"
+      ]
+    }
+  ]
+}

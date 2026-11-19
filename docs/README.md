@@ -48,7 +48,7 @@
 ### 想知道 Agent 到底好不好用
 
 - [eval/README.md](../eval/README.md)：评测方法。
-- [eval/baseline.md](../eval/baseline.md)：历史基线。
+- [eval/baseline.md](../eval/baseline.md)：当前套件基线与历史多轮结论。
 - [docs/eval-diagnostics.md](./eval-diagnostics.md)：固定基线和诊断。
 
 ## 文档怎么分工
