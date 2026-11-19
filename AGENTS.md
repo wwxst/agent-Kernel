@@ -13,6 +13,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm test` | 全部测试，不需要 API Key、不联网 |
 | `npm run typecheck` | `tsc --noEmit`（strict） |
 | `npm run check` | 上面两个一起跑：提交前跑这个 |
+| `npm run architecture:check` | 检查 `src/` 模块依赖方向，不需要 API Key |
 | `npm run worktree -- create <branch> [base]` | 创建独立分支和工作区；默认基于当前 HEAD |
 | `npm run worktree -- list` | 查看所有 Worktree |
 | `npm run worktree -- remove <branch>` | 删除干净的工作区，保留分支；有本地文件或特殊索引标记时拒绝删除 |
@@ -23,7 +24,7 @@ agent-Kernel 是一个最小 coding agent：模型说话，内核把工具调用
 | `npm run agent -- --tui ["<task>"]` | TUI：主视图在主屏就地追加（历史留在 Shell scrollback），`Ctrl+T` 进 transcript 整屏视图回看历史；不捕获鼠标；非 TTY 普通文本输出，`AGENT_TUI_COLOR=mono/full` 控制层次配色，`AGENT_TUI_THEME=dark/light/ansi` 选配色方案；需 `.env` |
 | `npm run eval` | 评测集：20 个真实小任务，记录成功率/请求数/工具调用/token/耗时；需要 `.env`，会花钱 |
 | `npm run eval:check` | 评测自检：不调用模型，验证每个任务初始状态确实会断言失败 |
-| `npm run eval:summary` | 汇总最近 3 轮完整评测的通过率、请求数、耗时中位数；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
+| `npm run eval:summary` | 汇总最近 3 轮同一评测套件、模型和 Commit 的完整评测；`-- 5` 指定轮数。只读 `eval/results/`，不花钱 |
 | `npm run eval:cross-day -- --date <YYYY-MM-DD>` | 跨天评测：在固定 commit `eac798d`（tag `stability-2026-11-05-prompt-v2`）上跑 3 轮，按日期归档；需要 `.env` |
 
 **任务参数是多行文本时，别走 `npm run`。** Windows 上 npm 经 `cmd.exe` 转发参数，内容会断在第一个换行处，而且不报错 —— 模型只收到第一行，看起来像它没听懂你的要求。多行任务直接跑入口：
