@@ -27,8 +27,10 @@ const allowedDependencies = new Map([
   ["tools", new Set(["tools", "protocol"])],
   ["model", new Set(["model", "protocol"])],
   ["ui", new Set(["ui", "core", "protocol"])],
-  ["entry", new Set(["entry", "core", "tools", "model", "ui", "protocol"])],
 ]);
+
+// 只有根目录的 src/cli.ts 是组装入口；不能通过新建 src/entry/ 文件扩张权限。
+const entryDependencies = new Set(["core", "tools", "model", "ui", "protocol"]);
 
 function toPosix(value) {
   return value.split(path.sep).join("/");
@@ -53,7 +55,7 @@ async function listTypeScriptFiles(directory) {
     const absolute = path.join(directory, entry.name);
     if (entry.isDirectory()) {
       files.push(...await listTypeScriptFiles(absolute));
-    } else if (entry.isFile() && /\.(?:ts|tsx|mts|cts)$/.test(entry.name) && !/\.d\.(?:ts|mts|cts)$/.test(entry.name)) {
+    } else if (entry.isFile() && /\.(?:ts|tsx|mts|cts)$/.test(entry.name)) {
       files.push(absolute);
     }
   }
@@ -226,7 +228,8 @@ export async function checkArchitecture(root = projectRoot) {
         continue;
       }
 
-      if (!allowedDependencies.get(sourceLayer).has(targetLayer)) {
+      const allowedTargets = sourceLayer === "entry" ? entryDependencies : allowedDependencies.get(sourceLayer);
+      if (!allowedTargets?.has(targetLayer)) {
         violations.push({
           file: relativeFile,
           line: location.line + 1,
