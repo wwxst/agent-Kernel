@@ -74,7 +74,7 @@ test("评测记录：每轮都写入当前评测套件版本", () => {
     infra: [],
   });
   assert.equal(record.suiteVersion, EVAL_SUITE_VERSION);
-  assert.equal(record.suiteVersion, 2);
+  assert.equal(record.suiteVersion, "2026-11-19-checkers-v2");
 });
 
 test("评测：并发任务报错后停止领取，等待已经启动的任务收尾再拒绝", async () => {
