@@ -1,0 +1,220 @@
+{
+  "at": "2026-11-19T14:54:52.818Z",
+  "suiteVersion": "2026-11-19-checkers-v2",
+  "model": "hy3",
+  "commit": "76a024a496a424614c47ebc6660c2b94ae6c347d",
+  "ok": true,
+  "passed": 1,
+  "total": 1,
+  "elapsed": 9.6,
+  "totals": {
+    "requests": 4,
+    "toolCalls": 5,
+    "tokens": 15743,
+    "unknownResponses": 0
+  },
+  "infraErrors": [],
+  "results": [
+    {
+      "name": "04-create-doc",
+      "ok": true,
+      "requests": 4,
+      "toolCalls": 5,
+      "tokens": {
+        "prompt": 15310,
+        "completion": 433,
+        "total": 15743,
+        "unknownResponses": 0
+      },
+      "seconds": 9.5,
+      "workdir": "C:\\Users\\ww\\AppData\\Local\\Temp\\agent-eval-04-create-doc-yPvdVr",
+      "trace": {
+        "version": 1,
+        "requests": [
+          {
+            "index": 1,
+            "taskElapsedMs": 1988,
+            "requestDurationMs": 1963,
+            "messageCount": 2,
+            "messageChars": 8021,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3660,
+            "completionTokens": 40,
+            "totalTokens": 3700,
+            "usageKnown": true
+          },
+          {
+            "index": 2,
+            "taskElapsedMs": 5324,
+            "requestDurationMs": 3321,
+            "messageCount": 6,
+            "messageChars": 8937,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3801,
+            "completionTokens": 297,
+            "totalTokens": 4098,
+            "usageKnown": true,
+            "promptTokenDelta": 141,
+            "promptTokenDeltaFromRequest": 1
+          },
+          {
+            "index": 3,
+            "taskElapsedMs": 7195,
+            "requestDurationMs": 1818,
+            "messageCount": 8,
+            "messageChars": 10325,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3890,
+            "completionTokens": 49,
+            "totalTokens": 3939,
+            "usageKnown": true,
+            "promptTokenDelta": 89,
+            "promptTokenDeltaFromRequest": 2
+          },
+          {
+            "index": 4,
+            "taskElapsedMs": 9552,
+            "requestDurationMs": 2334,
+            "messageCount": 10,
+            "messageChars": 10703,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3959,
+            "completionTokens": 47,
+            "totalTokens": 4006,
+            "usageKnown": true,
+            "promptTokenDelta": 69,
+            "promptTokenDeltaFromRequest": 3
+          }
+        ],
+        "toolCalls": [
+          {
+            "index": 1,
+            "requestIndex": 1,
+            "toolCallId": "chatcmpl-tool-a64c06377e207c4a",
+            "name": "ls",
+            "arguments": {
+              "path": "."
+            },
+            "executionMs": 6,
+            "observationMs": 1,
+            "fileChanges": [],
+            "resultChars": 52,
+            "resultBytes": 52,
+            "resultKind": "text"
+          },
+          {
+            "index": 2,
+            "requestIndex": 1,
+            "toolCallId": "chatcmpl-tool-a6394d76c90e8550",
+            "name": "read",
+            "arguments": {
+              "path": "package.json"
+            },
+            "executionMs": 3,
+            "observationMs": 1,
+            "fileChanges": [],
+            "resultChars": 127,
+            "resultBytes": 127,
+            "resultKind": "text"
+          },
+          {
+            "index": 3,
+            "requestIndex": 1,
+            "toolCallId": "chatcmpl-tool-bc7d3653679abd97",
+            "name": "read",
+            "arguments": {
+              "path": "README.md"
+            },
+            "executionMs": 2,
+            "observationMs": 1,
+            "fileChanges": [],
+            "resultChars": 26,
+            "resultBytes": 48,
+            "resultKind": "text"
+          },
+          {
+            "index": 4,
+            "requestIndex": 2,
+            "toolCallId": "chatcmpl-tool-8e06a98403e3354e",
+            "name": "write",
+            "arguments": {
+              "path": "docs/usage.md",
+              "content": "# 用法\n\n| 命令 | 说明 |\n| --- | --- |\n| `npm test` | 运行项目的 Node.js 测试。 |\n| `npm run lint` | 检查项目 JavaScript 文件的语法。 |\n"
+            },
+            "executionMs": 15,
+            "observationMs": 38,
+            "fileChanges": [
+              {
+                "path": "docs/usage.md",
+                "change": "added",
+                "afterBytes": 159
+              }
+            ],
+            "resultChars": 32,
+            "resultBytes": 32,
+            "resultKind": "text"
+          },
+          {
+            "index": 5,
+            "requestIndex": 3,
+            "toolCallId": "chatcmpl-tool-8aba324727ec5c4d",
+            "name": "edit",
+            "arguments": {
+              "path": "README.md",
+              "old_string": "一个用来练手的小仓库。\n",
+              "new_string": "一个用来练手的小仓库。\n\n[用法](docs/usage.md)\n"
+            },
+            "executionMs": 20,
+            "observationMs": 2,
+            "fileChanges": [
+              {
+                "path": "README.md",
+                "change": "modified",
+                "beforeBytes": 48,
+                "afterBytes": 75
+              }
+            ],
+            "resultChars": 32,
+            "resultBytes": 34,
+            "resultKind": "text"
+          }
+        ],
+        "fileChanges": [
+          {
+            "path": "README.md",
+            "change": "modified",
+            "beforeBytes": 48,
+            "afterBytes": 75
+          },
+          {
+            "path": "docs/usage.md",
+            "change": "added",
+            "afterBytes": 159
+          }
+        ],
+        "snapshotCoverage": {
+          "initial": {
+            "complete": true,
+            "visitedFiles": 2,
+            "visitedEntries": 2,
+            "hashedBytes": 175,
+            "warnings": []
+          },
+          "final": {
+            "complete": true,
+            "visitedFiles": 3,
+            "visitedEntries": 4,
+            "hashedBytes": 361,
+            "warnings": []
+          }
+        },
+        "diagnosticsErrors": [],
+        "elapsedMs": 9558
+      }
+    }
+  ]
+}
