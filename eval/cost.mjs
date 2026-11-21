@@ -47,7 +47,7 @@ export function estimateCost(usage, config, model) {
   const rates = config?.models?.[model] ?? config?.models?.["*"];
   if (rates === undefined) {
     return {
-      currency: config?.currency ?? "USD",
+      currency: config?.currency ?? null,
       amount: null,
       complete: false,
       reason: config === undefined ? "pricing_not_configured" : "model_price_not_configured",

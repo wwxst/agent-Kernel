@@ -548,15 +548,22 @@ function readUsage(payload: unknown): TokenUsage | undefined {
   if (details !== undefined && details !== null && !isRecord(details)) {
     throw invalid("usage.prompt_tokens_details must be an object");
   }
-  const cachedPromptTokens = details !== undefined && details !== null
-    ? readOptionalTokenCount(details, "cached_tokens")
-    : readOptionalTokenCount(usage, "prompt_cache_hit_tokens") ??
-      readOptionalTokenCount(usage, "cached_tokens");
+  const promptTokens = readTokenCount(usage, "prompt_tokens");
+  const completionTokens = readTokenCount(usage, "completion_tokens");
+  const totalTokens = readTokenCount(usage, "total_tokens");
+  const cachedPromptTokens = (details === undefined || details === null
+    ? undefined
+    : readOptionalTokenCount(details, "cached_tokens")) ??
+    readOptionalTokenCount(usage, "prompt_cache_hit_tokens") ??
+    readOptionalTokenCount(usage, "cached_tokens");
+  if (cachedPromptTokens !== undefined && cachedPromptTokens > promptTokens) {
+    throw invalid("usage.cached_tokens cannot exceed usage.prompt_tokens");
+  }
 
   return {
-    prompt_tokens: readTokenCount(usage, "prompt_tokens"),
-    completion_tokens: readTokenCount(usage, "completion_tokens"),
-    total_tokens: readTokenCount(usage, "total_tokens"),
+    prompt_tokens: promptTokens,
+    completion_tokens: completionTokens,
+    total_tokens: totalTokens,
     ...(cachedPromptTokens === undefined ? {} : { cached_prompt_tokens: cachedPromptTokens }),
   };
 }

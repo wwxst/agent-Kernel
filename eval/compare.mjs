@@ -21,6 +21,25 @@ export function compareRuns(a, b) {
   same("jobs", a.jobs ?? null, b.jobs ?? null);
   same("trace", a.trace ?? false, b.trace ?? false);
   same("keep", a.keep ?? false, b.keep ?? false);
+  const factorA = a.experiment?.factor ?? "unspecified";
+  const factorB = b.experiment?.factor ?? "unspecified";
+  same("experimentFactor", factorA, factorB);
+  if (!["unspecified", "agent-runtime", "system-prompt", "tool-definitions"].includes(factorA)) {
+    issues.push("unknown experiment factor: " + factorA);
+  }
+  const compareHash = (label, left, right) => {
+    if (left === undefined || right === undefined) {
+      if (factorA !== "unspecified") issues.push(label + " fingerprint missing");
+      return;
+    }
+    if (factorA === label) {
+      if (left === right) issues.push(label + " factor did not change");
+    } else if (left !== right) {
+      issues.push(label + " changed outside the declared experiment factor");
+    }
+  };
+  compareHash("system-prompt", a.promptSha256, b.promptSha256);
+  compareHash("tool-definitions", a.toolDefinitionsSha256, b.toolDefinitionsSha256);
   same("pricingSha256", a.pricingSha256 ?? "unknown", b.pricingSha256 ?? "unknown");
   same("costCurrency", a.totals?.cost?.currency ?? null, b.totals?.cost?.currency ?? null);
   same("taskSuiteSha256", a.taskSuiteSha256 ?? "unknown", b.taskSuiteSha256 ?? "unknown");
@@ -106,6 +125,7 @@ export function compareRuns(a, b) {
     issues: [...new Set(issues)],
     suiteVersion: a.suiteVersion ?? "unknown",
     model: a.model ?? "unknown",
+    factor: factorA,
     a: {
       commit: a.commit ?? "unknown", branch: a.branch ?? "unknown",
       workingTreeClean: a.workingTreeClean ?? null, passed: aPassed, total: aTotal,
@@ -132,6 +152,7 @@ export function summarizeExperiment(comparisons) {
   };
   return {
     rounds: comparisons.length,
+    factor: valid[0]?.factor ?? comparisons[0]?.factor ?? "unspecified",
     comparableRounds: valid.length,
     invalidRounds: comparisons.length - valid.length,
     improvedTasks: allTasks.filter((item) => item.status === "improved").length,
@@ -157,6 +178,7 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     "",
     "| Item | Result |",
     "| --- | ---: |",
+    "| Experiment factor | " + (summary.factor ?? "unspecified") + " |",
     "| Paired rounds | " + summary.rounds + " |",
     "| Comparable rounds | " + summary.comparableRounds + " |",
     "| Invalid rounds | " + summary.invalidRounds + " |",

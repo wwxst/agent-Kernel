@@ -15,7 +15,7 @@ export function experimentOrder(round) {
   return round % 2 === 1 ? ["A", "B"] : ["B", "A"];
 }
 
-async function runVariant(root, variant, experimentId, round, jobs, filters, trace, keep, pricingFile) {
+async function runVariant(root, variant, experimentId, factor, round, jobs, filters, trace, keep, pricingFile) {
   const label = variant;
   const output = "eval/results/experiments/" + experimentId +
     "/round-" + String(round).padStart(2, "0") + "-" + label + ".json";
@@ -24,6 +24,7 @@ async function runVariant(root, variant, experimentId, round, jobs, filters, tra
     EVAL_OUTPUT_FILE: output,
     EVAL_EXPERIMENT_ID: experimentId,
     EVAL_VARIANT: label,
+    EVAL_EXPERIMENT_FACTOR: factor,
   };
   if (pricingFile) env.EVAL_PRICING_FILE = pricingFile;
   const args = ["eval/run.mjs", "--jobs", String(jobs)];
@@ -58,12 +59,12 @@ async function cli() {
   const filters = [];
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
-    if (arg === "--a-dir" || arg === "--b-dir" || arg === "--rounds" || arg === "--jobs" || arg === "--task") {
+    if (arg === "--a-dir" || arg === "--b-dir" || arg === "--rounds" || arg === "--jobs" || arg === "--task" || arg === "--factor") {
       options[arg.slice(2)] = args[++index];
     } else if (arg === "--trace" || arg === "--keep") {
       options[arg.slice(2)] = true;
     } else if (arg === "--help") {
-      console.log("Usage: npm run eval:ab -- --a-dir PATH --b-dir PATH [--rounds 3] [--jobs 1] [--task FILTER] [--trace] [--keep]");
+      console.log("Usage: npm run eval:ab -- --a-dir PATH --b-dir PATH [--factor agent-runtime|system-prompt|tool-definitions] [--rounds 3] [--jobs 1] [--task FILTER] [--trace] [--keep]");
       return;
     } else {
       throw new Error("unknown argument: " + arg);
@@ -75,6 +76,10 @@ async function cli() {
   if (aDir === bDir) throw new Error("A and B must be different directories");
   const rounds = Number(options.rounds ?? 3);
   const jobs = Number(options.jobs ?? 1);
+  const factor = options.factor ?? "agent-runtime";
+  if (!["agent-runtime", "system-prompt", "tool-definitions"].includes(factor)) {
+    throw new Error("--factor must be agent-runtime, system-prompt, or tool-definitions");
+  }
   if (!Number.isSafeInteger(rounds) || rounds < 1) throw new Error("rounds must be a positive integer");
   if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error("jobs must be a positive integer");
   if (!process.env.API_KEY?.trim() && !process.env.OPENAI_API_KEY?.trim()) {
@@ -92,7 +97,7 @@ async function cli() {
     const records = {};
     for (const variant of experimentOrder(round)) {
       const root = variant === "A" ? aDir : bDir;
-      const result = await runVariant(root, variant, experimentId, round, jobs,
+      const result = await runVariant(root, variant, experimentId, factor, round, jobs,
         options.task ? [options.task] : filters, Boolean(options.trace), Boolean(options.keep), pricingFile);
       records[variant] = result.record;
       runFiles.push(result.resultPath);
@@ -110,7 +115,7 @@ async function cli() {
   const outputDir = path.join(aDir, "eval", "results", "experiments", experimentId);
   await mkdir(outputDir, { recursive: true });
   await writeFile(path.join(outputDir, "experiment.json"), JSON.stringify({
-    experimentId, rounds, jobs, runFiles, comparisons, summary,
+    experimentId, factor, rounds, jobs, runFiles, comparisons, summary,
   }, null, 2), "utf8");
   await writeFile(path.join(outputDir, "report.md"), report, "utf8");
   console.log(report);

@@ -103,6 +103,10 @@ async function cli() {
     : undefined;
   const git = await currentGitState();
   const commit = git.commit;
+  const toolDefinitions = new ToolRegistry(
+    createWorkspaceTools(new Workspace({ root: defaultTasksDir })),
+  ).definitions;
+  const toolDefinitionsJson = JSON.stringify(toolDefinitions);
 
   const names = (await readdir(defaultTasksDir))
     .filter((name) => filters.length === 0 || filters.some((filter) => name.includes(filter)))
@@ -149,6 +153,9 @@ async function cli() {
     trace,
     keep,
     promptSha256: createHash("sha256").update(DEFAULT_SYSTEM_PROMPT).digest("hex"),
+    promptChars: DEFAULT_SYSTEM_PROMPT.length,
+    toolDefinitionsSha256: createHash("sha256").update(toolDefinitionsJson).digest("hex"),
+    toolDefinitionsChars: toolDefinitionsJson.length,
     taskSuiteSha256: await taskSuiteFingerprint(defaultTasksDir, names),
     pricingSha256: createHash("sha256").update(JSON.stringify(pricing ?? null)).digest("hex"),
     endpointPath: endpointPath(baseUrl),
@@ -158,6 +165,7 @@ async function cli() {
     experiment: {
       id: process.env.EVAL_EXPERIMENT_ID ?? null,
       variant: process.env.EVAL_VARIANT ?? null,
+      factor: process.env.EVAL_EXPERIMENT_FACTOR ?? "unspecified",
     },
   };
   await report(summarize({ results, elapsed, model, commit, infra, metadata }), process.env.EVAL_OUTPUT_FILE);

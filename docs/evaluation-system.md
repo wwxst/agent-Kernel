@@ -26,7 +26,7 @@
 - 工具执行耗时、结果长度、工具错误、文件变化和快照覆盖情况；
 - 上下文压缩次数、摘要请求数、压缩失败和观察器错误；
 - Commit、分支、工作区是否干净、模型、端点主机/路径、Node、OS、架构、并发；
-- 系统提示词、任务集和价格表的 SHA-256 指纹。
+- 系统提示词、工具定义、任务集和价格表的 SHA-256 指纹。
 
 正常评测不必开启详细追踪；需要定位问题时使用 `--trace`。追踪会增加 I/O，带追踪的耗时不能直接和无追踪结果混比。
 
@@ -90,6 +90,8 @@
 - 默认执行 3 轮，默认并发 1；
 - 每轮交替 A/B 的执行顺序，减少固定先后顺序造成的时间偏差；
 - 使用同一进程环境中的模型、端点和价格配置；
+- 显式声明本轮唯一实验因素：`agent-runtime`、`system-prompt` 或 `tool-definitions`；
+- 自动核对提示词和工具定义指纹：测试提示词时工具定义必须不变，测试工具定义时提示词必须不变，测试运行时逻辑时两者都必须不变；
 - 每轮分别保存 A、B 原始 JSON 结果；
 - 自动检查模型、端点、任务集指纹、价格表指纹、运行环境、并发、任务集合和任务预算；
 - 配置不一致或存在基础设施错误时，将该轮标记为无效；
@@ -152,7 +154,7 @@ npm run eval:summary
 A/B 对照：
 
 ```bash
-npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --rounds 3 --jobs 1 --keep
+npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --factor system-prompt --rounds 3 --jobs 1 --keep
 ```
 
 CI 在 Linux、Windows、macOS 上运行类型检查、单元测试、架构边界检查和评测集自检；不会在 CI 中调用真实模型。

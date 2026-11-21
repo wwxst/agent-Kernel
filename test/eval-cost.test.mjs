@@ -31,8 +31,10 @@ test("费用估算：分别按普通输入、缓存输入和输出价格计算",
   });
 });
 
-test("费用估算：没有价格表时不猜测费用", () => {
-  assert.equal(estimateCost({ promptTokens: 100, completionTokens: 10 }, undefined, "mock-model").amount, null);
+test("费用估算：没有价格表时不猜测费用或币种", () => {
+  const cost = estimateCost({ promptTokens: 100, completionTokens: 10 }, undefined, "mock-model");
+  assert.equal(cost.amount, null);
+  assert.equal(cost.currency, null);
 });
 
 test("费用估算：模型没有配置价格时不套用其他模型价格", () => {

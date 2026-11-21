@@ -58,7 +58,7 @@ npm run eval:scenarios
 先准备两个独立目录：A 放基线代码，B 放候选代码。两个目录的评测任务、模型端点、模型名、Node/OS、并发和任务预算必须相同；只允许改变本轮要验证的因素。实验脚本不会自动创建或切换 Git 分支，也不会删除工作区。
 
 ```bash
-npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --rounds 3 --jobs 1 --keep
+npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --factor system-prompt --rounds 3 --jobs 1 --keep
 ```
 
 脚本每轮交替 A/B 先后顺序，默认三轮、并发 1。每个任务会保留工作区，便于后续生成质量盲审包。结果和报告保存在 A 目录的 eval/results/experiments/ 下。真实模型评测会产生 API 费用；本项目 CI 不会运行它。

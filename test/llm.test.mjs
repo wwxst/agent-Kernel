@@ -358,6 +358,13 @@ test("chat：缓存 Token 支持 OpenAI 兼容字段和厂商缓存命中字段"
     { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22, prompt_cache_hit_tokens: 9 },
   );
   assert.equal(provider.usage.cached_prompt_tokens, 9);
+
+  const fallback = await chatWith(
+    { role: "assistant", content: "ok" },
+    "stop",
+    { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22, prompt_tokens_details: {}, prompt_cache_hit_tokens: 6 },
+  );
+  assert.equal(fallback.usage.cached_prompt_tokens, 6);
 });
 
 test("chat：缓存 Token 字段存在但类型错误必须拒绝", async () => {
@@ -377,6 +384,17 @@ test("chat：缓存 Token 字段存在但类型错误必须拒绝", async () => 
   } finally {
     await server.close();
   }
+});
+
+test("chat：缓存 Token 不能大于输入 Token", async () => {
+  await assert.rejects(
+    () => chatWith(
+      { role: "assistant", content: "ok" },
+      "stop",
+      { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11, prompt_tokens_details: { cached_tokens: 12 } },
+    ),
+    /usage\.cached_tokens cannot exceed usage\.prompt_tokens/,
+  );
 });
 
 test("chat：没有 usage 时是未知，不是 0", async () => {

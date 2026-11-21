@@ -17,6 +17,9 @@ function run(overrides = {}) {
     pricingSha256: "pricing-hash",
     trace: false,
     keep: false,
+    promptSha256: "prompt-hash",
+    toolDefinitionsSha256: "tools-hash",
+    experiment: { factor: "agent-runtime" },
     passed: 2,
     total: 2,
     elapsed: 10,
@@ -118,6 +121,42 @@ test("A/B 汇总：只统计可比较轮次，并输出回归提醒", () => {
   assert.equal(summary.invalidRounds, 1);
   assert.equal(summary.regressedTasks, 1);
   assert.match(renderComparison([comparison], summary), /Regressed tasks/);
+});
+
+test("A/B 因素约束：测试 System Prompt 时只允许 Prompt 指纹变化", () => {
+  const result = compareRuns(
+    run({ experiment: { factor: "system-prompt" } }),
+    run({ promptSha256: "new-prompt", experiment: { factor: "system-prompt" } }),
+  );
+  assert.equal(result.comparable, true);
+  assert.equal(result.factor, "system-prompt");
+
+  const accidentalToolChange = compareRuns(
+    run({ experiment: { factor: "system-prompt" } }),
+    run({ promptSha256: "new-prompt", toolDefinitionsSha256: "changed-tools", experiment: { factor: "system-prompt" } }),
+  );
+  assert.equal(accidentalToolChange.comparable, false);
+  assert.ok(accidentalToolChange.issues.some((issue) => issue.includes("tool-definitions changed outside")));
+});
+
+test("A/B 因素约束：测试工具定义时只允许工具指纹变化", () => {
+  const result = compareRuns(
+    run({ experiment: { factor: "tool-definitions" } }),
+    run({ toolDefinitionsSha256: "new-tools", experiment: { factor: "tool-definitions" } }),
+  );
+  assert.equal(result.comparable, true);
+  const noChange = compareRuns(
+    run({ experiment: { factor: "tool-definitions" } }),
+    run({ experiment: { factor: "tool-definitions" } }),
+  );
+  assert.equal(noChange.comparable, false);
+  assert.ok(noChange.issues.some((issue) => issue.includes("factor did not change")));
+});
+
+test("A/B 因素约束：运行时实验不能顺带改变 Prompt 或工具说明", () => {
+  const result = compareRuns(run(), run({ promptSha256: "changed-prompt" }));
+  assert.equal(result.comparable, false);
+  assert.ok(result.issues.some((issue) => issue.includes("system-prompt changed outside")));
 });
 
 test("A/B 运行顺序：每轮交替，降低时间顺序偏差", () => {
