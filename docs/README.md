@@ -47,9 +47,10 @@
 
 ### 想知道 Agent 到底好不好用
 
-- [eval/README.md](../eval/README.md)：评测方法。
-- [eval/baseline.md](../eval/baseline.md)：历史基线。
-- [docs/eval-diagnostics.md](./eval-diagnostics.md)：固定基线和诊断。
+- [整体评测体系](./evaluation-system.md)：P1～P4 的数据采集、费用、A/B 对照、复杂任务和盲审规范。
+- [评测方法与命令](../eval/README.md)：怎么运行、怎么查看结果。
+- [评测基线](../eval/baseline.md)：历史真实模型数据。
+- [评测诊断](./eval-diagnostics.md)：跨天基线和详细追踪。
 
 ## 文档怎么分工
 
