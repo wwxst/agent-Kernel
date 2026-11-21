@@ -16,7 +16,7 @@ function run(overrides = {}) {
     passed: 2,
     total: 2,
     elapsed: 10,
-    totals: { requests: 8, toolCalls: 7, tokens: 100, cost: { amountUsd: 0.01 } },
+    totals: { requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100, cachedPromptTokens: 20, cost: { amountUsd: 0.01 } },
     infraErrors: [],
     results: [
       { name: "one", ok: true, requests: 4, toolCalls: 3, tokens: { total: 50 }, seconds: 5, settings: { maxSteps: 30 } },
@@ -31,7 +31,7 @@ test("A/B 对比：按任务计算回归、提升和资源差值", () => {
   const b = run({
     passed: 1,
     elapsed: 8,
-    totals: { requests: 6, toolCalls: 5, tokens: 80, cost: { amountUsd: 0.008 } },
+    totals: { requests: 6, summaryRequests: 2, toolCalls: 5, tokens: 80, cachedPromptTokens: 30, cost: { amountUsd: 0.008 } },
     results: [
       { name: "one", ok: true, requests: 3, toolCalls: 2, tokens: { total: 40 }, seconds: 4, settings: { maxSteps: 30 } },
       { name: "two", ok: false, requests: 3, toolCalls: 3, tokens: { total: 40 }, seconds: 4, settings: { maxSteps: 30 } },

@@ -6,7 +6,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const metrics = ["requests", "toolCalls", "tokens", "seconds"];
+const metrics = ["requests", "summaryRequests", "toolCalls", "tokens", "cachedPromptTokens", "seconds"];
 
 export function compareRuns(a, b) {
   const issues = [];
@@ -44,8 +44,10 @@ export function compareRuns(a, b) {
     const status = left.ok === right.ok ? "same" : right.ok ? "improved" : "regressed";
     const row = { name, status, aOk: left.ok, bOk: right.ok };
     for (const metric of metrics) {
-      const leftValue = metric === "tokens" ? left.tokens?.total : left[metric];
-      const rightValue = metric === "tokens" ? right.tokens?.total : right[metric];
+      const leftValue = metric === "tokens" ? left.tokens?.total
+        : metric === "cachedPromptTokens" ? left.tokens?.cachedPromptTokens : left[metric];
+      const rightValue = metric === "tokens" ? right.tokens?.total
+        : metric === "cachedPromptTokens" ? right.tokens?.cachedPromptTokens : right[metric];
       row[metric + "A"] = typeof leftValue === "number" ? leftValue : null;
       row[metric + "B"] = typeof rightValue === "number" ? rightValue : null;
       row[metric + "Delta"] = typeof leftValue === "number" && typeof rightValue === "number"
@@ -65,8 +67,10 @@ export function compareRuns(a, b) {
     passRateDeltaPoints: aTotal > 0 && bTotal > 0
       ? Number(((bPassed / bTotal - aPassed / aTotal) * 100).toFixed(2)) : null,
     requestsDelta: numericDelta(a.totals?.requests, b.totals?.requests),
+    summaryRequestsDelta: numericDelta(a.totals?.summaryRequests, b.totals?.summaryRequests),
     toolCallsDelta: numericDelta(a.totals?.toolCalls, b.totals?.toolCalls),
     tokensDelta: numericDelta(a.totals?.tokens, b.totals?.tokens),
+    cachedPromptTokensDelta: numericDelta(a.totals?.cachedPromptTokens, b.totals?.cachedPromptTokens),
     elapsedDelta: numericDelta(a.elapsed, b.elapsed),
     costDeltaUsd: numericDelta(a.totals?.cost?.amountUsd, b.totals?.cost?.amountUsd),
   };
@@ -102,8 +106,10 @@ export function summarizeExperiment(comparisons) {
     unchangedTasks: allTasks.filter((item) => item.status === "same").length,
     medianPassRateDeltaPoints: deltaMedian("passRateDeltaPoints"),
     medianRequestsDelta: deltaMedian("requestsDelta"),
+    medianSummaryRequestsDelta: deltaMedian("summaryRequestsDelta"),
     medianToolCallsDelta: deltaMedian("toolCallsDelta"),
     medianTokensDelta: deltaMedian("tokensDelta"),
+    medianCachedPromptTokensDelta: deltaMedian("cachedPromptTokensDelta"),
     medianElapsedDelta: deltaMedian("elapsedDelta"),
     medianCostDeltaUsd: deltaMedian("costDeltaUsd"),
   };
@@ -124,9 +130,11 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     "| Regressed tasks | " + summary.regressedTasks + " |",
     "| Unchanged tasks | " + summary.unchangedTasks + " |",
     "| Median pass-rate delta | " + show(summary.medianPassRateDeltaPoints, " pp") + " |",
-    "| Median request delta | " + show(summary.medianRequestsDelta) + " |",
+    "| Median business request delta | " + show(summary.medianRequestsDelta) + " |",
+    "| Median summary request delta | " + show(summary.medianSummaryRequestsDelta) + " |",
     "| Median tool-call delta | " + show(summary.medianToolCallsDelta) + " |",
     "| Median token delta | " + show(summary.medianTokensDelta) + " |",
+    "| Median cached input token delta | " + show(summary.medianCachedPromptTokensDelta) + " |",
     "| Median elapsed delta | " + show(summary.medianElapsedDelta, " s") + " |",
     "| Median cost delta | " + show(summary.medianCostDeltaUsd, " USD") + " |",
     "",

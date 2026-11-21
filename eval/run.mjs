@@ -196,6 +196,7 @@ export async function runRound({
 export function summarize({ results, elapsed, model, commit, infra, metadata = {} }) {
   const requests = results.reduce((total, result) => total + result.requests, 0);
   const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
+  const summaryRequests = results.reduce((total, result) => total + (result.summaryRequests ?? 0), 0);
   const tokens = results.reduce((total, result) => total + result.tokens.total, 0);
   const unknown = results.reduce((total, result) => total + result.tokens.unknownResponses, 0);
   const cachedPromptTokens = results.reduce((total, result) => total + (result.tokens.cachedPromptTokens ?? 0), 0);
@@ -219,7 +220,8 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
     total: results.length,
     elapsed: Number(elapsed.toFixed(1)),
     totals: {
-      requests, toolCalls, tokens, unknownResponses: unknown,
+      requests, summaryRequests, allModelRequests: requests + summaryRequests,
+      toolCalls, tokens, unknownResponses: unknown,
       cachedPromptTokens, cacheUsageUnknown,
       cost: {
         currency: costCurrency,
@@ -324,6 +326,7 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
       ok: error === undefined,
       failure,
       requests: stats.requests,
+      summaryRequests: agent.compactionStats.summaryRequests,
       toolCalls: stats.toolCalls,
       settings,
       tokens: {
@@ -453,11 +456,12 @@ async function report(record, outputFile) {
   // 并发跑时「任务耗时之和」会大于墙钟，两个都写出来，避免误读。
   // usage 有缺失时 tokens 前加 at least：那是已统计到的下限，不是实际账单。
   console.log(
-    `\n${passed}/${total} 通过 · ${totals.requests} 次模型请求 · ${totals.toolCalls} 次工具调用 · ` +
+    `\n${passed}/${total} 通过 · ${totals.requests} 次业务请求 + ${totals.summaryRequests} 次摘要请求 · ${totals.toolCalls} 次工具调用 · ` +
       `${unknown > 0 ? "at least " : ""}${totals.tokens} tokens` +
       `${unknown > 0 ? `（${unknown} 个请求没有 usage）` : ""}` +
       ` · 缓存命中 ${totals.cachedPromptTokens} tokens` +
       `${totals.cacheUsageUnknown > 0 ? `（${totals.cacheUsageUnknown} 个请求缓存用量未知）` : ""}` +
+      `${totals.cost.amountUsd === null ? "" : ` · 费用小计 ${totals.cost.amountUsd} ${totals.cost.currency}${totals.cost.complete ? "" : "（不完整）"}`}` +
       ` · 墙钟 ${elapsed.toFixed(1)}s` +
       `（任务耗时合计 ${busy.toFixed(1)}s）`,
 

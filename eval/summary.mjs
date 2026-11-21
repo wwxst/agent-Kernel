@@ -75,10 +75,20 @@ const selectedSuiteVersion =
   typeof latest.suiteVersion === "string" && latest.suiteVersion.length > 0 ? latest.suiteVersion : "legacy";
 const selectedModel = typeof latest.model === "string" && latest.model.length > 0 ? latest.model : "unknown";
 const selectedCommit = typeof latest.commit === "string" && latest.commit.length > 0 ? latest.commit : "unknown";
+const selectedJobs = latest.jobs ?? null;
+const selectedEndpoint = latest.endpointHost ?? "unknown";
+const selectedRuntime = runtimeKey(latest.environment);
+const selectedPrompt = latest.promptSha256 ?? "legacy";
+const selectedTrace = latest.trace ?? false;
 const sameConfiguration = (run) =>
   (typeof run.suiteVersion === "string" && run.suiteVersion.length > 0 ? run.suiteVersion : "legacy") === selectedSuiteVersion &&
   (typeof run.model === "string" && run.model.length > 0 ? run.model : "unknown") === selectedModel &&
-  (typeof run.commit === "string" && run.commit.length > 0 ? run.commit : "unknown") === selectedCommit;
+  (typeof run.commit === "string" && run.commit.length > 0 ? run.commit : "unknown") === selectedCommit &&
+  (run.jobs ?? null) === selectedJobs &&
+  (run.endpointHost ?? "unknown") === selectedEndpoint &&
+  runtimeKey(run.environment) === selectedRuntime &&
+  (run.promptSha256 ?? "legacy") === selectedPrompt &&
+  (run.trace ?? false) === selectedTrace;
 const matchingRuns = runs.filter(sameConfiguration);
 const skippedConfigurations = runs.length - matchingRuns.length;
 if (skippedConfigurations > 0) {
@@ -86,7 +96,7 @@ if (skippedConfigurations > 0) {
 }
 const recent = matchingRuns.slice(-wanted);
 const suiteLabel = selectedSuiteVersion === "legacy" ? "legacy（旧记录，无版本标记）" : selectedSuiteVersion;
-console.log(`评测套件：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)}`);
+console.log(`评测套件：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)} · 并发：${selectedJobs ?? "legacy"} · 端点：${selectedEndpoint}`);
 
 const average = (values) => values.reduce((total, value) => total + value, 0) / values.length;
 const median = (values) => {
@@ -101,9 +111,15 @@ for (const [index, run] of recent.entries()) {
   // 老记录只有 steps（当时把「问模型的次数」叫步数）；新记录统一叫 requests。
   const requests = average(run.results.map((task) => task.requests ?? task.steps));
   const tokens = run.totals?.tokens;
+  const cache = run.totals?.cachedPromptTokens;
+  const cost = run.totals?.cost;
   console.log(
-    `  第 ${index + 1} 轮  ${run.passed}/${run.total}  ${requests.toFixed(1)} 次请求  ` +
-      `${tokens === undefined ? "" : `${tokens} tokens  `}${Math.round(seconds)}s  ${run.at}`,
+    `  第 ${index + 1} 轮  ${run.passed}/${run.total}  ${requests.toFixed(1)} 次业务请求  ` +
+      `${run.totals?.summaryRequests ? `+${run.totals.summaryRequests} 次摘要请求  ` : ""}` +
+      `${tokens === undefined ? "" : `${tokens} tokens  `}` +
+      `${cache === undefined ? "" : `缓存 ${cache}  `}` +
+      `${cost?.amountUsd === null || cost?.amountUsd === undefined ? "" : `${cost.amountUsd} ${cost.currency}${cost.complete ? "" : " partial"}  `}` +
+      `${Math.round(seconds)}s  ${run.at}`,
   );
 }
 
@@ -133,6 +149,23 @@ if (tokenTotals.length > 0) {
   console.log(
     `Token：中位数 ${median(tokenTotals)}${unknown > 0 ? `（至少；${unknown} 个响应没有 usage）` : ""}`,
   );
+}
+const cacheTotals = recent.filter((run) => typeof run.totals?.cachedPromptTokens === "number")
+  .map((run) => run.totals.cachedPromptTokens);
+if (cacheTotals.length > 0) {
+  const unknown = recent.reduce((total, run) => total + (run.totals?.cacheUsageUnknown ?? 0), 0);
+  console.log(`缓存命中 Token：中位数 ${median(cacheTotals)}${unknown > 0 ? `（${unknown} 个请求缓存用量未知）` : ""}`);
+}
+const costTotals = recent.filter((run) => typeof run.totals?.cost?.amountUsd === "number")
+  .map((run) => run.totals.cost.amountUsd);
+if (costTotals.length > 0) {
+  const incomplete = recent.some((run) => run.totals?.cost?.complete !== true);
+  console.log(`费用小计：中位数 ${median(costTotals)} USD${incomplete ? "（不完整，仅供参考）" : ""}`);
+}
+
+function runtimeKey(environment) {
+  if (!environment) return "legacy";
+  return [environment.node, environment.platform, environment.arch].join("|");
 }
 
 // 不稳定的任务比失败更值得注意：它说明检查或任务本身有随机性。
