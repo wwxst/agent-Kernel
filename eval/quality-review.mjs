@@ -95,27 +95,42 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
 export function summarizeScorecards(scorecards) {
   if (!Array.isArray(scorecards) || scorecards.length === 0) throw new Error("at least one scorecard is required");
   for (const [index, card] of scorecards.entries()) validateScorecard(card, index);
-  const averages = Object.fromEntries(criteria.map((key) => [
-    key,
-    Number((scorecards.reduce((sum, card) => sum + card.scores[key], 0) / scorecards.length).toFixed(2)),
-  ]));
-  const disagreements = criteria.filter((key) => {
-    const values = scorecards.map((card) => card.scores[key]);
-    return Math.max(...values) - Math.min(...values) >= 2;
+  const groups = new Map();
+  for (const card of scorecards) {
+    const key = card.task + "::" + card.candidate;
+    const group = groups.get(key) ?? [];
+    group.push(card);
+    groups.set(key, group);
+  }
+  const summaries = [...groups.entries()].map(([, cards]) => {
+    const averages = Object.fromEntries(criteria.map((criterion) => [
+      criterion,
+      Number((cards.reduce((sum, card) => sum + card.scores[criterion], 0) / cards.length).toFixed(2)),
+    ]));
+    const disagreements = criteria.filter((criterion) => {
+      const values = cards.map((card) => card.scores[criterion]);
+      return Math.max(...values) - Math.min(...values) >= 2;
+    });
+    const recommendations = [...new Set(cards.map((card) => card.recommendation))];
+    const blockingFindings = cards.flatMap((card) => card.blockingFindings.map((finding) => ({
+      candidate: card.candidate, reviewerId: card.reviewerId, finding,
+    })));
+    return {
+      task: cards[0].task,
+      candidate: cards[0].candidate,
+      reviewers: cards.length,
+      averages,
+      overallAverage: Number((Object.values(averages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2)),
+      disagreements,
+      recommendationDisagreement: recommendations.length > 1,
+      recommendations,
+      blockingFindings,
+      requiresAdjudication: disagreements.length > 0 || recommendations.length > 1 || blockingFindings.length > 0,
+    };
   });
-  const recommendations = [...new Set(scorecards.map((card) => card.recommendation))];
-  const blockingFindings = scorecards.flatMap((card) => card.blockingFindings.map((finding) => ({
-    candidate: card.candidate, reviewerId: card.reviewerId, finding,
-  })));
   return {
-    reviewers: scorecards.length,
-    averages,
-    overallAverage: Number((Object.values(averages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2)),
-    disagreements,
-    recommendationDisagreement: recommendations.length > 1,
-    recommendations,
-    blockingFindings,
-    requiresAdjudication: disagreements.length > 0 || recommendations.length > 1 || blockingFindings.length > 0,
+    groups: summaries,
+    requiresAdjudication: summaries.some((summary) => summary.requiresAdjudication),
   };
 }
 

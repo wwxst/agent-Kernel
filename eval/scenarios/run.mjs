@@ -5,6 +5,8 @@
 import { Agent } from "../../src/core/agent.ts";
 import { SUMMARY_SECTIONS } from "../../src/core/context-compact.ts";
 import { ToolRegistry } from "../../src/core/tool-registry.ts";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 const systemPrompt = "t".repeat(1_086);
 
@@ -156,7 +158,7 @@ export async function runScenarios() {
   return results;
 }
 
-if (process.argv[1] && new URL(import.meta.url).pathname === process.argv[1].replaceAll("\\", "/")) {
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
   const results = await runScenarios();
   for (const result of results) console.log((result.ok ? "PASS " : "FAIL ") + result.name);
   console.log(JSON.stringify(results, null, 2));

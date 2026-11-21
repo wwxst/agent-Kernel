@@ -73,9 +73,9 @@ test("盲审评分：计算维度均分，并识别需要第三方裁决的分�
     blockingFindings: [], recommendation,
   });
   const result = summarizeScorecards([card("reviewer-1", 4), card("reviewer-2", 2, "needs-discussion")]);
-  assert.equal(result.overallAverage, 3);
-  assert.deepEqual(result.disagreements, ["correctness", "completeness", "stabilitySecurity", "maintainability", "scope"]);
-  assert.equal(result.recommendationDisagreement, true);
+  assert.equal(result.groups[0].overallAverage, 3);
+  assert.deepEqual(result.groups[0].disagreements, ["correctness", "completeness", "stabilitySecurity", "maintainability", "scope"]);
+  assert.equal(result.groups[0].recommendationDisagreement, true);
   assert.equal(result.requiresAdjudication, true);
 });
 
