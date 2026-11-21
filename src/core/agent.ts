@@ -107,7 +107,16 @@ function cancellationError(signal: AbortSignal): Error {
 
 /** 一份全零的用量。每次 Run 开始和 Session 创建时各拿一份，避免共用同一个可变对象。 */
 function emptyUsage(): AgentUsage {
-  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, reported: 0, unknown: 0 };
+  return {
+    promptTokens: 0,
+    completionTokens: 0,
+    totalTokens: 0,
+    cachedPromptTokens: 0,
+    cacheUsageReported: 0,
+    cacheUsageUnknown: 0,
+    reported: 0,
+    unknown: 0,
+  };
 }
 
 /** 预算是跨模块的运行时输入，不能只依赖 TypeScript 的静态类型。 */
@@ -131,6 +140,12 @@ export interface AgentUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** 已明确报告的缓存命中输入 Token。 */
+  cachedPromptTokens: number;
+  /** 明确报告缓存用量的请求数；0 与未知分开统计。 */
+  cacheUsageReported: number;
+  /** 没有缓存用量字段或整个 usage 缺失的请求数。 */
+  cacheUsageUnknown: number;
   /** 带 usage 的请求数。 */
   reported: number;
   /**
@@ -510,12 +525,19 @@ export class Agent {
     for (const totals of [this.currentRun.usage, this.sessionUsage]) {
       if (usage === undefined) {
         totals.unknown++;
+        totals.cacheUsageUnknown++;
         continue;
       }
       totals.reported++;
       totals.promptTokens += usage.prompt_tokens;
       totals.completionTokens += usage.completion_tokens;
       totals.totalTokens += usage.total_tokens;
+      if (usage.cached_prompt_tokens === undefined) {
+        totals.cacheUsageUnknown++;
+      } else {
+        totals.cacheUsageReported++;
+        totals.cachedPromptTokens += usage.cached_prompt_tokens;
+      }
     }
   }
 

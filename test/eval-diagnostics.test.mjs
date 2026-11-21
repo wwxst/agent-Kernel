@@ -100,6 +100,12 @@ test("诊断：记录每次请求的 usage、工具结果和逐工具的文件�
       ],
     );
     assert.equal(trace.requests[1].promptTokenDelta, 55);
+    assert.equal(trace.requests[0].systemPromptChars > 0, true);
+    assert.equal(trace.requests[0].conversationChars > 0, true);
+    assert.equal(trace.requests[0].toolDefinitionChars > 0, true);
+    assert.equal(trace.summary.requests, 2);
+    assert.equal(trace.summary.toolCalls, 1);
+    assert.equal(trace.summary.tools.write_file.calls, 1);
 
     assert.equal(trace.toolCalls.length, 1);
     const tool = trace.toolCalls[0];
@@ -214,6 +220,59 @@ test("诊断：脱敏像密钥的参数，并摘要超长字符串", async () =>
     assert.equal(args.content.chars, 700);
     assert.equal(args.content.sha256.length, 64);
     assert.equal(JSON.stringify(trace).includes(secret), false);
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test("诊断：命令参数、Bearer 和错误输出里的凭据也必须脱敏", async () => {
+  const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
+  const githubToken = "ghp_0123456789abcdefghijklmnopqrstuv";
+  const bearerToken = "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG";
+  const openaiKey = "sk-proj-0123456789abcdefghijklmnopqrstuv";
+  let request = 0;
+  const llm = {
+    async chat() {
+      request++;
+      if (request === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "secret-command",
+              type: "function",
+              function: {
+                name: "leaky_tool",
+                arguments: JSON.stringify({
+                  command: "curl -H 'Authorization: Bearer " + bearerToken + "' && export OPENAI_API_KEY=" + openaiKey,
+                }),
+              },
+            }],
+          },
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+  };
+  const tools = makeRegistry([{
+    name: "leaky_tool",
+    description: "Return a diagnostic error containing a credential-like string.",
+    parameters: { type: "object", properties: {} },
+    run: async () => ({ content: "ERROR: " + githubToken, isError: true }),
+  }]);
+
+  try {
+    const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });
+    const agent = new Agent({ llm: diagnostics.llm, tools, onToolResult: diagnostics.onToolResult });
+    await agent.run("inspect safely");
+    const trace = await diagnostics.finish();
+    const serialized = JSON.stringify(trace);
+    for (const secret of [githubToken, bearerToken, openaiKey]) {
+      assert.equal(serialized.includes(secret), false, "diagnostic output must not contain credential material");
+    }
+    assert.match(trace.toolCalls[0].arguments.command, /REDACTED/);
+    assert.match(trace.toolCalls[0].resultPreview, /REDACTED/);
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }

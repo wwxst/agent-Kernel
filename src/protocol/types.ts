@@ -130,6 +130,8 @@ export interface TokenUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  /** 缓存命中的输入 Token；端点未报告时保持 undefined，不伪装成 0。 */
+  cached_prompt_tokens?: number;
 }
 
 /**

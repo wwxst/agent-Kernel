@@ -13,7 +13,7 @@
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,6 +27,8 @@ import checkUpdateReadme from "../eval/tasks/09-update-readme/check.mjs";
 import checkDeleteDeadCode from "../eval/tasks/10-delete-dead-code/check.mjs";
 import checkWriteMissingTest from "../eval/tasks/17-write-missing-test/check.mjs";
 import checkBannedAdminBug from "../eval/tasks/19-banned-admin-bug/check.mjs";
+import checkLongContextCompaction from "../eval/tasks/21-long-context-compaction/check.mjs";
+import checkMultiToolRefactor from "../eval/tasks/22-multi-tool-refactor/check.mjs";
 import { importTaskModule, readTaskFile, readTaskJson } from "../eval/checker-helpers.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -46,6 +48,126 @@ async function withTaskFiles(name, run) {
     return run(root);
   });
 }
+
+test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改原始资料", async () => {
+  await withTaskFiles("21-long-context-compaction", async (root) => {
+    const notesDir = path.join(root, "notes");
+    const names = (await readdir(notesDir)).filter((name) => name.endsWith(".md")).sort();
+    const records = [];
+    for (const name of names) {
+      const content = await readFile(path.join(notesDir, name), "utf8");
+      records.push({
+        id: /^id: (.+)$/m.exec(content)?.[1],
+        date: /^date: (.+)$/m.exec(content)?.[1],
+        decision: /^decision: (.+)$/m.exec(content)?.[1],
+      });
+    }
+    records.sort((a, b) => a.date.localeCompare(b.date));
+    const rows = records.map((item) => "| " + item.id + " | " + item.date + " | " + item.decision + " |");
+    const output = [
+      "# Migration summary", "",
+      "| id | date | decision |",
+      "| --- | --- | --- |",
+      ...rows, "",
+      "Final release gate: GO_WITH_CANARY", "",
+    ].join("\n");
+    await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
+    const compactedContext = { compactionStats: { compactions: 1, summaryRequests: 1 } };
+    await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+    // 合法 Markdown 可以省掉表格列两侧的空格，并使用左/右/居中对齐分隔符。
+    const compactRows = records.map((item) => `|${item.id}|${item.date}|${item.decision}|`);
+    const compactTable = [
+      "# Migration summary", "",
+      "|id|date|decision|",
+      "|:---|---:|:---:|",
+      ...compactRows, "",
+      "Final release gate: GO_WITH_CANARY", "",
+    ].join("\n");
+    await writeFile(path.join(root, "migration-summary.md"), compactTable);
+    await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+
+    await writeFile(path.join(root, "migration-summary.md"), compactTable.replace(
+      compactRows[0], compactRows[0].replace(records[0].decision, "INCORRECT_DECISION"),
+    ));
+    await assert.rejects(() => checkLongContextCompaction(root, compactedContext),
+      /records must be exact and sorted by date/);
+    await writeFile(path.join(root, "migration-summary.md"), output);
+    await assert.rejects(
+      () => checkLongContextCompaction(root, { compactionStats: { compactions: 0, summaryRequests: 0 } }),
+      /must trigger at least one committed context compaction/,
+    );
+
+    await writeFile(path.join(root, "migration-summary.md"), [
+      "# Migration summary", "",
+      "| id | date | decision |",
+      "| --- | --- | --- |",
+      ...[...rows].reverse(), "",
+      "Final release gate: GO_WITH_CANARY", "",
+    ].join("\n"), "utf8");
+    await assert.rejects(() => checkLongContextCompaction(root, compactedContext), /exact and sorted by date/);
+
+    await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
+    await writeFile(path.join(notesDir, names[0]), "changed source note");
+    await assert.rejects(() => checkLongContextCompaction(root, compactedContext), /source note must not be modified/);
+  });
+});
+
+test("评测题 22：多文件格式化修复必须保留旧测试并新增边界测试", async () => {
+  await withTaskFiles("22-multi-tool-refactor", async (root) => {
+    await writeFile(path.join(root, "src", "format.mjs"), [
+      "export function formatUser({ name, email } = {}) {",
+      '  if (typeof name !== "string" || typeof email !== "string" || !name.trim() || !email.trim()) {',
+      '    throw new Error("name and email are required");',
+      "  }",
+      "  const cleanName = name.trim();",
+      "  const cleanEmail = email.trim();",
+      '  if (!cleanEmail.includes("@")) throw new Error("email must contain @");',
+      "  return cleanName + ` <${cleanEmail}>`;",
+      "}",
+      "",
+    ].join("\n"), "utf8");
+    const originalTests = await readFile(
+      path.join(projectRoot, "eval", "tasks", "22-multi-tool-refactor", "files", "test", "format.test.mjs"),
+      "utf8",
+    );
+    await writeFile(path.join(root, "test", "format.test.mjs"), originalTests + [
+      'test("trims surrounding whitespace", () => assert.equal(formatUser({ name: " Ada ", email: " ada@example.com " }), "Ada <ada@example.com>"));',
+      'test("rejects missing fields", () => assert.throws(() => formatUser({ name: "Ada", email: " " }), /name and email are required/));',
+      'test("rejects an invalid email", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
+      "",
+    ].join("\n"), "utf8");
+    const validToolUse = {
+      successfulToolCallNames: ["read", "edit", "shell"],
+      successfulShellCommands: ["node --test test/format.test.mjs"],
+    };
+    await assert.doesNotReject(() => checkMultiToolRefactor(root, validToolUse));
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, { successfulToolCallNames: ["read", "write"] }),
+      /must successfully run the requested test command with the shell tool/,
+    );
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, {
+        ...validToolUse,
+        successfulShellCommands: ["echo tests"],
+      }),
+      /must successfully execute node --test test\/format\.test\.mjs/,
+    );
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, {
+        toolCallNames: ["read", "edit", "shell"],
+        shellCommands: ["node --test test/format.test.mjs"],
+      }),
+      /must successfully inspect source files/,
+    );
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, {
+        ...validToolUse,
+        successfulShellCommands: ["echo node --test test/format.test.mjs"],
+      }),
+      /must successfully execute node --test test\/format\.test\.mjs/,
+    );
+  });
+});
 
 test("评测辅助函数：缺失文件、坏 JSON 和模块加载错误都归为任务断言失败", async () => {
   await withTempRoot("agent-checker-helper-", async (root) => {
@@ -113,6 +235,30 @@ test("评测题 04：文档表格完整且保留 README 原内容才通过", asy
     await writeFile(path.join(root, "README.md"), "# fixture\n\n一个用来练手的小仓库。\n\n[用法](docs/usage.md)\n");
     await assert.doesNotReject(() => checkCreateDoc(root));
 
+    const originalTwoColumn = await readFile(path.join(root, "docs", "usage.md"), "utf8");
+    // 三列是合法的：script 名、实际 npm 命令、一句说明。
+    const threeColumn = [
+      "# 用法", "",
+      "| npm script | 命令 | 说明 |",
+      "| --- | --- | --- |",
+      "| test | `npm test` | 运行测试 |",
+      "| lint | `npm run lint` | 检查代码 |",
+      "",
+    ].join("\n");
+    await writeFile(path.join(root, "docs", "usage.md"), threeColumn);
+    await assert.doesNotReject(() => checkCreateDoc(root));
+
+    await writeFile(path.join(root, "docs", "usage.md"), threeColumn.replace(
+      "| lint | `npm run lint` |", "| test | `npm run lint` |",
+    ));
+    await assert.rejects(() => checkCreateDoc(root), /script 列与命令列不一致/);
+
+    await writeFile(path.join(root, "docs", "usage.md"), threeColumn.replace(
+      "`npm run lint`", "lint",
+    ));
+    await assert.rejects(() => checkCreateDoc(root), /必须写完整 npm 命令/);
+
+    await writeFile(path.join(root, "docs", "usage.md"), originalTwoColumn);
     const noUsageDelimiter = (await readFile(path.join(root, "docs", "usage.md"), "utf8"))
       .replace("| --- | --- |", "");
     await writeFile(path.join(root, "docs", "usage.md"), noUsageDelimiter);

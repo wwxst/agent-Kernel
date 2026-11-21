@@ -906,7 +906,10 @@ test("token 统计：累计 prompt / completion / total 与请求数", async () 
     summaryRequests: 0,
     overflowRetries: 0,
     toolCalls: 1,
-    usage: { promptTokens: 150, completionTokens: 15, totalTokens: 165, reported: 2, unknown: 0 },
+    usage: {
+      promptTokens: 150, completionTokens: 15, totalTokens: 165,
+      cachedPromptTokens: 0, cacheUsageReported: 0, cacheUsageUnknown: 2, reported: 2, unknown: 0,
+    },
     tokenBudget: { limit: undefined, exceeded: false },
   });
 });
@@ -999,6 +1002,9 @@ test("token 统计：请求失败但带回 usage 时也要记账", async () => {
     promptTokens: 7,
     completionTokens: 3,
     totalTokens: 10,
+    cachedPromptTokens: 0,
+    cacheUsageReported: 0,
+    cacheUsageUnknown: 1,
     reported: 1,
     unknown: 0,
   });

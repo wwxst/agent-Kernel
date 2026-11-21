@@ -22,11 +22,11 @@ npm run eval:check           # 自检：不需要 API Key
 npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
-需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前基线见 [baseline.md](./baseline.md)（2026-11-05，hy3 prompt v2，6 轮 120/120，中位数 118,817 tokens / 70.8s；这些数字对应固定旧提交，不代表当前 main）。
+需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。历史基线见 [baseline.md](./baseline.md)，其中旧套件的结果不代表当前代码。当前评测套件为 `2026-11-21-eval-system-v4`，尚未建立新的真实模型基线；不能把旧套件成绩当作新套件成绩。
 
-任务之间互不依赖，所以默认并发 4 个：20 个任务的墙钟从约 226 秒降到约 74 秒。单任务的平均耗时不变（约 11 秒，8.8 步），因为时间几乎都花在等模型上——一次模型往返约 1.2 秒，工具执行和内核开销合计不到 5%。
+历史 v2 套件的 20 个任务互不依赖，曾通过默认并发 4 将墙钟从约 226 秒降到约 74 秒。这个历史数据不是新套件的实测结果。单任务时间主要花在等待模型返回，工具执行和内核开销占比较小。
 
-结果会打印成一张表，同时写进 `eval/results/<时间戳>.json`（不进 git）：
+结果会打印成一张表，同时写进 `eval/results/<时间戳>.json`（不进 git）。结果会记录模型、提交、分支、运行环境、任务预算、业务请求与摘要请求、上下文压缩、缓存 Token、提示词/工具/运行时代码/评测执行器指纹与请求耗时；不会记录 API Key 或完整端点 URL。
 
 ```
   PASS  01-add-health-route            9 req    9 tool   10.9s   17185 tok
@@ -37,7 +37,61 @@ npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 
 每行是：结果、任务名、模型请求数、真正执行的工具调用数、耗时、token。请求数和工具调用数是两个指标——一次模型回复可以要多个工具，只报「步数」会把副作用次数藏起来。端点没返回 `usage` 时，汇总的 token 前面会写 `at least`，因为那只是已统计到的下限。
 
-记录里同时写模型名、Commit SHA、每个任务的 token / 请求 / 工具调用明细，方便把一次分数对回到具体代码。
+记录里同时写模型名、Commit SHA、分支、Node/OS/架构、端点主机名、并发、提示词 SHA-256、每个任务的 token / 请求 / 工具调用明细和压缩统计，方便把一次分数对回到具体代码。
+
+### 离线专项场景与复杂任务
+
+不调用真实模型的专项场景：
+
+```bash
+npm run eval:scenarios
+```
+
+它验证上下文压缩、工具串行执行、工具错误反馈。真实模型任务集另外增加：
+- 21-long-context-compaction：16 份迁移记录的长上下文整理，检查器还会核实运行中确实发生了上下文压缩和摘要请求。
+- 22-multi-tool-refactor：跨文件修复、补测试并运行测试的多工具任务，检查器会核实实际使用 read、write/edit、shell 等不同工具，并确认 Agent 真正执行了指定测试命令。
+
+任务配置放在每个任务目录的 task.json；任务标签用于后续按场景分组统计。新增或改变任务验收语义时必须更新评测套件版本，旧套件结果不能混算。
+
+### A/B 对照实验
+
+先准备两个独立目录：A 放基线代码，B 放候选代码。两个目录的评测任务、模型端点、模型名、Node/OS、并发和任务预算必须相同；只允许改变本轮要验证的因素。实验脚本不会自动创建或切换 Git 分支，也不会删除工作区。
+
+```bash
+npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --factor system-prompt --rounds 3 --jobs 1 --keep
+```
+
+脚本每轮交替 A/B 先后顺序，默认三轮、并发 1。每个任务会保留工作区，便于后续生成质量盲审包。结果和报告保存在 A 目录的 eval/results/experiments/ 下。真实模型评测会产生 API 费用；本项目 CI 不会运行它。
+
+只比较已有两轮结果时：
+
+```bash
+npm run eval:compare -- eval/results/A.json eval/results/B.json --out eval/results/compare.md
+```
+
+如果模型、套件、端点、运行环境、并发、任务集合或任务预算不一致，比较会标记为无效，不会给出可采信的优劣结论。至少需要 3 轮全部有效、且 A/B 两侧每次运行都具有互不重复的 runId，报告才会标记为可用于决策；少于 3 轮、缺失 runId、重复使用同一结果或存在无效轮次，只能作为探索性证据。
+
+### 代码质量盲审
+
+两轮结果需要人工/AI 代码质量对照时，先分别使用 --keep 保存任务工作区，再生成匿名审查包：
+
+```bash
+node eval/quality-review.mjs --a eval/results/A.json --b eval/results/B.json --task 01-add-health-route --a-tasks-dir eval/tasks --b-tasks-dir eval/tasks --out eval/results/review-packs/health-route
+```
+
+审查包只含任务、初始文件、匿名候选和评分规范；版本映射写在审查包旁边的 .answer-key.json，审查者不得查看。每个任务的两份候选由同一组至少两名审查者独立评分，任一维度相差 2 分及以上、结论不同或存在阻断问题时交第三人裁决。评分卡汇总：
+
+```bash
+npm run eval:review -- --scores eval/results/review-packs/scorecards.json
+```
+
+评分标准见 quality-review/rubric.md。
+
+### 缓存 Token 与费用估算
+
+模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。费用只使用用户提供的价格表，不内置服务商价格：复制 `eval/pricing.example.json` 为本地 `eval/pricing.json`，填写准确的每百万 Token 价格，并设置 `EVAL_PRICING_FILE=eval/pricing.json`。示例里的费率是字符串占位符，没替换成真实数字会直接报错，避免把示例的 0 误当成真实价格。缺少价格或缓存用量不完整时，费用会标记为未知/不完整。
+
+任务可选提供 `task.json`，单独设置 `maxSteps`、`maxToolCalls`、`maxTotalTokens`、`contextWindowTokens`、`outputTokenReserve`、`maxTranscriptChars` 和 `tags`。没有配置的任务沿用原有默认值。
 
 加 `--keep` 会保留工作区，方便事后翻看 agent 到底改了什么。
 
@@ -66,7 +120,7 @@ tasks/01-add-health-route/
 ```
 
 - **`task.md`** 只写要求，不写「用哪个工具」。任务要像真的：一个从 issue 里抄下来的小改动。
-- **`check.mjs`** 只验行为，不看实现。可以 import 夹具里的模块、读文件、起子进程。
+- **`check.mjs`** 主要验任务最终行为，不限定 Agent 的内部实现；对明确测试内核机制的专项任务，可以接收只读运行证据（例如压缩统计、工具调用记录），确认机制确实发生。可以 import 夹具里的模块、读文件、起子进程。
 - **`files/`** 越小越好：两三个文件足够暴露「读—改—验证」的差别。
 
 ## 三条规矩
@@ -81,7 +135,7 @@ tasks/01-add-health-route/
 
 ## 评测套件版本和检查器质量
 
-每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-19-checkers-v2`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
+每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-21-eval-system-v4`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
 
 只要修改任务提示、初始夹具或检查器的验收语义，就必须更新套件标识。不同套件版本的成绩不能直接混算。旧结果没有 `suiteVersion` 字段，会被标记为 `legacy`。
 
@@ -89,7 +143,7 @@ tasks/01-add-health-route/
 
 - `02-fix-failing-test`：对原始测试文件做 SHA-256 校验，防止删减或改写测试后仍通过。
 - `03-rename-function`：递归检查整个任务目录，不能把旧函数名藏在子目录。
-- `04-create-doc`：检查表头、全部 npm scripts、说明内容，并确认 README 原有介绍保留。
+- `04-create-doc`：接受完整的两列或三列表格，检查全部 npm scripts、实际 npm 命令与说明对应关系，并确认 README 原有介绍保留。
 - `05-extract-constant`：用 TypeScript AST 确认 `TAX_RATE` 是值为 0.2 的 const，而且计算逻辑确实引用它。
 - `08-extract-duplication`：用 AST 确认两个导出校验函数都委托给同一个本地共享函数，再验证行为和错误文案。
 - `09-update-readme`：动态读取 `package.json`，确认全部 scripts 都列在「命令」章节内，并保留 README 原有介绍。
@@ -106,11 +160,13 @@ tasks/01-add-health-route/
 
 `npm run eval:summary` 只统计最近一条完整记录所属的同一组：
 
-- 评测套件版本；
-- 模型名称；
-- 完整 Git Commit SHA。
+- 评测套件版本、模型名称、完整 Git Commit SHA；
+- 端点主机与路径、并发、Node/OS/架构/时区；
+- 系统提示词、工具定义、运行时代码、评测执行器、任务集和价格表指纹；
+- 是否开启 trace/keep、工作区是否干净；
+- 实验 ID、A/B 标签和实验因素。
 
-不同组的记录会跳过并明确报告，不再把不同模型或不同代码版本的结果混在一起。想比较两个版本，应分别在相同任务集和模型配置下跑真实评测，再对照记录。
+不同组的记录会跳过并明确报告，不再把不同模型、不同代码、不同环境或不同实验的结果混在一起。输入 Token、输出 Token 和总 Token 分别汇总；存在 usage 缺失时会标明下限。想比较两个版本，应分别在相同任务集和模型配置下跑真实评测，再对照记录。
 
 注意：`npm run eval:check` 只验证每个任务的初始夹具确实会让检查器失败；它不负责证明检查器足够严格。检查器的正反例由普通单元测试覆盖。
 
