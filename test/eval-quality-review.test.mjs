@@ -48,21 +48,21 @@ test("盲审包：隐藏 A/B 映射，保留共同任务和初始夹具", async 
 test("盲审包：拒绝把本机环境文件和疑似密钥打包给审查者", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-blind-review-"));
   try {
-    const a = await fixture(root, "a", "export const value = 2;\\n");
-    const b = await fixture(root, "b", "export const value = 3;\\n");
+    const a = await fixture(root, "a", "export const value = 2;\n");
+    const b = await fixture(root, "b", "export const value = 3;\n");
     const makeRun = (workdir, commit) => ({
       suiteVersion: "suite", model: "mock", commit, branch: commit,
       evalHarnessSha256: "same-evaluator",
       results: [{ name: "task-1", ok: true, requests: 1, toolCalls: 0, tokens: { total: 1 }, seconds: 1, workdir }],
     });
-    await writeFile(path.join(a.workdir, ".env.local"), "API_KEY=do-not-copy-this-value\\n");
+    await writeFile(path.join(a.workdir, ".env.local"), "API_KEY=do-not-copy-this-value\n");
     await assert.rejects(() => createBlindReviewPack({
       aRun: makeRun(a.workdir, "a"), bRun: makeRun(b.workdir, "b"),
       taskName: "task-1", aTasksDir: a.tasks, bTasksDir: b.tasks,
       outputDir: path.join(root, "review-env"),
     }), /sensitive file path/);
     await rm(path.join(a.workdir, ".env.local"));
-    await writeFile(path.join(b.workdir, "input.mjs"), 'export const apiKey = "sk-proj-0123456789abcdefghijklmnopqrstuv";\\n');
+    await writeFile(path.join(b.workdir, "input.mjs"), 'export const apiKey = "sk-proj-0123456789abcdefghijklmnopqrstuv";\n');
     await assert.rejects(() => createBlindReviewPack({
       aRun: makeRun(a.workdir, "a"), bRun: makeRun(b.workdir, "b"),
       taskName: "task-1", aTasksDir: a.tasks, bTasksDir: b.tasks,

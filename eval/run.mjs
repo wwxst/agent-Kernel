@@ -213,8 +213,8 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
   const requests = results.reduce((total, result) => total + result.requests, 0);
   const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
   const summaryRequests = results.reduce((total, result) => total + (result.summaryRequests ?? 0), 0);
-  const promptTokens = results.reduce((total, result) => total + result.tokens.prompt, 0);
-  const completionTokens = results.reduce((total, result) => total + result.tokens.completion, 0);
+  const promptTokens = results.reduce((total, result) => total + (result.tokens.prompt ?? 0), 0);
+  const completionTokens = results.reduce((total, result) => total + (result.tokens.completion ?? 0), 0);
   const tokens = results.reduce((total, result) => total + result.tokens.total, 0);
   const unknown = results.reduce((total, result) => total + result.tokens.unknownResponses, 0);
   const cachedPromptTokens = results.reduce((total, result) => total + (result.tokens.cachedPromptTokens ?? 0), 0);
