@@ -422,7 +422,9 @@ function endpointHost(baseUrl) {
 
 function endpointPath(baseUrl) {
   try {
-    return new URL(baseUrl).pathname.replace(/\\/+$/, "") || "/";
+    let pathname = new URL(baseUrl).pathname;
+    while (pathname.length > 1 && pathname.endsWith("/")) pathname = pathname.slice(0, -1);
+    return pathname;
   } catch {
     return "unknown";
   }

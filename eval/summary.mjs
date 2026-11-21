@@ -173,7 +173,7 @@ if (costTotals.length > 0) {
 
 function runtimeKey(environment) {
   if (!environment) return "legacy";
-  return [environment.node, environment.platform, environment.arch].join("|");
+  return [environment.node, environment.platform, environment.arch, environment.osRelease].join("|");
 }
 
 // 不稳定的任务比失败更值得注意：它说明检查或任务本身有随机性。
