@@ -49,6 +49,9 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
     readTree(bTask.workdir),
   ]);
   if (!sameTree(initialA, initialB)) throw new Error("initial task fixtures differ between variants");
+  assertReviewSafeTree(initialA, "initial task fixture");
+  assertReviewSafeTree(candidateA, "candidate A");
+  assertReviewSafeTree(candidateB, "candidate B");
 
   const destination = path.resolve(outputDir);
   await mkdir(path.dirname(destination), { recursive: true });
@@ -231,6 +234,34 @@ function sameTree(left, right) {
     if (other === undefined || !content.equals(other)) return false;
   }
   return true;
+}
+
+/** 盲审包可能被转交给外部审查者：发现常见密钥文件或高置信度凭据时宁可拒绝打包。 */
+function assertReviewSafeTree(files, label) {
+  const credentialPatterns = [
+    ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
+    ["aws-access-key", /\\bAKIA[0-9A-Z]{16}\\b/],
+    ["github-token", /\\bgh[pousr]_[A-Za-z0-9]{20,}\\b/],
+    ["openai-style-api-key", /\\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\\b/],
+    ["bearer-token", /\\bBearer\\s+[A-Za-z0-9._~+/-]{24,}/i],
+    ["inline-secret", /\\b(?:api[_-]?key|access[_-]?token|client[_-]?secret)\\s*[:=]\\s*["'][^"'\\r\\n]{16,}["']/i],
+  ];
+  for (const [name, content] of files) {
+    const basename = path.posix.basename(name).toLowerCase();
+    const envFile = basename === ".env" ||
+      (/^\\.env\\./.test(basename) && ![".env.example", ".env.sample", ".env.template"].includes(basename));
+    const credentialFile = /^(?:id_rsa|id_ed25519|credentials(?:\\.json)?|service-account\\.json|secrets?\\.json)$/i.test(basename) ||
+      /\\.(?:pem|p12|pfx|p8|key|kdbx|tfstate)$/i.test(basename);
+    if (envFile || credentialFile) {
+      throw new Error("refusing to include sensitive file path in blind review " + label + ": " + name);
+    }
+    const text = content.toString("utf8");
+    for (const [kind, pattern] of credentialPatterns) {
+      if (pattern.test(text)) {
+        throw new Error("refusing to include possible " + kind + " in blind review " + label + ": " + name);
+      }
+    }
+  }
 }
 
 async function writeTree(root, files) {
