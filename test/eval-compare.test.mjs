@@ -19,7 +19,9 @@ function run(overrides = {}) {
     keep: false,
     promptSha256: "prompt-hash",
     toolDefinitionsSha256: "tools-hash",
-    experiment: { factor: "agent-runtime" },
+    runtimeSourceSha256: "runtime-hash",
+    evalHarnessSha256: "eval-harness-hash",
+    experiment: { factor: "unspecified" },
     passed: 2,
     total: 2,
     elapsed: 10,
@@ -142,7 +144,7 @@ test("A/B 因素约束：测试 System Prompt 时只允许 Prompt 指纹变化",
 test("A/B 因素约束：测试工具定义时只允许工具指纹变化", () => {
   const result = compareRuns(
     run({ experiment: { factor: "tool-definitions" } }),
-    run({ toolDefinitionsSha256: "new-tools", experiment: { factor: "tool-definitions" } }),
+    run({ toolDefinitionsSha256: "new-tools", runtimeSourceSha256: "new-runtime", experiment: { factor: "tool-definitions" } }),
   );
   assert.equal(result.comparable, true);
   const noChange = compareRuns(
@@ -157,6 +159,29 @@ test("A/B 因素约束：运行时实验不能顺带改变 Prompt 或工具说�
   const result = compareRuns(run(), run({ promptSha256: "changed-prompt" }));
   assert.equal(result.comparable, false);
   assert.ok(result.issues.some((issue) => issue.includes("system-prompt changed outside")));
+
+  const runtimeChanged = compareRuns(
+    run({ experiment: { factor: "agent-runtime" } }),
+    run({ runtimeSourceSha256: "new-runtime", experiment: { factor: "agent-runtime" } }),
+  );
+  assert.equal(runtimeChanged.comparable, true);
+  const runtimeDidNotChange = compareRuns(
+    run({ experiment: { factor: "agent-runtime" } }),
+    run({ experiment: { factor: "agent-runtime" } }),
+  );
+  assert.equal(runtimeDidNotChange.comparable, false);
+  assert.ok(runtimeDidNotChange.issues.some((issue) => issue.includes("agent-runtime factor did not change")));
+});
+
+test("A/B 对比：评测执行器不同或缺少指纹时拒绝比较", () => {
+  const changed = compareRuns(run(), run({ evalHarnessSha256: "other-evaluator" }));
+  assert.equal(changed.comparable, false);
+  assert.ok(changed.issues.includes("evalHarnessSha256 differs"));
+  const missing = run();
+  delete missing.evalHarnessSha256;
+  const absent = compareRuns(run(), missing);
+  assert.equal(absent.comparable, false);
+  assert.ok(absent.issues.includes("evaluation harness fingerprint missing"));
 });
 
 test("A/B 运行顺序：每轮交替，降低时间顺序偏差", () => {

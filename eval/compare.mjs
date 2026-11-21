@@ -40,7 +40,23 @@ export function compareRuns(a, b) {
   };
   compareHash("system-prompt", a.promptSha256, b.promptSha256);
   compareHash("tool-definitions", a.toolDefinitionsSha256, b.toolDefinitionsSha256);
+  if (factorA === "system-prompt" || factorA === "agent-runtime" || factorA === "tool-definitions") {
+    if (!a.runtimeSourceSha256 || !b.runtimeSourceSha256) {
+      issues.push("runtime source fingerprint missing");
+    } else if (factorA === "system-prompt" && a.runtimeSourceSha256 !== b.runtimeSourceSha256) {
+      issues.push("runtime source changed outside the system-prompt experiment");
+    } else if ((factorA === "agent-runtime" || factorA === "tool-definitions") &&
+      a.runtimeSourceSha256 === b.runtimeSourceSha256) {
+      issues.push(factorA + " factor did not change runtime source");
+    }
+  } else if (factorA === "unspecified" &&
+    a.runtimeSourceSha256 !== undefined && b.runtimeSourceSha256 !== undefined &&
+    a.runtimeSourceSha256 !== b.runtimeSourceSha256) {
+    issues.push("runtime source changed without a declared experiment factor");
+  }
   same("pricingSha256", a.pricingSha256 ?? "unknown", b.pricingSha256 ?? "unknown");
+  same("evalHarnessSha256", a.evalHarnessSha256 ?? null, b.evalHarnessSha256 ?? null);
+  if (!a.evalHarnessSha256 || !b.evalHarnessSha256) issues.push("evaluation harness fingerprint missing");
   same("costCurrency", a.totals?.cost?.currency ?? null, b.totals?.cost?.currency ?? null);
   same("taskSuiteSha256", a.taskSuiteSha256 ?? "unknown", b.taskSuiteSha256 ?? "unknown");
   same("taskNames", [...(a.taskNames ?? a.results.map((item) => item.name))].sort(),
@@ -126,6 +142,7 @@ export function compareRuns(a, b) {
     suiteVersion: a.suiteVersion ?? "unknown",
     model: a.model ?? "unknown",
     factor: factorA,
+    evalHarnessSha256: a.evalHarnessSha256 ?? null,
     a: {
       commit: a.commit ?? "unknown", branch: a.branch ?? "unknown",
       workingTreeClean: a.workingTreeClean ?? null, passed: aPassed, total: aTotal,

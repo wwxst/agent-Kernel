@@ -23,8 +23,10 @@ test("盲审包：隐藏 A/B 映射，保留共同任务和初始夹具", async 
     const b = await fixture(root, "b", "export const value = 3;\n");
     const result = await createBlindReviewPack({
       aRun: { suiteVersion: "suite", model: "mock", commit: "a-commit", branch: "a-branch",
+        evalHarnessSha256: "same-evaluator",
         results: [{ name: "task-1", ok: true, requests: 2, toolCalls: 1, tokens: { total: 20 }, seconds: 1, workdir: a.workdir }] },
       bRun: { suiteVersion: "suite", model: "mock", commit: "b-commit", branch: "b-branch",
+        evalHarnessSha256: "same-evaluator",
         results: [{ name: "task-1", ok: true, requests: 3, toolCalls: 2, tokens: { total: 30 }, seconds: 2, workdir: b.workdir }] },
       taskName: "task-1", aTasksDir: a.tasks, bTasksDir: b.tasks,
       outputDir: path.join(root, "review-pack"),
@@ -49,7 +51,10 @@ test("盲审包：初始夹具不一致时拒绝比较", async () => {
     const a = await fixture(root, "a", "A");
     const b = await fixture(root, "b", "B");
     await writeFile(path.join(b.tasks, "task-1", "files", "input.mjs"), "different");
-    const makeRun = (workdir) => ({ suiteVersion: "suite", model: "mock", results: [{ name: "task-1", workdir }] });
+    const makeRun = (workdir) => ({
+      suiteVersion: "suite", model: "mock", evalHarnessSha256: "same-evaluator",
+      results: [{ name: "task-1", workdir }],
+    });
     await assert.rejects(() => createBlindReviewPack({
       aRun: makeRun(a.workdir), bRun: makeRun(b.workdir), taskName: "task-1",
       aTasksDir: a.tasks, bTasksDir: b.tasks, outputDir: path.join(root, "review"),

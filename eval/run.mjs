@@ -156,6 +156,11 @@ async function cli() {
     promptChars: DEFAULT_SYSTEM_PROMPT.length,
     toolDefinitionsSha256: createHash("sha256").update(toolDefinitionsJson).digest("hex"),
     toolDefinitionsChars: toolDefinitionsJson.length,
+    runtimeSourceSha256: await runtimeSourceFingerprint(path.resolve(here, "..", "src")),
+    evalHarnessSha256: await fingerprintFiles(here, [
+      "run.mjs", "diagnostics.mjs", "cost.mjs", "compare.mjs", "ab.mjs",
+      "selfcheck.mjs", "checker-helpers.mjs", "../package.json", "../package-lock.json",
+    ]),
     taskSuiteSha256: await taskSuiteFingerprint(defaultTasksDir, names),
     pricingSha256: createHash("sha256").update(JSON.stringify(pricing ?? null)).digest("hex"),
     endpointPath: endpointPath(baseUrl),
@@ -453,6 +458,34 @@ async function taskSuiteFingerprint(tasksDir, names) {
     }
   }
   for (const name of [...names].sort()) await walk(path.join(tasksDir, name), name);
+  return hash.digest("hex");
+}
+
+async function fingerprintFiles(root, files) {
+  const hash = createHash("sha256");
+  for (const relative of [...files].sort()) {
+    const content = await readFile(path.join(root, relative));
+    hash.update(relative.split(path.sep).join("/")).update("\\0").update(content).update("\\0");
+  }
+  return hash.digest("hex");
+}
+
+async function runtimeSourceFingerprint(srcDir) {
+  const hash = createHash("sha256");
+  async function walk(directory, relativeRoot = "") {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const relative = relativeRoot === "" ? entry.name : path.join(relativeRoot, entry.name);
+      const normalized = relative.split(path.sep).join("/");
+      if (entry.isSymbolicLink()) throw new Error("source tree must not contain symlinks: " + normalized);
+      if (entry.isDirectory()) {
+        await walk(path.join(directory, entry.name), relative);
+      } else if (entry.isFile() && normalized !== "core/default-system-prompt.ts") {
+        hash.update(normalized).update("\\0").update(await readFile(path.join(directory, entry.name))).update("\\0");
+      }
+    }
+  }
+  await walk(srcDir);
   return hash.digest("hex");
 }
 

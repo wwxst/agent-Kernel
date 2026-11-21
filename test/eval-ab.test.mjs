@@ -8,7 +8,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-const evalFiles = ["ab.mjs", "compare.mjs", "run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs"];
+const evalFiles = [
+  "ab.mjs", "compare.mjs", "run.mjs", "selfcheck.mjs", "diagnostics.mjs",
+  "cost.mjs", "checker-helpers.mjs",
+];
 
 async function createVariant(root) {
   await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
@@ -18,6 +21,9 @@ async function createVariant(root) {
   for (const file of evalFiles) {
     await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
   }
+  await Promise.all(["package.json", "package-lock.json"].map((file) =>
+    copyFile(path.join(projectRoot, file), path.join(root, file))));
+}
 }
 
 test("A/B 实验：两轮交替运行，分别保存记录并生成可比较报告", async () => {
@@ -39,6 +45,10 @@ test("A/B 实验：两轮交替运行，分别保存记录并生成可比较报�
     const bDir = path.join(root, "B");
     await Promise.all([mkdir(aDir), mkdir(bDir)]);
     await Promise.all([createVariant(aDir), createVariant(bDir)]);
+    await writeFile(
+      path.join(bDir, "src", "core", "agent.ts"),
+      (await readFile(path.join(bDir, "src", "core", "agent.ts"), "utf8")) + "\\n// harmless runtime variant for the A/B harness test\\n",
+    );
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 
     const child = spawn(process.execPath, [

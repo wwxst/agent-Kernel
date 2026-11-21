@@ -81,6 +81,8 @@ const selectedEndpointPath = latest.endpointPath ?? "unknown";
 const selectedRuntime = runtimeKey(latest.environment);
 const selectedPrompt = latest.promptSha256 ?? "legacy";
 const selectedToolDefinitions = latest.toolDefinitionsSha256 ?? "legacy";
+const selectedRuntimeSource = latest.runtimeSourceSha256 ?? "legacy";
+const selectedEvalHarness = latest.evalHarnessSha256 ?? "legacy";
 const selectedTrace = latest.trace ?? false;
 const selectedKeep = latest.keep ?? false;
 const selectedTaskSuite = latest.taskSuiteSha256 ?? "legacy";
@@ -95,6 +97,8 @@ const sameConfiguration = (run) =>
   runtimeKey(run.environment) === selectedRuntime &&
   (run.promptSha256 ?? "legacy") === selectedPrompt &&
   (run.toolDefinitionsSha256 ?? "legacy") === selectedToolDefinitions &&
+  (run.runtimeSourceSha256 ?? "legacy") === selectedRuntimeSource &&
+  (run.evalHarnessSha256 ?? "legacy") === selectedEvalHarness &&
   (run.trace ?? false) === selectedTrace &&
   (run.keep ?? false) === selectedKeep &&
   (run.taskSuiteSha256 ?? "legacy") === selectedTaskSuite &&
