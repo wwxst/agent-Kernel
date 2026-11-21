@@ -49,7 +49,7 @@ npm run eval:scenarios
 
 它验证上下文压缩、工具串行执行、工具错误反馈。真实模型任务集另外增加：
 - 21-long-context-compaction：16 份迁移记录的长上下文整理，检查器还会核实运行中确实发生了上下文压缩和摘要请求。
-- 22-multi-tool-refactor：跨文件修复、补测试并运行测试的多工具任务，检查器会核实实际使用 read、write/edit、shell 等不同工具。
+- 22-multi-tool-refactor：跨文件修复、补测试并运行测试的多工具任务，检查器会核实实际使用 read、write/edit、shell 等不同工具，并确认 Agent 真正执行了指定测试命令。
 
 任务配置放在每个任务目录的 task.json；任务标签用于后续按场景分组统计。新增或改变任务验收语义时必须更新评测套件版本，旧套件结果不能混算。
 

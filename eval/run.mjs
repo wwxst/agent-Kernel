@@ -303,11 +303,22 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
       ? await createEvalDiagnostics({ llm, tools, workdir, model, pricing })
       : undefined;
     const toolCallNames = [];
+    const shellCommands = [];
     const agent = new Agent({
       llm: diagnostics?.llm ?? llm,
       tools,
       systemPrompt: () => DEFAULT_SYSTEM_PROMPT,
-      onToolCall: (call) => toolCallNames.push(call.function.name),
+      onToolCall: (call) => {
+        toolCallNames.push(call.function.name);
+        if (call.function.name === "shell") {
+          try {
+            const args = JSON.parse(call.function.arguments);
+            if (typeof args.command === "string") shellCommands.push(args.command);
+          } catch {
+            // 参数无效本身会由 ToolRegistry 反馈；评测记录不重复解释。
+          }
+        }
+      },
       ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
       maxSteps: settings.maxSteps,
       maxToolCalls: settings.maxToolCalls,
@@ -335,6 +346,7 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
         await check(workdir, {
           compactionStats: agent.compactionStats,
           toolCallNames: [...toolCallNames],
+          shellCommands: [...shellCommands],
         });
       } catch (failureOfCheck) {
         error = failureOfCheck;

@@ -34,4 +34,8 @@ export default async function check(root, context = {}) {
   assert.ok(names.has("shell"), "the task must run the requested test command with the shell tool");
   assert.ok(names.has("write") || names.has("edit"), "the task must modify files with write or edit");
   assert.ok(names.size >= 3, "the task must exercise at least three distinct tools");
+  assert.ok(
+    (context.shellCommands ?? []).some((command) => /\bnode\s+--test\s+test\/format\.test\.mjs\b/.test(command)),
+    "the Agent must execute node --test test/format.test.mjs with the shell tool",
+  );
 }

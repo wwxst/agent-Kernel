@@ -32,7 +32,8 @@ const SECRET_KEY = /(?:api[_-]?key|token|secret|password|authorization|credentia
 const SECRET_VALUE_PATTERNS = [
   /\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,})\b/g,
   /\bBearer\s+[A-Za-z0-9._~+/-]{24,}/gi,
-  /(\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*["']?)[^\s"',;]{12,}/gi,
+  /(\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|authorization|credential|token|secret|password)\s*[:=]\s*["']?)[^\s"',;]{12,}/gi,
+  /\bBasic\s+[A-Za-z0-9+/=]{16,}/gi,
 ];
 
 function sanitizeString(value) {

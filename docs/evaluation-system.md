@@ -108,7 +108,7 @@ A/B 工具只运行已经准备好的目录，不会创建或删除 Git 分支�
 新增任务：
 
 - `21-long-context-compaction`：逐一读取 16 份迁移记录，跨文件整理并保留全部关键字段；检查器还会核实本次真实执行至少提交了一次上下文压缩和摘要请求。
-- `22-multi-tool-refactor`：跨文件修复格式化逻辑，保留原测试、补齐边界测试，并实际运行测试命令；检查器会核实 Agent 确实调用了 read、write/edit、shell 等至少三种不同工具。
+- `22-multi-tool-refactor`：跨文件修复格式化逻辑，保留原测试、补齐边界测试，并实际运行测试命令；检查器会核实 Agent 确实调用了 read、write/edit、shell 等至少三种不同工具，并检查它通过 shell 执行了指定的 Node 测试命令。
 
 离线专项场景使用假模型和真实 Agent / ToolRegistry，不调用外部 API：
 

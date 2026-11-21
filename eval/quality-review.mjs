@@ -265,7 +265,7 @@ function assertReviewSafeTree(files, label) {
     ["npmrc-auth-token", /:_authToken\s*=\s*\S+/i],
     ["openai-style-api-key", /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/],
     ["bearer-token", /\bBearer\s+[A-Za-z0-9._~+/-]{24,}/i],
-    ["inline-secret", /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["'][^"'\r\n]{16,}["']/i],
+    ["inline-secret", /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|authorization|credential|token|secret|password)\s*[:=]\s*["'][^"'\r\n]{16,}["']/i],
   ];
   for (const [name, content] of files) {
     const basename = path.posix.basename(name).toLowerCase();

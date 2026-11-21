@@ -118,10 +118,21 @@ test("评测题 22：多文件格式化修复必须保留旧测试并新增边�
       'test("rejects an invalid email", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
       "",
     ].join("\n"), "utf8");
-    await assert.doesNotReject(() => checkMultiToolRefactor(root, { toolCallNames: ["read", "edit", "shell"] }));
+    const validToolUse = {
+      toolCallNames: ["read", "edit", "shell"],
+      shellCommands: ["node --test test/format.test.mjs"],
+    };
+    await assert.doesNotReject(() => checkMultiToolRefactor(root, validToolUse));
     await assert.rejects(
       () => checkMultiToolRefactor(root, { toolCallNames: ["read", "write"] }),
       /must run the requested test command with the shell tool/,
+    );
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, {
+        ...validToolUse,
+        shellCommands: ["echo tests"],
+      }),
+      /must execute node --test test\/format\.test\.mjs/,
     );
   });
 });
