@@ -76,7 +76,45 @@ test("盲审评分：计算维度均分，并识别需要第三方裁决的分�
   assert.equal(result.groups[0].overallAverage, 3);
   assert.deepEqual(result.groups[0].disagreements, ["correctness", "completeness", "stabilitySecurity", "maintainability", "scope"]);
   assert.equal(result.groups[0].recommendationDisagreement, true);
+  assert.equal(result.groups[0].insufficientReviewers, false);
+  assert.deepEqual(result.pairs[0].missingCandidates, ["candidate-2"]);
   assert.equal(result.requiresAdjudication, true);
+});
+
+test("盲审评分：单人评分和缺失候选不能算完成的盲审", () => {
+  const card = {
+    task: "task-1", candidate: "candidate-1", reviewerId: "reviewer-1",
+    scores: { correctness: 3, completeness: 3, stabilitySecurity: 3, maintainability: 3, scope: 3 },
+    evidence: {
+      correctness: "src/file.mjs: behavior matches the task",
+      completeness: "all requested outputs exist",
+      stabilitySecurity: "edge case is covered",
+      maintainability: "implementation is easy to follow",
+      scope: "only required files changed",
+    },
+    blockingFindings: [], recommendation: "accept",
+  };
+  const result = summarizeScorecards([card]);
+  assert.equal(result.groups[0].reviewers, 1);
+  assert.equal(result.groups[0].insufficientReviewers, true);
+  assert.deepEqual(result.pairs[0].missingCandidates, ["candidate-2"]);
+  assert.equal(result.requiresAdjudication, true);
+});
+
+test("盲审评分：同一审查者不能冒充两名独立审查者", () => {
+  const card = {
+    task: "task-1", candidate: "candidate-1", reviewerId: "same-reviewer",
+    scores: { correctness: 3, completeness: 3, stabilitySecurity: 3, maintainability: 3, scope: 3 },
+    evidence: {
+      correctness: "src/file.mjs: behavior matches the task",
+      completeness: "all requested outputs exist",
+      stabilitySecurity: "edge case is covered",
+      maintainability: "implementation is easy to follow",
+      scope: "only required files changed",
+    },
+    blockingFindings: [], recommendation: "accept",
+  };
+  assert.throws(() => summarizeScorecards([card, { ...card }]), /duplicate independent reviewer/);
 });
 
 test("盲审评分：拒绝没有证据的分数", () => {

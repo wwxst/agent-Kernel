@@ -4,8 +4,9 @@
  * 审查包只包含任务、初始夹具、匿名候选工作区和评分规范；版本映射单独写入 answer-key。
  */
 import { randomInt } from "node:crypto";
-import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { compareRuns } from "./compare.mjs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -19,11 +20,18 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
   if (!taskName || !outputDir) throw new Error("taskName and outputDir are required");
   if (aRun.suiteVersion !== bRun.suiteVersion) throw new Error("cannot blind-review runs from different task suite versions");
   if (aRun.model !== bRun.model) throw new Error("cannot blind-review runs using different models");
+  const pair = compareRuns(aRun, bRun);
+  if (!pair.comparable) {
+    throw new Error("cannot blind-review incomparable runs: " + pair.issues.join("; "));
+  }
   const aTask = aRun.results?.find((item) => item.name === taskName);
   const bTask = bRun.results?.find((item) => item.name === taskName);
   if (!aTask || !bTask) throw new Error("task " + taskName + " must exist in both run records");
   if (typeof aTask.workdir !== "string" || typeof bTask.workdir !== "string") {
     throw new Error("both runs must preserve task workspaces with --keep");
+  }
+  if (path.resolve(aTask.workdir) === path.resolve(bTask.workdir)) {
+    throw new Error("A and B task workspaces must be different directories");
   }
 
   const aTaskDir = path.join(aTasksDir, taskName);
@@ -84,8 +92,9 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
       "- scorecard.template.json：评分模板",
       "",
     ].join("\n"), "utf8");
-    await writeFile(destination + ".answer-key.json", JSON.stringify(answerKey, null, 2), "utf8");
+    await writeFile(destination + ".answer-key.json", JSON.stringify(answerKey, null, 2), { encoding: "utf8", flag: "wx" });
   } catch (error) {
+    await rm(destination, { recursive: true, force: true });
     throw new Error("could not create blind review pack: " + (error instanceof Error ? error.message : String(error)));
   }
 
@@ -96,8 +105,15 @@ export function summarizeScorecards(scorecards) {
   if (!Array.isArray(scorecards) || scorecards.length === 0) throw new Error("at least one scorecard is required");
   for (const [index, card] of scorecards.entries()) validateScorecard(card, index);
   const groups = new Map();
+  const reviewerSets = new Map();
   for (const card of scorecards) {
     const key = card.task + "::" + card.candidate;
+    const reviewers = reviewerSets.get(key) ?? new Set();
+    if (reviewers.has(card.reviewerId)) {
+      throw new Error("duplicate independent reviewer " + card.reviewerId + " for " + key);
+    }
+    reviewers.add(card.reviewerId);
+    reviewerSets.set(key, reviewers);
     const group = groups.get(key) ?? [];
     group.push(card);
     groups.set(key, group);
@@ -119,18 +135,41 @@ export function summarizeScorecards(scorecards) {
       task: cards[0].task,
       candidate: cards[0].candidate,
       reviewers: cards.length,
+      insufficientReviewers: cards.length < 2,
       averages,
       overallAverage: Number((Object.values(averages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2)),
       disagreements,
       recommendationDisagreement: recommendations.length > 1,
       recommendations,
       blockingFindings,
-      requiresAdjudication: disagreements.length > 0 || recommendations.length > 1 || blockingFindings.length > 0,
+      requiresAdjudication: cards.length < 2 || disagreements.length > 0 ||
+        recommendations.length > 1 || blockingFindings.length > 0,
+    };
+  });
+  const taskNames = [...new Set(scorecards.map((card) => card.task))].sort();
+  const pairs = taskNames.map((task) => {
+    const candidate1 = summaries.find((item) => item.task === task && item.candidate === "candidate-1");
+    const candidate2 = summaries.find((item) => item.task === task && item.candidate === "candidate-2");
+    const missingCandidates = [
+      ...(!candidate1 ? ["candidate-1"] : []),
+      ...(!candidate2 ? ["candidate-2"] : []),
+    ];
+    const insufficientReviewers = Boolean(candidate1?.insufficientReviewers || candidate2?.insufficientReviewers);
+    return {
+      task,
+      missingCandidates,
+      insufficientReviewers,
+      complete: missingCandidates.length === 0 && !insufficientReviewers,
+      candidate2MinusCandidate1: candidate1 && candidate2
+        ? Number((candidate2.overallAverage - candidate1.overallAverage).toFixed(2))
+        : null,
     };
   });
   return {
     groups: summaries,
-    requiresAdjudication: summaries.some((summary) => summary.requiresAdjudication),
+    pairs,
+    requiresAdjudication: summaries.some((summary) => summary.requiresAdjudication) ||
+      pairs.some((pair) => !pair.complete),
   };
 }
 
@@ -141,8 +180,8 @@ function validateScorecard(card, index) {
       typeof card.reviewerId !== "string" || card.reviewerId === "") {
     throw new Error("scorecard " + (index + 1) + " has invalid task, candidate, or reviewerId");
   }
-  if (card.scores === null || typeof card.scores !== "object" ||
-      card.evidence === null || typeof card.evidence !== "object") {
+  if (card.scores === null || typeof card.scores !== "object" || Array.isArray(card.scores) ||
+      card.evidence === null || typeof card.evidence !== "object" || Array.isArray(card.evidence)) {
     throw new Error("scorecard " + (index + 1) + " must include scores and evidence");
   }
   for (const key of criteria) {
@@ -153,6 +192,7 @@ function validateScorecard(card, index) {
     }
   }
   if (!Array.isArray(card.blockingFindings) ||
+      !card.blockingFindings.every((finding) => typeof finding === "string" && finding.trim() !== "") ||
       !["accept", "reject", "needs-discussion"].includes(card.recommendation)) {
     throw new Error("scorecard " + (index + 1) + " has invalid findings or recommendation");
   }

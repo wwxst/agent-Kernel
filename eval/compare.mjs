@@ -21,6 +21,7 @@ export function compareRuns(a, b) {
   same("trace", a.trace ?? false, b.trace ?? false);
   same("keep", a.keep ?? false, b.keep ?? false);
   same("pricingSha256", a.pricingSha256 ?? "unknown", b.pricingSha256 ?? "unknown");
+  same("costCurrency", a.totals?.cost?.currency ?? null, b.totals?.cost?.currency ?? null);
   same("taskSuiteSha256", a.taskSuiteSha256 ?? "unknown", b.taskSuiteSha256 ?? "unknown");
   same("taskNames", [...(a.taskNames ?? a.results.map((item) => item.name))].sort(),
     [...(b.taskNames ?? b.results.map((item) => item.name))].sort());
@@ -58,9 +59,10 @@ export function compareRuns(a, b) {
       row[metric + "Delta"] = typeof leftValue === "number" && typeof rightValue === "number"
         ? rightValue - leftValue : null;
     }
-    const aCost = left.cost?.amountUsd;
-    const bCost = right.cost?.amountUsd;
-    row.costDeltaUsd = left.cost?.complete === true && right.cost?.complete === true &&
+    const aCost = left.cost?.amount;
+    const bCost = right.cost?.amount;
+    row.costDelta = left.cost?.complete === true && right.cost?.complete === true &&
+      left.cost?.currency === right.cost?.currency &&
       typeof aCost === "number" && typeof bCost === "number" ? bCost - aCost : null;
     return row;
   });
@@ -78,8 +80,10 @@ export function compareRuns(a, b) {
     tokensDelta: numericDelta(a.totals?.tokens, b.totals?.tokens),
     cachedPromptTokensDelta: numericDelta(a.totals?.cachedPromptTokens, b.totals?.cachedPromptTokens),
     elapsedDelta: numericDelta(a.elapsed, b.elapsed),
-    costDeltaUsd: a.totals?.cost?.complete === true && b.totals?.cost?.complete === true
-      ? numericDelta(a.totals?.cost?.amountUsd, b.totals?.cost?.amountUsd) : null,
+    costDelta: a.totals?.cost?.complete === true && b.totals?.cost?.complete === true &&
+      a.totals?.cost?.currency === b.totals?.cost?.currency
+      ? numericDelta(a.totals?.cost?.amount, b.totals?.cost?.amount) : null,
+    costCurrency: a.totals?.cost?.currency ?? null,
   };
 
   return {
@@ -118,7 +122,8 @@ export function summarizeExperiment(comparisons) {
     medianTokensDelta: deltaMedian("tokensDelta"),
     medianCachedPromptTokensDelta: deltaMedian("cachedPromptTokensDelta"),
     medianElapsedDelta: deltaMedian("elapsedDelta"),
-    medianCostDeltaUsd: deltaMedian("costDeltaUsd"),
+    medianCostDelta: deltaMedian("costDelta"),
+    costCurrency: valid.find((item) => item.totals.costCurrency)?.totals.costCurrency ?? null,
   };
 }
 
@@ -143,7 +148,7 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     "| Median token delta | " + show(summary.medianTokensDelta) + " |",
     "| Median cached input token delta | " + show(summary.medianCachedPromptTokensDelta) + " |",
     "| Median elapsed delta | " + show(summary.medianElapsedDelta, " s") + " |",
-    "| Median cost delta | " + show(summary.medianCostDeltaUsd, " USD") + " |",
+    "| Median cost delta | " + show(summary.medianCostDelta, summary.costCurrency ? " " + summary.costCurrency : "") + " |",
     "",
     "## Per-round validity",
     "",
@@ -151,6 +156,15 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
   for (const [index, item] of comparisons.entries()) {
     lines.push("### Round " + (index + 1) + ": " + (item.comparable ? "comparable" : "invalid"));
     if (item.issues.length > 0) for (const issue of item.issues) lines.push("- " + issue);
+    if (item.tasks.length > 0) {
+      lines.push("", "| Task | Status | Token Δ | Request Δ | Tool Δ | Time Δ (s) | Cost Δ |", "| --- | --- | ---: | ---: | ---: | ---: | ---: |");
+      for (const task of item.tasks) {
+        lines.push("| " + task.name + " | " + task.status + " | " +
+          show(task.tokensDelta) + " | " + show(task.requestsDelta) + " | " +
+          show(task.toolCallsDelta) + " | " + show(task.secondsDelta) + " | " +
+          show(task.costDelta, item.totals.costCurrency ? " " + item.totals.costCurrency : "") + " |");
+      }
+    }
     lines.push("");
   }
   lines.push("## Decision notes", "", "- Do not adopt a change solely because tokens or time decreased.", "- Reject regressions in task success, safety, or required behavior.", "- Review quality scorecards and blocking findings before accepting a candidate.", "- Invalid rounds must be rerun; do not mix incompatible configurations.", "");

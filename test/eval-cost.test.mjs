@@ -25,19 +25,19 @@ test("费用估算：分别按普通输入、缓存输入和输出价格计算",
 
   assert.deepEqual(cost, {
     currency: "USD",
-    amountUsd: 0.00208,
+    amount: 0.00208,
     complete: true,
     coverage: "complete",
   });
 });
 
 test("费用估算：没有价格表时不猜测费用", () => {
-  assert.equal(estimateCost({ promptTokens: 100, completionTokens: 10 }, undefined, "mock-model").amountUsd, null);
+  assert.equal(estimateCost({ promptTokens: 100, completionTokens: 10 }, undefined, "mock-model").amount, null);
 });
 
 test("费用估算：模型没有配置价格时不套用其他模型价格", () => {
   const cost = estimateCost({ promptTokens: 100, completionTokens: 10 }, config, "other-model");
-  assert.equal(cost.amountUsd, null);
+  assert.equal(cost.amount, null);
   assert.equal(cost.reason, "model_price_not_configured");
 });
 
@@ -53,7 +53,7 @@ test("费用估算：usage 缺失时只报告已知请求小计，不冒充完�
   assert.equal(cost.complete, false);
   assert.equal(cost.coverage, "reported_requests_only");
   assert.equal(cost.unknownRequests, 1);
-  assert.equal(cost.amountUsd, 0.0028);
+  assert.equal(cost.amount, 0.0028);
 });
 
 test("费用估算：缓存价格与普通输入相同时，缓存用量未知不影响费用准确性", () => {
@@ -66,7 +66,7 @@ test("费用估算：缓存价格与普通输入相同时，缓存用量未知�
     cacheUsageUnknown: 1, unknown: 0,
   }, sameRate, "mock-model");
   assert.equal(cost.complete, true);
-  assert.equal(cost.amountUsd, 0.0028);
+  assert.equal(cost.amount, 0.0028);
 });
 
 test("费用估算：缓存价格有折扣但缓存 Token 未知时拒绝估算", () => {
@@ -78,7 +78,7 @@ test("费用估算：缓存价格有折扣但缓存 Token 未知时拒绝估算"
     unknown: 0,
   }, config, "mock-model");
 
-  assert.equal(cost.amountUsd, null);
+  assert.equal(cost.amount, null);
   assert.equal(cost.reason, "cache_usage_unknown");
 });
 

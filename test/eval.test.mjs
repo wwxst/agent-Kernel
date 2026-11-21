@@ -17,7 +17,7 @@
  */
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { copyFile, cp, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -119,6 +119,44 @@ test("评测入口：通过符号链接路径启动仍执行 CLI", {
   }
 });
 
+test("评测：EVAL_OUTPUT_FILE 指定结果路径并写入完整记录", async () => {
+  await withRoundFixture(async (options) => {
+    const root = await mkdtemp(path.join(tmpdir(), "agent-output-path-test-"));
+    try {
+      await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
+      await mkdir(path.join(root, "eval"));
+      for (const file of ["run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs"]) {
+        await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
+      }
+      await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
+      const outputFile = "eval/results/experiments/test-run.json";
+      const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
+        cwd: root,
+        env: {
+          ...process.env, BASE_URL: options.baseUrl, API_KEY: "test", OPENAI_API_KEY: "", MODEL: "mock",
+          EVAL_OUTPUT_FILE: outputFile,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 10_000,
+      });
+      child.stdout.resume();
+      let stderr = "";
+      child.stderr.on("data", (chunk) => { stderr += chunk; });
+      const code = await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", resolve);
+      });
+      assert.equal(code, 0, stderr);
+      const record = JSON.parse(await readFile(path.join(root, outputFile), "utf8"));
+      assert.equal(record.model, "mock");
+      assert.deepEqual(record.taskNames, ["first", "queued"]);
+      assert.equal(record.results.length, 2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 test("评测：成绩文件保存失败必须非零退出", async () => {
   await withRoundFixture(async (options) => {
     const root = await mkdtemp(path.join(tmpdir(), "agent-report-test-"));
@@ -132,7 +170,9 @@ test("评测：成绩文件保存失败必须非零退出", async () => {
       // 只在临时副本制造 ENOTDIR，不触碰仓库原有成绩。
       await writeFile(path.join(root, "eval", "results"), "blocking file");
       const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
-        env: { ...process.env, BASE_URL: options.baseUrl, API_KEY: "test", MODEL: "mock" },
+        cwd: root,
+        env: { ...process.env, BASE_URL: options.baseUrl, API_KEY: "test", OPENAI_API_KEY: "", MODEL: "mock",
+          EVAL_OUTPUT_FILE: "eval/results/custom.json" },
         stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
       });
       child.stdout.resume();

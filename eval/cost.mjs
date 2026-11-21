@@ -40,7 +40,7 @@ export async function loadPricingConfig(filePath) {
 }
 
 /**
- * amountUsd 是已知请求的估算小计；complete=false 时不能当作整轮真实账单。
+ * amount 是已知请求的估算小计；complete=false 时不能当作整轮真实账单。
  * 缓存价格与普通输入价格不同时，如果有请求未报告缓存用量，就拒绝给出金额。
  */
 export function estimateCost(usage, config, model) {
@@ -48,7 +48,7 @@ export function estimateCost(usage, config, model) {
   if (rates === undefined) {
     return {
       currency: config?.currency ?? "USD",
-      amountUsd: null,
+      amount: null,
       complete: false,
       reason: config === undefined ? "pricing_not_configured" : "model_price_not_configured",
     };
@@ -60,17 +60,17 @@ export function estimateCost(usage, config, model) {
   const unknownRequests = usage.unknown ?? usage.unknownResponses ?? 0;
   const cacheUsageUnknown = usage.cacheUsageUnknown ?? 0;
   if (cachedPromptTokens > promptTokens) {
-    return { currency: config.currency, amountUsd: null, complete: false, reason: "cached_tokens_exceed_prompt_tokens" };
+    return { currency: config.currency, amount: null, complete: false, reason: "cached_tokens_exceed_prompt_tokens" };
   }
 
   const cachedRate = rates.cachedInputPerMillion ?? rates.inputPerMillion;
   const cachePriceDiffers = cachedRate !== rates.inputPerMillion;
   if (cacheUsageUnknown > 0 && cachePriceDiffers) {
-    return { currency: config.currency, amountUsd: null, complete: false, reason: "cache_usage_unknown" };
+    return { currency: config.currency, amount: null, complete: false, reason: "cache_usage_unknown" };
   }
 
   const uncachedPromptTokens = promptTokens - cachedPromptTokens;
-  const amountUsd = (
+  const amount = (
     uncachedPromptTokens * rates.inputPerMillion +
     cachedPromptTokens * cachedRate +
     completionTokens * rates.outputPerMillion
@@ -78,7 +78,7 @@ export function estimateCost(usage, config, model) {
 
   return {
     currency: config.currency,
-    amountUsd: Number(amountUsd.toFixed(10)),
+    amount: Number(amount.toFixed(10)),
     complete: unknownRequests === 0 && !(cacheUsageUnknown > 0 && cachePriceDiffers),
     coverage: unknownRequests > 0 ? "reported_requests_only" : "complete",
     ...(unknownRequests > 0 ? { unknownRequests } : {}),

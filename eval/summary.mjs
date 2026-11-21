@@ -126,7 +126,7 @@ for (const [index, run] of recent.entries()) {
       `${run.totals?.summaryRequests ? `+${run.totals.summaryRequests} 次摘要请求  ` : ""}` +
       `${tokens === undefined ? "" : `${tokens} tokens  `}` +
       `${cache === undefined ? "" : `缓存 ${cache}  `}` +
-      `${cost?.amountUsd === null || cost?.amountUsd === undefined ? "" : `${cost.amountUsd} ${cost.currency}${cost.complete ? "" : " partial"}  `}` +
+      `${cost?.amount === null || cost?.amount === undefined ? "" : `${cost.amount} ${cost.currency}${cost.complete ? "" : " partial"}  `}` +
       `${Math.round(seconds)}s  ${run.at}`,
   );
 }
@@ -164,11 +164,11 @@ if (cacheTotals.length > 0) {
   const unknown = recent.reduce((total, run) => total + (run.totals?.cacheUsageUnknown ?? 0), 0);
   console.log(`缓存命中 Token：中位数 ${median(cacheTotals)}${unknown > 0 ? `（${unknown} 个请求缓存用量未知）` : ""}`);
 }
-const costTotals = recent.filter((run) => typeof run.totals?.cost?.amountUsd === "number")
-  .map((run) => run.totals.cost.amountUsd);
+const costTotals = recent.filter((run) => typeof run.totals?.cost?.amount === "number")
+  .map((run) => run.totals.cost.amount);
 if (costTotals.length > 0) {
   const incomplete = recent.some((run) => run.totals?.cost?.complete !== true);
-  console.log(`费用小计：中位数 ${median(costTotals)} ${recent.find((run) => run.totals?.cost?.amountUsd !== undefined)?.totals.cost.currency ?? "USD"}${incomplete ? "（不完整，仅供参考）" : ""}`);
+  console.log(`费用小计：中位数 ${median(costTotals)} ${recent.find((run) => run.totals?.cost?.amount !== undefined)?.totals.cost.currency ?? "USD"}${incomplete ? "（不完整，仅供参考）" : ""}`);
 }
 
 function runtimeKey(environment) {

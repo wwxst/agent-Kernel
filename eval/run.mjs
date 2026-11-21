@@ -160,7 +160,7 @@ async function cli() {
       variant: process.env.EVAL_VARIANT ?? null,
     },
   };
-  await report(summarize({ results, elapsed, model, commit, infra, metadata }));
+  await report(summarize({ results, elapsed, model, commit, infra, metadata }), process.env.EVAL_OUTPUT_FILE);
 }
 
 /** 跑一轮：并发执行任务，并在结算窗口内收集检查器留下的未处理 rejection。 */
@@ -206,9 +206,9 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
   const cacheUsageUnknown = results.reduce((total, result) => total + (result.tokens.cacheUsageUnknown ?? 0), 0);
   const passed = results.filter((result) => result.ok).length;
   const costs = results.map((result) => result.cost);
-  const priced = costs.filter((cost) => cost?.amountUsd !== null && cost?.amountUsd !== undefined);
+  const priced = costs.filter((cost) => cost?.amount !== null && cost?.amount !== undefined);
   const costCurrency = priced[0]?.currency ?? "USD";
-  const costTotal = priced.reduce((total, cost) => total + cost.amountUsd, 0);
+  const costTotal = priced.reduce((total, cost) => total + cost.amount, 0);
   const allPriced = priced.length === results.length && results.length > 0;
   const costComplete = allPriced && costs.every((cost) => cost.complete);
 
@@ -228,7 +228,7 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
       cachedPromptTokens, cacheUsageUnknown,
       cost: {
         currency: costCurrency,
-        amountUsd: allPriced ? Number(costTotal.toFixed(10)) : null,
+        amount: allPriced ? Number(costTotal.toFixed(10)) : null,
         complete: costComplete,
         pricedTasks: priced.length,
         totalTasks: results.length,
@@ -492,7 +492,7 @@ async function report(record, outputFile) {
       `${unknown > 0 ? `（${unknown} 个请求没有 usage）` : ""}` +
       ` · 缓存命中 ${totals.cachedPromptTokens} tokens` +
       `${totals.cacheUsageUnknown > 0 ? `（${totals.cacheUsageUnknown} 个请求缓存用量未知）` : ""}` +
-      `${totals.cost.amountUsd === null ? "" : ` · 费用小计 ${totals.cost.amountUsd} ${totals.cost.currency}${totals.cost.complete ? "" : "（不完整）"}`}` +
+      `${totals.cost.amount === null ? "" : ` · 费用小计 ${totals.cost.amount} ${totals.cost.currency}${totals.cost.complete ? "" : "（不完整）"}`}` +
       ` · 墙钟 ${elapsed.toFixed(1)}s` +
       `（任务耗时合计 ${busy.toFixed(1)}s）`,
 
