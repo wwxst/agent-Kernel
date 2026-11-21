@@ -66,7 +66,7 @@ test("评测记录：每轮都写入当前评测套件版本", () => {
       ok: true,
       requests: 2,
       toolCalls: 3,
-      tokens: { total: 10, unknownResponses: 0 },
+      tokens: { total: 10, unknownResponses: 0, cachedPromptTokens: 0, cacheUsageUnknown: 0 },
     }],
     elapsed: 1.25,
     model: "test-model",

@@ -273,8 +273,11 @@ test("流式：累计响应字节超限时拒绝，注释和未换行内容也�
 });
 
 /** 用一条 message（外加默认的 finish_reason）跑一次 chat。 */
-async function chatWith(message, finishReason = "stop") {
-  const payload = { choices: [{ index: 0, message, finish_reason: finishReason }] };
+async function chatWith(message, finishReason = "stop", usage) {
+  const payload = {
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    ...(usage === undefined ? {} : { usage }),
+  };
   const server = await respondWith(payload);
   try {
     return await clientFor(server.url).chat([], []);

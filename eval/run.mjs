@@ -118,6 +118,7 @@ async function cli() {
   console.log(`commit: ${commit}`);
   console.log(`tasks:  ${names.length}  并发: ${Math.min(jobs, names.length)}\n`);
 
+  const startedAt = Date.now();
   const { results, elapsed, infra } = await runRound({
     tasksDir: defaultTasksDir,
     names,
@@ -197,8 +198,8 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
   const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
   const tokens = results.reduce((total, result) => total + result.tokens.total, 0);
   const unknown = results.reduce((total, result) => total + result.tokens.unknownResponses, 0);
-  const cachedPromptTokens = results.reduce((total, result) => total + result.tokens.cachedPromptTokens, 0);
-  const cacheUsageUnknown = results.reduce((total, result) => total + result.tokens.cacheUsageUnknown, 0);
+  const cachedPromptTokens = results.reduce((total, result) => total + (result.tokens.cachedPromptTokens ?? 0), 0);
+  const cacheUsageUnknown = results.reduce((total, result) => total + (result.tokens.cacheUsageUnknown ?? 0), 0);
   const passed = results.filter((result) => result.ok).length;
   const costs = results.map((result) => result.cost);
   const priced = costs.filter((cost) => cost?.amountUsd !== null && cost?.amountUsd !== undefined);
@@ -428,6 +429,12 @@ async function readTaskConfig(taskDir) {
     if (config[key] !== undefined && (!Number.isSafeInteger(config[key]) || config[key] < 0)) {
       throw new Error(`invalid task config ${key}: expected a non-negative safe integer`);
     }
+  }
+  if (config.contextWindowTokens !== undefined && config.contextWindowTokens < 1) {
+    throw new Error("invalid task config contextWindowTokens: expected an integer >= 1");
+  }
+  if (config.maxTranscriptChars !== undefined && config.maxTranscriptChars < 1_024) {
+    throw new Error("invalid task config maxTranscriptChars: expected an integer >= 1024");
   }
   if (config.maxSteps !== undefined && config.maxSteps < 1) {
     throw new Error("invalid task config maxSteps: expected an integer >= 1");
