@@ -26,7 +26,7 @@ npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 
 任务之间互不依赖，所以默认并发 4 个：20 个任务的墙钟从约 226 秒降到约 74 秒。单任务的平均耗时不变（约 11 秒，8.8 步），因为时间几乎都花在等模型上——一次模型往返约 1.2 秒，工具执行和内核开销合计不到 5%。
 
-结果会打印成一张表，同时写进 `eval/results/<时间戳>.json`（不进 git）：
+结果会打印成一张表，同时写进 `eval/results/<时间戳>.json`（不进 git）。结果会记录模型、提交、分支、运行环境、任务预算、上下文压缩、缓存 Token 与请求耗时；不会记录 API Key 或完整端点 URL。
 
 ```
   PASS  01-add-health-route            9 req    9 tool   10.9s   17185 tok
@@ -37,7 +37,13 @@ npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 
 每行是：结果、任务名、模型请求数、真正执行的工具调用数、耗时、token。请求数和工具调用数是两个指标——一次模型回复可以要多个工具，只报「步数」会把副作用次数藏起来。端点没返回 `usage` 时，汇总的 token 前面会写 `at least`，因为那只是已统计到的下限。
 
-记录里同时写模型名、Commit SHA、每个任务的 token / 请求 / 工具调用明细，方便把一次分数对回到具体代码。
+记录里同时写模型名、Commit SHA、分支、Node/OS/架构、端点主机名、并发、提示词 SHA-256、每个任务的 token / 请求 / 工具调用明细和压缩统计，方便把一次分数对回到具体代码。
+
+### 缓存 Token 与费用估算
+
+模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。费用只使用用户提供的价格表，不内置服务商价格：复制 `eval/pricing.example.json` 为本地 `eval/pricing.json`，填写准确的每百万 Token 价格，并设置 `EVAL_PRICING_FILE=eval/pricing.json`。缺少价格或缓存用量不完整时，费用会标记为未知/不完整。
+
+任务可选提供 `task.json`，单独设置 `maxSteps`、`maxToolCalls`、`maxTotalTokens`、`contextWindowTokens`、`outputTokenReserve`、`maxTranscriptChars` 和 `tags`。没有配置的任务沿用原有默认值。
 
 加 `--keep` 会保留工作区，方便事后翻看 agent 到底改了什么。
 
@@ -81,7 +87,7 @@ tasks/01-add-health-route/
 
 ## 评测套件版本和检查器质量
 
-每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-19-checkers-v2`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
+每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-21-eval-system-v1`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
 
 只要修改任务提示、初始夹具或检查器的验收语义，就必须更新套件标识。不同套件版本的成绩不能直接混算。旧结果没有 `suiteVersion` 字段，会被标记为 `legacy`。
 
