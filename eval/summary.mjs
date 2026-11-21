@@ -77,18 +77,26 @@ const selectedModel = typeof latest.model === "string" && latest.model.length > 
 const selectedCommit = typeof latest.commit === "string" && latest.commit.length > 0 ? latest.commit : "unknown";
 const selectedJobs = latest.jobs ?? null;
 const selectedEndpoint = latest.endpointHost ?? "unknown";
+const selectedEndpointPath = latest.endpointPath ?? "unknown";
 const selectedRuntime = runtimeKey(latest.environment);
 const selectedPrompt = latest.promptSha256 ?? "legacy";
 const selectedTrace = latest.trace ?? false;
+const selectedKeep = latest.keep ?? false;
+const selectedTaskSuite = latest.taskSuiteSha256 ?? "legacy";
+const selectedPricing = latest.pricingSha256 ?? "legacy";
 const sameConfiguration = (run) =>
   (typeof run.suiteVersion === "string" && run.suiteVersion.length > 0 ? run.suiteVersion : "legacy") === selectedSuiteVersion &&
   (typeof run.model === "string" && run.model.length > 0 ? run.model : "unknown") === selectedModel &&
   (typeof run.commit === "string" && run.commit.length > 0 ? run.commit : "unknown") === selectedCommit &&
   (run.jobs ?? null) === selectedJobs &&
   (run.endpointHost ?? "unknown") === selectedEndpoint &&
+  (run.endpointPath ?? "unknown") === selectedEndpointPath &&
   runtimeKey(run.environment) === selectedRuntime &&
   (run.promptSha256 ?? "legacy") === selectedPrompt &&
-  (run.trace ?? false) === selectedTrace;
+  (run.trace ?? false) === selectedTrace &&
+  (run.keep ?? false) === selectedKeep &&
+  (run.taskSuiteSha256 ?? "legacy") === selectedTaskSuite &&
+  (run.pricingSha256 ?? "legacy") === selectedPricing;
 const matchingRuns = runs.filter(sameConfiguration);
 const skippedConfigurations = runs.length - matchingRuns.length;
 if (skippedConfigurations > 0) {
@@ -96,7 +104,7 @@ if (skippedConfigurations > 0) {
 }
 const recent = matchingRuns.slice(-wanted);
 const suiteLabel = selectedSuiteVersion === "legacy" ? "legacy（旧记录，无版本标记）" : selectedSuiteVersion;
-console.log(`评测套件：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)} · 并发：${selectedJobs ?? "legacy"} · 端点：${selectedEndpoint}`);
+console.log(`评测套件：${suiteLabel} · 模型：${selectedModel} · 提交：${selectedCommit.slice(0, 7)} · 并发：${selectedJobs ?? "legacy"} · 端点：${selectedEndpoint}${selectedEndpointPath}`);
 
 const average = (values) => values.reduce((total, value) => total + value, 0) / values.length;
 const median = (values) => {
@@ -160,7 +168,7 @@ const costTotals = recent.filter((run) => typeof run.totals?.cost?.amountUsd ===
   .map((run) => run.totals.cost.amountUsd);
 if (costTotals.length > 0) {
   const incomplete = recent.some((run) => run.totals?.cost?.complete !== true);
-  console.log(`费用小计：中位数 ${median(costTotals)} USD${incomplete ? "（不完整，仅供参考）" : ""}`);
+  console.log(`费用小计：中位数 ${median(costTotals)} ${recent.find((run) => run.totals?.cost?.amountUsd !== undefined)?.totals.cost.currency ?? "USD"}${incomplete ? "（不完整，仅供参考）" : ""}`);
 }
 
 function runtimeKey(environment) {

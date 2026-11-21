@@ -149,6 +149,9 @@ async function cli() {
     trace,
     keep,
     promptSha256: createHash("sha256").update(DEFAULT_SYSTEM_PROMPT).digest("hex"),
+    taskSuiteSha256: await taskSuiteFingerprint(defaultTasksDir, names),
+    pricingSha256: createHash("sha256").update(JSON.stringify(pricing ?? null)).digest("hex"),
+    endpointPath: endpointPath(baseUrl),
     pricing: pricing === undefined
       ? { configured: false }
       : { configured: true, version: pricing.version, currency: pricing.currency },
@@ -415,6 +418,32 @@ function endpointHost(baseUrl) {
   } catch {
     return "unknown";
   }
+}
+
+function endpointPath(baseUrl) {
+  try {
+    return new URL(baseUrl).pathname.replace(/\\/+$/, "") || "/";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function taskSuiteFingerprint(tasksDir, names) {
+  const hash = createHash("sha256");
+  async function walk(directory, relativeRoot) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      const full = path.join(directory, entry.name);
+      const relative = path.join(relativeRoot, entry.name).split(path.sep).join("/");
+      if (entry.isSymbolicLink()) throw new Error("task suite must not contain symlinks: " + relative);
+      if (entry.isDirectory()) await walk(full, relative);
+      else if (entry.isFile()) {
+        hash.update(relative).update("\\0").update(await readFile(full)).update("\\0");
+      }
+    }
+  }
+  for (const name of [...names].sort()) await walk(path.join(tasksDir, name), name);
+  return hash.digest("hex");
 }
 
 async function readTaskConfig(taskDir) {

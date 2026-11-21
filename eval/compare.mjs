@@ -16,7 +16,12 @@ export function compareRuns(a, b) {
   same("suiteVersion", a.suiteVersion, b.suiteVersion);
   same("model", a.model, b.model);
   same("endpointHost", a.endpointHost ?? "unknown", b.endpointHost ?? "unknown");
+  same("endpointPath", a.endpointPath ?? "unknown", b.endpointPath ?? "unknown");
   same("jobs", a.jobs ?? null, b.jobs ?? null);
+  same("trace", a.trace ?? false, b.trace ?? false);
+  same("keep", a.keep ?? false, b.keep ?? false);
+  same("pricingSha256", a.pricingSha256 ?? "unknown", b.pricingSha256 ?? "unknown");
+  same("taskSuiteSha256", a.taskSuiteSha256 ?? "unknown", b.taskSuiteSha256 ?? "unknown");
   same("taskNames", [...(a.taskNames ?? a.results.map((item) => item.name))].sort(),
     [...(b.taskNames ?? b.results.map((item) => item.name))].sort());
   same("runtime", runtimeKey(a.environment), runtimeKey(b.environment));
@@ -55,7 +60,8 @@ export function compareRuns(a, b) {
     }
     const aCost = left.cost?.amountUsd;
     const bCost = right.cost?.amountUsd;
-    row.costDeltaUsd = typeof aCost === "number" && typeof bCost === "number" ? bCost - aCost : null;
+    row.costDeltaUsd = left.cost?.complete === true && right.cost?.complete === true &&
+      typeof aCost === "number" && typeof bCost === "number" ? bCost - aCost : null;
     return row;
   });
 
@@ -72,7 +78,8 @@ export function compareRuns(a, b) {
     tokensDelta: numericDelta(a.totals?.tokens, b.totals?.tokens),
     cachedPromptTokensDelta: numericDelta(a.totals?.cachedPromptTokens, b.totals?.cachedPromptTokens),
     elapsedDelta: numericDelta(a.elapsed, b.elapsed),
-    costDeltaUsd: numericDelta(a.totals?.cost?.amountUsd, b.totals?.cost?.amountUsd),
+    costDeltaUsd: a.totals?.cost?.complete === true && b.totals?.cost?.complete === true
+      ? numericDelta(a.totals?.cost?.amountUsd, b.totals?.cost?.amountUsd) : null,
   };
 
   return {
@@ -152,7 +159,7 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
 
 function runtimeKey(environment) {
   if (!environment) return "legacy";
-  return [environment.node, environment.platform, environment.arch].join("|");
+  return [environment.node, environment.platform, environment.arch, environment.osRelease].join("|");
 }
 
 function numericDelta(a, b) {

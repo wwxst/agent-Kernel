@@ -64,7 +64,8 @@ export function estimateCost(usage, config, model) {
   }
 
   const cachedRate = rates.cachedInputPerMillion ?? rates.inputPerMillion;
-  if (cacheUsageUnknown > 0 && cachedRate !== rates.inputPerMillion) {
+  const cachePriceDiffers = cachedRate !== rates.inputPerMillion;
+  if (cacheUsageUnknown > 0 && cachePriceDiffers) {
     return { currency: config.currency, amountUsd: null, complete: false, reason: "cache_usage_unknown" };
   }
 
@@ -78,11 +79,11 @@ export function estimateCost(usage, config, model) {
   return {
     currency: config.currency,
     amountUsd: Number(amountUsd.toFixed(10)),
-    complete: unknownRequests === 0 && cacheUsageUnknown === 0,
+    complete: unknownRequests === 0 && !(cacheUsageUnknown > 0 && cachePriceDiffers),
     coverage: unknownRequests > 0 ? "reported_requests_only" : "complete",
     ...(unknownRequests > 0 ? { unknownRequests } : {}),
     ...(cacheUsageUnknown > 0 ? { cacheUsageUnknown } : {}),
-    ...((unknownRequests > 0 || cacheUsageUnknown > 0)
+    ...((unknownRequests > 0 || (cacheUsageUnknown > 0 && cachePriceDiffers))
       ? { reason: "some_usage_details_are_unknown" }
       : {}),
   };
