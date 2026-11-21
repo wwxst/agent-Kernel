@@ -1,0 +1,21 @@
+{
+  "task": "replace-with-task-name",
+  "candidate": "candidate-1",
+  "reviewerId": "reviewer-1",
+  "scores": {
+    "correctness": 0,
+    "completeness": 0,
+    "stabilitySecurity": 0,
+    "maintainability": 0,
+    "scope": 0
+  },
+  "evidence": {
+    "correctness": "file:line or reproducible behavior",
+    "completeness": "file:line or missing requirement",
+    "stabilitySecurity": "test, edge case, or security evidence",
+    "maintainability": "specific design evidence",
+    "scope": "specific necessary or unnecessary changes"
+  },
+  "blockingFindings": [],
+  "recommendation": "needs-discussion"
+}

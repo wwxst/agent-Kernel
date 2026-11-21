@@ -39,6 +39,22 @@ npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 
 记录里同时写模型名、Commit SHA、分支、Node/OS/架构、端点主机名、并发、提示词 SHA-256、每个任务的 token / 请求 / 工具调用明细和压缩统计，方便把一次分数对回到具体代码。
 
+### 代码质量盲审
+
+两轮结果需要人工/AI 代码质量对照时，先分别使用 --keep 保存任务工作区，再生成匿名审查包：
+
+```bash
+node eval/quality-review.mjs --a eval/results/A.json --b eval/results/B.json --task 01-add-health-route --a-tasks-dir eval/tasks --b-tasks-dir eval/tasks --out eval/results/review-packs/health-route
+```
+
+审查包只含任务、初始文件、匿名候选和评分规范；版本映射写在审查包旁边的 .answer-key.json，审查者不得查看。每个任务至少两名审查者独立评分，任一维度相差 2 分及以上、结论不同或存在阻断问题时交第三人裁决。评分卡汇总：
+
+```bash
+node eval/quality-review.mjs --scores eval/results/review-packs/scorecards.json
+```
+
+评分标准见 quality-review/rubric.md。
+
 ### 缓存 Token 与费用估算
 
 模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。费用只使用用户提供的价格表，不内置服务商价格：复制 `eval/pricing.example.json` 为本地 `eval/pricing.json`，填写准确的每百万 Token 价格，并设置 `EVAL_PRICING_FILE=eval/pricing.json`。缺少价格或缓存用量不完整时，费用会标记为未知/不完整。

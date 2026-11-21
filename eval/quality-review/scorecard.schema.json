@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Kernel blind code review scorecard",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task", "candidate", "reviewerId", "scores", "evidence", "blockingFindings", "recommendation"],
+  "properties": {
+    "task": { "type": "string", "minLength": 1 },
+    "candidate": { "enum": ["candidate-1", "candidate-2"] },
+    "reviewerId": { "type": "string", "minLength": 1 },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctness", "completeness", "stabilitySecurity", "maintainability", "scope"],
+      "properties": {
+        "correctness": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "completeness": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "stabilitySecurity": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "maintainability": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "scope": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctness", "completeness", "stabilitySecurity", "maintainability", "scope"],
+      "properties": {
+        "correctness": { "type": "string", "minLength": 1 },
+        "completeness": { "type": "string", "minLength": 1 },
+        "stabilitySecurity": { "type": "string", "minLength": 1 },
+        "maintainability": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "minLength": 1 }
+      }
+    },
+    "blockingFindings": { "type": "array", "items": { "type": "string" } },
+    "recommendation": { "enum": ["accept", "reject", "needs-discussion"] }
+  }
+}
