@@ -217,6 +217,30 @@ test("评测题 04：文档表格完整且保留 README 原内容才通过", asy
     await writeFile(path.join(root, "README.md"), "# fixture\n\n一个用来练手的小仓库。\n\n[用法](docs/usage.md)\n");
     await assert.doesNotReject(() => checkCreateDoc(root));
 
+    const originalTwoColumn = await readFile(path.join(root, "docs", "usage.md"), "utf8");
+    // 三列是合法的：script 名、实际 npm 命令、一句说明。
+    const threeColumn = [
+      "# 用法", "",
+      "| npm script | 命令 | 说明 |",
+      "| --- | --- | --- |",
+      "| test | `npm test` | 运行测试 |",
+      "| lint | `npm run lint` | 检查代码 |",
+      "",
+    ].join("\n");
+    await writeFile(path.join(root, "docs", "usage.md"), threeColumn);
+    await assert.doesNotReject(() => checkCreateDoc(root));
+
+    await writeFile(path.join(root, "docs", "usage.md"), threeColumn.replace(
+      "| lint | `npm run lint` |", "| test | `npm run lint` |",
+    ));
+    await assert.rejects(() => checkCreateDoc(root), /script 列与命令列不一致/);
+
+    await writeFile(path.join(root, "docs", "usage.md"), threeColumn.replace(
+      "`npm run lint`", "lint",
+    ));
+    await assert.rejects(() => checkCreateDoc(root), /必须写完整 npm 命令/);
+
+    await writeFile(path.join(root, "docs", "usage.md"), originalTwoColumn);
     const noUsageDelimiter = (await readFile(path.join(root, "docs", "usage.md"), "utf8"))
       .replace("| --- | --- |", "");
     await writeFile(path.join(root, "docs", "usage.md"), noUsageDelimiter);
