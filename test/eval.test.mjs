@@ -290,8 +290,66 @@ test("评测汇总：不同套件版本、模型和提交必须分组统计", as
     assert.match(result.stdout, /提交：current/);
     assert.match(result.stdout, /最近 2 轮完整评测/);
     assert.match(result.stdout, /合计：3\/4 个任务（75\.0%）/);
-    assert.match(result.stdout, /已跳过 3 轮不同评测版本、模型或代码提交的记录/);
+    assert.match(result.stdout, /已跳过 3 轮不同评测配置/);
     assert.doesNotMatch(result.stdout, /old-model|other-model|old-commit/);
+  });
+});
+
+test("评测汇总：分别报告输入和输出 Token 中位数", async () => {
+  await withSummaryFixture(async (script, recordFile) => {
+    const makeRun = (promptTokens, completionTokens) => ({
+      suiteVersion: "suite-v1", model: "mock", commit: "commit", jobs: 1,
+      endpointHost: "api.example.test", endpointPath: "/v1",
+      environment: { node: "v22", platform: "linux", arch: "x64", osRelease: "kernel", timezone: "UTC" },
+      promptSha256: "prompt", toolDefinitionsSha256: "tools", runtimeSourceSha256: "runtime",
+      evalHarnessSha256: "harness", taskSuiteSha256: "tasks", pricingSha256: "pricing",
+      trace: false, keep: false, workingTreeClean: true,
+      experiment: { id: "experiment-1", variant: "B", factor: "system-prompt" },
+      total: 2, passed: 2, elapsed: 2, at: "2026-11-21T00:00:00.000Z", infraErrors: [],
+      totals: {
+        requests: 2, summaryRequests: 0, promptTokens, completionTokens,
+        tokens: promptTokens + completionTokens, unknownResponses: 0,
+        cachedPromptTokens: 0, cacheUsageUnknown: 0,
+        cost: { amount: null, currency: null, complete: false },
+      },
+      results: [
+        { name: "first", ok: true, requests: 1, seconds: 1 },
+        { name: "second", ok: true, requests: 1, seconds: 1 },
+      ],
+    });
+    await writeFile(recordFile, JSON.stringify(makeRun(80, 20)));
+    await writeFile(path.join(path.dirname(recordFile), "2.json"), JSON.stringify(makeRun(100, 30)));
+    const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /输入 Token：中位数 90/);
+    assert.match(result.stdout, /输出 Token：中位数 25/);
+    assert.match(result.stdout, /实验：experiment-1 \/ system-prompt \/ B/);
+  });
+});
+
+test("评测汇总：不同实验身份和时区必须分组统计", async () => {
+  await withSummaryFixture(async (script, recordFile) => {
+    const makeRun = (experimentId, timezone) => ({
+      suiteVersion: "suite-v1", model: "mock", commit: "commit", jobs: 1,
+      endpointHost: "api.example.test", endpointPath: "/v1",
+      environment: { node: "v22", platform: "linux", arch: "x64", osRelease: "kernel", timezone },
+      promptSha256: "prompt", toolDefinitionsSha256: "tools", runtimeSourceSha256: "runtime",
+      evalHarnessSha256: "harness", taskSuiteSha256: "tasks", pricingSha256: "pricing",
+      trace: false, keep: false, workingTreeClean: true,
+      experiment: { id: experimentId, variant: "B", factor: "system-prompt" },
+      total: 2, passed: 2, elapsed: 2, at: "2026-11-21T00:00:00.000Z", infraErrors: [],
+      results: [
+        { name: "first", ok: true, requests: 1, seconds: 1 },
+        { name: "second", ok: true, requests: 1, seconds: 1 },
+      ],
+    });
+    await writeFile(recordFile, JSON.stringify(makeRun("experiment-old", "UTC")));
+    await writeFile(path.join(path.dirname(recordFile), "2.json"), JSON.stringify(makeRun("experiment-new", "Asia/Tokyo")));
+    const result = spawnSync(process.execPath, [script, "3"], { encoding: "utf8", timeout: 5000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /实验：experiment-new/);
+    assert.match(result.stdout, /最近 1 轮完整评测/);
+    assert.match(result.stdout, /已跳过 1 轮不同评测配置/);
   });
 });
 
