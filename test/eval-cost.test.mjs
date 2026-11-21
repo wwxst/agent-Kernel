@@ -82,6 +82,20 @@ test("费用估算：缓存价格有折扣但缓存 Token 未知时拒绝估算"
   assert.equal(cost.reason, "cache_usage_unknown");
 });
 
+test("费用估算：金额使用价格表声明的币种，不固定标成美元", () => {
+  const cny = validatePricingConfig({
+    version: 1, currency: "CNY",
+    models: { "mock-model": { inputPerMillion: 2, outputPerMillion: 8 } },
+  });
+  const cost = estimateCost({
+    promptTokens: 1_000_000, completionTokens: 0, cachedPromptTokens: 0,
+    cacheUsageUnknown: 0, unknown: 0,
+  }, cny, "mock-model");
+  assert.deepEqual(cost, {
+    currency: "CNY", amount: 2, complete: true, coverage: "complete",
+  });
+});
+
 test("价格配置：拒绝负数、NaN 和缺少必需费率", () => {
   for (const rate of [-1, NaN, Infinity, "2"]) {
     assert.throws(() => validatePricingConfig({

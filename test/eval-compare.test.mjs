@@ -64,6 +64,18 @@ test("A/B 对比：模型、环境、任务配置不一致时拒绝给出有效�
   assert.ok(result.issues.some((issue) => issue.includes("task settings differ")));
 });
 
+test("A/B 对比：价格币种不同不能计算费用差值", () => {
+  const result = compareRuns(run(), run({
+    totals: {
+      requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100,
+      cachedPromptTokens: 20, cost: { amount: 0.01, currency: "CNY", complete: true },
+    },
+  }));
+  assert.equal(result.comparable, false);
+  assert.ok(result.issues.includes("costCurrency differs"));
+  assert.equal(result.totals.costDelta, null);
+});
+
 test("A/B 汇总：只统计可比较轮次，并输出回归提醒", () => {
   const comparison = compareRuns(run(), run({
     results: [
