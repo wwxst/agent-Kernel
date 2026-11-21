@@ -42,6 +42,8 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
     readFile(path.join(bTaskDir, "task.md"), "utf8"),
   ]);
   if (aPrompt !== bPrompt) throw new Error("task prompts differ; these results are not a valid blind pair");
+  // 任务说明也会交给外部盲审者，必须和初始文件、候选文件使用相同的凭据扫描规则。
+  assertReviewSafeTree(new Map([["task.md", Buffer.from(aPrompt, "utf8")]]), "task prompt");
 
   const [initialA, initialB, candidateA, candidateB] = await Promise.all([
     readTree(path.join(aTaskDir, "files")),

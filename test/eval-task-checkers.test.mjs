@@ -119,20 +119,34 @@ test("评测题 22：多文件格式化修复必须保留旧测试并新增边�
       "",
     ].join("\n"), "utf8");
     const validToolUse = {
-      toolCallNames: ["read", "edit", "shell"],
-      shellCommands: ["node --test test/format.test.mjs"],
+      successfulToolCallNames: ["read", "edit", "shell"],
+      successfulShellCommands: ["node --test test/format.test.mjs"],
     };
     await assert.doesNotReject(() => checkMultiToolRefactor(root, validToolUse));
     await assert.rejects(
-      () => checkMultiToolRefactor(root, { toolCallNames: ["read", "write"] }),
-      /must run the requested test command with the shell tool/,
+      () => checkMultiToolRefactor(root, { successfulToolCallNames: ["read", "write"] }),
+      /must successfully run the requested test command with the shell tool/,
     );
     await assert.rejects(
       () => checkMultiToolRefactor(root, {
         ...validToolUse,
-        shellCommands: ["echo tests"],
+        successfulShellCommands: ["echo tests"],
       }),
-      /must execute node --test test\/format\.test\.mjs/,
+      /must successfully execute node --test test\/format\.test\.mjs/,
+    );
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, {
+        toolCallNames: ["read", "edit", "shell"],
+        shellCommands: ["node --test test/format.test.mjs"],
+      }),
+      /must successfully inspect source files/,
+    );
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, {
+        ...validToolUse,
+        successfulShellCommands: ["echo node --test test/format.test.mjs"],
+      }),
+      /must successfully execute node --test test\/format\.test\.mjs/,
     );
   });
 });

@@ -29,13 +29,14 @@ export default async function check(root, context = {}) {
   assert.equal(result.error, undefined, result.error?.message);
   assert.equal(result.status, 0, result.stdout + result.stderr);
 
-  const names = new Set(context.toolCallNames ?? []);
-  assert.ok(names.has("read"), "the task must inspect source files with the read tool");
-  assert.ok(names.has("shell"), "the task must run the requested test command with the shell tool");
-  assert.ok(names.has("write") || names.has("edit"), "the task must modify files with write or edit");
-  assert.ok(names.size >= 3, "the task must exercise at least three distinct tools");
+  const names = new Set(context.successfulToolCallNames ?? []);
+  assert.ok(names.has("read"), "the task must successfully inspect source files with the read tool");
+  assert.ok(names.has("shell"), "the task must successfully run the requested test command with the shell tool");
+  assert.ok(names.has("write") || names.has("edit"), "the task must successfully modify files with write or edit");
+  assert.ok(names.size >= 3, "the task must successfully execute at least three distinct tools");
   assert.ok(
-    (context.shellCommands ?? []).some((command) => /\bnode\s+--test\s+test\/format\.test\.mjs\b/.test(command)),
-    "the Agent must execute node --test test/format.test.mjs with the shell tool",
+    (context.successfulShellCommands ?? []).some((command) =>
+      /(?:^|&&|;|\n)\s*node\s+--test\s+(?:\.\/)?test\/format\.test\.mjs(?:\s|$)/.test(command)),
+    "the Agent must successfully execute node --test test/format.test.mjs with the shell tool",
   );
 }

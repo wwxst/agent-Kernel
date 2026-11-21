@@ -304,6 +304,8 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
       : undefined;
     const toolCallNames = [];
     const shellCommands = [];
+    const successfulToolCallNames = [];
+    const successfulShellCommands = [];
     const agent = new Agent({
       llm: diagnostics?.llm ?? llm,
       tools,
@@ -319,7 +321,23 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
           }
         }
       },
-      ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
+      onToolResult: (call, result, isError) => {
+        diagnostics?.onToolResult(call, result, isError);
+        if (isError) return;
+        if (call.function.name === "shell") {
+          // Shell 会把真实退出状态放在第一行。只记录已完成、退出码为零的前台测试命令，
+          // 不把 onToolCall 的“准备执行”或非零退出误当作已执行成功。
+          if (!/^exit 0(?:\r?\n|$)/.test(result)) return;
+          try {
+            const args = JSON.parse(call.function.arguments);
+            if (args.background === true || typeof args.command !== "string") return;
+            successfulShellCommands.push(args.command);
+          } catch {
+            return;
+          }
+        }
+        successfulToolCallNames.push(call.function.name);
+      },
       maxSteps: settings.maxSteps,
       maxToolCalls: settings.maxToolCalls,
       maxTotalTokens: settings.maxTotalTokens,
@@ -347,6 +365,8 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
           compactionStats: agent.compactionStats,
           toolCallNames: [...toolCallNames],
           shellCommands: [...shellCommands],
+          successfulToolCallNames: [...successfulToolCallNames],
+          successfulShellCommands: [...successfulShellCommands],
         });
       } catch (failureOfCheck) {
         error = failureOfCheck;

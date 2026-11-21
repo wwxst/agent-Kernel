@@ -82,6 +82,31 @@ test("盲审包：拒绝把本机环境文件和疑似密钥打包给审查者",
   }
 });
 
+test("盲审包：任务说明里的密钥也不能泄漏给审查者", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-blind-review-"));
+  try {
+    const a = await fixture(root, "a", "export const value = 2;\n");
+    const b = await fixture(root, "b", "export const value = 3;\n");
+    for (const taskRoot of [a.tasks, b.tasks]) {
+      await writeFile(path.join(taskRoot, "task-1", "task.md"),
+        "Implement parser with token sk-proj-0123456789abcdefghijklmnopqrstuv\n");
+    }
+    const makeRun = (workdir, commit) => ({
+      suiteVersion: "suite", model: "mock", commit, branch: commit,
+      evalHarnessSha256: "same-evaluator",
+      results: [{ name: "task-1", ok: true, requests: 1, toolCalls: 0, tokens: { total: 1 }, seconds: 1, workdir }],
+    });
+    const outputDir = path.join(root, "review-prompt");
+    await assert.rejects(() => createBlindReviewPack({
+      aRun: makeRun(a.workdir, "a"), bRun: makeRun(b.workdir, "b"),
+      taskName: "task-1", aTasksDir: a.tasks, bTasksDir: b.tasks, outputDir,
+    }), /possible openai-style-api-key in blind review task prompt: task.md/);
+    await assert.rejects(() => readFile(path.join(outputDir, "task.md"), "utf8"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("盲审包：初始夹具不一致时拒绝比较", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-blind-review-"));
   try {
