@@ -100,6 +100,12 @@ test("诊断：记录每次请求的 usage、工具结果和逐工具的文件�
       ],
     );
     assert.equal(trace.requests[1].promptTokenDelta, 55);
+    assert.equal(trace.requests[0].systemPromptChars > 0, true);
+    assert.equal(trace.requests[0].conversationChars > 0, true);
+    assert.equal(trace.requests[0].toolDefinitionChars > 0, true);
+    assert.equal(trace.summary.requests, 2);
+    assert.equal(trace.summary.toolCalls, 1);
+    assert.equal(trace.summary.tools.write_file.calls, 1);
 
     assert.equal(trace.toolCalls.length, 1);
     const tool = trace.toolCalls[0];

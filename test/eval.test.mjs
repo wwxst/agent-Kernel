@@ -125,7 +125,7 @@ test("评测：成绩文件保存失败必须非零退出", async () => {
     try {
       await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
       await mkdir(path.join(root, "eval"));
-      for (const file of ["run.mjs", "selfcheck.mjs", "diagnostics.mjs"]) {
+      for (const file of ["run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs"]) {
         await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
       }
       await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
