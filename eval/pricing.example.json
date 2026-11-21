@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "currency": "USD",
+  "models": {
+    "replace-with-exact-model-name": {
+      "inputPerMillion": 0,
+      "outputPerMillion": 0,
+      "cachedInputPerMillion": 0
+    }
+  }
+}

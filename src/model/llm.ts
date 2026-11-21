@@ -544,11 +544,27 @@ function readUsage(payload: unknown): TokenUsage | undefined {
   if (usage === undefined || usage === null) return undefined;
   if (!isRecord(usage)) throw invalid("usage must be an object");
 
+  const details = usage.prompt_tokens_details;
+  if (details !== undefined && details !== null && !isRecord(details)) {
+    throw invalid("usage.prompt_tokens_details must be an object");
+  }
+  const cachedPromptTokens = details !== undefined && details !== null
+    ? readOptionalTokenCount(details, "cached_tokens")
+    : readOptionalTokenCount(usage, "prompt_cache_hit_tokens") ??
+      readOptionalTokenCount(usage, "cached_tokens");
+
   return {
     prompt_tokens: readTokenCount(usage, "prompt_tokens"),
     completion_tokens: readTokenCount(usage, "completion_tokens"),
     total_tokens: readTokenCount(usage, "total_tokens"),
+    ...(cachedPromptTokens === undefined ? {} : { cached_prompt_tokens: cachedPromptTokens }),
   };
+}
+
+/** 可选用量字段：字段缺失表示未知，字段存在但类型错误仍然是协议错误。 */
+function readOptionalTokenCount(usage: Record<string, unknown>, field: string): number | undefined {
+  if (usage[field] === undefined) return undefined;
+  return readTokenCount(usage, field);
 }
 
 /** usage 里的 token 数必须是非负整数；小数、负数、字符串都不是「用法」。 */
