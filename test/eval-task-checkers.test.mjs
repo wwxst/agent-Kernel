@@ -27,6 +27,8 @@ import checkUpdateReadme from "../eval/tasks/09-update-readme/check.mjs";
 import checkDeleteDeadCode from "../eval/tasks/10-delete-dead-code/check.mjs";
 import checkWriteMissingTest from "../eval/tasks/17-write-missing-test/check.mjs";
 import checkBannedAdminBug from "../eval/tasks/19-banned-admin-bug/check.mjs";
+import checkLongContextCompaction from "../eval/tasks/21-long-context-compaction/check.mjs";
+import checkMultiToolRefactor from "../eval/tasks/22-multi-tool-refactor/check.mjs";
 import { importTaskModule, readTaskFile, readTaskJson } from "../eval/checker-helpers.mjs";
 
 const projectRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -46,6 +48,74 @@ async function withTaskFiles(name, run) {
     return run(root);
   });
 }
+
+test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改原始资料", async () => {
+  await withTaskFiles("21-long-context-compaction", async (root) => {
+    const notesDir = path.join(root, "notes");
+    const names = (await readdir(notesDir)).filter((name) => name.endsWith(".md")).sort();
+    const records = [];
+    for (const name of names) {
+      const content = await readFile(path.join(notesDir, name), "utf8");
+      records.push({
+        id: /^id: (.+)$/m.exec(content)?.[1],
+        date: /^date: (.+)$/m.exec(content)?.[1],
+        decision: /^decision: (.+)$/m.exec(content)?.[1],
+      });
+    }
+    records.sort((a, b) => a.date.localeCompare(b.date));
+    const rows = records.map((item) => "| " + item.id + " | " + item.date + " | " + item.decision + " |");
+    const output = [
+      "# Migration summary", "",
+      "| id | date | decision |",
+      "| --- | --- | --- |",
+      ...rows, "",
+      "Final release gate: GO_WITH_CANARY", "",
+    ].join("\\n");
+    await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
+    await assert.doesNotReject(() => checkLongContextCompaction(root));
+
+    await writeFile(path.join(root, "migration-summary.md"), [
+      "# Migration summary", "",
+      "| id | date | decision |",
+      "| --- | --- | --- |",
+      ...[...rows].reverse(), "",
+      "Final release gate: GO_WITH_CANARY", "",
+    ].join("\\n"), "utf8");
+    await assert.rejects(() => checkLongContextCompaction(root), /exact and sorted by date/);
+
+    await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
+    await writeFile(path.join(notesDir, names[0]), "changed source note");
+    await assert.rejects(() => checkLongContextCompaction(root), /source note must not be modified/);
+  });
+});
+
+test("评测题 22：多文件格式化修复必须保留旧测试并新增边界测试", async () => {
+  await withTaskFiles("22-multi-tool-refactor", async (root) => {
+    await writeFile(path.join(root, "src", "format.mjs"), [
+      "export function formatUser({ name, email } = {}) {",
+      '  if (typeof name !== "string" || typeof email !== "string" || !name.trim() || !email.trim()) {',
+      '    throw new Error("name and email are required");',
+      "  }",
+      "  const cleanName = name.trim();",
+      "  const cleanEmail = email.trim();",
+      '  if (!cleanEmail.includes("@")) throw new Error("email must contain @");',
+      "  return cleanName + ` <${cleanEmail}>`;",
+      "}",
+      "",
+    ].join("\\n"), "utf8");
+    await writeFile(path.join(root, "test", "format.test.mjs"), [
+      'import assert from "node:assert/strict";',
+      'import test from "node:test";',
+      'import { formatUser } from "../src/format.mjs";',
+      'test("formats a user", () => assert.equal(formatUser({ name: "Ada", email: "ada@example.com" }), "Ada <ada@example.com>"));',
+      'test("trims surrounding whitespace", () => assert.equal(formatUser({ name: " Ada ", email: " ada@example.com " }), "Ada <ada@example.com>"));',
+      'test("rejects missing fields", () => assert.throws(() => formatUser({ name: "Ada", email: " " }), /name and email are required/));',
+      'test("rejects an invalid email", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
+      "",
+    ].join("\\n"), "utf8");
+    await assert.doesNotReject(() => checkMultiToolRefactor(root));
+  });
+});
 
 test("评测辅助函数：缺失文件、坏 JSON 和模块加载错误都归为任务断言失败", async () => {
   await withTempRoot("agent-checker-helper-", async (root) => {
