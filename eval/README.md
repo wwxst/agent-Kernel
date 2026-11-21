@@ -69,7 +69,7 @@ npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --factor 
 npm run eval:compare -- eval/results/A.json eval/results/B.json --out eval/results/compare.md
 ```
 
-如果模型、套件、端点、运行环境、并发、任务集合或任务预算不一致，比较会标记为无效，不会给出可采信的优劣结论。至少需要 3 轮全部有效的配对结果，报告才会标记为可用于决策；少于 3 轮或仍有无效轮次，只能作为探索性证据。
+如果模型、套件、端点、运行环境、并发、任务集合或任务预算不一致，比较会标记为无效，不会给出可采信的优劣结论。至少需要 3 轮全部有效、且 A/B 两侧每次运行都具有互不重复的 runId，报告才会标记为可用于决策；少于 3 轮、缺失 runId、重复使用同一结果或存在无效轮次，只能作为探索性证据。
 
 ### 代码质量盲审
 
