@@ -6,7 +6,10 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const metrics = ["requests", "summaryRequests", "toolCalls", "tokens", "cachedPromptTokens", "seconds"];
+const metrics = [
+  "requests", "summaryRequests", "toolCalls",
+  "promptTokens", "completionTokens", "tokens", "cachedPromptTokens", "seconds",
+];
 
 export function compareRuns(a, b) {
   const issues = [];
@@ -97,10 +100,15 @@ export function compareRuns(a, b) {
     const cacheUsageComplete = left.tokens?.cacheUsageUnknown === 0 && right.tokens?.cacheUsageUnknown === 0;
     for (const metric of metrics) {
       const leftValue = metric === "tokens" ? left.tokens?.total
+        : metric === "promptTokens" ? left.tokens?.prompt
+        : metric === "completionTokens" ? left.tokens?.completion
         : metric === "cachedPromptTokens" ? left.tokens?.cachedPromptTokens : left[metric];
       const rightValue = metric === "tokens" ? right.tokens?.total
+        : metric === "promptTokens" ? right.tokens?.prompt
+        : metric === "completionTokens" ? right.tokens?.completion
         : metric === "cachedPromptTokens" ? right.tokens?.cachedPromptTokens : right[metric];
-      const complete = metric === "tokens" ? tokenUsageComplete
+      const complete = metric === "tokens" || metric === "promptTokens" || metric === "completionTokens"
+        ? tokenUsageComplete
         : metric === "cachedPromptTokens" ? cacheUsageComplete : true;
       row[metric + "A"] = complete && typeof leftValue === "number" ? leftValue : null;
       row[metric + "B"] = complete && typeof rightValue === "number" ? rightValue : null;
@@ -125,6 +133,10 @@ export function compareRuns(a, b) {
     requestsDelta: numericDelta(a.totals?.requests, b.totals?.requests),
     summaryRequestsDelta: numericDelta(a.totals?.summaryRequests, b.totals?.summaryRequests),
     toolCallsDelta: numericDelta(a.totals?.toolCalls, b.totals?.toolCalls),
+    promptTokensDelta: a.totals?.unknownResponses === 0 && b.totals?.unknownResponses === 0
+      ? numericDelta(a.totals?.promptTokens, b.totals?.promptTokens) : null,
+    completionTokensDelta: a.totals?.unknownResponses === 0 && b.totals?.unknownResponses === 0
+      ? numericDelta(a.totals?.completionTokens, b.totals?.completionTokens) : null,
     tokensDelta: a.totals?.unknownResponses === 0 && b.totals?.unknownResponses === 0
       ? numericDelta(a.totals?.tokens, b.totals?.tokens) : null,
     cachedPromptTokensDelta: a.totals?.cacheUsageUnknown === 0 && b.totals?.cacheUsageUnknown === 0
@@ -161,6 +173,8 @@ export function summarizeExperiment(comparisons) {
   if (!Array.isArray(comparisons) || comparisons.length === 0) {
     throw new Error("at least one paired comparison is required");
   }
+  const factors = new Set(comparisons.map((item) => item.factor ?? "unspecified"));
+  if (factors.size > 1) throw new Error("cannot summarize comparisons from different experiment factors");
   const valid = comparisons.filter((item) => item.comparable);
   const allTasks = valid.flatMap((item) => item.tasks);
   const deltaMedian = (key) => {
@@ -179,6 +193,8 @@ export function summarizeExperiment(comparisons) {
     medianRequestsDelta: deltaMedian("requestsDelta"),
     medianSummaryRequestsDelta: deltaMedian("summaryRequestsDelta"),
     medianToolCallsDelta: deltaMedian("toolCallsDelta"),
+    medianPromptTokensDelta: deltaMedian("promptTokensDelta"),
+    medianCompletionTokensDelta: deltaMedian("completionTokensDelta"),
     medianTokensDelta: deltaMedian("tokensDelta"),
     medianCachedPromptTokensDelta: deltaMedian("cachedPromptTokensDelta"),
     medianElapsedDelta: deltaMedian("elapsedDelta"),
@@ -206,7 +222,9 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     "| Median business request delta | " + show(summary.medianRequestsDelta) + " |",
     "| Median summary request delta | " + show(summary.medianSummaryRequestsDelta) + " |",
     "| Median tool-call delta | " + show(summary.medianToolCallsDelta) + " |",
-    "| Median token delta | " + show(summary.medianTokensDelta) + " |",
+    "| Median input-token delta | " + show(summary.medianPromptTokensDelta) + " |",
+    "| Median output-token delta | " + show(summary.medianCompletionTokensDelta) + " |",
+    "| Median total-token delta | " + show(summary.medianTokensDelta) + " |",
     "| Median cached input token delta | " + show(summary.medianCachedPromptTokensDelta) + " |",
     "| Median elapsed delta | " + show(summary.medianElapsedDelta, " s") + " |",
     "| Median cost delta | " + show(summary.medianCostDelta, summary.costCurrency ? " " + summary.costCurrency : "") + " |",
@@ -221,9 +239,10 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     if (item.issues.length > 0) for (const issue of item.issues) lines.push("- Invalid: " + issue);
     if (item.warnings.length > 0) for (const warning of item.warnings) lines.push("- Warning: " + warning);
     if (item.tasks.length > 0) {
-      lines.push("", "| Task | Status | Token Δ | Request Δ | Tool Δ | Time Δ (s) | Cost Δ |", "| --- | --- | ---: | ---: | ---: | ---: | ---: |");
+      lines.push("", "| Task | Status | Input Δ | Output Δ | Total Δ | Request Δ | Tool Δ | Time Δ (s) | Cost Δ |", "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
       for (const task of item.tasks) {
         lines.push("| " + task.name + " | " + task.status + " | " +
+          show(task.promptTokensDelta) + " | " + show(task.completionTokensDelta) + " | " +
           show(task.tokensDelta) + " | " + show(task.requestsDelta) + " | " +
           show(task.toolCallsDelta) + " | " + show(task.secondsDelta) + " | " +
           show(task.costDelta, item.totals.costCurrency ? " " + item.totals.costCurrency : "") + " |");
@@ -237,7 +256,9 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
 
 function runtimeKey(environment) {
   if (!environment) return "legacy";
-  return [environment.node, environment.platform, environment.arch, environment.osRelease].join("|");
+  return [
+    environment.node, environment.platform, environment.arch, environment.osRelease, environment.timezone,
+  ].join("|");
 }
 
 function numericDelta(a, b) {

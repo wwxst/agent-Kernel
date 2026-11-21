@@ -26,14 +26,14 @@ function run(overrides = {}) {
     total: 2,
     elapsed: 10,
     totals: {
-      requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100,
+      requests: 8, summaryRequests: 1, toolCalls: 7, promptTokens: 80, completionTokens: 20, tokens: 100,
       cachedPromptTokens: 20, unknownResponses: 0, cacheUsageUnknown: 0,
       cost: { amount: 0.01, currency: "USD", complete: true },
     },
     infraErrors: [],
     results: [
-      { name: "one", ok: true, requests: 4, toolCalls: 3, tokens: { total: 50, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 10 }, seconds: 5, settings: { maxSteps: 30 } },
-      { name: "two", ok: true, requests: 4, toolCalls: 4, tokens: { total: 50, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 10 }, seconds: 5, settings: { maxSteps: 30 } },
+      { name: "one", ok: true, requests: 4, toolCalls: 3, tokens: { prompt: 40, completion: 10, total: 50, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 10 }, seconds: 5, settings: { maxSteps: 30 } },
+      { name: "two", ok: true, requests: 4, toolCalls: 4, tokens: { prompt: 40, completion: 10, total: 50, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 10 }, seconds: 5, settings: { maxSteps: 30 } },
     ],
     ...overrides,
   };
@@ -45,19 +45,21 @@ test("A/B 对比：按任务计算回归、提升和资源差值", () => {
     passed: 1,
     elapsed: 8,
     totals: {
-      requests: 6, summaryRequests: 2, toolCalls: 5, tokens: 80,
+      requests: 6, summaryRequests: 2, toolCalls: 5, promptTokens: 64, completionTokens: 16, tokens: 80,
       cachedPromptTokens: 30, unknownResponses: 0, cacheUsageUnknown: 0,
       cost: { amount: 0.008, currency: "USD", complete: true },
     },
     results: [
-      { name: "one", ok: true, requests: 3, toolCalls: 2, tokens: { total: 40, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 15 }, seconds: 4, settings: { maxSteps: 30 } },
-      { name: "two", ok: false, requests: 3, toolCalls: 3, tokens: { total: 40, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 15 }, seconds: 4, settings: { maxSteps: 30 } },
+      { name: "one", ok: true, requests: 3, toolCalls: 2, tokens: { prompt: 32, completion: 8, total: 40, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 15 }, seconds: 4, settings: { maxSteps: 30 } },
+      { name: "two", ok: false, requests: 3, toolCalls: 3, tokens: { prompt: 32, completion: 8, total: 40, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 15 }, seconds: 4, settings: { maxSteps: 30 } },
     ],
   });
   const result = compareRuns(a, b);
   assert.equal(result.comparable, true);
   assert.equal(result.tasks[1].status, "regressed");
   assert.equal(result.totals.passRateDeltaPoints, -50);
+  assert.equal(result.totals.promptTokensDelta, -16);
+  assert.equal(result.totals.completionTokensDelta, -4);
   assert.equal(result.totals.tokensDelta, -20);
   assert.equal(result.totals.costDelta, -0.002);
 });
@@ -81,7 +83,7 @@ test("A/B 对比：用量未知时不把 Token 下限伪装成精确差值", () 
   const a = run();
   const b = run({
     totals: {
-      requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100,
+      requests: 8, summaryRequests: 1, toolCalls: 7, promptTokens: 80, completionTokens: 20, tokens: 100,
       cachedPromptTokens: 20, unknownResponses: 1, cacheUsageUnknown: 1,
       cost: { amount: 0.01, currency: "USD", complete: false },
     },
@@ -92,6 +94,8 @@ test("A/B 对比：用量未知时不把 Token 下限伪装成精确差值", () 
   });
   const result = compareRuns(a, b);
   assert.equal(result.comparable, true);
+  assert.equal(result.totals.promptTokensDelta, null);
+  assert.equal(result.totals.completionTokensDelta, null);
   assert.equal(result.totals.tokensDelta, null);
   assert.equal(result.totals.cachedPromptTokensDelta, null);
   assert.ok(result.warnings.some((warning) => warning.includes("unknown usage")));
@@ -182,6 +186,27 @@ test("A/B 对比：评测执行器不同或缺少指纹时拒绝比较", () => {
   const absent = compareRuns(run(), missing);
   assert.equal(absent.comparable, false);
   assert.ok(absent.issues.includes("evaluation harness fingerprint missing"));
+});
+
+test("A/B 汇总：拒绝把不同实验因素的轮次混在一起", () => {
+  const prompt = compareRuns(
+    run({ experiment: { factor: "system-prompt" } }),
+    run({ promptSha256: "new-prompt", experiment: { factor: "system-prompt" } }),
+  );
+  const runtime = compareRuns(
+    run({ experiment: { factor: "agent-runtime" } }),
+    run({ runtimeSourceSha256: "new-runtime", experiment: { factor: "agent-runtime" } }),
+  );
+  assert.throws(() => summarizeExperiment([prompt, runtime]), /different experiment factors/);
+});
+
+test("A/B 对比：时区不同不能视为相同运行环境", () => {
+  const result = compareRuns(
+    run(),
+    run({ environment: { ...run().environment, timezone: "Asia/Tokyo" } }),
+  );
+  assert.equal(result.comparable, false);
+  assert.ok(result.issues.includes("runtime differs"));
 });
 
 test("A/B 运行顺序：每轮交替，降低时间顺序偏差", () => {
