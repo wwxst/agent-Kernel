@@ -126,7 +126,11 @@ test("A/B 汇总：只统计可比较轮次，并输出回归提醒", () => {
   assert.equal(summary.comparableRounds, 1);
   assert.equal(summary.invalidRounds, 1);
   assert.equal(summary.regressedTasks, 1);
-  assert.match(renderComparison([comparison], summary), /Regressed tasks/);
+  assert.equal(summary.decisionReady, false);
+  assert.match(renderComparison([comparison], summary), /Regressed task-rounds/);
+  assert.match(renderComparison([comparison], summary), /exploratory only/);
+  const threeValidRounds = summarizeExperiment([comparison, comparison, comparison]);
+  assert.equal(threeValidRounds.decisionReady, true);
 });
 
 test("A/B 因素约束：测试 System Prompt 时只允许 Prompt 指纹变化", () => {

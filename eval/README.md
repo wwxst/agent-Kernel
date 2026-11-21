@@ -69,7 +69,7 @@ npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --factor 
 npm run eval:compare -- eval/results/A.json eval/results/B.json --out eval/results/compare.md
 ```
 
-如果模型、套件、端点、运行环境、并发、任务集合或任务预算不一致，比较会标记为无效，不会给出可采信的优劣结论。
+如果模型、套件、端点、运行环境、并发、任务集合或任务预算不一致，比较会标记为无效，不会给出可采信的优劣结论。至少需要 3 轮全部有效的配对结果，报告才会标记为可用于决策；少于 3 轮或仍有无效轮次，只能作为探索性证据。
 
 ### 代码质量盲审
 
@@ -120,7 +120,7 @@ tasks/01-add-health-route/
 ```
 
 - **`task.md`** 只写要求，不写「用哪个工具」。任务要像真的：一个从 issue 里抄下来的小改动。
-- **`check.mjs`** 只验行为，不看实现。可以 import 夹具里的模块、读文件、起子进程。
+- **`check.mjs`** 主要验任务最终行为，不限定 Agent 的内部实现；对明确测试内核机制的专项任务，可以接收只读运行证据（例如压缩统计、工具调用记录），确认机制确实发生。可以 import 夹具里的模块、读文件、起子进程。
 - **`files/`** 越小越好：两三个文件足够暴露「读—改—验证」的差别。
 
 ## 三条规矩
@@ -135,7 +135,7 @@ tasks/01-add-health-route/
 
 ## 评测套件版本和检查器质量
 
-每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-21-eval-system-v1`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
+每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-21-eval-system-v2`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
 
 只要修改任务提示、初始夹具或检查器的验收语义，就必须更新套件标识。不同套件版本的成绩不能直接混算。旧结果没有 `suiteVersion` 字段，会被标记为 `legacy`。
 

@@ -199,6 +199,8 @@ export function summarizeExperiment(comparisons) {
     factor: valid[0]?.factor ?? comparisons[0]?.factor ?? "unspecified",
     comparableRounds: valid.length,
     invalidRounds: comparisons.length - valid.length,
+    // 少于三轮，或仍有无效轮次时，只能看趋势，不能作为采用优化的最终依据。
+    decisionReady: valid.length >= 3 && valid.length === comparisons.length,
     improvedTasks: allTasks.filter((item) => item.status === "improved").length,
     regressedTasks: allTasks.filter((item) => item.status === "regressed").length,
     unchangedTasks: allTasks.filter((item) => item.status === "same").length,
@@ -228,9 +230,10 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     "| Paired rounds | " + summary.rounds + " |",
     "| Comparable rounds | " + summary.comparableRounds + " |",
     "| Invalid rounds | " + summary.invalidRounds + " |",
-    "| Improved tasks | " + summary.improvedTasks + " |",
-    "| Regressed tasks | " + summary.regressedTasks + " |",
-    "| Unchanged tasks | " + summary.unchangedTasks + " |",
+    "| Improved task-rounds | " + summary.improvedTasks + " |",
+    "| Regressed task-rounds | " + summary.regressedTasks + " |",
+    "| Unchanged task-rounds | " + summary.unchangedTasks + " |",
+    "| Decision readiness | " + (summary.decisionReady ? "ready (>=3 valid paired rounds)" : "exploratory only; need 3 valid paired rounds") + " |",
     "| Median pass-rate delta | " + show(summary.medianPassRateDeltaPoints, " pp") + " |",
     "| Median business request delta | " + show(summary.medianRequestsDelta) + " |",
     "| Median summary request delta | " + show(summary.medianSummaryRequestsDelta) + " |",
@@ -263,7 +266,8 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     }
     lines.push("");
   }
-  lines.push("## Decision notes", "", "- Do not adopt a change solely because tokens or time decreased.", "- Reject regressions in task success, safety, or required behavior.", "- Review quality scorecards and blocking findings before accepting a candidate.", "- Invalid rounds must be rerun; do not mix incompatible configurations.", "");
+  lines.push("## Decision notes", "", "- Fewer than three comparable paired rounds, or any invalid round, is exploratory evidence only.",
+    "- Do not adopt a change solely because tokens or time decreased.", "- Reject regressions in task success, safety, or required behavior.", "- Review quality scorecards and blocking findings before accepting a candidate.", "- Invalid rounds must be rerun; do not mix incompatible configurations.", "");
   return lines.join("\n");
 }
 
