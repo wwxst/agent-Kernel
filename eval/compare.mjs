@@ -17,6 +17,10 @@ export function compareRuns(a, b) {
   const same = (label, left, right) => {
     if (JSON.stringify(left) !== JSON.stringify(right)) issues.push(label + " differs");
   };
+  if (typeof a.runId === "string" && a.runId.length > 0 &&
+      typeof b.runId === "string" && b.runId.length > 0 && a.runId === b.runId) {
+    issues.push("A and B must be distinct run IDs");
+  }
   same("suiteVersion", a.suiteVersion, b.suiteVersion);
   same("model", a.model, b.model);
   same("endpointHost", a.endpointHost ?? "unknown", b.endpointHost ?? "unknown");
@@ -167,10 +171,12 @@ export function compareRuns(a, b) {
     experimentId: experimentIdA,
     evalHarnessSha256: a.evalHarnessSha256 ?? null,
     a: {
+      runId: a.runId ?? null,
       commit: a.commit ?? "unknown", branch: a.branch ?? "unknown",
       workingTreeClean: a.workingTreeClean ?? null, passed: aPassed, total: aTotal,
     },
     b: {
+      runId: b.runId ?? null,
       commit: b.commit ?? "unknown", branch: b.branch ?? "unknown",
       workingTreeClean: b.workingTreeClean ?? null, passed: bPassed, total: bTotal,
     },
@@ -189,6 +195,27 @@ export function summarizeExperiment(comparisons) {
   const experimentIds = new Set(comparisons.map((item) => item.experimentId ?? null));
   if (experimentIds.size > 1) throw new Error("cannot summarize comparisons from different experiment IDs");
   const valid = comparisons.filter((item) => item.comparable);
+  // A/B 轮次的 "可用于决策" 不能只数数组长度：重复放入同一轮结果绝不能冒充三次独立评测。
+  const usedRunIds = new Set();
+  let distinctRunRounds = 0;
+  let duplicateRunRounds = 0;
+  let missingRunIdRounds = 0;
+  for (const comparison of valid) {
+    const aId = comparison.a?.runId;
+    const bId = comparison.b?.runId;
+    if (typeof aId !== "string" || aId.length === 0 ||
+        typeof bId !== "string" || bId.length === 0) {
+      missingRunIdRounds++;
+      continue;
+    }
+    if (aId === bId || usedRunIds.has(aId) || usedRunIds.has(bId)) {
+      duplicateRunRounds++;
+      continue;
+    }
+    usedRunIds.add(aId);
+    usedRunIds.add(bId);
+    distinctRunRounds++;
+  }
   const allTasks = valid.flatMap((item) => item.tasks);
   const deltaMedian = (key) => {
     const values = valid.map((item) => item.totals[key]).filter((value) => typeof value === "number");
@@ -199,8 +226,12 @@ export function summarizeExperiment(comparisons) {
     factor: valid[0]?.factor ?? comparisons[0]?.factor ?? "unspecified",
     comparableRounds: valid.length,
     invalidRounds: comparisons.length - valid.length,
-    // 少于三轮，或仍有无效轮次时，只能看趋势，不能作为采用优化的最终依据。
-    decisionReady: valid.length >= 3 && valid.length === comparisons.length,
+    distinctRunRounds,
+    duplicateRunRounds,
+    missingRunIdRounds,
+    // 至少三轮相同口径、独立运行的 A/B 配对，才能标记为可用于决策。
+    decisionReady: valid.length >= 3 && valid.length === comparisons.length &&
+      distinctRunRounds === comparisons.length,
     improvedTasks: allTasks.filter((item) => item.status === "improved").length,
     regressedTasks: allTasks.filter((item) => item.status === "regressed").length,
     unchangedTasks: allTasks.filter((item) => item.status === "same").length,
@@ -230,10 +261,13 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     "| Paired rounds | " + summary.rounds + " |",
     "| Comparable rounds | " + summary.comparableRounds + " |",
     "| Invalid rounds | " + summary.invalidRounds + " |",
+    "| Distinct paired runs | " + summary.distinctRunRounds + " |",
+    "| Duplicate/reused runs | " + summary.duplicateRunRounds + " |",
+    "| Runs missing IDs | " + summary.missingRunIdRounds + " |",
     "| Improved task-rounds | " + summary.improvedTasks + " |",
     "| Regressed task-rounds | " + summary.regressedTasks + " |",
     "| Unchanged task-rounds | " + summary.unchangedTasks + " |",
-    "| Decision readiness | " + (summary.decisionReady ? "ready (>=3 valid paired rounds)" : "exploratory only; need 3 valid paired rounds") + " |",
+    "| Decision readiness | " + (summary.decisionReady ? "ready (>=3 independent valid paired rounds)" : "exploratory only; need 3 independent valid paired rounds") + " |",
     "| Median pass-rate delta | " + show(summary.medianPassRateDeltaPoints, " pp") + " |",
     "| Median business request delta | " + show(summary.medianRequestsDelta) + " |",
     "| Median summary request delta | " + show(summary.medianSummaryRequestsDelta) + " |",
@@ -266,7 +300,7 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
     }
     lines.push("");
   }
-  lines.push("## Decision notes", "", "- Fewer than three comparable paired rounds, or any invalid round, is exploratory evidence only.",
+  lines.push("## Decision notes", "", "- Fewer than three independent comparable paired rounds, reused or missing run IDs, or any invalid round, is exploratory evidence only.",
     "- Do not adopt a change solely because tokens or time decreased.", "- Reject regressions in task success, safety, or required behavior.", "- Review quality scorecards and blocking findings before accepting a candidate.", "- Invalid rounds must be rerun; do not mix incompatible configurations.", "");
   return lines.join("\n");
 }
