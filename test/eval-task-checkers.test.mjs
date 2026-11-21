@@ -70,7 +70,7 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       "| --- | --- | --- |",
       ...rows, "",
       "Final release gate: GO_WITH_CANARY", "",
-    ].join("\\n");
+    ].join("\n");
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
     await assert.doesNotReject(() => checkLongContextCompaction(root));
 
@@ -80,7 +80,7 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       "| --- | --- | --- |",
       ...[...rows].reverse(), "",
       "Final release gate: GO_WITH_CANARY", "",
-    ].join("\\n"), "utf8");
+    ].join("\n"), "utf8");
     await assert.rejects(() => checkLongContextCompaction(root), /exact and sorted by date/);
 
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
@@ -102,7 +102,7 @@ test("评测题 22：多文件格式化修复必须保留旧测试并新增边�
       "  return cleanName + ` <${cleanEmail}>`;",
       "}",
       "",
-    ].join("\\n"), "utf8");
+    ].join("\n"), "utf8");
     await writeFile(path.join(root, "test", "format.test.mjs"), [
       'import assert from "node:assert/strict";',
       'import test from "node:test";',
@@ -112,7 +112,7 @@ test("评测题 22：多文件格式化修复必须保留旧测试并新增边�
       'test("rejects missing fields", () => assert.throws(() => formatUser({ name: "Ada", email: " " }), /name and email are required/));',
       'test("rejects an invalid email", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
       "",
-    ].join("\\n"), "utf8");
+    ].join("\n"), "utf8");
     await assert.doesNotReject(() => checkMultiToolRefactor(root));
   });
 });

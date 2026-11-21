@@ -24,7 +24,6 @@ async function createVariant(root) {
   await Promise.all(["package.json", "package-lock.json"].map((file) =>
     copyFile(path.join(projectRoot, file), path.join(root, file))));
 }
-}
 
 test("A/B 实验：两轮交替运行，分别保存记录并生成可比较报告", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agent-ab-test-"));
@@ -47,7 +46,7 @@ test("A/B 实验：两轮交替运行，分别保存记录并生成可比较报�
     await Promise.all([createVariant(aDir), createVariant(bDir)]);
     await writeFile(
       path.join(bDir, "src", "core", "agent.ts"),
-      (await readFile(path.join(bDir, "src", "core", "agent.ts"), "utf8")) + "\\n// harmless runtime variant for the A/B harness test\\n",
+      (await readFile(path.join(bDir, "src", "core", "agent.ts"), "utf8")) + "\n// harmless runtime variant for the A/B harness test\n",
     );
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 
