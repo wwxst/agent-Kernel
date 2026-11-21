@@ -3,9 +3,9 @@
   "currency": "USD",
   "models": {
     "replace-with-exact-model-name": {
-      "inputPerMillion": 0,
-      "outputPerMillion": 0,
-      "cachedInputPerMillion": 0
+      "inputPerMillion": "REPLACE_WITH_REAL_PRICE",
+      "outputPerMillion": "REPLACE_WITH_REAL_PRICE",
+      "cachedInputPerMillion": "REPLACE_WITH_REAL_PRICE"
     }
   }
 }

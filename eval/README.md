@@ -89,7 +89,7 @@ npm run eval:review -- --scores eval/results/review-packs/scorecards.json
 
 ### 缓存 Token 与费用估算
 
-模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。费用只使用用户提供的价格表，不内置服务商价格：复制 `eval/pricing.example.json` 为本地 `eval/pricing.json`，填写准确的每百万 Token 价格，并设置 `EVAL_PRICING_FILE=eval/pricing.json`。缺少价格或缓存用量不完整时，费用会标记为未知/不完整。
+模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。费用只使用用户提供的价格表，不内置服务商价格：复制 `eval/pricing.example.json` 为本地 `eval/pricing.json`，填写准确的每百万 Token 价格，并设置 `EVAL_PRICING_FILE=eval/pricing.json`。示例里的费率是字符串占位符，没替换成真实数字会直接报错，避免把示例的 0 误当成真实价格。缺少价格或缓存用量不完整时，费用会标记为未知/不完整。
 
 任务可选提供 `task.json`，单独设置 `maxSteps`、`maxToolCalls`、`maxTotalTokens`、`contextWindowTokens`、`outputTokenReserve`、`maxTranscriptChars` 和 `tags`。没有配置的任务沿用原有默认值。
 
