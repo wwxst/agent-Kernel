@@ -159,7 +159,11 @@ test("A/B 汇总：同一轮不能重复冒充三轮独立证据", () => {
   assert.equal(crossReuse.duplicateRunRounds, 1);
   assert.equal(crossReuse.decisionReady, false);
 
-  const missingId = summarizeExperiment([first, second, compareRuns(run(), run())]);
+  const withoutIds = compareRuns(
+    run({ experiment: { id: "same-experiment", variant: "A", factor: "unspecified" } }),
+    run({ experiment: { id: "same-experiment", variant: "B", factor: "unspecified" } }),
+  );
+  const missingId = summarizeExperiment([first, second, withoutIds]);
   assert.equal(missingId.missingRunIdRounds, 1);
   assert.equal(missingId.decisionReady, false);
 });
