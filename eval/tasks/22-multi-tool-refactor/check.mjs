@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 export default async function check(root) {
-  const source = await readFile(path.join(root, "src", "format.mjs"), "utf8");
-  const tests = await readFile(path.join(root, "test", "format.test.mjs"), "utf8");
-  assert.match(tests, /formats a user/, "original formatting test must remain");
+  const taskDir = path.dirname(fileURLToPath(import.meta.url));
+  const testsPath = path.join(root, "test", "format.test.mjs");
+  const tests = await readFile(testsPath, "utf8");
+  const originalTests = (await readFile(path.join(taskDir, "files", "test", "format.test.mjs"), "utf8")).trim();
+  assert.ok(tests.includes(originalTests), "original formatting test must remain unchanged");
   assert.match(tests, /trims surrounding whitespace/, "whitespace test must be added");
   assert.match(tests, /rejects missing fields/, "missing-field test must be added");
   assert.match(tests, /rejects an invalid email/, "invalid-email test must be added");
@@ -17,9 +19,11 @@ export default async function check(root) {
   assert.equal(formatUser({ name: "  Ada Lovelace ", email: " ada@example.com " }), "Ada Lovelace <ada@example.com>");
   assert.throws(() => formatUser({ name: " ", email: "a@b" }), /name and email are required/);
   assert.throws(() => formatUser({ name: "Ada", email: " " }), /name and email are required/);
+  assert.throws(() => formatUser({ name: 42, email: "ada@example.com" }), /name and email are required/);
+  assert.throws(() => formatUser({ name: "Ada", email: 42 }), /name and email are required/);
   assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/);
 
-  const result = spawnSync(process.execPath, ["--test", path.join(root, "test", "format.test.mjs")], {
+  const result = spawnSync(process.execPath, ["--test", testsPath], {
     cwd: root, encoding: "utf8", timeout: 10_000,
   });
   assert.equal(result.error, undefined, result.error?.message);

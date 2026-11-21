@@ -31,8 +31,15 @@ export default async function check(root) {
   const outputPath = path.join(root, "migration-summary.md");
   assert.ok(existsSync(outputPath), "migration-summary.md must be created");
   const output = await readFile(outputPath, "utf8");
-  assert.match(output, /\|\s*id\s*\|\s*date\s*\|\s*decision\s*\|/i);
-  const rows = output.split(/\r?\n/).filter((line) => /^\| MIG-\d+ \|/.test(line));
+  const lines = output.split(/\r?\n/);
+  const headerIndex = lines.findIndex((line) => /^\|\s*id\s*\|\s*date\s*\|\s*decision\s*\|$/i.test(line));
+  assert.notEqual(headerIndex, -1, "summary must contain the id/date/decision table header");
+  assert.match(lines[headerIndex + 1] ?? "", /^\|\s*:?-{3,}\s*\|\s*:?-{3,}\s*\|\s*:?-{3,}\s*\|$/);
+  const rows = [];
+  for (const line of lines.slice(headerIndex + 2)) {
+    if (!line.startsWith("|")) break;
+    if (/^\| MIG-\d+ \|/.test(line)) rows.push(line);
+  }
   const expectedRows = expected.map((item) =>
     "| " + item.id + " | " + item.date + " | " + item.decision + " |");
   assert.deepEqual(rows, expectedRows, "all records must be exact and sorted by date");
