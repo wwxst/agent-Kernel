@@ -74,6 +74,24 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
     const compactedContext = { compactionStats: { compactions: 1, summaryRequests: 1 } };
     await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+    // 合法 Markdown 可以省掉表格列两侧的空格，并使用左/右/居中对齐分隔符。
+    const compactRows = records.map((item) => `|${item.id}|${item.date}|${item.decision}|`);
+    const compactTable = [
+      "# Migration summary", "",
+      "|id|date|decision|",
+      "|:---|---:|:---:|",
+      ...compactRows, "",
+      "Final release gate: GO_WITH_CANARY", "",
+    ].join("\n");
+    await writeFile(path.join(root, "migration-summary.md"), compactTable);
+    await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+
+    await writeFile(path.join(root, "migration-summary.md"), compactTable.replace(
+      compactRows[0], compactRows[0].replace(records[0].decision, "INCORRECT_DECISION"),
+    ));
+    await assert.rejects(() => checkLongContextCompaction(root, compactedContext),
+      /records must be exact and sorted by date/);
+    await writeFile(path.join(root, "migration-summary.md"), output);
     await assert.rejects(
       () => checkLongContextCompaction(root, { compactionStats: { compactions: 0, summaryRequests: 0 } }),
       /must trigger at least one committed context compaction/,

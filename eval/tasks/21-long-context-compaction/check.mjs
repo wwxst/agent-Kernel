@@ -34,15 +34,26 @@ export default async function check(root, context = {}) {
   const lines = output.split(/\r?\n/);
   const headerIndex = lines.findIndex((line) => /^\|\s*id\s*\|\s*date\s*\|\s*decision\s*\|$/i.test(line));
   assert.notEqual(headerIndex, -1, "summary must contain the id/date/decision table header");
-  assert.match(lines[headerIndex + 1] ?? "", /^\|\s*:?-{3,}\s*\|\s*:?-{3,}\s*\|\s*:?-{3,}\s*\|$/);
+  const delimiter = (lines[headerIndex + 1] ?? "").trim();
+  const delimiterCells = delimiter.startsWith("|") && delimiter.endsWith("|")
+    ? delimiter.slice(1, -1).split("|").map((cell) => cell.trim())
+    : [];
+  assert.equal(delimiterCells.length, 3, "table must have three Markdown delimiter cells");
+  assert.ok(delimiterCells.every((cell) => /^:?-{3,}:?$/.test(cell)),
+    "table must contain a valid Markdown delimiter");
+
+  // Markdown 表格中的空格与对齐冒号不属于字段值，不能因排版不同误判任务失败。
+  // 仍然逐项核对 id/date/decision 原值、日期排序、恰好 16 行。
   const rows = [];
   for (const line of lines.slice(headerIndex + 2)) {
-    if (!line.startsWith("|")) break;
-    if (/^\| MIG-\d+ \|/.test(line)) rows.push(line);
+    const text = line.trim();
+    if (!text.startsWith("|")) break;
+    assert.ok(text.endsWith("|"), "table data row must end with a pipe");
+    const cells = text.slice(1, -1).split("|").map((cell) => cell.trim());
+    assert.equal(cells.length, 3, "table data row must have three columns");
+    rows.push({ id: cells[0], date: cells[1], decision: cells[2] });
   }
-  const expectedRows = expected.map((item) =>
-    "| " + item.id + " | " + item.date + " | " + item.decision + " |");
-  assert.deepEqual(rows, expectedRows, "all records must be exact and sorted by date");
+  assert.deepEqual(rows, expected, "all records must be exact and sorted by date");
   assert.equal(rows.length, 16, "summary must contain exactly 16 migration rows");
   assert.match(output, /^Final release gate: GO_WITH_CANARY$/m);
   assert.ok(context.compactionStats?.compactions >= 1, "the long-context task must trigger at least one committed context compaction");

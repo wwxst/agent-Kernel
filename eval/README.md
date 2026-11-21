@@ -22,7 +22,7 @@ npm run eval:check           # 自检：不需要 API Key
 npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
-需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。历史基线见 [baseline.md](./baseline.md)，其中旧套件的结果不代表当前代码。当前评测套件为 `2026-11-21-eval-system-v3`，尚未建立新的真实模型基线；不能把旧套件成绩当作新套件成绩。
+需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。历史基线见 [baseline.md](./baseline.md)，其中旧套件的结果不代表当前代码。当前评测套件为 `2026-11-21-eval-system-v4`，尚未建立新的真实模型基线；不能把旧套件成绩当作新套件成绩。
 
 历史 v2 套件的 20 个任务互不依赖，曾通过默认并发 4 将墙钟从约 226 秒降到约 74 秒。这个历史数据不是新套件的实测结果。单任务时间主要花在等待模型返回，工具执行和内核开销占比较小。
 
@@ -135,7 +135,7 @@ tasks/01-add-health-route/
 
 ## 评测套件版本和检查器质量
 
-每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-21-eval-system-v3`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
+每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-21-eval-system-v4`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
 
 只要修改任务提示、初始夹具或检查器的验收语义，就必须更新套件标识。不同套件版本的成绩不能直接混算。旧结果没有 `suiteVersion` 字段，会被标记为 `legacy`。
 
