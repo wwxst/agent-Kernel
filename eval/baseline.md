@@ -4,7 +4,7 @@
 
 ## 当前评测套件版本
 
-当前代码中的评测套件标识为 `2026-11-21-eval-system-v1`，当前包含 22 个真实模型任务，并增加了请求级观测、缓存 Token、费用估算、A/B 对照、代码质量盲审和离线专项场景。
+当前代码中的评测套件标识为 `2026-11-21-eval-system-v2`，当前包含 22 个真实模型任务，并增加了请求级观测、缓存 Token、费用估算、A/B 对照、代码质量盲审和离线专项场景。
 
 `2026-11-19-checkers-v2` 的三轮真实模型基线（固定提交 `76a024a`、hy3、20 个任务、并发 4，57/60）已推送到独立分支 [docs/eval-baseline-3rounds](https://github.com/wwxst/agent-Kernel/tree/docs/eval-baseline-3rounds/eval/baselines/2026-11-19-checkers-v2)，但尚未合并到当前 `main`，因此本分支不复制或覆盖那份原始归档。它是旧套件的历史对照，不能和当前 22 任务的新套件直接混算。
 

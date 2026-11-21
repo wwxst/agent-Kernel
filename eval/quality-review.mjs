@@ -182,6 +182,8 @@ export function summarizeScorecards(scorecards) {
 
 function validateScorecard(card, index) {
   if (card === null || typeof card !== "object" || Array.isArray(card)) throw new Error("scorecard " + (index + 1) + " must be an object");
+  const label = "scorecard " + (index + 1);
+  assertExactKeys(card, ["task", "candidate", "reviewerId", "scores", "evidence", "blockingFindings", "recommendation"], label);
   if (typeof card.task !== "string" || card.task === "" ||
       !["candidate-1", "candidate-2"].includes(card.candidate) ||
       typeof card.reviewerId !== "string" || card.reviewerId === "") {
@@ -191,6 +193,8 @@ function validateScorecard(card, index) {
       card.evidence === null || typeof card.evidence !== "object" || Array.isArray(card.evidence)) {
     throw new Error("scorecard " + (index + 1) + " must include scores and evidence");
   }
+  assertExactKeys(card.scores, criteria, label + " scores");
+  assertExactKeys(card.evidence, criteria, label + " evidence");
   for (const key of criteria) {
     const score = card.scores[key];
     if (!Number.isInteger(score) || score < 0 || score > 4) throw new Error("scorecard " + (index + 1) + " has invalid score for " + key);
@@ -202,6 +206,16 @@ function validateScorecard(card, index) {
       !card.blockingFindings.every((finding) => typeof finding === "string" && finding.trim() !== "") ||
       !["accept", "reject", "needs-discussion"].includes(card.recommendation)) {
     throw new Error("scorecard " + (index + 1) + " has invalid findings or recommendation");
+  }
+}
+
+function assertExactKeys(value, expected, label) {
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  const extra = actual.filter((key) => !wanted.includes(key));
+  const missing = wanted.filter((key) => !actual.includes(key));
+  if (extra.length > 0 || missing.length > 0) {
+    throw new Error(label + " has invalid fields (extra: " + extra.join(", ") + "; missing: " + missing.join(", ") + ")");
   }
 }
 
@@ -242,6 +256,13 @@ function assertReviewSafeTree(files, label) {
     ["private-key", /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/],
     ["aws-access-key", /\bAKIA[0-9A-Z]{16}\b/],
     ["github-token", /\bgh[pousr]_[A-Za-z0-9]{20,}\b/],
+    ["github-fine-grained-token", /\bgithub_pat_[A-Za-z0-9_]{20,}\b/],
+    ["npm-token", /\bnpm_[A-Za-z0-9]{20,}\b/],
+    ["gitlab-token", /\bglpat-[A-Za-z0-9_-]{20,}\b/],
+    ["slack-token", /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/],
+    ["google-api-key", /\bAIza[0-9A-Za-z_-]{30,}\b/],
+    ["google-oauth-token", /\bya29\.[0-9A-Za-z_-]{20,}\b/],
+    ["npmrc-auth-token", /:_authToken\s*=\s*\S+/i],
     ["openai-style-api-key", /\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b/],
     ["bearer-token", /\bBearer\s+[A-Za-z0-9._~+/-]{24,}/i],
     ["inline-secret", /\b(?:api[_-]?key|access[_-]?token|client[_-]?secret)\s*[:=]\s*["'][^"'\r\n]{16,}["']/i],
@@ -250,7 +271,7 @@ function assertReviewSafeTree(files, label) {
     const basename = path.posix.basename(name).toLowerCase();
     const envFile = basename === ".env" ||
       (/^\.env\./.test(basename) && ![".env.example", ".env.sample", ".env.template"].includes(basename));
-    const credentialFile = /^(?:id_rsa|id_ed25519|credentials(?:\.json)?|service-account\.json|secrets?\.json)$/i.test(basename) ||
+    const credentialFile = /^(?:id_rsa|id_ed25519|credentials(?:\.json)?|application_default_credentials\.json|service[_-]?account(?:\.json)?|secrets?\.json)$/i.test(basename) ||
       /\.(?:pem|p12|pfx|p8|key|kdbx|tfstate)$/i.test(basename);
     if (envFile || credentialFile) {
       throw new Error("refusing to include sensitive file path in blind review " + label + ": " + name);

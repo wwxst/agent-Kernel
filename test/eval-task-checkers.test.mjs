@@ -72,7 +72,12 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       "Final release gate: GO_WITH_CANARY", "",
     ].join("\n");
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
-    await assert.doesNotReject(() => checkLongContextCompaction(root));
+    const compactedContext = { compactionStats: { compactions: 1, summaryRequests: 1 } };
+    await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+    await assert.rejects(
+      () => checkLongContextCompaction(root, { compactionStats: { compactions: 0, summaryRequests: 0 } }),
+      /must trigger at least one committed context compaction/,
+    );
 
     await writeFile(path.join(root, "migration-summary.md"), [
       "# Migration summary", "",
@@ -81,11 +86,11 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       ...[...rows].reverse(), "",
       "Final release gate: GO_WITH_CANARY", "",
     ].join("\n"), "utf8");
-    await assert.rejects(() => checkLongContextCompaction(root), /exact and sorted by date/);
+    await assert.rejects(() => checkLongContextCompaction(root, compactedContext), /exact and sorted by date/);
 
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
     await writeFile(path.join(notesDir, names[0]), "changed source note");
-    await assert.rejects(() => checkLongContextCompaction(root), /source note must not be modified/);
+    await assert.rejects(() => checkLongContextCompaction(root, compactedContext), /source note must not be modified/);
   });
 });
 
@@ -113,7 +118,11 @@ test("评测题 22：多文件格式化修复必须保留旧测试并新增边�
       'test("rejects an invalid email", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
       "",
     ].join("\n"), "utf8");
-    await assert.doesNotReject(() => checkMultiToolRefactor(root));
+    await assert.doesNotReject(() => checkMultiToolRefactor(root, { toolCallNames: ["read", "edit", "shell"] }));
+    await assert.rejects(
+      () => checkMultiToolRefactor(root, { toolCallNames: ["read", "write"] }),
+      /must run the requested test command with the shell tool/,
+    );
   });
 });
 

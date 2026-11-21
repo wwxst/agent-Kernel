@@ -36,10 +36,11 @@ async function runVariant(root, variant, experimentId, factor, round, jobs, filt
     child.once("error", reject);
     child.once("close", (code) => resolve(code ?? 1));
   });
-  const resultPath = path.join(root, output);
+  const resultFile = path.join(root, output);
   try {
-    const record = JSON.parse(await readFile(resultPath, "utf8"));
-    return { record, exitCode, resultPath };
+    const record = JSON.parse(await readFile(resultFile, "utf8"));
+    // 结果索引只保存相对路径，避免把本机用户名和工作区绝对路径写进实验汇总。
+    return { record, exitCode, resultPath: output };
   } catch (error) {
     throw new Error(label + " run did not produce a result file: " + (error instanceof Error ? error.message : String(error)));
   }
@@ -100,7 +101,7 @@ async function cli() {
       const result = await runVariant(root, variant, experimentId, factor, round, jobs,
         options.task ? [options.task] : filters, Boolean(options.trace), Boolean(options.keep), pricingFile);
       records[variant] = result.record;
-      runFiles.push(result.resultPath);
+      runFiles.push({ variant, path: result.resultPath });
       if (result.exitCode !== 0) {
         console.warn("Variant " + variant + " round " + round + " exited with " + result.exitCode + "; preserving its recorded result.");
       }

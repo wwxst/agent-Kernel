@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export default async function check(root) {
+export default async function check(root, context = {}) {
   const taskDir = path.dirname(fileURLToPath(import.meta.url));
   const testsPath = path.join(root, "test", "format.test.mjs");
   const tests = await readFile(testsPath, "utf8");
@@ -28,4 +28,10 @@ export default async function check(root) {
   });
   assert.equal(result.error, undefined, result.error?.message);
   assert.equal(result.status, 0, result.stdout + result.stderr);
+
+  const names = new Set(context.toolCallNames ?? []);
+  assert.ok(names.has("read"), "the task must inspect source files with the read tool");
+  assert.ok(names.has("shell"), "the task must run the requested test command with the shell tool");
+  assert.ok(names.has("write") || names.has("edit"), "the task must modify files with write or edit");
+  assert.ok(names.size >= 3, "the task must exercise at least three distinct tools");
 }

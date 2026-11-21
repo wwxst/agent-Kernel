@@ -29,6 +29,16 @@ const MAX_HASH_BYTES_PER_FILE = 1_000_000;
 const MAX_TOTAL_HASH_BYTES = 20_000_000;
 const SKIP_DIRECTORIES = new Set([".git", "node_modules"]);
 const SECRET_KEY = /(?:api[_-]?key|token|secret|password|authorization|credential)/i;
+const SECRET_VALUE_PATTERNS = [
+  /\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,})\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/-]{24,}/gi,
+  /(\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[:=]\s*["']?)[^\s"',;]{12,}/gi,
+];
+
+function sanitizeString(value) {
+  return SECRET_VALUE_PATTERNS.reduce((text, pattern, index) =>
+    text.replace(pattern, index === 2 ? "$1[REDACTED]" : "[REDACTED]"), value);
+}
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -46,13 +56,13 @@ function sanitizeValue(value, key = "", depth = 0) {
   if (SECRET_KEY.test(key)) return "[REDACTED]";
 
   if (typeof value === "string") {
-    if (value.length <= 512) return value;
+    if (value.length <= 512) return sanitizeString(value);
     return {
       type: "string",
       chars: value.length,
       bytes: Buffer.byteLength(value),
       sha256: hash(value),
-      preview: value.slice(0, 120) + "…",
+      preview: sanitizeString(value.slice(0, 120)) + "…",
     };
   }
 
@@ -238,7 +248,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir, model, pricin
   const eventsByCallId = new Map();
   const noteDiagnosticError = (error) => {
     try {
-      trace.diagnosticsErrors.push(describeError(error).slice(0, 500));
+      trace.diagnosticsErrors.push(sanitizeString(describeError(error)).slice(0, 500));
     } catch {
       // 诊断记账自身失败也不能改变任务行为。
     }
@@ -310,7 +320,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir, model, pricin
         recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
         entry.taskElapsedMs = Math.round(performance.now() - startedAt);
         entry.requestDurationMs = Math.round(performance.now() - requestStarted);
-        entry.error = describeError(error).slice(0, 500);
+        entry.error = sanitizeString(describeError(error)).slice(0, 500);
         trace.requests.push(entry);
         throw error;
       }
@@ -373,7 +383,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir, model, pricin
       event.resultChars = result.length;
       event.resultBytes = Buffer.byteLength(result);
       event.resultKind = isError ? "error" : "text";
-      if (event.resultKind === "error") event.resultPreview = result.slice(0, 200);
+      if (event.resultKind === "error") event.resultPreview = sanitizeString(result.slice(0, 200));
       if (queue.length === 0) eventsByCallId.delete(call.id);
     } catch (error) {
       noteDiagnosticError(error);

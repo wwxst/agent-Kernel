@@ -51,7 +51,7 @@ const resultsDir = path.join(here, "results");
 const INFRA_SETTLE_MS = 20;
 
 // 修改任务提示、夹具或检查器的验收语义时递增；不同版本的成绩不能直接混算。
-export const EVAL_SUITE_VERSION = "2026-11-21-eval-system-v1";
+export const EVAL_SUITE_VERSION = "2026-11-21-eval-system-v2";
 
 /** 直接运行检测比较真实路径，避免 macOS 的 /var 与 /private/var 等符号链接别名造成漏判。 */
 function sameFilePath(left, right) {
@@ -302,10 +302,12 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
     const diagnostics = trace
       ? await createEvalDiagnostics({ llm, tools, workdir, model, pricing })
       : undefined;
+    const toolCallNames = [];
     const agent = new Agent({
       llm: diagnostics?.llm ?? llm,
       tools,
       systemPrompt: () => DEFAULT_SYSTEM_PROMPT,
+      onToolCall: (call) => toolCallNames.push(call.function.name),
       ...(diagnostics ? { onToolResult: diagnostics.onToolResult } : {}),
       maxSteps: settings.maxSteps,
       maxToolCalls: settings.maxToolCalls,
@@ -330,7 +332,10 @@ async function runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pr
     if (error === undefined) {
       try {
         const check = (await import(pathToFileURL(path.join(taskDir, "check.mjs")).href)).default;
-        await check(workdir);
+        await check(workdir, {
+          compactionStats: agent.compactionStats,
+          toolCallNames: [...toolCallNames],
+        });
       } catch (failureOfCheck) {
         error = failureOfCheck;
         failure = isExpectedFailure(failureOfCheck) ? "check" : "infra";

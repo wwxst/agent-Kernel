@@ -4,7 +4,7 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export default async function check(root) {
+export default async function check(root, context = {}) {
   const taskDir = path.dirname(fileURLToPath(import.meta.url));
   const initialNotesDir = path.join(taskDir, "files", "notes");
   const notesDir = path.join(root, "notes");
@@ -45,4 +45,6 @@ export default async function check(root) {
   assert.deepEqual(rows, expectedRows, "all records must be exact and sorted by date");
   assert.equal(rows.length, 16, "summary must contain exactly 16 migration rows");
   assert.match(output, /^Final release gate: GO_WITH_CANARY$/m);
+  assert.ok(context.compactionStats?.compactions >= 1, "the long-context task must trigger at least one committed context compaction");
+  assert.ok(context.compactionStats?.summaryRequests >= 1, "the long-context task must issue a real summary request");
 }

@@ -68,6 +68,12 @@ test("盲审包：拒绝把本机环境文件和疑似密钥打包给审查者",
       taskName: "task-1", aTasksDir: a.tasks, bTasksDir: b.tasks,
       outputDir: path.join(root, "review-token"),
     }), /possible openai-style-api-key/);
+    await writeFile(path.join(b.workdir, "input.mjs"), 'export const token = "github_pat_0123456789abcdefghijklmnopqrstuv";\n');
+    await assert.rejects(() => createBlindReviewPack({
+      aRun: makeRun(a.workdir, "a"), bRun: makeRun(b.workdir, "b"),
+      taskName: "task-1", aTasksDir: a.tasks, bTasksDir: b.tasks,
+      outputDir: path.join(root, "review-github-pat"),
+    }), /possible github-fine-grained-token/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -178,6 +184,23 @@ test("盲审评分：同一任务的两个候选必须使用同一组审查者",
   assert.equal(mismatched.pairs[0].reviewerPanelMismatch, true);
   assert.equal(mismatched.pairs[0].complete, false);
   assert.equal(mismatched.requiresAdjudication, true);
+});
+
+test("盲审评分：评分卡必须严格符合 schema，不能夹带额外字段", () => {
+  const card = {
+    task: "task-1", candidate: "candidate-1", reviewerId: "reviewer-1",
+    scores: { correctness: 3, completeness: 3, stabilitySecurity: 3, maintainability: 3, scope: 3 },
+    evidence: {
+      correctness: "src/file.mjs: behavior matches the task",
+      completeness: "all requested outputs exist",
+      stabilitySecurity: "edge case is covered",
+      maintainability: "implementation is easy to follow",
+      scope: "only required files changed",
+    },
+    blockingFindings: [], recommendation: "accept",
+  };
+  assert.throws(() => summarizeScorecards([{ ...card, model: "hidden-model" }]), /extra: model/);
+  assert.throws(() => summarizeScorecards([{ ...card, scores: { ...card.scores, extra: 4 } }]), /scores has invalid fields.*extra: extra/);
 });
 
 test("盲审评分：拒绝没有证据的分数", () => {
