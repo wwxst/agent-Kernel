@@ -135,6 +135,7 @@ export function summarizeScorecards(scorecards) {
       task: cards[0].task,
       candidate: cards[0].candidate,
       reviewers: cards.length,
+      reviewerIds: cards.map((card) => card.reviewerId).sort(),
       insufficientReviewers: cards.length < 2,
       averages,
       overallAverage: Number((Object.values(averages).reduce((sum, value) => sum + value, 0) / criteria.length).toFixed(2)),
@@ -155,11 +156,14 @@ export function summarizeScorecards(scorecards) {
       ...(!candidate2 ? ["candidate-2"] : []),
     ];
     const insufficientReviewers = Boolean(candidate1?.insufficientReviewers || candidate2?.insufficientReviewers);
+    const reviewerPanelMismatch = Boolean(candidate1 && candidate2 &&
+      JSON.stringify(candidate1.reviewerIds) !== JSON.stringify(candidate2.reviewerIds));
     return {
       task,
       missingCandidates,
       insufficientReviewers,
-      complete: missingCandidates.length === 0 && !insufficientReviewers,
+      reviewerPanelMismatch,
+      complete: missingCandidates.length === 0 && !insufficientReviewers && !reviewerPanelMismatch,
       candidate2MinusCandidate1: candidate1 && candidate2
         ? Number((candidate2.overallAverage - candidate1.overallAverage).toFixed(2))
         : null,

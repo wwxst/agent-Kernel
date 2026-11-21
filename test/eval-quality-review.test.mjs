@@ -117,6 +117,36 @@ test("盲审评分：同一审查者不能冒充两名独立审查者", () => {
   assert.throws(() => summarizeScorecards([card, { ...card }]), /duplicate independent reviewer/);
 });
 
+test("盲审评分：同一任务的两个候选必须使用同一组审查者", () => {
+  const card = (candidate, reviewerId) => ({
+    task: "task-1", candidate, reviewerId,
+    scores: { correctness: 3, completeness: 3, stabilitySecurity: 3, maintainability: 3, scope: 3 },
+    evidence: {
+      correctness: "src/file.mjs: behavior matches the task",
+      completeness: "all requested outputs exist",
+      stabilitySecurity: "edge case is covered",
+      maintainability: "implementation is easy to follow",
+      scope: "only required files changed",
+    },
+    blockingFindings: [], recommendation: "accept",
+  });
+  const matched = summarizeScorecards([
+    card("candidate-1", "reviewer-1"), card("candidate-1", "reviewer-2"),
+    card("candidate-2", "reviewer-1"), card("candidate-2", "reviewer-2"),
+  ]);
+  assert.equal(matched.pairs[0].complete, true);
+  assert.equal(matched.pairs[0].reviewerPanelMismatch, false);
+  assert.equal(matched.requiresAdjudication, false);
+
+  const mismatched = summarizeScorecards([
+    card("candidate-1", "reviewer-1"), card("candidate-1", "reviewer-2"),
+    card("candidate-2", "reviewer-1"), card("candidate-2", "reviewer-3"),
+  ]);
+  assert.equal(mismatched.pairs[0].reviewerPanelMismatch, true);
+  assert.equal(mismatched.pairs[0].complete, false);
+  assert.equal(mismatched.requiresAdjudication, true);
+});
+
 test("盲审评分：拒绝没有证据的分数", () => {
   const card = {
     task: "task-1", candidate: "candidate-1", reviewerId: "r1",

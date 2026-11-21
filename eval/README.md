@@ -79,7 +79,7 @@ npm run eval:compare -- eval/results/A.json eval/results/B.json --out eval/resul
 node eval/quality-review.mjs --a eval/results/A.json --b eval/results/B.json --task 01-add-health-route --a-tasks-dir eval/tasks --b-tasks-dir eval/tasks --out eval/results/review-packs/health-route
 ```
 
-审查包只含任务、初始文件、匿名候选和评分规范；版本映射写在审查包旁边的 .answer-key.json，审查者不得查看。每个任务至少两名审查者独立评分，任一维度相差 2 分及以上、结论不同或存在阻断问题时交第三人裁决。评分卡汇总：
+审查包只含任务、初始文件、匿名候选和评分规范；版本映射写在审查包旁边的 .answer-key.json，审查者不得查看。每个任务的两份候选由同一组至少两名审查者独立评分，任一维度相差 2 分及以上、结论不同或存在阻断问题时交第三人裁决。评分卡汇总：
 
 ```bash
 npm run eval:review -- --scores eval/results/review-packs/scorecards.json
