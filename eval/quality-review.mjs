@@ -12,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const rubricPath = path.join(here, "quality-review", "rubric.md");
 const templatePath = path.join(here, "quality-review", "scorecard.template.json");
+const schemaPath = path.join(here, "quality-review", "scorecard.schema.json");
 const criteria = ["correctness", "completeness", "stabilitySecurity", "maintainability", "scope"];
 const MAX_FILES = 2_000;
 const MAX_BYTES = 20_000_000;
@@ -78,6 +79,7 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
     await writeTree(path.join(destination, "candidate-2"), second);
     await writeFile(path.join(destination, "rubric.md"), await readFile(rubricPath, "utf8"), "utf8");
     await writeFile(path.join(destination, "scorecard.template.json"), await readFile(templatePath, "utf8"), "utf8");
+    await writeFile(path.join(destination, "scorecard.schema.json"), await readFile(schemaPath, "utf8"), "utf8");
     await writeFile(path.join(destination, "REVIEW.md"), [
       "# Blind review",
       "",
@@ -85,7 +87,7 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
       "不要猜测候选来自哪个模型、分支或提交；不要查看 answer-key。",
       "两名审查者必须独立完成评分，评分后再比较。",
       "每个维度都要写具体证据；阻断问题单独列出。",
-      "评分标准见 rubric.md，填写 scorecard.template.json 后另存为独立 JSON。",
+      "评分标准见 rubric.md；填写 scorecard.template.json，结构必须符合 scorecard.schema.json，再另存为独立 JSON。",
       "",
       "## 文件",
       "- task.md：共同任务要求",
@@ -93,9 +95,12 @@ export async function createBlindReviewPack({ aRun, bRun, taskName, aTasksDir, b
       "- candidate-1/ 与 candidate-2/：匿名最终工作区",
       "- rubric.md：评分规则",
       "- scorecard.template.json：评分模板",
+      "- scorecard.schema.json：评分卡结构约束",
       "",
     ].join("\n"), "utf8");
-    await writeFile(destination + ".answer-key.json", JSON.stringify(answerKey, null, 2), { encoding: "utf8", flag: "wx" });
+    await writeFile(destination + ".answer-key.json", JSON.stringify(answerKey, null, 2), {
+      encoding: "utf8", flag: "wx", mode: 0o600,
+    });
   } catch (error) {
     await rm(destination, { recursive: true, force: true });
     throw new Error("could not create blind review pack: " + (error instanceof Error ? error.message : String(error)));

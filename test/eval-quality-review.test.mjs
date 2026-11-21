@@ -32,7 +32,10 @@ test("盲审包：隐藏 A/B 映射，保留共同任务和初始夹具", async 
       outputDir: path.join(root, "review-pack"),
     });
     const review = await readFile(path.join(result.outputDir, "REVIEW.md"), "utf8");
+    const schema = JSON.parse(await readFile(path.join(result.outputDir, "scorecard.schema.json"), "utf8"));
+    assert.equal(schema.additionalProperties, false);
     assert.match(review, /candidate-1/);
+    assert.match(review, /scorecard.schema.json/);
     assert.doesNotMatch(review, /a-commit|b-commit|a-branch|b-branch/);
     assert.equal(await readFile(path.join(result.outputDir, "initial", "input.mjs"), "utf8"), "export const value = 1;\n");
     const first = await readFile(path.join(result.outputDir, "candidate-1", "input.mjs"), "utf8");
