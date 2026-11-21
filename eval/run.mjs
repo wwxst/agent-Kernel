@@ -215,7 +215,7 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
   const passed = results.filter((result) => result.ok).length;
   const costs = results.map((result) => result.cost);
   const priced = costs.filter((cost) => cost?.amount !== null && cost?.amount !== undefined);
-  const costCurrency = priced[0]?.currency ?? "USD";
+  const costCurrency = priced[0]?.currency ?? costs.find((cost) => cost?.currency)?.currency ?? null;
   const costTotal = priced.reduce((total, cost) => total + cost.amount, 0);
   const allPriced = priced.length === results.length && results.length > 0;
   const costComplete = allPriced && costs.every((cost) => cost.complete);

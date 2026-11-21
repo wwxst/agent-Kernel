@@ -79,6 +79,7 @@ test("A/B 实验：两轮交替运行，分别保存记录并生成可比较报�
     assert.equal(record.summary.rounds, 2);
     assert.equal(record.summary.comparableRounds, 2);
     assert.equal(record.summary.invalidRounds, 0);
+    assert.equal(record.summary.factor, "agent-runtime");
     assert.equal(record.runFiles.length, 4);
     for (const comparison of record.comparisons) assert.equal(comparison.comparable, true);
     const report = await readFile(path.join(experimentDir, "report.md"), "utf8");
