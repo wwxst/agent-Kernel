@@ -10,6 +10,7 @@ const metrics = ["requests", "summaryRequests", "toolCalls", "tokens", "cachedPr
 
 export function compareRuns(a, b) {
   const issues = [];
+  const warnings = [];
   const same = (label, left, right) => {
     if (JSON.stringify(left) !== JSON.stringify(right)) issues.push(label + " differs");
   };
@@ -28,6 +29,14 @@ export function compareRuns(a, b) {
   same("runtime", runtimeKey(a.environment), runtimeKey(b.environment));
   if ((a.infraErrors ?? []).length > 0) issues.push("A run contains infrastructure errors");
   if ((b.infraErrors ?? []).length > 0) issues.push("B run contains infrastructure errors");
+  if (a.workingTreeClean !== true) warnings.push("A working tree is not confirmed clean; commit SHA may not describe all evaluated code");
+  if (b.workingTreeClean !== true) warnings.push("B working tree is not confirmed clean; commit SHA may not describe all evaluated code");
+  if (a.totals?.unknownResponses !== 0 || b.totals?.unknownResponses !== 0) {
+    warnings.push("some model responses have unknown usage; token deltas are lower bounds and are omitted");
+  }
+  if (a.totals?.cacheUsageUnknown !== 0 || b.totals?.cacheUsageUnknown !== 0) {
+    warnings.push("some model responses have unknown cache usage; cached-token deltas are omitted");
+  }
 
   const aResults = new Map((a.results ?? []).map((item) => [item.name, item]));
   const bResults = new Map((b.results ?? []).map((item) => [item.name, item]));
@@ -49,14 +58,18 @@ export function compareRuns(a, b) {
     }
     const status = left.ok === right.ok ? "same" : right.ok ? "improved" : "regressed";
     const row = { name, status, aOk: left.ok, bOk: right.ok };
+    const tokenUsageComplete = left.tokens?.unknownResponses === 0 && right.tokens?.unknownResponses === 0;
+    const cacheUsageComplete = left.tokens?.cacheUsageUnknown === 0 && right.tokens?.cacheUsageUnknown === 0;
     for (const metric of metrics) {
       const leftValue = metric === "tokens" ? left.tokens?.total
         : metric === "cachedPromptTokens" ? left.tokens?.cachedPromptTokens : left[metric];
       const rightValue = metric === "tokens" ? right.tokens?.total
         : metric === "cachedPromptTokens" ? right.tokens?.cachedPromptTokens : right[metric];
-      row[metric + "A"] = typeof leftValue === "number" ? leftValue : null;
-      row[metric + "B"] = typeof rightValue === "number" ? rightValue : null;
-      row[metric + "Delta"] = typeof leftValue === "number" && typeof rightValue === "number"
+      const complete = metric === "tokens" ? tokenUsageComplete
+        : metric === "cachedPromptTokens" ? cacheUsageComplete : true;
+      row[metric + "A"] = complete && typeof leftValue === "number" ? leftValue : null;
+      row[metric + "B"] = complete && typeof rightValue === "number" ? rightValue : null;
+      row[metric + "Delta"] = complete && typeof leftValue === "number" && typeof rightValue === "number"
         ? rightValue - leftValue : null;
     }
     const aCost = left.cost?.amount;
@@ -77,8 +90,10 @@ export function compareRuns(a, b) {
     requestsDelta: numericDelta(a.totals?.requests, b.totals?.requests),
     summaryRequestsDelta: numericDelta(a.totals?.summaryRequests, b.totals?.summaryRequests),
     toolCallsDelta: numericDelta(a.totals?.toolCalls, b.totals?.toolCalls),
-    tokensDelta: numericDelta(a.totals?.tokens, b.totals?.tokens),
-    cachedPromptTokensDelta: numericDelta(a.totals?.cachedPromptTokens, b.totals?.cachedPromptTokens),
+    tokensDelta: a.totals?.unknownResponses === 0 && b.totals?.unknownResponses === 0
+      ? numericDelta(a.totals?.tokens, b.totals?.tokens) : null,
+    cachedPromptTokensDelta: a.totals?.cacheUsageUnknown === 0 && b.totals?.cacheUsageUnknown === 0
+      ? numericDelta(a.totals?.cachedPromptTokens, b.totals?.cachedPromptTokens) : null,
     elapsedDelta: numericDelta(a.elapsed, b.elapsed),
     costDelta: a.totals?.cost?.complete === true && b.totals?.cost?.complete === true &&
       a.totals?.cost?.currency === b.totals?.cost?.currency
@@ -91,9 +106,16 @@ export function compareRuns(a, b) {
     issues: [...new Set(issues)],
     suiteVersion: a.suiteVersion ?? "unknown",
     model: a.model ?? "unknown",
-    a: { commit: a.commit ?? "unknown", branch: a.branch ?? "unknown", passed: aPassed, total: aTotal },
-    b: { commit: b.commit ?? "unknown", branch: b.branch ?? "unknown", passed: bPassed, total: bTotal },
+    a: {
+      commit: a.commit ?? "unknown", branch: a.branch ?? "unknown",
+      workingTreeClean: a.workingTreeClean ?? null, passed: aPassed, total: aTotal,
+    },
+    b: {
+      commit: b.commit ?? "unknown", branch: b.branch ?? "unknown",
+      workingTreeClean: b.workingTreeClean ?? null, passed: bPassed, total: bTotal,
+    },
     totals,
+    warnings: [...new Set(warnings)],
     tasks,
   };
 }
@@ -155,7 +177,10 @@ export function renderComparison(comparisons, summary = summarizeExperiment(comp
   ];
   for (const [index, item] of comparisons.entries()) {
     lines.push("### Round " + (index + 1) + ": " + (item.comparable ? "comparable" : "invalid"));
-    if (item.issues.length > 0) for (const issue of item.issues) lines.push("- " + issue);
+    lines.push("- A: " + item.a.branch + " @ " + item.a.commit + " · clean worktree: " + String(item.a.workingTreeClean));
+    lines.push("- B: " + item.b.branch + " @ " + item.b.commit + " · clean worktree: " + String(item.b.workingTreeClean));
+    if (item.issues.length > 0) for (const issue of item.issues) lines.push("- Invalid: " + issue);
+    if (item.warnings.length > 0) for (const warning of item.warnings) lines.push("- Warning: " + warning);
     if (item.tasks.length > 0) {
       lines.push("", "| Task | Status | Token Δ | Request Δ | Tool Δ | Time Δ (s) | Cost Δ |", "| --- | --- | ---: | ---: | ---: | ---: | ---: |");
       for (const task of item.tasks) {

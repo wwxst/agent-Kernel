@@ -20,11 +20,15 @@ function run(overrides = {}) {
     passed: 2,
     total: 2,
     elapsed: 10,
-    totals: { requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100, cachedPromptTokens: 20, cost: { amount: 0.01, complete: true } },
+    totals: {
+      requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100,
+      cachedPromptTokens: 20, unknownResponses: 0, cacheUsageUnknown: 0,
+      cost: { amount: 0.01, currency: "USD", complete: true },
+    },
     infraErrors: [],
     results: [
-      { name: "one", ok: true, requests: 4, toolCalls: 3, tokens: { total: 50 }, seconds: 5, settings: { maxSteps: 30 } },
-      { name: "two", ok: true, requests: 4, toolCalls: 4, tokens: { total: 50 }, seconds: 5, settings: { maxSteps: 30 } },
+      { name: "one", ok: true, requests: 4, toolCalls: 3, tokens: { total: 50, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 10 }, seconds: 5, settings: { maxSteps: 30 } },
+      { name: "two", ok: true, requests: 4, toolCalls: 4, tokens: { total: 50, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 10 }, seconds: 5, settings: { maxSteps: 30 } },
     ],
     ...overrides,
   };
@@ -35,10 +39,14 @@ test("A/B 对比：按任务计算回归、提升和资源差值", () => {
   const b = run({
     passed: 1,
     elapsed: 8,
-    totals: { requests: 6, summaryRequests: 2, toolCalls: 5, tokens: 80, cachedPromptTokens: 30, cost: { amount: 0.008, complete: true } },
+    totals: {
+      requests: 6, summaryRequests: 2, toolCalls: 5, tokens: 80,
+      cachedPromptTokens: 30, unknownResponses: 0, cacheUsageUnknown: 0,
+      cost: { amount: 0.008, currency: "USD", complete: true },
+    },
     results: [
-      { name: "one", ok: true, requests: 3, toolCalls: 2, tokens: { total: 40 }, seconds: 4, settings: { maxSteps: 30 } },
-      { name: "two", ok: false, requests: 3, toolCalls: 3, tokens: { total: 40 }, seconds: 4, settings: { maxSteps: 30 } },
+      { name: "one", ok: true, requests: 3, toolCalls: 2, tokens: { total: 40, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 15 }, seconds: 4, settings: { maxSteps: 30 } },
+      { name: "two", ok: false, requests: 3, toolCalls: 3, tokens: { total: 40, unknownResponses: 0, cacheUsageUnknown: 0, cachedPromptTokens: 15 }, seconds: 4, settings: { maxSteps: 30 } },
     ],
   });
   const result = compareRuns(a, b);
@@ -64,11 +72,32 @@ test("A/B 对比：模型、环境、任务配置不一致时拒绝给出有效�
   assert.ok(result.issues.some((issue) => issue.includes("task settings differ")));
 });
 
+test("A/B 对比：用量未知时不把 Token 下限伪装成精确差值", () => {
+  const a = run();
+  const b = run({
+    totals: {
+      requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100,
+      cachedPromptTokens: 20, unknownResponses: 1, cacheUsageUnknown: 1,
+      cost: { amount: 0.01, currency: "USD", complete: false },
+    },
+    results: [
+      { name: "one", ok: true, requests: 4, toolCalls: 3, tokens: { total: 50, unknownResponses: 1, cacheUsageUnknown: 1 }, seconds: 5, settings: { maxSteps: 30 } },
+      { name: "two", ok: true, requests: 4, toolCalls: 4, tokens: { total: 50, unknownResponses: 0, cacheUsageUnknown: 0 }, seconds: 5, settings: { maxSteps: 30 } },
+    ],
+  });
+  const result = compareRuns(a, b);
+  assert.equal(result.comparable, true);
+  assert.equal(result.totals.tokensDelta, null);
+  assert.equal(result.totals.cachedPromptTokensDelta, null);
+  assert.ok(result.warnings.some((warning) => warning.includes("unknown usage")));
+});
+
 test("A/B 对比：价格币种不同不能计算费用差值", () => {
   const result = compareRuns(run(), run({
     totals: {
       requests: 8, summaryRequests: 1, toolCalls: 7, tokens: 100,
-      cachedPromptTokens: 20, cost: { amount: 0.01, currency: "CNY", complete: true },
+      cachedPromptTokens: 20, unknownResponses: 0, cacheUsageUnknown: 0,
+      cost: { amount: 0.01, currency: "CNY", complete: true },
     },
   }));
   assert.equal(result.comparable, false);
