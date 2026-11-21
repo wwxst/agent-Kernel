@@ -125,10 +125,15 @@ test("评测：EVAL_OUTPUT_FILE 指定结果路径并写入完整记录", async 
     try {
       await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
       await mkdir(path.join(root, "eval"));
-      for (const file of ["run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs"]) {
+      for (const file of [
+          "run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs",
+          "compare.mjs", "ab.mjs", "checker-helpers.mjs",
+        ]) {
         await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
       }
       await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
+      await copyFile(path.join(projectRoot, "package.json"), path.join(root, "package.json"));
+      await copyFile(path.join(projectRoot, "package-lock.json"), path.join(root, "package-lock.json"));
       const outputFile = "eval/results/experiments/test-run.json";
       const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
         cwd: root,
@@ -163,10 +168,15 @@ test("评测：成绩文件保存失败必须非零退出", async () => {
     try {
       await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
       await mkdir(path.join(root, "eval"));
-      for (const file of ["run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs"]) {
+      for (const file of [
+          "run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs",
+          "compare.mjs", "ab.mjs", "checker-helpers.mjs",
+        ]) {
         await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
       }
       await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
+      await copyFile(path.join(projectRoot, "package.json"), path.join(root, "package.json"));
+      await copyFile(path.join(projectRoot, "package-lock.json"), path.join(root, "package-lock.json"));
       // 只在临时副本制造 ENOTDIR，不触碰仓库原有成绩。
       await writeFile(path.join(root, "eval", "results"), "blocking file");
       const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {

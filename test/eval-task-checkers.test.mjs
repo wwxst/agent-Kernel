@@ -103,11 +103,11 @@ test("评测题 22：多文件格式化修复必须保留旧测试并新增边�
       "}",
       "",
     ].join("\n"), "utf8");
-    await writeFile(path.join(root, "test", "format.test.mjs"), [
-      'import assert from "node:assert/strict";',
-      'import test from "node:test";',
-      'import { formatUser } from "../src/format.mjs";',
-      'test("formats a user", () => assert.equal(formatUser({ name: "Ada", email: "ada@example.com" }), "Ada <ada@example.com>"));',
+    const originalTests = await readFile(
+      path.join(projectRoot, "eval", "tasks", "22-multi-tool-refactor", "files", "test", "format.test.mjs"),
+      "utf8",
+    );
+    await writeFile(path.join(root, "test", "format.test.mjs"), originalTests + [
       'test("trims surrounding whitespace", () => assert.equal(formatUser({ name: " Ada ", email: " ada@example.com " }), "Ada <ada@example.com>"));',
       'test("rejects missing fields", () => assert.throws(() => formatUser({ name: "Ada", email: " " }), /name and email are required/));',
       'test("rejects an invalid email", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
