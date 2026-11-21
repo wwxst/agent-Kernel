@@ -129,8 +129,45 @@ test("A/B 汇总：只统计可比较轮次，并输出回归提醒", () => {
   assert.equal(summary.decisionReady, false);
   assert.match(renderComparison([comparison], summary), /Regressed task-rounds/);
   assert.match(renderComparison([comparison], summary), /exploratory only/);
-  const threeValidRounds = summarizeExperiment([comparison, comparison, comparison]);
-  assert.equal(threeValidRounds.decisionReady, true);
+  const reusedRound = summarizeExperiment([comparison, comparison, comparison]);
+  assert.equal(reusedRound.decisionReady, false);
+  assert.equal(reusedRound.missingRunIdRounds, 3);
+});
+
+test("A/B 汇总：同一轮不能重复冒充三轮独立证据", () => {
+  const pair = (aId, bId) => compareRuns(
+    run({ runId: aId, experiment: { id: "same-experiment", variant: "A", factor: "unspecified" } }),
+    run({ runId: bId, experiment: { id: "same-experiment", variant: "B", factor: "unspecified" } }),
+  );
+  const first = pair("a-1", "b-1");
+  const second = pair("a-2", "b-2");
+  const third = pair("a-3", "b-3");
+
+  const realRounds = summarizeExperiment([first, second, third]);
+  assert.equal(realRounds.comparableRounds, 3);
+  assert.equal(realRounds.distinctRunRounds, 3);
+  assert.equal(realRounds.decisionReady, true);
+
+  const repeated = summarizeExperiment([first, first, first]);
+  assert.equal(repeated.comparableRounds, 3);
+  assert.equal(repeated.distinctRunRounds, 1);
+  assert.equal(repeated.duplicateRunRounds, 2);
+  assert.equal(repeated.decisionReady, false);
+  assert.match(renderComparison([first, first, first], repeated), /Duplicate\/reused runs/);
+
+  const crossReuse = summarizeExperiment([first, pair("a-1", "b-2"), third]);
+  assert.equal(crossReuse.duplicateRunRounds, 1);
+  assert.equal(crossReuse.decisionReady, false);
+
+  const missingId = summarizeExperiment([first, second, compareRuns(run(), run())]);
+  assert.equal(missingId.missingRunIdRounds, 1);
+  assert.equal(missingId.decisionReady, false);
+});
+
+test("A/B 对比：同一运行不能同时作为 A 和 B", () => {
+  const result = compareRuns(run({ runId: "same-id" }), run({ runId: "same-id" }));
+  assert.equal(result.comparable, false);
+  assert.ok(result.issues.includes("A and B must be distinct run IDs"));
 });
 
 test("A/B 因素约束：测试 System Prompt 时只允许 Prompt 指纹变化", () => {
