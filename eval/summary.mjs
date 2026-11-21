@@ -120,7 +120,7 @@ const recent = matchingRuns.slice(-wanted);
 const suiteLabel = selectedSuiteVersion === "legacy" ? "legacy（旧记录，无版本标记）" : selectedSuiteVersion;
 console.log(
   "评测套件：" + suiteLabel + " · 模型：" + selectedModel + " · 提交：" + selectedCommit.slice(0, 7) +
-    " · 并发：" + (selectedJobs ?? "legacy") + " · 端点：" + selectedEndpoint + selectedEndpointPath +
+    " · 并发：" + (selectedJobs ?? "legacy") + " · 端点：" + selectedEndpoint + " · 路径：" + selectedEndpointPath +
     " · 实验：" + (selectedExperimentId ?? "无") + " / " + selectedExperimentFactor + " / " + (selectedExperimentVariant ?? "无"),
 );
 
