@@ -188,6 +188,24 @@ test("A/B 对比：评测执行器不同或缺少指纹时拒绝比较", () => {
   assert.ok(absent.issues.includes("evaluation harness fingerprint missing"));
 });
 
+test("A/B 对比：不同实验 ID 或相同候选标签不能组成一对", () => {
+  const a = run({ experiment: { id: "experiment-1", variant: "A", factor: "system-prompt" } });
+  const differentId = run({
+    promptSha256: "new-prompt",
+    experiment: { id: "experiment-2", variant: "B", factor: "system-prompt" },
+  });
+  const different = compareRuns(a, differentId);
+  assert.equal(different.comparable, false);
+  assert.ok(different.issues.includes("experimentId differs"));
+
+  const sameVariant = compareRuns(a, run({
+    promptSha256: "new-prompt",
+    experiment: { id: "experiment-1", variant: "A", factor: "system-prompt" },
+  }));
+  assert.equal(sameVariant.comparable, false);
+  assert.ok(sameVariant.issues.includes("expected A baseline and B candidate variants"));
+});
+
 test("A/B 汇总：拒绝把不同实验因素的轮次混在一起", () => {
   const prompt = compareRuns(
     run({ experiment: { factor: "system-prompt" } }),
@@ -198,6 +216,18 @@ test("A/B 汇总：拒绝把不同实验因素的轮次混在一起", () => {
     run({ runtimeSourceSha256: "new-runtime", experiment: { factor: "agent-runtime" } }),
   );
   assert.throws(() => summarizeExperiment([prompt, runtime]), /different experiment factors/);
+});
+
+test("A/B 汇总：拒绝把不同实验 ID 的轮次混在一起", () => {
+  const first = compareRuns(
+    run({ experiment: { id: "experiment-1", variant: "A", factor: "system-prompt" } }),
+    run({ promptSha256: "prompt-b", experiment: { id: "experiment-1", variant: "B", factor: "system-prompt" } }),
+  );
+  const second = compareRuns(
+    run({ experiment: { id: "experiment-2", variant: "A", factor: "system-prompt" } }),
+    run({ promptSha256: "prompt-c", experiment: { id: "experiment-2", variant: "B", factor: "system-prompt" } }),
+  );
+  assert.throws(() => summarizeExperiment([first, second]), /different experiment IDs/);
 });
 
 test("A/B 对比：时区不同不能视为相同运行环境", () => {

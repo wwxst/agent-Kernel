@@ -27,6 +27,16 @@ export function compareRuns(a, b) {
   const factorA = a.experiment?.factor ?? "unspecified";
   const factorB = b.experiment?.factor ?? "unspecified";
   same("experimentFactor", factorA, factorB);
+  const experimentIdA = a.experiment?.id ?? null;
+  const experimentIdB = b.experiment?.id ?? null;
+  same("experimentId", experimentIdA, experimentIdB);
+  const variantA = a.experiment?.variant ?? null;
+  const variantB = b.experiment?.variant ?? null;
+  if (variantA !== null || variantB !== null) {
+    if (variantA !== "A" || variantB !== "B") {
+      issues.push("expected A baseline and B candidate variants");
+    }
+  }
   if (!["unspecified", "agent-runtime", "system-prompt", "tool-definitions"].includes(factorA)) {
     issues.push("unknown experiment factor: " + factorA);
   }
@@ -154,6 +164,7 @@ export function compareRuns(a, b) {
     suiteVersion: a.suiteVersion ?? "unknown",
     model: a.model ?? "unknown",
     factor: factorA,
+    experimentId: experimentIdA,
     evalHarnessSha256: a.evalHarnessSha256 ?? null,
     a: {
       commit: a.commit ?? "unknown", branch: a.branch ?? "unknown",
@@ -175,6 +186,8 @@ export function summarizeExperiment(comparisons) {
   }
   const factors = new Set(comparisons.map((item) => item.factor ?? "unspecified"));
   if (factors.size > 1) throw new Error("cannot summarize comparisons from different experiment factors");
+  const experimentIds = new Set(comparisons.map((item) => item.experimentId ?? null));
+  if (experimentIds.size > 1) throw new Error("cannot summarize comparisons from different experiment IDs");
   const valid = comparisons.filter((item) => item.comparable);
   const allTasks = valid.flatMap((item) => item.tasks);
   const deltaMedian = (key) => {
