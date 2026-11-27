@@ -12,6 +12,10 @@
 
 - [当前架构](./architecture.md)：Core、Transcript、Tool、Hook、Subagent、Skill、Model、UI 的真实关系。
 
+### 理解 Agent 与 AI 创作、视频编辑的协作方式
+
+- [AI 创作画布与视频编辑器协作架构](./design/ai-creative-workspace-architecture.md)：Agent 客户端、AI 创作画布、视频编辑器的职责边界；工具、Skill、上游代码复用和分阶段接入方案。**这是目标架构提案，不代表当前代码已经实现。**
+
 ### 把 Agent 跑起来
 
 - [配置与启动](./configuration.md)：环境变量、CLI 参数、工作区、预算。
