@@ -396,15 +396,21 @@ test("一次完整 Run：Hook 正常触发，Transcript 与工具结果一字不
 });
 
 /**
- * 构造「JSON 能解析、structuredClone 会爆栈」的参数：声明字段照常，额外塞一条 3000 层嵌套的未声明字段。
+ * 构造「JSON 能解析、structuredClone 会爆栈」的参数：额外塞一条 3000 层嵌套的未声明字段。
  *
- * 3000 层是实测值：JSON.parse 接受，structuredClone 抛 RangeError: Maximum call stack size exceeded。
+ * 直接拼 JSON 文本，不经过 `JSON.stringify`：这个深度上某些 Node 版本（Windows + Node 22）
+ * 会先在 `JSON.stringify` 里爆栈，用例就变成在测序列化而不是测 Hook 的副本。
+ * 3000 层是实测值：`JSON.parse` 接受，`structuredClone` 抛 RangeError: Maximum call stack size exceeded。
  * 未声明字段默认被忽略（没开 strictArguments），所以工具能正常执行 —— 差别只在 Hook 的副本。
  */
-function deepUndeclaredArguments(declared = {}) {
-  let deep = "leaf";
-  for (let i = 0; i < 3000; i++) deep = { next: deep };
-  return { ...declared, extra: deep };
+function deepToolCall(id, name) {
+  const depth = 3000;
+  const args = '{"extra":' + '{"next":'.repeat(depth) + '"leaf"' + '}'.repeat(depth) + '}';
+  return {
+    role: "assistant",
+    content: null,
+    tool_calls: [{ id, type: "function", function: { name, arguments: args } }],
+  };
 }
 
 test("一次完整 Run：后置 Hook 的上下文复制失败不改变工具结果，Transcript 配对完整", async () => {
@@ -429,7 +435,7 @@ test("一次完整 Run：后置 Hook 的上下文复制失败不改变工具结�
       return "side effect done";
     },
   }], hooks);
-  const chat = createScriptedChat([callTool("c1", "touch", deepUndeclaredArguments()), finalReply("done")]);
+  const chat = createScriptedChat([deepToolCall("c1", "touch"), finalReply("done")]);
   const agent = new Agent({ llm: chat, tools: registry });
 
   const reply = await agent.run("do it");
@@ -465,7 +471,7 @@ test("失败 Run：失败 Hook 的上下文复制失败不外泄，isError 结�
       return { content: "ERROR: tool failed", isError: true };
     },
   }], hooks);
-  const chat = createScriptedChat([callTool("c1", "touch", deepUndeclaredArguments()), finalReply("done")]);
+  const chat = createScriptedChat([deepToolCall("c1", "touch"), finalReply("done")]);
   const agent = new Agent({
     llm: chat,
     tools: registry,
