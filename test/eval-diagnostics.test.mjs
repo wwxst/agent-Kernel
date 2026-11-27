@@ -9,6 +9,7 @@
  *   - 用例一：跑一轮真实 `Agent`，断言 usage、工具结果、逐工具的文件变化都被记下。
  *   - 用例二：像密钥的参数要变成 `[REDACTED]`，超长字符串只留摘要。
  *   - 用例三：正文 `ERROR:` 与宿主侧 `isError` 分开记录，避免诊断误判。
+ *   - 用例四：Shell 的非零退出、超时与取消按失败记录，和 CLI / TUI / tool-log 同口径。
  *   - 快照边界：特殊文件名不能改写字典原型，大文件降级为元数据并报告覆盖不足。
  *   - 跨天入口：`eval/cross-day.mjs --help` 不该切提交、也不该联系模型。
  *
@@ -169,6 +170,63 @@ test("诊断：ERROR 正文与宿主侧错误状态独立记录", async () => {
     assert.deepEqual(trace.toolCalls.map((tool) => tool.resultKind), ["text", "error"]);
     assert.equal(trace.toolCalls[0].resultPreview, undefined);
     assert.equal(trace.toolCalls[1].resultPreview, "ERROR: genuine tool failure");
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test("诊断：Shell 非零退出、超时与取消按失败记录，退出 0 仍算成功", async () => {
+  const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
+  const results = new Map([
+    ["exit 0", "exit 0\nok"],
+    ["exit 3", "exit 3\nboom"],
+    ["slow", "timeout after 50ms\npartial"],
+    ["cancel", "cancelled by signal\npartial"],
+  ]);
+  let request = 0;
+  const llm = {
+    async chat() {
+      request++;
+      if (request === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [...results.keys()].map((command, index) => ({
+              id: "shell-" + index,
+              type: "function",
+              function: { name: "shell", arguments: JSON.stringify({ command }) },
+            })),
+          },
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+  };
+  const tools = makeRegistry([{
+    name: "shell",
+    description: "Return a shell-shaped result without running a process.",
+    parameters: {
+      type: "object",
+      properties: { command: { type: "string" } },
+      required: ["command"],
+    },
+    run: async (args) => results.get(args.command),
+  }]);
+
+  try {
+    const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });
+    const agent = new Agent({ llm: diagnostics.llm, tools, onToolResult: diagnostics.onToolResult });
+    await agent.run("run four shell-shaped calls");
+    const trace = await diagnostics.finish();
+
+    // 宿主侧 isError 对这四次调用都是 false；诊断必须自己认出 Shell 的失败状态。
+    assert.deepEqual(trace.toolCalls.map((tool) => tool.resultKind),
+      ["text", "error", "error", "error"]);
+    assert.equal(trace.summary.toolErrors, 3);
+    assert.equal(trace.summary.tools.shell.calls, 4);
+    assert.equal(trace.summary.tools.shell.errors, 3);
+    assert.equal(trace.toolCalls[1].resultPreview, "exit 3\nboom".slice(0, 200));
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }

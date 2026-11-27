@@ -195,7 +195,7 @@ const cacheTotals = recent.filter((run) => typeof run.totals?.cachedPromptTokens
   .map((run) => run.totals.cachedPromptTokens);
 if (cacheTotals.length > 0) {
   const unknown = recent.reduce((total, run) => total + (run.totals?.cacheUsageUnknown ?? 0), 0);
-  console.log(`缓存命中 Token：中位数 ${median(cacheTotals)}${unknown > 0 ? `（${unknown} 个请求缓存用量未知）` : ""}`);
+  console.log(`缓存命中 Token：中位数 ${unknown > 0 ? "至少 " : ""}${median(cacheTotals)}${unknown > 0 ? `（${unknown} 个请求缓存用量未知）` : ""}`);
 }
 const costTotals = recent.filter((run) => typeof run.totals?.cost?.amount === "number")
   .map((run) => run.totals.cost.amount);

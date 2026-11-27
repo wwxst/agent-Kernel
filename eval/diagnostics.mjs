@@ -21,6 +21,7 @@ import { createHash } from "node:crypto";
 import { open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { ChatResponseError, describeError } from "../src/protocol/errors.ts";
+import { isToolResultFailure } from "../src/core/tool-result-status.ts";
 import { estimateCost } from "./cost.mjs";
 
 const MAX_TRACKED_FILES = 2_000;
@@ -383,7 +384,9 @@ export async function createEvalDiagnostics({ llm, tools, workdir, model, pricin
       if (!event) return;
       event.resultChars = result.length;
       event.resultBytes = Buffer.byteLength(result);
-      event.resultKind = isError ? "error" : "text";
+      // 与 CLI / TUI / tool-log 共用同一套判定：Shell 的非零退出、超时和取消都以文本
+      // 返回，宿主侧 isError 是 false；只看 isError 会把最常见的失败记成成功。
+      event.resultKind = isToolResultFailure(call, result, isError) ? "error" : "text";
       if (event.resultKind === "error") event.resultPreview = sanitizeString(result.slice(0, 200));
       if (queue.length === 0) eventsByCallId.delete(call.id);
     } catch (error) {

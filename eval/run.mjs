@@ -570,7 +570,7 @@ async function report(record, outputFile) {
     `\n${passed}/${total} 通过 · ${totals.requests} 次业务请求 + ${totals.summaryRequests} 次摘要请求 · ${totals.toolCalls} 次工具调用 · ` +
       `${unknown > 0 ? "at least " : ""}${totals.tokens} tokens` +
       `${unknown > 0 ? `（${unknown} 个请求没有 usage）` : ""}` +
-      ` · 缓存命中 ${totals.cachedPromptTokens} tokens` +
+      ` · 缓存命中 ${totals.cacheUsageUnknown > 0 ? "at least " : ""}${totals.cachedPromptTokens} tokens` +
       `${totals.cacheUsageUnknown > 0 ? `（${totals.cacheUsageUnknown} 个请求缓存用量未知）` : ""}` +
       `${totals.cost.amount === null ? "" : ` · 费用小计 ${totals.cost.amount} ${totals.cost.currency}${totals.cost.complete ? "" : "（不完整）"}`}` +
       ` · 墙钟 ${elapsed.toFixed(1)}s` +
