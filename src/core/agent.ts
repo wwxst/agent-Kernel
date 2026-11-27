@@ -14,15 +14,16 @@
  * 内容目录：
  *   - `DEFAULT_SYSTEM_PROMPT`：默认系统提示，从 `core/default-system-prompt.ts` 转出，保持既有入口。
  *   - `AgentUsage` / `AgentStats` / `AgentSessionStats`：用量与统计；成本未知单独计数，不补 0；
- *     业务请求与辅助摘要请求分开计数。
+ *     业务请求与辅助摘要请求分开计数。`AgentUsage` 定义在 `run-state.ts`，这里按原入口转出。
  *   - `AgentOptions`：客户端、工具、系统提示、四个预算（步数 / 工具调用 / token / 上下文窗口）、
  *     取消信号与六种观察回调。
  *   - `Agent`：`run(task)` 跑一次任务；`transcript`、`runReplies`、`stats`、`sessionStats`、
  *     `observerFailureCount`、`retryAttempts`、`toolExecutionDisabled`。
  *   - latestConfirmedReply：最后一次业务请求已确认的回复，供展示层结束草稿。
- *   - RunState 与 runLoop()：本轮预算与进展、业务请求、工具批次准入与结果回传。
+ *   - runLoop() 与 `run-state.ts` 的 `RunState`：本轮预算与进展、业务请求、工具批次准入与结果回传。
  *
- * 模块关系：SessionContext 维护对话，ToolRegistry 执行工具，ChatClient 发送请求。
+ * 模块关系：SessionContext 维护对话，ToolRegistry 执行工具，ChatClient 发送请求，
+ * RunState 保存一次 Run 的计数、用量与无进展判定。
  * CLI、TUI 和 eval 通过 Agent 的任务入口及只读快照观察进度。
  */
 import { setTimeout as sleep } from "node:timers/promises";
@@ -37,6 +38,10 @@ import type { ToolRegistry } from "./tool-registry.ts";
 import { DEFAULT_SYSTEM_PROMPT } from "./default-system-prompt.ts";
 import { SessionContext } from "./session-context.ts";
 import type { ContextOptions } from "./session-context.ts";
+import { MAX_IDENTICAL_TOOL_BATCHES, RunState, emptyUsage, toolBatchSignature } from "./run-state.ts";
+import type { AgentUsage } from "./run-state.ts";
+
+export type { AgentUsage } from "./run-state.ts";
 
 export { DEFAULT_SYSTEM_PROMPT };
 
@@ -54,69 +59,11 @@ function createToolResult(call: ToolCall, result: string): Message {
   return { role: "tool", tool_call_id: call.id, content: result };
 }
 
-/** 将 JSON 参数规范化，让对象键顺序不影响工具批次签名；数组顺序仍保留。 */
-function canonicalizeJson(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalizeJson);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-        .map(([key, child]) => [key, canonicalizeJson(child)]),
-    );
-  }
-  return value;
-}
-
-/** 参数不是合法 JSON 时保留原文，让坏参数仍能形成稳定签名并交给 ToolRegistry 报错。 */
-function canonicalizeArguments(argumentsText: string): string {
-  // ToolRegistry 将空参数串作为空对象执行，两种写法必须共用重复计数。
-  if (argumentsText === "") return "{}";
-  try {
-    return JSON.stringify(canonicalizeJson(JSON.parse(argumentsText)));
-  } catch {
-    return argumentsText;
-  }
-}
-
-/** 工具调用顺序有意义，所以只规范化每个调用的参数，不排序调用数组。 */
-function toolBatchSignature(calls: readonly ToolCall[]): string {
-  return JSON.stringify(calls.map((call) => [
-    call.function.name,
-    canonicalizeArguments(call.function.arguments),
-  ]));
-}
-
-/**
- * 两批工具结果是否逐条相同：内容、错误状态、等待状态都一致才算「没有进展」。
- *
- * 比较的是宿主侧结果，不是模型看到的文本：只有这里才知道一次读取是「有效等待」还是「普通稳定输出」。
- */
-function sameToolResults(left: readonly ToolExecutionResult[], right: readonly ToolExecutionResult[]): boolean {
-  return left.length === right.length && left.every((result, index) => {
-    const other = right[index];
-    return result.content === other.content && result.isError === other.isError && result.isWaiting === other.isWaiting;
-  });
-}
-
 /** 取消时抛出的错误：把 signal 上的原因带出来，CLI 才能说清是被什么停掉的。 */
 function cancellationError(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
   const detail = reason instanceof Error ? reason.message : typeof reason === "string" ? reason : "";
   return new Error(detail.length > 0 ? `cancelled: ${detail}` : "cancelled");
-}
-
-/** 一份全零的用量。每次 Run 开始和 Session 创建时各拿一份，避免共用同一个可变对象。 */
-function emptyUsage(): AgentUsage {
-  return {
-    promptTokens: 0,
-    completionTokens: 0,
-    totalTokens: 0,
-    cachedPromptTokens: 0,
-    cacheUsageReported: 0,
-    cacheUsageUnknown: 0,
-    reported: 0,
-    unknown: 0,
-  };
 }
 
 /** 预算是跨模块的运行时输入，不能只依赖 TypeScript 的静态类型。 */
@@ -125,34 +72,6 @@ function assertIntegerBudget(name: string, value: number, minimum: number): void
     // 中文对照：配置 {name} 的值 {value} 不合法，需要一个不小于 {minimum} 的整数。
     throw new Error(`invalid ${name}: ${String(value)} (expected an integer >= ${minimum})`);
   }
-}
-
-/** 普通工具连续三批完整相同才判定无进展，避免把一次偶然的稳定结果当成死循环。 */
-const MAX_IDENTICAL_TOOL_BATCHES = 3;
-
-/**
- * 一次任务里能观察到的用量。
- *
- * `unknown` 不是装饰：端点可能不返回 usage，那几个 token 数就只是**已报告部分**的和。
- * 只要 unknown > 0，调用方就不能说「这次任务精确花了 X token」。
- */
-export interface AgentUsage {
-  promptTokens: number;
-  completionTokens: number;
-  totalTokens: number;
-  /** 已明确报告的缓存命中输入 Token。 */
-  cachedPromptTokens: number;
-  /** 明确报告缓存用量的请求数；0 与未知分开统计。 */
-  cacheUsageReported: number;
-  /** 没有缓存用量字段或整个 usage 缺失的请求数。 */
-  cacheUsageUnknown: number;
-  /** 带 usage 的请求数。 */
-  reported: number;
-  /**
-   * 成本未知的请求数：端点没返回 usage，或者请求在中途失败（可能已产生费用）。
-   * 大于 0 时上面的合计只是下限，不能说「这次任务精确花了 X token」。
-   */
-  unknown: number;
 }
 
 /** 一次 Run 的成本与执行量。和 transcript 一样，失败之后也可以读；跨 Run 的累计见 `sessionStats`。 */
@@ -259,62 +178,6 @@ export interface AgentOptions extends ContextOptions {
    * 最终消息仍以 chat() 的返回值为准，回调晚到、漏掉都不影响正确性。
    */
   onDelta?: (text: string) => void;
-}
-
-/** 一个 Run 独占的状态。开始下一次任务时整体替换，Session 的历史与账单独立保留。 */
-class RunState {
-  requests = 0;
-  // 两种重发都计入统计，只有真正发出才计数。
-  retries = 0;
-  overflowRetries = 0;
-  toolCalls = 0;
-  readonly usage = emptyUsage();
-  readonly replies: Message[] = [];
-  private lastToolBatch?: {
-    signature: string;
-    results: readonly ToolExecutionResult[];
-    /**
-     * 连续相同批次里「没有进展」的次数。只有整串连续相同批次都是有效等待时才不计数 ——
-     * 等后台任务不是原地打转；但一旦这串里出现过普通批次，后续的等待批次就照普通规则计数，
-     * 也不会把之前的计数清零（见 ADR-0030 的不变量）。
-     */
-    repetitions: number;
-    /**
-     * 这串连续相同批次是否每一批都是有效等待。一旦混进非等待批次就永久为 false，
-     * 豁免随即失效，不会因为后面又出现一次等待而恢复。
-     */
-    allWaiting: boolean;
-  };
-
-  /** 只有完整批次才记录。直接比较文本和状态，避免把整批大结果再序列化一份。 */
-  recordToolBatch(signature: string, results: readonly ToolExecutionResult[], waiting: boolean): void {
-    const previous = this.lastToolBatch;
-    if (previous === undefined || previous.signature !== signature) {
-      this.lastToolBatch = { signature, results, repetitions: waiting ? 0 : 1, allWaiting: waiting };
-      return;
-    }
-
-    // 结果变化只重置重复次数；同一签名的等待链一旦遇到普通批次，就不能再恢复豁免。
-    const allWaiting = previous.allWaiting && waiting;
-    const sameResults = sameToolResults(previous.results, results);
-    const repetitions = sameResults
-      ? (allWaiting ? previous.repetitions : previous.repetitions + 1)
-      : (allWaiting ? 0 : 1);
-    this.lastToolBatch = { signature, results, repetitions, allWaiting };
-  }
-
-  /**
-   * 是否该在执行前拦下这一批：上一批同签名、同结果，且不构成有效等待。
-   *
-   * 有效等待的重复是正常轮询（后台任务还没输出），交给 maxSteps 兜底；
-   * 只要链上出现过普通批次，豁免就失效，重复三次仍然会被拦下。
-   */
-  shouldStopToolBatch(signature: string): boolean {
-    const last = this.lastToolBatch;
-    if (last === undefined || last.signature !== signature) return false;
-    if (last.allWaiting) return false;
-    return last.repetitions >= MAX_IDENTICAL_TOOL_BATCHES;
-  }
 }
 
 export class Agent {

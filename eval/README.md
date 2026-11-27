@@ -63,7 +63,7 @@ npm run eval:scenarios
 npm run eval:ab -- --a-dir ../agent-kernel-A --b-dir ../agent-kernel-B --factor system-prompt --rounds 3 --jobs 1 --keep
 ```
 
-脚本每轮交替 A/B 先后顺序，默认三轮、并发 1。每个任务会保留工作区，便于后续生成质量盲审包。结果和报告保存在 A 目录的 eval/results/experiments/ 下。真实模型评测会产生 API 费用；本项目 CI 不会运行它。
+脚本每轮交替 A/B 先后顺序，默认三轮、并发 1。每个任务会保留工作区，便于后续生成质量盲审包。结果和报告保存在 A 目录的 eval/results/experiments/ 下。真实模型评测会产生 API 费用；本项目 CI 不会运行它。已经用于决策的实验归档在 [`eval/experiments/`](./experiments/)（报告、`experiment.json` 与原始六轮记录）。
 
 只比较已有两轮结果时：
 
