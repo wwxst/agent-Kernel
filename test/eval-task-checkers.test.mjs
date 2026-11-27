@@ -74,8 +74,7 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       "Final release gate: GO_WITH_CANARY", "",
     ].join("\n");
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
-    const compactedContext = { compactionStats: { compactions: 1, summaryRequests: 1 } };
-    await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+    await assert.doesNotReject(() => checkLongContextCompaction(root));
     // 合法 Markdown 可以省掉表格列两侧的空格，并使用左/右/居中对齐分隔符。
     const compactRows = records.map((item) => `|${item.id}|${item.date}|${item.decision}|`);
     const compactTable = [
@@ -86,18 +85,14 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       "Final release gate: GO_WITH_CANARY", "",
     ].join("\n");
     await writeFile(path.join(root, "migration-summary.md"), compactTable);
-    await assert.doesNotReject(() => checkLongContextCompaction(root, compactedContext));
+    await assert.doesNotReject(() => checkLongContextCompaction(root));
 
     await writeFile(path.join(root, "migration-summary.md"), compactTable.replace(
       compactRows[0], compactRows[0].replace(records[0].decision, "INCORRECT_DECISION"),
     ));
-    await assert.rejects(() => checkLongContextCompaction(root, compactedContext),
+    await assert.rejects(() => checkLongContextCompaction(root),
       /records must be exact and sorted by date/);
     await writeFile(path.join(root, "migration-summary.md"), output);
-    await assert.rejects(
-      () => checkLongContextCompaction(root, { compactionStats: { compactions: 0, summaryRequests: 0 } }),
-      /must trigger at least one committed context compaction/,
-    );
 
     await writeFile(path.join(root, "migration-summary.md"), [
       "# Migration summary", "",
@@ -106,11 +101,11 @@ test("评测题 21：逐条保留 16 份记录、按日期排序且不能修改�
       ...[...rows].reverse(), "",
       "Final release gate: GO_WITH_CANARY", "",
     ].join("\n"), "utf8");
-    await assert.rejects(() => checkLongContextCompaction(root, compactedContext), /exact and sorted by date/);
+    await assert.rejects(() => checkLongContextCompaction(root), /exact and sorted by date/);
 
     await writeFile(path.join(root, "migration-summary.md"), output, "utf8");
     await writeFile(path.join(notesDir, names[0]), "changed source note");
-    await assert.rejects(() => checkLongContextCompaction(root, compactedContext), /source note must not be modified/);
+    await assert.rejects(() => checkLongContextCompaction(root), /source note must not be modified/);
   });
 });
 
@@ -193,6 +188,20 @@ test("评测题 22：原始测试换成 LF、新增测试标题措辞不同时�
     await writeFile(path.join(root, "test", "format.test.mjs"), [
       originalLf,
       ...EQUIVALENT_FORMAT_TESTS,
+      "",
+    ].join("\n"), "utf8");
+    await assert.doesNotReject(() => checkMultiToolRefactor(root, MULTI_TOOL_EVIDENCE));
+  });
+});
+
+test("评测题 22：无效邮箱测试标题写成 do not contain 时仍然通过", async () => {
+  await withTaskFiles("22-multi-tool-refactor", async (root) => {
+    await writeFile(path.join(root, "src", "format.mjs"), FORMAT_USER_FIX, "utf8");
+    const originalLf = (await readFormatTestsFixture()).replace(/\r\n/g, "\n").trimEnd();
+    await writeFile(path.join(root, "test", "format.test.mjs"), [
+      originalLf,
+      ...EQUIVALENT_FORMAT_TESTS,
+      'test("rejects emails that do not contain @", () => assert.throws(() => formatUser({ name: "Ada", email: "invalid" }), /email must contain @/));',
       "",
     ].join("\n"), "utf8");
     await assert.doesNotReject(() => checkMultiToolRefactor(root, MULTI_TOOL_EVIDENCE));

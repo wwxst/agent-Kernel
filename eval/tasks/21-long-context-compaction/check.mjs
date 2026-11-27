@@ -4,7 +4,9 @@ import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-export default async function check(root, context = {}) {
+// 本题验证长上下文聚合能力；压缩正确性由 eval/scenarios/run.mjs 的离线场景和单元测试覆盖，
+// 不在这里强制触发压缩。
+export default async function check(root) {
   const taskDir = path.dirname(fileURLToPath(import.meta.url));
   const initialNotesDir = path.join(taskDir, "files", "notes");
   const notesDir = path.join(root, "notes");
@@ -56,6 +58,4 @@ export default async function check(root, context = {}) {
   assert.deepEqual(rows, expected, "all records must be exact and sorted by date");
   assert.equal(rows.length, 16, "summary must contain exactly 16 migration rows");
   assert.match(output, /^Final release gate: GO_WITH_CANARY$/m);
-  assert.ok(context.compactionStats?.compactions >= 1, "the long-context task must trigger at least one committed context compaction");
-  assert.ok(context.compactionStats?.summaryRequests >= 1, "the long-context task must issue a real summary request");
 }

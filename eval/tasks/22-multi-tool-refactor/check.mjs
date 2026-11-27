@@ -25,9 +25,11 @@ export default async function check(root, context = {}) {
   );
   assert.match(tests, /trim|whitespace|空格|首尾/i, "a whitespace/trim test must be added");
   assert.match(tests, /missing|required|缺失|必填|not a string|non-string/i, "a missing-field test must be added");
-  // @ 与 invalid/without/missing 等词必须同行，避免用原测试里的邮箱地址凑成「无效邮箱测试」；
+  // @ 与 invalid/without/missing 等否定或要求词必须同行，避免用原测试里的邮箱地址凑成「无效邮箱测试」；
   // 标题直接写 invalid email / 无效邮箱时也接受，因为断言里的 @ 可能出现在下一行。
-  const invalidEmail = /(?:invalid|without|missing|不含|缺少)[^\n]*@|@[^\n]*(?:invalid|without|missing|不含|缺少)/i.test(tests)
+  const invalidEmailCue =
+    "(?:invalid|without|missing|not contain|does not contain|must contain|require|不含|缺少|不包含|必须包含|必须含|需要包含|要求包含)";
+  const invalidEmail = new RegExp(`${invalidEmailCue}[^\\n]*@|@[^\\n]*${invalidEmailCue}`, "i").test(tests)
     || /invalid[^\n]*(?:e-?mail|邮箱)|(?:e-?mail|邮箱)[^\n]*invalid|无效[^\n]*邮箱|邮箱[^\n]*无效/i.test(tests);
   assert.ok(invalidEmail, "an invalid-email test must be added");
 

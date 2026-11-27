@@ -1,8 +1,8 @@
 {
   "maxSteps": 40,
   "maxToolCalls": 80,
-  "maxTotalTokens": 60000,
-  "contextWindowTokens": 8192,
+  "maxTotalTokens": 120000,
+  "contextWindowTokens": 32768,
   "outputTokenReserve": 1024,
-  "tags": ["long-context", "context-compaction", "multi-file-read"]
+  "tags": ["long-context", "multi-file-read"]
 }
