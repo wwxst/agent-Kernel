@@ -16,7 +16,8 @@
  *     `grep`（起点可以是目录或单个文件）/ `run` / `readJobOutput` / `killJob`；
  *     内部有原子替换、路径解析、输出截断、进程树清理。
  *   - `createWorkspaceTools()`：把上面这些方法翻译成模型能调用的九个工具（含英文说明书）；
- *     文件类工具声明 `strictArguments`，参数写错直接报错而不是被静默忽略。
+ *     文件类工具声明 `strictArguments`，参数写错直接报错而不是被静默忽略；
+ *     `shell` 前台失败（非零退出 / 超时 / 取消）带 `isError:true`，内容保持原文，后台只返回任务编号。
  *   - `WorkspaceOptions` / `ReadOptions` / `GrepOptions` / `BackgroundJob` / `JobOutput`：构造参数、
  *     read 的行窗口、grep 选项、后台任务登记、一次后台读取的结构化结果（含「是否有效等待」）。
  *   - `RegexGrep`：grep 的正则匹配线程客户端，超时或取消就 terminate。
@@ -2139,6 +2140,17 @@ const SEARCH_PATH_DESCRIPTION =
   "File or directory to search: a directory is searched recursively, a single file only itself. " +
   "Relative paths resolve from the workspace root; absolute paths and ../ are allowed. Defaults to the workspace root.";
 
+/**
+ * 前台 shell 结果是否失败：只看第一行状态，不扫正文。
+ *
+ * 成功只有一种写法 —— 第一行正好是 `exit 0`；`exit N`、`exit null`、`timeout after …ms`、
+ * `cancelled by signal` 都算失败。正文里碰巧出现 `exit 0` 不能把一次失败盖成成功，
+ * 所以这里只匹配第一行（状态行由 `Workspace.run()` 自己写在最前面）。
+ */
+function foregroundShellFailed(output: string): boolean {
+  return output.split("\n")[0] !== "exit 0";
+}
+
 export function createWorkspaceTools(workspace: Workspace): Tool[] {
   return [
     {
@@ -2354,12 +2366,18 @@ export function createWorkspaceTools(workspace: Workspace): Tool[] {
         },
         required: ["command"],
       },
-      run: async (args) => workspace.run(String(args.command), {
-        background: args.background === true,
-        timeoutMs: typeof args.timeout === "number"
-          ? Math.min(600_000, Math.max(1_000, args.timeout))
-          : undefined,
-      }),
+      run: async (args) => {
+        const background = args.background === true;
+        const output = await workspace.run(String(args.command), {
+          background,
+          timeoutMs: typeof args.timeout === "number"
+            ? Math.min(600_000, Math.max(1_000, args.timeout))
+            : undefined,
+        });
+        // 后台启动成功只是一个编号，不是命令执行的成功或失败；只有前台命令才按状态行判定。
+        if (background) return output;
+        return { content: output, isError: foregroundShellFailed(output) };
+      },
     },
     {
       name: "shell-output",
