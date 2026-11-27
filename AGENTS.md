@@ -46,7 +46,8 @@ node --env-file-if-exists=.env src/cli.ts "<多行任务>"
 | `src/protocol/types.ts` | 协议词汇：消息、工具、工具调用、token 用量的类型 |
 | `src/protocol/chat-request.ts` | 请求发送与窗口测量共用的工具编码和默认输出额度 |
 | `src/protocol/errors.ts` | 所有错误的类型，以及「把意外说成一句话」的文案兜底 |
-| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、无进展检测、会话生命周期与用量记账 |
+| `src/core/agent.ts` | **Core**：agent loop、消息顺序、请求与工具预算、会话生命周期与用量记账 |
+| `src/core/run-state.ts` | 一次 Run 的状态、用量、回复和重复工具批次判定 |
 | `src/core/session-context.ts` | 当前 Transcript、请求准入、摘要提交与上下文超限恢复 |
 | `src/core/default-system-prompt.ts` | Agent 的默认系统提示 |
 | `src/core/context-compact.ts` | 上下文压缩的纯计算：请求体积与 token 估算、Snip、可移除历史段切分、摘要提示词与合格性检查 |
