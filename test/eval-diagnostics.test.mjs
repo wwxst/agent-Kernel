@@ -9,12 +9,12 @@
  *   - 用例一：跑一轮真实 `Agent`，断言 usage、工具结果、逐工具的文件变化都被记下。
  *   - 用例二：像密钥的参数要变成 `[REDACTED]`，超长字符串只留摘要。
  *   - 用例三：正文 `ERROR:` 与宿主侧 `isError` 分开记录，避免诊断误判。
- *   - 用例四：Shell 的非零退出、超时与取消按失败记录，和 CLI / TUI / tool-log 同口径。
+ *   - 用例四：Shell 状态按失败记录（合成结果与真实 shell 两条路径）。
  *   - 快照边界：特殊文件名不能改写字典原型，大文件降级为元数据并报告覆盖不足。
  *   - 跨天入口：`eval/cross-day.mjs --help` 不该切提交、也不该联系模型。
  *
- * 模块关系：依赖 `src/core/agent.ts`、`eval/diagnostics.mjs`、`test/support/harness.mjs`，
- * 由 `npm test` 启动。
+ * 模块关系：依赖 `src/core/agent.ts`、`src/tools/workspace.ts`、`eval/diagnostics.mjs`、
+ * `test/support/harness.mjs`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -24,6 +24,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { Agent } from "../src/core/agent.ts";
+import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import { createEvalDiagnostics } from "../eval/diagnostics.mjs";
 import { makeRegistry } from "./support/harness.mjs";
 
@@ -227,6 +228,56 @@ test("诊断：Shell 非零退出、超时与取消按失败记录，退出 0 �
     assert.equal(trace.summary.tools.shell.calls, 4);
     assert.equal(trace.summary.tools.shell.errors, 3);
     assert.equal(trace.toolCalls[1].resultPreview, "exit 3\nboom".slice(0, 200));
+  } finally {
+    await rm(workdir, { recursive: true, force: true });
+  }
+});
+
+test("诊断：真实 shell 非零退出记为 error，成功命令记为 text", async () => {
+  const workdir = await mkdtemp(path.join(tmpdir(), "agent-eval-diagnostics-"));
+  let request = 0;
+  const llm = {
+    async chat() {
+      request++;
+      if (request === 1) {
+        return {
+          message: {
+            role: "assistant",
+            content: null,
+            tool_calls: [
+              {
+                id: "shell_fail",
+                type: "function",
+                function: {
+                  name: "shell",
+                  arguments: JSON.stringify({
+                    command: `node -e "console.log('boom'); process.exitCode = 3"`,
+                  }),
+                },
+              },
+              {
+                id: "shell_ok",
+                type: "function",
+                function: { name: "shell", arguments: JSON.stringify({ command: "echo ok" }) },
+              },
+            ],
+          },
+        };
+      }
+      return { message: { role: "assistant", content: "done" } };
+    },
+  };
+  const tools = makeRegistry(createWorkspaceTools(new Workspace({ root: workdir })));
+
+  try {
+    const diagnostics = await createEvalDiagnostics({ llm, tools, workdir });
+    const agent = new Agent({ llm: diagnostics.llm, tools, onToolResult: diagnostics.onToolResult });
+    await agent.run("run a failing shell command and a successful one");
+    const trace = await diagnostics.finish();
+
+    assert.deepEqual(trace.toolCalls.map((tool) => tool.resultKind), ["error", "text"]);
+    assert.ok(trace.toolCalls[0].resultPreview.startsWith("exit 3"), trace.toolCalls[0].resultPreview);
+    assert.equal(trace.summary.toolErrors, 1);
   } finally {
     await rm(workdir, { recursive: true, force: true });
   }

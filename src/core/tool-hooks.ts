@@ -81,6 +81,9 @@ export interface ToolHooksOptions {
  * 为什么必须复制：参数校验已经跑完了，如果 Hook 拿到的是工具真正会收到的那个对象，
  * 它改一下 `context.args` 就等于绕过校验改参数 —— 那是 Hook 不该有的权力。
  * 复制之后 Hook 只能看，改也只改到自己那份。
+ *
+ * 已知边界：`structuredClone` 对深嵌套参数会抛 `RangeError`。后置事件必须在隔离的
+ * `try` 里才调用它 —— 工具已经跑完，副本构造失败不能反过来吞掉真实结果。
  */
 function cloneContext(call: ToolCall, args: Record<string, unknown>): ToolUseContext {
   return { call: structuredClone(call), args: structuredClone(args) };
@@ -121,7 +124,7 @@ export class ToolHooks {
   private readonly postToolUse: readonly PostToolUseHook[];
   private readonly postToolUseFailure: readonly PostToolUseFailureHook[];
 
-  /** Hook 自身失败的累计次数（抛错或返回 rejected Promise），供宿主诊断。 */
+  /** Hook 自身失败的累计次数（抛错、返回 rejected Promise，或上下文复制失败），供宿主诊断。 */
   private failures = 0;
 
   constructor(options: ToolHooksOptions = {}) {
@@ -162,21 +165,27 @@ export class ToolHooks {
   /** 跑成功后的链：全部执行完，单个 Hook 失败不影响下一个，也不影响结果。 */
   async runPostToolUse(call: ToolCall, args: Record<string, unknown>, result: string): Promise<void> {
     for (const hook of this.postToolUse) {
-      await this.runQuietly(hook, { ...cloneContext(call, args), result });
+      await this.runQuietly(hook, () => ({ ...cloneContext(call, args), result }));
     }
   }
 
   /** 跑失败后的链：全部执行完；错误对象原样传下去，不复制也不改写。 */
   async runPostToolUseFailure(call: ToolCall, args: Record<string, unknown>, error: unknown): Promise<void> {
     for (const hook of this.postToolUseFailure) {
-      await this.runQuietly(hook, { ...cloneContext(call, args), error });
+      await this.runQuietly(hook, () => ({ ...cloneContext(call, args), error }));
     }
   }
 
-  /** 单个 Hook 的隔离执行：同步抛错和 rejected Promise 都只计数，不往外传。 */
-  private async runQuietly<Context>(hook: (context: Context) => unknown, context: Context): Promise<void> {
+  /**
+   * 单个 Hook 的隔离执行：同步抛错和 rejected Promise 都只计数，不往外传。
+   *
+   * 上下文由 `makeContext` 在 `try` 内现造：每个 Hook 拿到自己的新副本（互不影响），
+   * 而副本构造本身失败（例如深嵌套参数让 `structuredClone` 爆栈）也只是一次计入的故障 ——
+   * 若把构造留在外面，通知失败就会冒充执行失败，工具已经产生的结果会被丢掉。
+   */
+  private async runQuietly<Context>(hook: (context: Context) => unknown, makeContext: () => Context): Promise<void> {
     try {
-      await hook(context);
+      await hook(makeContext());
     } catch {
       this.failures++;
     }

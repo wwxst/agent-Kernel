@@ -11,6 +11,7 @@
 | 模型使用本次请求实际提供的工具定义，不信静态提示列举 | ToolRegistry.definitions | test/agent.test.mjs |
 | 模型错误显示标题与修复建议不维护两套标题 | modelFailure | test/model-errors.test.mjs |
 | TUI 不主动启用鼠标跟踪，但会过滤意外到达的 SGR 鼠标报告 | Tui 输入层 | test/tui.test.mjs + test/cli-pty.test.mjs |
+| Shell 前台非零退出 / 超时 / 取消 = isError:true，内容原文不变；后台启动不是失败 | src/tools/workspace.ts | test/tool-registry.test.mjs + test/tool-hooks.test.mjs |
 
 ## 修改规则
 

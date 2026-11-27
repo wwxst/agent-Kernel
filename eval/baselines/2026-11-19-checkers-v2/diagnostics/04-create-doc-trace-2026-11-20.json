@@ -1,0 +1,328 @@
+{
+  "at": "2026-11-20T01:01:18.201Z",
+  "suiteVersion": "2026-11-19-checkers-v2",
+  "model": "hy3",
+  "commit": "76a024a496a424614c47ebc6660c2b94ae6c347d",
+  "ok": false,
+  "passed": 0,
+  "total": 1,
+  "elapsed": 12.2,
+  "totals": {
+    "requests": 7,
+    "toolCalls": 9,
+    "tokens": 28230,
+    "unknownResponses": 0
+  },
+  "infraErrors": [],
+  "results": [
+    {
+      "name": "04-create-doc",
+      "ok": false,
+      "failure": "check",
+      "requests": 7,
+      "toolCalls": 9,
+      "tokens": {
+        "prompt": 27753,
+        "completion": 477,
+        "total": 28230,
+        "unknownResponses": 0
+      },
+      "seconds": 12.1,
+      "error": "正文表格必须有命令列和说明列",
+      "workdir": "C:\\Users\\ADMINI~1\\AppData\\Local\\Temp\\agent-eval-04-create-doc-WswKTC",
+      "trace": {
+        "version": 1,
+        "requests": [
+          {
+            "index": 1,
+            "taskElapsedMs": 1731,
+            "requestDurationMs": 1719,
+            "messageCount": 2,
+            "messageChars": 8021,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3660,
+            "completionTokens": 50,
+            "totalTokens": 3710,
+            "usageKnown": true
+          },
+          {
+            "index": 2,
+            "taskElapsedMs": 3602,
+            "requestDurationMs": 1755,
+            "messageCount": 5,
+            "messageChars": 8721,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3762,
+            "completionTokens": 34,
+            "totalTokens": 3796,
+            "usageKnown": true,
+            "promptTokenDelta": 102,
+            "promptTokenDeltaFromRequest": 1
+          },
+          {
+            "index": 3,
+            "taskElapsedMs": 5467,
+            "requestDurationMs": 1861,
+            "messageCount": 7,
+            "messageChars": 9148,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3829,
+            "completionTokens": 59,
+            "totalTokens": 3888,
+            "usageKnown": true,
+            "promptTokenDelta": 67,
+            "promptTokenDeltaFromRequest": 2
+          },
+          {
+            "index": 4,
+            "taskElapsedMs": 6814,
+            "requestDurationMs": 1231,
+            "messageCount": 10,
+            "messageChars": 10095,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 3975,
+            "completionTokens": 24,
+            "totalTokens": 3999,
+            "usageKnown": true,
+            "promptTokenDelta": 146,
+            "promptTokenDeltaFromRequest": 3
+          },
+          {
+            "index": 5,
+            "taskElapsedMs": 8991,
+            "requestDurationMs": 2168,
+            "messageCount": 13,
+            "messageChars": 10739,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 4085,
+            "completionTokens": 159,
+            "totalTokens": 4244,
+            "usageKnown": true,
+            "promptTokenDelta": 110,
+            "promptTokenDeltaFromRequest": 4
+          },
+          {
+            "index": 6,
+            "taskElapsedMs": 10387,
+            "requestDurationMs": 1369,
+            "messageCount": 15,
+            "messageChars": 11590,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 4186,
+            "completionTokens": 51,
+            "totalTokens": 4237,
+            "usageKnown": true,
+            "promptTokenDelta": 101,
+            "promptTokenDeltaFromRequest": 5
+          },
+          {
+            "index": 7,
+            "taskElapsedMs": 12120,
+            "requestDurationMs": 1699,
+            "messageCount": 17,
+            "messageChars": 11970,
+            "toolCount": 9,
+            "toolDefinitionChars": 7708,
+            "promptTokens": 4256,
+            "completionTokens": 100,
+            "totalTokens": 4356,
+            "usageKnown": true,
+            "promptTokenDelta": 70,
+            "promptTokenDeltaFromRequest": 6
+          }
+        ],
+        "toolCalls": [
+          {
+            "index": 1,
+            "requestIndex": 1,
+            "toolCallId": "chatcmpl-tool-a1927366c1dede05",
+            "name": "shell",
+            "arguments": {
+              "command": "pwd && git status --short"
+            },
+            "executionMs": 108,
+            "observationMs": 3,
+            "fileChanges": [],
+            "resultChars": 115,
+            "resultBytes": 115,
+            "resultKind": "text"
+          },
+          {
+            "index": 2,
+            "requestIndex": 1,
+            "toolCallId": "chatcmpl-tool-946b27536cd80a29",
+            "name": "glob",
+            "arguments": {
+              "pattern": "{package.json,README.md,docs/**}"
+            },
+            "executionMs": 3,
+            "observationMs": 2,
+            "fileChanges": [],
+            "resultChars": 12,
+            "resultBytes": 12,
+            "resultKind": "text"
+          },
+          {
+            "index": 3,
+            "requestIndex": 2,
+            "toolCallId": "chatcmpl-tool-a7f07b8ac85613f2",
+            "name": "ls",
+            "arguments": {
+              "path": "/tmp/agent-eval-04-create-doc-WswKTC"
+            },
+            "executionMs": 1,
+            "observationMs": 2,
+            "fileChanges": [],
+            "resultChars": 91,
+            "resultBytes": 91,
+            "resultKind": "error",
+            "resultPreview": "ERROR: ENOENT: no such file or directory, realpath 'C:\\tmp\\agent-eval-04-create-doc-WswKTC'"
+          },
+          {
+            "index": 4,
+            "requestIndex": 3,
+            "toolCallId": "chatcmpl-tool-9f619d34758180f4",
+            "name": "ls",
+            "arguments": {
+              "path": "."
+            },
+            "executionMs": 2,
+            "observationMs": 2,
+            "fileChanges": [],
+            "resultChars": 52,
+            "resultBytes": 52,
+            "resultKind": "text"
+          },
+          {
+            "index": 5,
+            "requestIndex": 3,
+            "toolCallId": "chatcmpl-tool-9179d48bbe14c2b2",
+            "name": "shell",
+            "arguments": {
+              "command": "ls -la"
+            },
+            "executionMs": 110,
+            "observationMs": 2,
+            "fileChanges": [],
+            "resultChars": 250,
+            "resultBytes": 250,
+            "resultKind": "text"
+          },
+          {
+            "index": 6,
+            "requestIndex": 4,
+            "toolCallId": "chatcmpl-tool-a4c80fefd16f74c3",
+            "name": "read",
+            "arguments": {
+              "path": "package.json"
+            },
+            "executionMs": 2,
+            "observationMs": 2,
+            "fileChanges": [],
+            "resultChars": 127,
+            "resultBytes": 127,
+            "resultKind": "text"
+          },
+          {
+            "index": 7,
+            "requestIndex": 4,
+            "toolCallId": "chatcmpl-tool-993ecd06cd918195",
+            "name": "read",
+            "arguments": {
+              "path": "README.md"
+            },
+            "executionMs": 1,
+            "observationMs": 2,
+            "fileChanges": [],
+            "resultChars": 26,
+            "resultBytes": 48,
+            "resultKind": "text"
+          },
+          {
+            "index": 8,
+            "requestIndex": 5,
+            "toolCallId": "chatcmpl-tool-9d4b7c3ca5fb4c74",
+            "name": "write",
+            "arguments": {
+              "path": "docs/usage.md",
+              "content": "# 用法\n\n| npm script | 命令 | 说明 |\n| --- | --- | --- |\n| `test` | `node --test` | 运行项目的测试套件。 |\n| `lint` | `node --check .` | 检查项目代码的语法错误。 |\n"
+            },
+            "executionMs": 19,
+            "observationMs": 6,
+            "fileChanges": [
+              {
+                "path": "docs/usage.md",
+                "change": "added",
+                "afterBytes": 192
+              }
+            ],
+            "resultChars": 32,
+            "resultBytes": 32,
+            "resultKind": "text"
+          },
+          {
+            "index": 9,
+            "requestIndex": 6,
+            "toolCallId": "chatcmpl-tool-93492fa5d112ff32",
+            "name": "edit",
+            "arguments": {
+              "path": "README.md",
+              "old_string": "一个用来练手的小仓库。\n",
+              "new_string": "一个用来练手的小仓库。\n\n[查看用法](docs/usage.md)\n"
+            },
+            "executionMs": 30,
+            "observationMs": 4,
+            "fileChanges": [
+              {
+                "path": "README.md",
+                "change": "modified",
+                "beforeBytes": 48,
+                "afterBytes": 81
+              }
+            ],
+            "resultChars": 32,
+            "resultBytes": 34,
+            "resultKind": "text"
+          }
+        ],
+        "fileChanges": [
+          {
+            "path": "README.md",
+            "change": "modified",
+            "beforeBytes": 48,
+            "afterBytes": 81
+          },
+          {
+            "path": "docs/usage.md",
+            "change": "added",
+            "afterBytes": 192
+          }
+        ],
+        "snapshotCoverage": {
+          "initial": {
+            "complete": true,
+            "visitedFiles": 2,
+            "visitedEntries": 2,
+            "hashedBytes": 175,
+            "warnings": []
+          },
+          "final": {
+            "complete": true,
+            "visitedFiles": 3,
+            "visitedEntries": 4,
+            "hashedBytes": 400,
+            "warnings": []
+          }
+        },
+        "diagnosticsErrors": [],
+        "elapsedMs": 12126
+      }
+    }
+  ]
+}

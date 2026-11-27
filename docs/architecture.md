@@ -109,7 +109,7 @@ Agent 负责请求和工具预算。SessionContext 持有当前 Transcript、未
 
 ## 5. ToolRegistry
 
-`src/core/tool-registry.ts` 是所有 Tool call 的统一执行入口。
+`src/core/tool-registry.ts` 是所有 Tool call 的统一执行入口。权威入口是 `executeWithStatus()`，返回 `{ content, isError }`；`execute()` 只是只返回 `content`、丢掉 `isError` 的兼容包装。
 
 它负责：
 
@@ -118,7 +118,14 @@ Agent 负责请求和工具预算。SessionContext 持有当前 Transcript、未
 - 解析参数。
 - 执行 Tool。
 - 把普通失败折成 `ERROR: ...` 文本。
+- 产出宿主侧唯一的失败信号 `isError`；它不进入发给模型的 Message。
 - 在执行前后触发 Hook。
+
+`isError` 的口径：
+
+- 工具正常返回字符串 = 成功。
+- 工具返回 `{ content, isError:true }` = 结构化失败。当前只有前台 `shell` 用它：非零退出、超时、取消都算失败，`content` 仍是状态行 + 输出原文。`background:true` 的启动成功不是失败。
+- 工具抛出错误 = 失败，折成 `ERROR:` 文本；`ProcessCleanupError` 在通知 Hook 之后继续抛给宿主。
 
 它不负责：
 
@@ -131,20 +138,20 @@ Agent 负责请求和工具预算。SessionContext 持有当前 Transcript、未
 
 ## 6. Tool Hooks
 
-Hook 挂在 `ToolRegistry.execute()` 上：
+Hook 挂在 `ToolRegistry.executeWithStatus()` 上：
 
 ~~~text
 PreToolUse
     ↓
 Tool.run()
-    ↓
-PostToolUse       成功
-PostToolUseFailure 失败
+    ├─ isError:false → PostToolUse
+    ├─ isError:true  → PostToolUseFailure(new Error(content))
+    └─ 抛错          → PostToolUseFailure(原始错误)
 ~~~
 
-`PreToolUse` 可以阻止一次调用；后两个只观察结果。
+`PreToolUse` 可以阻止一次调用；后两个只观察结果。结构化失败用结果原文合成 `Error(content)`，工具抛出的错误则把原始错误对象交给 Hook。
 
-Hook 自己出错不会把 Tool 变成失败，也不会修改 Transcript，只增加诊断计数。
+Hook 自己出错不会把 Tool 变成失败，也不会修改 Transcript，只增加诊断计数；上下文复制失败同样只计数（F-001）。
 
 当前还有一个真实 Hook 用户：`AGENT_TOOL_LOG` 对应的工具调用日志。
 

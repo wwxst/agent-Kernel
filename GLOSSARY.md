@@ -113,7 +113,7 @@ _Avoid_: full access, workspace（这两个都不是隔离）
 _Avoid_: output, observation, response
 
 **ERROR text**:
-失败的工具结果：以 `ERROR: ` 开头的文本，模型读到后可自行纠正。工具失败从不抛异常。
+失败的工具结果折给模型的那条文本。失败本身的权威信号是宿主侧 `ToolExecutionResult.isError: true`，不是文本前缀：内容可能是普通输出（例如 **shell** 的 `exit 3` 状态行），不一定以 `ERROR: ` 开头。工具失败对模型折成文本，不抛进 **agent loop**；唯一例外是不可恢复的 `ProcessCleanupError`。
 _Avoid_: exception, failure, error object
 
 **Workspace**:
@@ -150,7 +150,7 @@ _Avoid_: LLM, model, provider
 - **Transcript** 是 **Message** 的序列；每个 **Step** 追加一条 assistant **Message**，它可能携带多个 **Tool call**。
 - 每个 **Tool call** 恰好由一条 **Tool result** **Message** 答复，两者靠 id 配对；没有执行的调用也留一条 `not run` 结果，配对不为预算或取消让路。
 - **Tool registry** 持有 N 个 **Tool**，这些 **Tool** 只作用于一个 **Workspace**。
-- 每个 **Tool call** 在参数校验通过后直接执行；普通失败折成 **ERROR text**，模型下一轮自己纠正。
+- 每个 **Tool call** 在参数校验通过后直接执行；普通失败折成 **ERROR text** 回灌，成败另由宿主侧的 `ToolExecutionResult.isError` 表达，模型下一轮自己纠正。
 - 每个 **Tool call** 执行前后会经过登记过的 **Hook**：`PreToolUse` 能阻止它（被拦下的调用不执行，结果是一条带原因的 **ERROR text**），`PostToolUse` / `PostToolUseFailure` 只观察。**Hook** 不改变 **Tool result**，也不改变 **Transcript**。
 - **Full access** 不改变进程权限：**shell** 与文件工具都以启动者同权执行，可以离开 **Workspace**。
 - **Step limit** 限制一次 **Run** 里的 **Step** 数；**Tool call budget** 限制同一 Run 里真正执行的 **Tool call** 数；**Token budget** 是软上限，达到后 Run 不再发新请求。
@@ -164,6 +164,6 @@ _Avoid_: LLM, model, provider
 ## Flagged ambiguities
 
 - "agent" 既指整个程序（CLI 加 Core），也指循环本身。本仓库里 **Core** 专指循环，**Run** 专指一次执行；"agent" 只作为项目名出现。
-- "error" 有两种：**ERROR text** 是回灌给模型的文本；异常（throw）只出现在 Tool 之外的宿主代码里。
+- "error" 有两种：**ERROR text** 是回灌给模型的失败文本，成败另有宿主侧 `isError`；异常（throw）是宿主代码的错误路径，工具抛出的异常会先被 **Tool registry** 折成文本，只有不可恢复的 `ProcessCleanupError` 继续上抛。
 - "full access" 不是 "sandbox"：**Full access** 是「不再自己施加限制」；**Sandbox** 是操作系统级隔离，本仓库没有实现。
 - "log" 有两种：**Run log** 是 TUI 给人看的滚动记录；**Transcript** 是模型记忆。两者不互为副本，也不要求同步。
