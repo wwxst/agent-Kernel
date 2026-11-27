@@ -12,16 +12,18 @@
  *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填（只认对象自身字段）、类型不对、
  *     工具抛任何东西，一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
  *   - 未知参数：声明 `strictArguments` 的工具拒绝并列出可用参数；未声明的仍按老规矩忽略。
+ *   - 真实 shell：前台非零退出 / 超时是 `isError:true`、内容原文不变，后台启动不是失败。
  *   - 注册体检：工具基本形状、重名、`array` / `object` 参数、非法 schema、`required` 未声明、缺类型。
  *
- * 模块关系：依赖 `src/protocol/errors.ts`、`test/support/harness.mjs` 与 `node:test`，
- * 由 `npm test` 启动。
+ * 模块关系：依赖 `src/protocol/errors.ts`、`src/tools/workspace.ts`、`test/support/harness.mjs` 与
+ * `node:test`，由 `npm test` 启动。
  */
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProcessCleanupError } from "../src/protocol/errors.ts";
 import { ToolRegistry } from "../src/core/tool-registry.ts";
-import { echoTool, makeRegistry } from "./support/harness.mjs";
+import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
+import { echoTool, makeRegistry, withWorkspace } from "./support/harness.mjs";
 
 /** 构造一次工具调用（ToolCall 的线上形状）。 */
 function call(name, rawArguments = "{}", id = "call_1") {
@@ -98,6 +100,40 @@ test("executeWithStatus：文件正文以 ERROR: 开头仍是成功结果", asyn
   const outcome = await registry.executeWithStatus(call("read"));
   assert.deepEqual(outcome, { content: "ERROR: this is literal file content", isError: false });
   assert.equal((await registry.executeWithStatus(call("missing"))).isError, true);
+});
+
+test("executeWithStatus：前台 shell 非零退出与超时是失败，后台启动不是失败", async () => {
+  await withWorkspace(async (dir) => {
+    const registry = new ToolRegistry(createWorkspaceTools(new Workspace({ root: dir })));
+
+    const ok = await registry.executeWithStatus(call("shell", JSON.stringify({ command: "echo ok" })));
+    assert.equal(ok.isError, false);
+    assert.ok(ok.content.startsWith("exit 0"), ok.content);
+
+    const failed = await registry.executeWithStatus(call("shell", JSON.stringify({
+      command: `node -e "console.log('boom'); process.exitCode = 3"`,
+    })));
+    assert.equal(failed.isError, true);
+    assert.ok(failed.content.startsWith("exit 3"), failed.content);
+    assert.equal(failed.content.split("\n")[1], "boom");
+
+    const timedOut = await registry.executeWithStatus(call("shell", JSON.stringify({
+      command: `node -e "setTimeout(()=>{}, 5000)"`,
+      timeout: 1000,
+    })));
+    assert.equal(timedOut.isError, true);
+    assert.ok(timedOut.content.split("\n")[0].startsWith("timeout after"), timedOut.content);
+
+    const started = await registry.executeWithStatus(call("shell", JSON.stringify({
+      command: `node -e "setInterval(()=>{}, 1000)"`,
+      background: true,
+    })));
+    assert.equal(started.isError, false);
+    const jobId = /started (job-\d+)/.exec(started.content)?.[1];
+    assert.ok(jobId, started.content);
+    const killed = await registry.executeWithStatus(call("shell-kill", JSON.stringify({ job_id: jobId })));
+    assert.equal(killed.isError, false, killed.content);
+  });
 });
 
 test("execute：命中工具就执行它", async () => {

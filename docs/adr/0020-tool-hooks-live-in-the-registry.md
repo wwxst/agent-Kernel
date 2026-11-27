@@ -1,7 +1,7 @@
-# ADR-0020：Hook 挂在 ToolRegistry.execute 上，不挂在 Agent 循环里
+# ADR-0020：Hook 挂在 ToolRegistry.executeWithStatus 上，不挂在 Agent 循环里
 
 - 状态：已采纳（2026-11-13）
-- 影响范围：`src/core/tool-hooks.ts`（新增）、`src/core/tool-registry.ts`、`ToolRegistry` 的构造函数
+- 影响范围：`src/core/tool-hooks.ts`（新增）、`src/core/tool-registry.ts`（`executeWithStatus()` 与 `ToolRegistry` 的构造函数）
 
 ## 背景
 
@@ -13,16 +13,29 @@
 
 ## 决定
 
-Hook 挂**工具执行的唯一入口** `ToolRegistry.execute()`，围着 `tool.run()` 前后触发：
+Hook 挂**工具执行的唯一入口** `ToolRegistry.executeWithStatus()`，围着 `tool.run()` 前后触发：
 
 ```
-execute(): 找工具 → 解析参数 → 校验参数 → PreToolUse → tool.run() → PostToolUse
-                                                        ↘ 抛错 → PostToolUseFailure
+executeWithStatus(): 找工具 → 解析参数 → 校验参数 → PreToolUse → tool.run()
+                                                              ├─ isError:false → PostToolUse
+                                                              └─ isError:true  → PostToolUseFailure(new Error(content))
+                                                              ↘ 抛错 → PostToolUseFailure(原始错误)
 ```
 
 - `ToolRegistry` 构造函数多一个可选参数 `hooks: ToolHooks`；不传就是空执行器，行为与以前完全一致。
 - `ToolHooks`（`src/core/tool-hooks.ts`）自己管登记顺序、执行、故障隔离，不认识任何具体工具。
-- `Agent` 主循环一行未改：它调用的仍然是 `this.tools.execute(call)`。
+- `Agent` 主循环调用的是 `executeWithStatus()`，因此宿主侧始终能拿到 `isError`；`execute()` 只是只返回文本的兼容包装，留给旧调用方。
+
+## 两种失败通知
+
+失败事件有两条来源，交给 Hook 的错误对象不同：
+
+- **工具抛出错误**：折成 `ERROR: ...` 文本回灌模型，同时把**原始错误对象**原样交给 `PostToolUseFailure`。Hook 能读到真实异常类型（例如 `ProcessCleanupError`），而不是折过的字符串。
+- **工具返回结构化失败 `{ isError:true }`**：结果文本本身已经是失败原因（例如前台 `shell` 的 `exit 3`），没有原始异常对象，因此用 `new Error(content)` 合成一个错误交给 Hook。Hook 拿到的 `error.message` 与模型读到的结果原文逐字一致。
+
+## Hook 自己的失败
+
+Hook 拿到的是副本；`structuredClone` 构造副本失败也计为一次 Hook 故障（`failureCount++`），不改变工具结果、不改变 Transcript（F-001）。前置 Hook 的其它失败仍然 fail-closed，后置 Hook 的其它失败仍然 fail-open。
 
 ## 为什么不挂在 Agent 循环里
 

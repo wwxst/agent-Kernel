@@ -4,6 +4,8 @@
  * 这里最关键的一条规矩：工具出错不许让程序崩，只能变成一句「错误：原因」交回去。
  * 区别在哪：崩了，整轮就结束，用户得从头再来；交回一句话，模型下一轮读到它，
  * 就能自己换个路径、换个参数再试 —— 这才是它该有的样子。
+ * 一次调用成没成，只有一个宿主侧事实：`ToolExecutionResult.isError`。它由
+ * `executeWithStatus()` 产出，`execute()` 只把内容交出去，不再让调用方从文本里猜。
  *
  * 文件职责：负责工具查找、注册时体检、参数校验、执行、把失败折成文本，
  * 以及围着 `tool.run()` 触发三个 Hook 事件（`PreToolUse` / `PostToolUse` / `PostToolUseFailure`）。
@@ -13,8 +15,10 @@
  * 内容目录：
  *   - `ToolRegistry`：注册表本体，构造时先挡掉形状不合格的工具，再挡掉重名与不支持的 Schema。
  *   - `ToolRegistry.definitions`：发给模型的说明书副本，没有执行函数，也不能改写注册后的校验规则。
- *   - `ToolRegistry.execute()`：按名字执行一次调用，四个失败分支全部折成 `ERROR:` 文本；
- *     参数过关之后围着 `tool.run()` 依次触发三个 Hook 事件。
+ *   - `ToolRegistry.executeWithStatus()`：**唯一权威的执行入口**，按名字执行一次调用并返回宿主侧
+ *     `{ content, isError }`；四个失败分支全部折成 `ERROR:` 文本，结构化失败（`isError:true`）
+ *     用 `Error(content)` 通知 `PostToolUseFailure`，工具抛出的错误则把原始错误对象交给 Hook。
+ *   - `ToolRegistry.execute()`：兼容旧调用方的包装层，只返回 `content`，把 `isError` 丢掉。
  *   - 内部：`assertToolShape()` 注册时先查基本形状（对象、非空名字、description、run）、
  *     `assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
  *     共用的一套字段体检、`validateArguments()` 按 Schema 校验参数（并对声明了
@@ -235,20 +239,31 @@ export class ToolRegistry {
   }
 
   /**
-   * 工具箱方法 execute（执行工具）：按名字执行一次工具调用。
+   * 工具箱方法 execute（执行工具）：按名字执行一次工具调用，只返回文本。
    *
-   * 普通工具失败折成 ERROR 文本，让模型继续纠正；但进程树清理未确认时，
-   * 后代进程可能还在产生副作用，必须抛 ProcessCleanupError 阻断后续工具。
-   *
-   * 这里是**唯一**的执行入口，所以 Hook 也只需要挂在这里：所有工具自动经过它，
-   * 不用逐个工具接线（见 `docs/adr/0020-tool-hooks-live-in-the-registry.md`）。
+   * 这是**兼容包装**：它丢掉 `executeWithStatus()` 给出的宿主侧 `isError`，
+   * 失败与否只剩文本可看。需要知道这次调用成没成的宿主代码，一律用 `executeWithStatus()`。
    */
-  /** 兼容旧调用方的文本接口；Agent 使用 executeWithStatus 保留明确的错误状态。 */
   async execute(call: ToolCall): Promise<string> {
     return (await this.executeWithStatus(call)).content;
   }
 
-  /** 执行工具并返回宿主侧状态；isError 不进入发给模型的 Message。 */
+  /**
+   * 工具箱方法 executeWithStatus（带状态执行）：**唯一权威的执行入口**。
+   *
+   * 普通工具失败折成 ERROR 文本，让模型继续纠正；但进程树清理未确认时，
+   * 后代进程可能还在产生副作用，必须抛 ProcessCleanupError 阻断后续工具。
+   *
+   * 返回值里的 `isError` 是宿主侧唯一的失败信号，不会序列化进发给模型的 Message。
+   * 通知 Hook 时分两条路，不能混：
+   *   - 工具正常返回 `{ isError: true }`（例如前台 shell 非零退出）：这是结构化失败，
+   *     没有原始异常对象，用 `new Error(content)` 把结果原文交给 `PostToolUseFailure`；
+   *   - 工具抛出错误：折成 `ERROR:` 文本回灌模型，同时把**原始错误对象**交给 Hook，
+   *     Hook 看到的不是折过的文本（`ProcessCleanupError` 在通知之后仍原样抛出）。
+   *
+   * 这里是唯一的执行入口，所以 Hook 也只需要挂在这里：所有工具自动经过它，
+   * 不用逐个工具接线（见 `docs/adr/0020-tool-hooks-live-in-the-registry.md`）。
+   */
   async executeWithStatus(call: ToolCall): Promise<ToolExecutionResult> {
     const failed = (content: string): ToolExecutionResult => ({ content, isError: true });
     const name = call.function.name;

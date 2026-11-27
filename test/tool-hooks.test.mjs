@@ -15,6 +15,7 @@
  *   - 边界：未知工具、坏 JSON、参数不合法不触发任何事件；`ProcessCleanupError` 先通知再照旧抛出；
  *     没有登记 Hook 时行为与以前一致。
  *   - 接入面：九个内置工具全部经过同一个入口；一次完整 `Agent.run` 的 Transcript 不受 Hook 影响。
+ *   - 真实 shell：非零退出只走 `PostToolUseFailure`，错误消息就是未改动的结果原文；成功只走 `PostToolUse`。
  *
  * 模块关系：依赖 `src/core/tool-hooks.ts`、`src/core/tool-registry.ts`、`src/tools/workspace.ts`、
  * `src/protocol/errors.ts`、`test/support/harness.mjs` 与 `node:test`，由 `npm test` 启动。
@@ -369,6 +370,37 @@ test("九个内置工具全部经过同一个入口：每个都触发一次 Pre 
       "pre shell-output", "post shell-output",
       "pre shell-kill", "post shell-kill",
     ]);
+  });
+});
+
+test("真实 shell：非零退出只触发 PostToolUseFailure，成功命令只触发 PostToolUse", async () => {
+  await withWorkspace(async (dir) => {
+    const events = [];
+    let failureContext;
+    const registry = new ToolRegistry(createWorkspaceTools(new Workspace({ root: dir })), new ToolHooks({
+      postToolUse: [(context) => {
+        events.push(["post", context.call.function.name, context.result]);
+      }],
+      postToolUseFailure: [(context) => {
+        events.push(["failure", context.call.function.name]);
+        failureContext = context;
+      }],
+    }));
+
+    const failed = await registry.executeWithStatus(call("shell", {
+      command: `node -e "console.log('boom'); process.exitCode = 3"`,
+    }));
+    assert.equal(failed.isError, true);
+    assert.ok(failed.content.startsWith("exit 3"), failed.content);
+
+    const ok = await registry.executeWithStatus(call("shell", { command: "echo ok" }));
+    assert.equal(ok.isError, false);
+
+    assert.deepEqual(events, [["failure", "shell"], ["post", "shell", ok.content]]);
+    // 结构化失败没有原始异常对象：Hook 拿到的是用结果原文合成的 Error，原文一字不改。
+    assert.ok(failureContext.error instanceof Error);
+    assert.equal(failureContext.error.message, failed.content);
+    assert.equal(failed.content.split("\n")[1], "boom");
   });
 });
 
