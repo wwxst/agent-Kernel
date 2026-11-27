@@ -21,6 +21,8 @@ import { createHash } from "node:crypto";
 import { open, readdir } from "node:fs/promises";
 import path from "node:path";
 import { ChatResponseError, describeError } from "../src/protocol/errors.ts";
+import { isToolResultFailure } from "../src/core/tool-result-status.ts";
+import { estimateCost } from "./cost.mjs";
 
 const MAX_TRACKED_FILES = 2_000;
 const MAX_TRACKED_ENTRIES = 5_000;
@@ -28,6 +30,17 @@ const MAX_HASH_BYTES_PER_FILE = 1_000_000;
 const MAX_TOTAL_HASH_BYTES = 20_000_000;
 const SKIP_DIRECTORIES = new Set([".git", "node_modules"]);
 const SECRET_KEY = /(?:api[_-]?key|token|secret|password|authorization|credential)/i;
+const SECRET_VALUE_PATTERNS = [
+  /\b(?:sk-(?:proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|npm_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ya29\.[0-9A-Za-z_-]{20,})\b/g,
+  /\bBearer\s+[A-Za-z0-9._~+/-]{24,}/gi,
+  /(\b(?:api[_-]?key|access[_-]?token|client[_-]?secret|authorization|credential|token|secret|password)\s*[:=]\s*["']?)[^\s"',;]{12,}/gi,
+  /\bBasic\s+[A-Za-z0-9+/=]{16,}/gi,
+];
+
+function sanitizeString(value) {
+  return SECRET_VALUE_PATTERNS.reduce((text, pattern, index) =>
+    text.replace(pattern, index === 2 ? "$1[REDACTED]" : "[REDACTED]"), value);
+}
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -45,13 +58,13 @@ function sanitizeValue(value, key = "", depth = 0) {
   if (SECRET_KEY.test(key)) return "[REDACTED]";
 
   if (typeof value === "string") {
-    if (value.length <= 512) return value;
+    if (value.length <= 512) return sanitizeString(value);
     return {
       type: "string",
       chars: value.length,
       bytes: Buffer.byteLength(value),
       sha256: hash(value),
-      preview: value.slice(0, 120) + "…",
+      preview: sanitizeString(value.slice(0, 120)) + "…",
     };
   }
 
@@ -218,14 +231,15 @@ function diffSnapshots(before, after) {
  * 包装一次评测任务使用的 Llm 与 ToolRegistry。
  * 包装器保留原始模型/工具返回值；诊断失败单独记账，不改变任务结果。
  */
-export async function createEvalDiagnostics({ llm, tools, workdir }) {
+export async function createEvalDiagnostics({ llm, tools, workdir, model, pricing }) {
   const startedAt = performance.now();
   const initialSnapshot = await snapshotFiles(workdir);
   let previousSnapshot = initialSnapshot;
   let currentRequestIndex = 0;
 
   const trace = {
-    version: 1,
+    version: 2,
+    model: model ?? null,
     requests: [],
     toolCalls: [],
     fileChanges: [],
@@ -236,28 +250,40 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
   const eventsByCallId = new Map();
   const noteDiagnosticError = (error) => {
     try {
-      trace.diagnosticsErrors.push(describeError(error).slice(0, 500));
+      trace.diagnosticsErrors.push(sanitizeString(describeError(error)).slice(0, 500));
     } catch {
       // 诊断记账自身失败也不能改变任务行为。
     }
   };
 
   const observedLlm = {
-    async chat(messages, definitions) {
+    async chat(messages, definitions, options) {
       const index = trace.requests.length + 1;
       currentRequestIndex = index;
       const requestStarted = performance.now();
+      const messageCharsByRole = Object.create(null);
+      for (const message of messages) {
+        const role = typeof message?.role === "string" ? message.role : "unknown";
+        messageCharsByRole[role] = (messageCharsByRole[role] ?? 0) + safeJsonLength(message);
+      }
+      const messageChars = messages.reduce((total, message) => total + safeJsonLength(message), 0);
+      const systemPromptChars = messageCharsByRole.system ?? 0;
       const entry = {
         index,
         taskElapsedMs: Math.round(performance.now() - startedAt),
         requestDurationMs: null,
         messageCount: messages.length,
-        messageChars: messages.reduce((total, message) => total + safeJsonLength(message), 0),
+        messageChars,
+        messageCharsByRole,
+        systemPromptChars,
+        conversationChars: Math.max(0, messageChars - systemPromptChars),
         toolCount: definitions.length,
         toolDefinitionChars: safeJsonLength(definitions),
         promptTokens: null,
         completionTokens: null,
         totalTokens: null,
+        cachedPromptTokens: null,
+        cacheUsageKnown: false,
         usageKnown: false,
       };
 
@@ -266,7 +292,18 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
         entry.promptTokens = usage.prompt_tokens;
         entry.completionTokens = usage.completion_tokens;
         entry.totalTokens = usage.total_tokens;
+        entry.cachedPromptTokens = usage.cached_prompt_tokens ?? null;
+        entry.cacheUsageKnown = usage.cached_prompt_tokens !== undefined;
         entry.usageKnown = true;
+        if (pricing !== undefined && model !== undefined) {
+          entry.estimatedCost = estimateCost({
+            promptTokens: usage.prompt_tokens,
+            completionTokens: usage.completion_tokens,
+            cachedPromptTokens: usage.cached_prompt_tokens ?? 0,
+            cacheUsageUnknown: usage.cached_prompt_tokens === undefined ? 1 : 0,
+            unknown: 0,
+          }, pricing, model);
+        }
         const previous = [...trace.requests].reverse().find((request) => request.usageKnown);
         if (previous) {
           entry.promptTokenDelta = usage.prompt_tokens - previous.promptTokens;
@@ -275,7 +312,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
       };
 
       try {
-        const response = await llm.chat(messages, definitions);
+        const response = await llm.chat(messages, definitions, options);
         recordUsage(response?.usage);
         entry.taskElapsedMs = Math.round(performance.now() - startedAt);
         entry.requestDurationMs = Math.round(performance.now() - requestStarted);
@@ -285,7 +322,7 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
         recordUsage(error instanceof ChatResponseError ? error.usage : undefined);
         entry.taskElapsedMs = Math.round(performance.now() - startedAt);
         entry.requestDurationMs = Math.round(performance.now() - requestStarted);
-        entry.error = describeError(error).slice(0, 500);
+        entry.error = sanitizeString(describeError(error)).slice(0, 500);
         trace.requests.push(entry);
         throw error;
       }
@@ -347,8 +384,10 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
       if (!event) return;
       event.resultChars = result.length;
       event.resultBytes = Buffer.byteLength(result);
-      event.resultKind = isError ? "error" : "text";
-      if (event.resultKind === "error") event.resultPreview = result.slice(0, 200);
+      // 与 CLI / TUI / tool-log 共用同一套判定：Shell 的非零退出、超时和取消都以文本
+      // 返回，宿主侧 isError 是 false；只看 isError 会把最常见的失败记成成功。
+      event.resultKind = isToolResultFailure(call, result, isError) ? "error" : "text";
+      if (event.resultKind === "error") event.resultPreview = sanitizeString(result.slice(0, 200));
       if (queue.length === 0) eventsByCallId.delete(call.id);
     } catch (error) {
       noteDiagnosticError(error);
@@ -365,6 +404,33 @@ export async function createEvalDiagnostics({ llm, tools, workdir }) {
     trace.fileChanges = diffSnapshots(initialSnapshot, finalSnapshot);
     trace.snapshotCoverage.final = finalSnapshot.coverage;
     trace.elapsedMs = Math.round(performance.now() - startedAt);
+    const toolGroups = new Map();
+    for (const event of trace.toolCalls) {
+      const group = toolGroups.get(event.name) ?? {
+        calls: 0, errors: 0, executionMs: 0, observationMs: 0, resultChars: 0,
+      };
+      group.calls++;
+      if (event.resultKind === "error") group.errors++;
+      group.executionMs += event.executionMs;
+      group.observationMs += event.observationMs;
+      group.resultChars += event.resultChars ?? 0;
+      toolGroups.set(event.name, group);
+    }
+    trace.summary = {
+      requests: trace.requests.length,
+      requestDurationMs: trace.requests.reduce((total, item) => total + (item.requestDurationMs ?? 0), 0),
+      promptTokens: trace.requests.reduce((total, item) => total + (item.promptTokens ?? 0), 0),
+      completionTokens: trace.requests.reduce((total, item) => total + (item.completionTokens ?? 0), 0),
+      totalTokens: trace.requests.reduce((total, item) => total + (item.totalTokens ?? 0), 0),
+      cachedPromptTokens: trace.requests.reduce((total, item) => total + (item.cachedPromptTokens ?? 0), 0),
+      usageUnknown: trace.requests.filter((item) => !item.usageKnown).length,
+      cacheUsageUnknown: trace.requests.filter((item) => item.usageKnown && !item.cacheUsageKnown).length,
+      toolCalls: trace.toolCalls.length,
+      toolErrors: trace.toolCalls.filter((item) => item.resultKind === "error").length,
+      toolExecutionMs: trace.toolCalls.reduce((total, item) => total + item.executionMs, 0),
+      toolObservationMs: trace.toolCalls.reduce((total, item) => total + item.observationMs, 0),
+      tools: Object.fromEntries(toolGroups),
+    };
     return trace;
   }
 

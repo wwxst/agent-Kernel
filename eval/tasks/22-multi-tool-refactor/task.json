@@ -1,0 +1,6 @@
+{
+  "maxSteps": 30,
+  "maxToolCalls": 60,
+  "maxTotalTokens": 30000,
+  "tags": ["multi-tool", "test-driven-fix", "validation"]
+}

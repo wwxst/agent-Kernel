@@ -273,8 +273,11 @@ test("流式：累计响应字节超限时拒绝，注释和未换行内容也�
 });
 
 /** 用一条 message（外加默认的 finish_reason）跑一次 chat。 */
-async function chatWith(message, finishReason = "stop") {
-  const payload = { choices: [{ index: 0, message, finish_reason: finishReason }] };
+async function chatWith(message, finishReason = "stop", usage) {
+  const payload = {
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    ...(usage === undefined ? {} : { usage }),
+  };
   const server = await respondWith(payload);
   try {
     return await clientFor(server.url).chat([], []);
@@ -325,15 +328,73 @@ test("chat：合法响应被归一化，只保留协议字段", async () => {
 test("chat：保留 usage，字段原样归一化", async () => {
   const payload = {
     choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
-    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, cache_hit_tokens: 0 },
+    usage: {
+      prompt_tokens: 11, completion_tokens: 7, total_tokens: 18,
+      prompt_tokens_details: { cached_tokens: 4 }, cache_hit_tokens: 0,
+    },
   };
   const server = await respondWith(payload);
   try {
     const result = await clientFor(server.url).chat([], []);
-    assert.deepEqual(result.usage, { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 });
+    assert.deepEqual(result.usage, {
+      prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, cached_prompt_tokens: 4,
+    });
   } finally {
     await server.close();
   }
+});
+
+test("chat：缓存 Token 支持 OpenAI 兼容字段和厂商缓存命中字段", async () => {
+  const nested = await chatWith(
+    { role: "assistant", content: "ok" },
+    "stop",
+    { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22, prompt_tokens_details: { cached_tokens: 7 } },
+  );
+  assert.equal(nested.usage.cached_prompt_tokens, 7);
+
+  const provider = await chatWith(
+    { role: "assistant", content: "ok" },
+    "stop",
+    { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22, prompt_cache_hit_tokens: 9 },
+  );
+  assert.equal(provider.usage.cached_prompt_tokens, 9);
+
+  const fallback = await chatWith(
+    { role: "assistant", content: "ok" },
+    "stop",
+    { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22, prompt_tokens_details: {}, prompt_cache_hit_tokens: 6 },
+  );
+  assert.equal(fallback.usage.cached_prompt_tokens, 6);
+});
+
+test("chat：缓存 Token 字段存在但类型错误必须拒绝", async () => {
+  const payload = {
+    choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+    usage: {
+      prompt_tokens: 10, completion_tokens: 1, total_tokens: 11,
+      prompt_tokens_details: { cached_tokens: "4" },
+    },
+  };
+  const server = await respondWith(payload);
+  try {
+    await assert.rejects(
+      () => clientFor(server.url).chat([], []),
+      /usage\.cached_tokens must be a non-negative integer/,
+    );
+  } finally {
+    await server.close();
+  }
+});
+
+test("chat：缓存 Token 不能大于输入 Token", async () => {
+  await assert.rejects(
+    () => chatWith(
+      { role: "assistant", content: "ok" },
+      "stop",
+      { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11, prompt_tokens_details: { cached_tokens: 12 } },
+    ),
+    /usage\.cached_tokens cannot exceed usage\.prompt_tokens/,
+  );
 });
 
 test("chat：没有 usage 时是未知，不是 0", async () => {
