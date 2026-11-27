@@ -22,7 +22,7 @@ npm run eval:check           # 自检：不需要 API Key
 npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
-需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前评测套件为 `2026-11-27-eval-system-v6`，尚未建立新的真实模型基线，不能把旧套件的成绩当作 v6 的成绩。
+需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前评测套件为 `2026-11-27-eval-system-v6`，已有三轮真实模型基线（提交 `dfcaf8a`、`hy3`、22 个任务、并发 4）：63/66（95.5%），中位数 147 次请求 / 652,130 tokens / 112.6 秒。原始记录归档在 [`baselines/2026-11-27-eval-system-v6/`](./baselines/2026-11-27-eval-system-v6/)，逐轮数字见 [baseline.md](./baseline.md)；不能把旧套件的成绩当作 v6 的成绩。
 
 上一套件 `2026-11-19-checkers-v2` 的历史基线固定在同一提交 `76a024a`、同一模型 `hy3`：三轮 57/60（每轮 19/20），中位数 132 次请求 / 542,515 tokens / 79.5 秒。它是**上一套件的历史基线**，不能和 v6 的结果混算；旧套件的 6 轮 120/120 属于不同提交，同样不能混算。详见 [baseline.md](./baseline.md)，其中旧套件的结果不代表当前代码。
 

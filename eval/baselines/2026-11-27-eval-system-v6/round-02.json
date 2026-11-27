@@ -1,0 +1,975 @@
+{
+  "at": "2026-11-27T14:45:57.570Z",
+  "suiteVersion": "2026-11-27-eval-system-v6",
+  "model": "hy3",
+  "commit": "dfcaf8ace91874c2fff6137e9b6e75715c9ff444",
+  "runId": "ce6df44b-60cc-47ff-9f9c-ec69345fedf9",
+  "startedAt": "2026-11-27T14:44:15.191Z",
+  "branch": "review/pr62-ci",
+  "workingTreeClean": true,
+  "endpointHost": "127.0.0.1:8788",
+  "environment": {
+    "node": "v24.20.0",
+    "platform": "win32",
+    "arch": "x64",
+    "osRelease": "10.0.26300",
+    "timezone": "Asia/Shanghai"
+  },
+  "jobs": 4,
+  "taskNames": [
+    "01-add-health-route",
+    "02-fix-failing-test",
+    "03-rename-function",
+    "04-create-doc",
+    "05-extract-constant",
+    "06-guard-missing-file",
+    "07-add-quiet-flag",
+    "08-extract-duplication",
+    "09-update-readme",
+    "10-delete-dead-code",
+    "11-fix-slice-boundary",
+    "12-add-input-validation",
+    "13-callback-to-promise",
+    "14-fix-sort-order",
+    "15-merge-defaults",
+    "16-handle-bad-json",
+    "17-write-missing-test",
+    "18-remove-debug-logs",
+    "19-banned-admin-bug",
+    "20-fix-email-regex",
+    "21-long-context-compaction",
+    "22-multi-tool-refactor"
+  ],
+  "trace": false,
+  "keep": false,
+  "promptSha256": "932d8b7ef256be250ab5dbfd9ca30d6601b7db31c8d63ff703ee8b897511cd1c",
+  "promptChars": 7753,
+  "toolDefinitionsSha256": "a6423b0118358d4d51c40f55a701b45cbf7bb8750ffbaf8f44049f7f176b85ff",
+  "toolDefinitionsChars": 7708,
+  "runtimeSourceSha256": "b5c666e8b7af2a0a2e08e7abab95e4927cc96bc114486d8290a41bbc05072bc6",
+  "evalHarnessSha256": "68e6cb77b56dd2576df2a6144de379541ad0989929bfbd254495841e946ab6a3",
+  "taskSuiteSha256": "9afe512dec91e6cd3255f7e6a84f8248684a214c396d41cce68aa575ccd697d4",
+  "pricingSha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+  "endpointPath": "/v1",
+  "pricing": {
+    "configured": false
+  },
+  "experiment": {
+    "id": null,
+    "variant": null,
+    "factor": "unspecified"
+  },
+  "ok": true,
+  "passed": 22,
+  "total": 22,
+  "elapsed": 102.3,
+  "totals": {
+    "requests": 146,
+    "summaryRequests": 0,
+    "allModelRequests": 146,
+    "toolCalls": 166,
+    "promptTokens": 637855,
+    "completionTokens": 14275,
+    "tokens": 652130,
+    "unknownResponses": 0,
+    "cachedPromptTokens": 602880,
+    "cacheUsageUnknown": 0,
+    "cost": {
+      "currency": null,
+      "amount": null,
+      "complete": false,
+      "pricedTasks": 0,
+      "totalTasks": 22
+    }
+  },
+  "infraErrors": [],
+  "results": [
+    {
+      "name": "01-add-health-route",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 4,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 20012,
+        "completion": 401,
+        "total": 20413,
+        "cachedPromptTokens": 18816,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 12.3
+    },
+    {
+      "name": "02-fix-failing-test",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 5,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 19427,
+        "completion": 239,
+        "total": 19666,
+        "cachedPromptTokens": 18368,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 17.6
+    },
+    {
+      "name": "03-rename-function",
+      "ok": true,
+      "requests": 6,
+      "summaryRequests": 0,
+      "toolCalls": 11,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 24043,
+        "completion": 508,
+        "total": 24551,
+        "cachedPromptTokens": 22656,
+        "cacheUsageReported": 6,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 20.4
+    },
+    {
+      "name": "04-create-doc",
+      "ok": true,
+      "requests": 4,
+      "summaryRequests": 0,
+      "toolCalls": 7,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 15541,
+        "completion": 611,
+        "total": 16152,
+        "cachedPromptTokens": 14784,
+        "cacheUsageReported": 4,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 12.7
+    },
+    {
+      "name": "05-extract-constant",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 4,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 19866,
+        "completion": 498,
+        "total": 20364,
+        "cachedPromptTokens": 18816,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 13.9
+    },
+    {
+      "name": "06-guard-missing-file",
+      "ok": true,
+      "requests": 9,
+      "summaryRequests": 0,
+      "toolCalls": 9,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 36952,
+        "completion": 656,
+        "total": 37608,
+        "cachedPromptTokens": 35200,
+        "cacheUsageReported": 9,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 22.5
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "ok": true,
+      "requests": 4,
+      "summaryRequests": 0,
+      "toolCalls": 3,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 15179,
+        "completion": 427,
+        "total": 15606,
+        "cachedPromptTokens": 14464,
+        "cacheUsageReported": 4,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 9.4
+    },
+    {
+      "name": "08-extract-duplication",
+      "ok": true,
+      "requests": 7,
+      "summaryRequests": 0,
+      "toolCalls": 6,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 28427,
+        "completion": 569,
+        "total": 28996,
+        "cachedPromptTokens": 26880,
+        "cacheUsageReported": 7,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 16.8
+    },
+    {
+      "name": "09-update-readme",
+      "ok": true,
+      "requests": 4,
+      "summaryRequests": 0,
+      "toolCalls": 4,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 15397,
+        "completion": 246,
+        "total": 15643,
+        "cachedPromptTokens": 14848,
+        "cacheUsageReported": 4,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 8.2
+    },
+    {
+      "name": "10-delete-dead-code",
+      "ok": true,
+      "requests": 8,
+      "summaryRequests": 0,
+      "toolCalls": 17,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 33848,
+        "completion": 882,
+        "total": 34730,
+        "cachedPromptTokens": 31744,
+        "cacheUsageReported": 8,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 18.9
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "ok": true,
+      "requests": 6,
+      "summaryRequests": 0,
+      "toolCalls": 5,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 22810,
+        "completion": 442,
+        "total": 23252,
+        "cachedPromptTokens": 21760,
+        "cacheUsageReported": 6,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 14.4
+    },
+    {
+      "name": "12-add-input-validation",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 5,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 19090,
+        "completion": 372,
+        "total": 19462,
+        "cachedPromptTokens": 17664,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 11.6
+    },
+    {
+      "name": "13-callback-to-promise",
+      "ok": true,
+      "requests": 14,
+      "summaryRequests": 0,
+      "toolCalls": 14,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 60601,
+        "completion": 1580,
+        "total": 62181,
+        "cachedPromptTokens": 58112,
+        "cacheUsageReported": 14,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 36.5
+    },
+    {
+      "name": "14-fix-sort-order",
+      "ok": true,
+      "requests": 6,
+      "summaryRequests": 0,
+      "toolCalls": 5,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 22654,
+        "completion": 258,
+        "total": 22912,
+        "cachedPromptTokens": 21760,
+        "cacheUsageReported": 6,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 12
+    },
+    {
+      "name": "15-merge-defaults",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 4,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 18905,
+        "completion": 277,
+        "total": 19182,
+        "cachedPromptTokens": 17984,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 10.1
+    },
+    {
+      "name": "16-handle-bad-json",
+      "ok": true,
+      "requests": 10,
+      "summaryRequests": 0,
+      "toolCalls": 9,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 40805,
+        "completion": 826,
+        "total": 41631,
+        "cachedPromptTokens": 38656,
+        "cacheUsageReported": 10,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 21.1
+    },
+    {
+      "name": "17-write-missing-test",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 5,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 19246,
+        "completion": 323,
+        "total": 19569,
+        "cachedPromptTokens": 18432,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 10.6
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 4,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 19022,
+        "completion": 315,
+        "total": 19337,
+        "cachedPromptTokens": 18240,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 10
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "ok": true,
+      "requests": 9,
+      "summaryRequests": 0,
+      "toolCalls": 8,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 38997,
+        "completion": 1001,
+        "total": 39998,
+        "cachedPromptTokens": 36992,
+        "cacheUsageReported": 9,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 22.6
+    },
+    {
+      "name": "20-fix-email-regex",
+      "ok": true,
+      "requests": 7,
+      "summaryRequests": 0,
+      "toolCalls": 6,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 200000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": []
+      },
+      "tokens": {
+        "prompt": 27851,
+        "completion": 1036,
+        "total": 28887,
+        "cachedPromptTokens": 26112,
+        "cacheUsageReported": 7,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 30.8
+    },
+    {
+      "name": "21-long-context-compaction",
+      "ok": true,
+      "requests": 12,
+      "summaryRequests": 0,
+      "toolCalls": 26,
+      "settings": {
+        "maxSteps": 40,
+        "maxToolCalls": 80,
+        "maxTotalTokens": 120000,
+        "contextWindowTokens": 32768,
+        "outputTokenReserve": 1024,
+        "maxTranscriptChars": 120000,
+        "tags": [
+          "long-context",
+          "multi-file-read"
+        ]
+      },
+      "tokens": {
+        "prompt": 98162,
+        "completion": 1839,
+        "total": 100001,
+        "cachedPromptTokens": 91008,
+        "cacheUsageReported": 12,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 31.7
+    },
+    {
+      "name": "22-multi-tool-refactor",
+      "ok": true,
+      "requests": 5,
+      "summaryRequests": 0,
+      "toolCalls": 5,
+      "settings": {
+        "maxSteps": 30,
+        "maxToolCalls": 60,
+        "maxTotalTokens": 30000,
+        "contextWindowTokens": null,
+        "outputTokenReserve": 8192,
+        "maxTranscriptChars": 120000,
+        "tags": [
+          "multi-tool",
+          "test-driven-fix",
+          "validation"
+        ]
+      },
+      "tokens": {
+        "prompt": 21020,
+        "completion": 969,
+        "total": 21989,
+        "cachedPromptTokens": 19584,
+        "cacheUsageReported": 5,
+        "cacheUsageUnknown": 0,
+        "unknownResponses": 0
+      },
+      "cost": {
+        "currency": null,
+        "amount": null,
+        "complete": false,
+        "reason": "pricing_not_configured"
+      },
+      "compaction": {
+        "compactions": 0,
+        "summaryRequests": 0,
+        "summaryFailures": 0,
+        "archiveFailures": 0,
+        "lastError": ""
+      },
+      "observerFailures": 0,
+      "seconds": 15.7
+    }
+  ]
+}

@@ -1,0 +1,519 @@
+{
+  "suiteVersion": "2026-11-27-eval-system-v6",
+  "model": "hy3",
+  "baseUrl": "http://127.0.0.1:8788/v1",
+  "tasks": 22,
+  "jobs": 4,
+  "command": "npm run eval -- --jobs 4",
+  "commits": [
+    "dfcaf8ace91874c2fff6137e9b6e75715c9ff444"
+  ],
+  "rounds": 3,
+  "generatedAt": "2026-11-27T14:49:16.101Z",
+  "overall": {
+    "taskAttempts": 66,
+    "taskPasses": 63,
+    "passRate": 95.5
+  },
+  "medians": {
+    "requests": 147,
+    "toolCalls": 166,
+    "prompt": 637855,
+    "completion": 14275,
+    "tokens": 652130,
+    "elapsed": 112.6
+  },
+  "tokenRange": {
+    "min": 637964,
+    "max": 706678
+  },
+  "perRound": [
+    {
+      "round": 1,
+      "at": "2026-11-27T14:44:11.337Z",
+      "commit": "dfcaf8ace91874c2fff6137e9b6e75715c9ff444",
+      "passed": 20,
+      "total": 22,
+      "requests": 147,
+      "toolCalls": 158,
+      "prompt": 625501,
+      "completion": 12463,
+      "tokens": 637964,
+      "unknown": 0,
+      "elapsed": 112.6,
+      "busy": 428.6,
+      "failures": [
+        "04-create-doc",
+        "08-extract-duplication"
+      ]
+    },
+    {
+      "round": 2,
+      "at": "2026-11-27T14:45:57.570Z",
+      "commit": "dfcaf8ace91874c2fff6137e9b6e75715c9ff444",
+      "passed": 22,
+      "total": 22,
+      "requests": 146,
+      "toolCalls": 166,
+      "prompt": 637855,
+      "completion": 14275,
+      "tokens": 652130,
+      "unknown": 0,
+      "elapsed": 102.3,
+      "busy": 379.8,
+      "failures": []
+    },
+    {
+      "round": 3,
+      "at": "2026-11-27T14:48:13.957Z",
+      "commit": "dfcaf8ace91874c2fff6137e9b6e75715c9ff444",
+      "passed": 21,
+      "total": 22,
+      "requests": 163,
+      "toolCalls": 176,
+      "prompt": 691805,
+      "completion": 14873,
+      "tokens": 706678,
+      "unknown": 0,
+      "elapsed": 132.5,
+      "busy": 458.3,
+      "failures": [
+        "04-create-doc"
+      ]
+    }
+  ],
+  "perTask": [
+    {
+      "name": "01-add-health-route",
+      "requests": [
+        5,
+        5,
+        5
+      ],
+      "tokens": [
+        20480,
+        20413,
+        20806
+      ],
+      "medianTokens": 20480,
+      "minTokens": 20413,
+      "maxTokens": 20806,
+      "spread": 1.02,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "02-fix-failing-test",
+      "requests": [
+        5,
+        5,
+        5
+      ],
+      "tokens": [
+        19654,
+        19666,
+        19672
+      ],
+      "medianTokens": 19666,
+      "minTokens": 19654,
+      "maxTokens": 19672,
+      "spread": 1,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "03-rename-function",
+      "requests": [
+        5,
+        6,
+        6
+      ],
+      "tokens": [
+        20185,
+        24551,
+        25284
+      ],
+      "medianTokens": 24551,
+      "minTokens": 20185,
+      "maxTokens": 25284,
+      "spread": 1.25,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "04-create-doc",
+      "requests": [
+        4,
+        4,
+        6
+      ],
+      "tokens": [
+        16072,
+        16152,
+        25255
+      ],
+      "medianTokens": 16152,
+      "minTokens": 16072,
+      "maxTokens": 25255,
+      "spread": 1.57,
+      "passes": 1,
+      "failures": [
+        {
+          "failure": "check",
+          "error": "命令列必须写完整 npm 命令，例如 npm test 或 npm run lint"
+        },
+        {
+          "failure": "check",
+          "error": "命令列必须写完整 npm 命令，例如 npm test 或 npm run lint"
+        }
+      ]
+    },
+    {
+      "name": "05-extract-constant",
+      "requests": [
+        8,
+        5,
+        11
+      ],
+      "tokens": [
+        32504,
+        20364,
+        45377
+      ],
+      "medianTokens": 32504,
+      "minTokens": 20364,
+      "maxTokens": 45377,
+      "spread": 2.23,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "06-guard-missing-file",
+      "requests": [
+        12,
+        9,
+        10
+      ],
+      "tokens": [
+        54726,
+        37608,
+        41609
+      ],
+      "medianTokens": 41609,
+      "minTokens": 37608,
+      "maxTokens": 54726,
+      "spread": 1.46,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "07-add-quiet-flag",
+      "requests": [
+        4,
+        4,
+        5
+      ],
+      "tokens": [
+        15448,
+        15606,
+        19474
+      ],
+      "medianTokens": 15606,
+      "minTokens": 15448,
+      "maxTokens": 19474,
+      "spread": 1.26,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "08-extract-duplication",
+      "requests": [
+        9,
+        7,
+        7
+      ],
+      "tokens": [
+        41104,
+        28996,
+        29067
+      ],
+      "medianTokens": 29067,
+      "minTokens": 28996,
+      "maxTokens": 41104,
+      "spread": 1.42,
+      "passes": 2,
+      "failures": [
+        {
+          "failure": "check",
+          "error": "共享校验中的类型、空字符串、最大长度三种规则都必须只实现一次\n\n0 !== 1\n"
+        }
+      ]
+    },
+    {
+      "name": "09-update-readme",
+      "requests": [
+        4,
+        4,
+        5
+      ],
+      "tokens": [
+        15559,
+        15643,
+        19856
+      ],
+      "medianTokens": 15643,
+      "minTokens": 15559,
+      "maxTokens": 19856,
+      "spread": 1.28,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "10-delete-dead-code",
+      "requests": [
+        7,
+        8,
+        22
+      ],
+      "tokens": [
+        28533,
+        34730,
+        101344
+      ],
+      "medianTokens": 34730,
+      "minTokens": 28533,
+      "maxTokens": 101344,
+      "spread": 3.55,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "11-fix-slice-boundary",
+      "requests": [
+        5,
+        6,
+        7
+      ],
+      "tokens": [
+        19377,
+        23252,
+        28252
+      ],
+      "medianTokens": 23252,
+      "minTokens": 19377,
+      "maxTokens": 28252,
+      "spread": 1.46,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "12-add-input-validation",
+      "requests": [
+        5,
+        5,
+        7
+      ],
+      "tokens": [
+        19310,
+        19462,
+        27750
+      ],
+      "medianTokens": 19462,
+      "minTokens": 19310,
+      "maxTokens": 27750,
+      "spread": 1.44,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "13-callback-to-promise",
+      "requests": [
+        12,
+        14,
+        11
+      ],
+      "tokens": [
+        53452,
+        62181,
+        46991
+      ],
+      "medianTokens": 53452,
+      "minTokens": 46991,
+      "maxTokens": 62181,
+      "spread": 1.32,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "14-fix-sort-order",
+      "requests": [
+        5,
+        6,
+        5
+      ],
+      "tokens": [
+        19151,
+        22912,
+        19113
+      ],
+      "medianTokens": 19151,
+      "minTokens": 19113,
+      "maxTokens": 22912,
+      "spread": 1.2,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "15-merge-defaults",
+      "requests": [
+        5,
+        5,
+        6
+      ],
+      "tokens": [
+        19178,
+        19182,
+        23286
+      ],
+      "medianTokens": 19182,
+      "minTokens": 19178,
+      "maxTokens": 23286,
+      "spread": 1.21,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "16-handle-bad-json",
+      "requests": [
+        6,
+        10,
+        6
+      ],
+      "tokens": [
+        23956,
+        41631,
+        23971
+      ],
+      "medianTokens": 23971,
+      "minTokens": 23956,
+      "maxTokens": 41631,
+      "spread": 1.74,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "17-write-missing-test",
+      "requests": [
+        7,
+        5,
+        5
+      ],
+      "tokens": [
+        27286,
+        19569,
+        19445
+      ],
+      "medianTokens": 19569,
+      "minTokens": 19445,
+      "maxTokens": 27286,
+      "spread": 1.4,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "18-remove-debug-logs",
+      "requests": [
+        7,
+        5,
+        4
+      ],
+      "tokens": [
+        27160,
+        19337,
+        15442
+      ],
+      "medianTokens": 19337,
+      "minTokens": 15442,
+      "maxTokens": 27160,
+      "spread": 1.76,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "19-banned-admin-bug",
+      "requests": [
+        11,
+        9,
+        7
+      ],
+      "tokens": [
+        47912,
+        39998,
+        29848
+      ],
+      "medianTokens": 39998,
+      "minTokens": 29848,
+      "maxTokens": 47912,
+      "spread": 1.61,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "20-fix-email-regex",
+      "requests": [
+        6,
+        7,
+        10
+      ],
+      "tokens": [
+        23373,
+        28887,
+        42884
+      ],
+      "medianTokens": 28887,
+      "minTokens": 23373,
+      "maxTokens": 42884,
+      "spread": 1.83,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "21-long-context-compaction",
+      "requests": [
+        10,
+        12,
+        8
+      ],
+      "tokens": [
+        71816,
+        100001,
+        60224
+      ],
+      "medianTokens": 71816,
+      "minTokens": 60224,
+      "maxTokens": 100001,
+      "spread": 1.66,
+      "passes": 3,
+      "failures": []
+    },
+    {
+      "name": "22-multi-tool-refactor",
+      "requests": [
+        5,
+        5,
+        5
+      ],
+      "tokens": [
+        21728,
+        21989,
+        21728
+      ],
+      "medianTokens": 21728,
+      "minTokens": 21728,
+      "maxTokens": 21989,
+      "spread": 1.01,
+      "passes": 3,
+      "failures": []
+    }
+  ]
+}
