@@ -12,6 +12,10 @@
 
 - [当前架构](./architecture.md)：Core、Transcript、Tool、Hook、Subagent、Skill、Model、UI 的真实关系。
 
+### 理解 Agent 与 AI 创作、视频编辑的协作方式
+
+- [AI 创作画布与视频编辑器协作架构](./design/ai-creative-workspace-architecture.md)：Agent 客户端、AI 创作画布、视频编辑器的职责边界；工具、Skill、上游代码复用和分阶段接入方案。**这是目标架构提案，不代表当前代码已经实现。**
+
 ### 把 Agent 跑起来
 
 - [配置与启动](./configuration.md)：环境变量、CLI 参数、工作区、预算。
@@ -23,6 +27,13 @@
 ### 想知道为什么这样设计
 
 - [ADR](./adr/)：架构决定、理由、代价和不变量。
+- [外部 Agent 驱动客户端](./design/agent-as-developer.md)：让 Claude、Codex 等外部 Agent 操控我们的客户端；明确中央决策模型、执行模型、Kernel 和用户的职责边界。
+
+> 外部 Agent 驱动客户端与 AI 创作画布是**两个不同产品形态**的方向提案，各自声明职责边界，不互相替代。两份都是目标方向，不代表当前代码已经实现；当前能力以[当前架构](./architecture.md)和代码为准。
+
+### 想评估未来的架构改造
+
+- [Main Agent Loop 精简重构提案](./proposals/main-agent-loop-simplification.md)：**待用户评审，未批准实施**；只归档方案、范围、不变量和验收标准，当前 `src/` 未按它改动。
 
 ### 想研究完整的 Agent 能力路线
 
@@ -44,6 +55,7 @@
 ### 想回顾某次审查结论
 
 - [docs/reviews/](./reviews/)：某一时间点的审查结论与过程，是记录而不是规格。
+- [2026-11-20 Tool Registry / Tool Execution 审查](./reviews/2026-11-20-tool-registry-execution.md)：Review Only 记录，7 条确认问题（含 F-001、F-002）**尚未修复**，代码未因此报告改动。
 
 ### 想知道 Agent 到底好不好用
 
@@ -62,7 +74,8 @@
 | `docs/tui.md` | TUI 使用和设计边界 |
 | `docs/development-workflow.md` | 研发流程 |
 | `docs/agents/spec-template.md` | 功能设计模板 |
-| `docs/design/` | 稳定设计原则 |
+| `docs/design/` | 稳定设计原则与跨产品方向提案（提案中的能力不代表已实现） |
+| `docs/proposals/` | 待评审的架构改造提案（未批准、不代表当前实现） |
 | `docs/contracts/` | 行为契约 |
 | `docs/adr/` | 为什么这么设计 |
 | `docs/reviews/` | 某次审查的结论与过程（记录，不是规格） |
