@@ -56,11 +56,12 @@
 
 - [docs/reviews/](./reviews/)：某一时间点的审查结论与过程，是记录而不是规格。
 - [2026-11-20 Tool Registry / Tool Execution 审查](./reviews/2026-11-20-tool-registry-execution.md)：Review Only 记录，7 条确认问题（含 F-001、F-002）**尚未修复**，代码未因此报告改动。
+- [2026-11-20 评测基线报告](./reviews/2026-11-20-eval-baseline.md)：checkers-v2 三轮真实基线的环境、稳定性、Token 归因与优化建议；是记录，不是新成绩。
 
 ### 想知道 Agent 到底好不好用
 
-- [eval/README.md](../eval/README.md)：评测方法。
-- [eval/baseline.md](../eval/baseline.md)：历史基线。
+- [eval/README.md](../eval/README.md)：评测方法、归档格式和一轮的成本口径。
+- [eval/baseline.md](../eval/baseline.md)：当前套件（`2026-11-19-checkers-v2`）三轮真实基线与历史对照。
 - [docs/eval-diagnostics.md](./eval-diagnostics.md)：固定基线和诊断。
 
 ## 文档怎么分工

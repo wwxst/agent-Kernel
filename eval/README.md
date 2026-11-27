@@ -22,7 +22,7 @@ npm run eval:check           # 自检：不需要 API Key
 npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
-需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前基线见 [baseline.md](./baseline.md)（2026-11-05，hy3 prompt v2，6 轮 120/120，中位数 118,817 tokens / 70.8s；这些数字对应固定旧提交，不代表当前 main）。
+需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前基线见 [baseline.md](./baseline.md)：套件 `2026-11-19-checkers-v2`、提交 `76a024a`、`hy3`，三轮 57/60（每轮 19/20），中位数 132 次请求 / 542,515 tokens / 79.5 秒；旧套件的 6 轮 120/120 属于不同提交，不能混算。
 
 任务之间互不依赖，所以默认并发 4 个：20 个任务的墙钟从约 226 秒降到约 74 秒。单任务的平均耗时不变（约 11 秒，8.8 步），因为时间几乎都花在等模型上——一次模型往返约 1.2 秒，工具执行和内核开销合计不到 5%。
 
@@ -114,6 +114,27 @@ tasks/01-add-health-route/
 
 注意：`npm run eval:check` 只验证每个任务的初始夹具确实会让检查器失败；它不负责证明检查器足够严格。检查器的正反例由普通单元测试覆盖。
 
-新套件的真实模型基线尚未建立。需要配置 API Key 后执行 `npm run eval`；在实际跑出结果前，不能把历史基线当作新套件的成绩，也不能声称 Agent 能力已经提升。
+新套件的第一份真实基线已建立：三轮、同一提交 `76a024a`、同一模型 `hy3`、同一套件 `2026-11-19-checkers-v2`，共 60 次任务执行，57 次通过。逐轮数据、三轮汇总和那次单独复跑都归档在 [`baselines/2026-11-19-checkers-v2/`](./baselines/2026-11-19-checkers-v2/)：
+
+```
+round-01.json              第 1 轮完整记录
+round-02.json              第 2 轮完整记录
+round-03.json              第 3 轮完整记录
+summary.json               三轮汇总（中位数、逐任务波动、失败分布）
+04-create-doc-retry.json   该任务的单独复跑，不计入三轮成绩
+diagnostics/               单任务 --trace 记录，用于定位失败与逐请求成本，不计入成绩
+```
+
+归档沿用 `eval/results/<时间戳>.json` 的原始记录，一个字段都不裁剪；`summary.json` 的口径和 `baselines/cross-day/*/summary.json` 一致（`perRound` + `perTask`），不是另一套格式。
+
+**每轮都要单独看。** 三轮都是 19/20，合起来 57/60（95.0%）；`04-create-doc` 三轮全败，属于重复失败而不是偶发。它的失败点是检查器要求的表格形状（两列、首列表头必须叫 `命令`、命令列必须写成 `npm run <script>`），而模型稳定地写成三列或只写脚本名。这条结论有独立的复现实验支撑，见 [最终报告](../docs/reviews/2026-11-20-eval-baseline.md)。
+
+### 一轮要花多少钱
+
+以三轮中位数为口径：132 次请求、542,515 tokens（prompt 528,968 / completion 12,981）、墙钟 79.5 秒、任务耗时合计 286 秒（并发 4，利用率约 3.6 倍）。平均每个任务 6.6 次请求、27,177 tokens。
+
+成本结构比总量更值得关注：**单次请求有 3,572 tokens 是固定开销**（系统提示 1,600 + 9 个工具的定义 1,972），每次都要重发。平均每请求 prompt 4,010 tokens，其中约 89% 是这段固定内容；固定块占全部 Token 账单的 87%。Completion 只占 2.4%。
+
+所以「Token 变多」优先怀疑提示词和工具说明变长，而不是模型变啰嗦。要定位到单次请求，用 `--trace` 跑单任务（`npm run eval -- <任务名> --jobs 1 --trace --keep`），记录里会多出每请求的 `messageChars` / `toolDefinitionChars` / `promptTokens`；正式基线**不开** `--trace`，因为追踪有 I/O 开销。
 
 诊断和跨天实验的当前约束见 [固定基线与诊断说明](../docs/eval-diagnostics.md)。
