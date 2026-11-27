@@ -10,7 +10,7 @@
  *   - 上下文：拿到工具名、参数、结果、原始错误；拿到的是副本，改不动真实调用。
  *   - 阻止：返回 `{ block }` 后工具不执行、结果是带原因的 `ERROR` 文本、后面的前置 Hook 不再跑；
  *     原因写空、写 `false` 时怎么判定。
- *   - 故障隔离：Hook 同步抛错、返回 rejected Promise、决定字段 getter 抛错、工具也失败时，
+ *   - 故障隔离：Hook 同步抛错、返回 rejected Promise、决定字段 getter 抛错、上下文复制失败、工具也失败时，
  *     结果与错误文本都不变，只记失败次数。
  *   - 边界：未知工具、坏 JSON、参数不合法不触发任何事件；`ProcessCleanupError` 先通知再照旧抛出；
  *     没有登记 Hook 时行为与以前一致。
@@ -393,4 +393,99 @@ test("一次完整 Run：Hook 正常触发，Transcript 与工具结果一字不
       .map((message) => [message.tool_call_id, message.content]),
     [["c1", "echo a"]],
   );
+});
+
+/**
+ * 构造「JSON 能解析、structuredClone 会爆栈」的参数：声明字段照常，额外塞一条 3000 层嵌套的未声明字段。
+ *
+ * 3000 层是实测值：JSON.parse 接受，structuredClone 抛 RangeError: Maximum call stack size exceeded。
+ * 未声明字段默认被忽略（没开 strictArguments），所以工具能正常执行 —— 差别只在 Hook 的副本。
+ */
+function deepUndeclaredArguments(declared = {}) {
+  let deep = "leaf";
+  for (let i = 0; i < 3000; i++) deep = { next: deep };
+  return { ...declared, extra: deep };
+}
+
+test("一次完整 Run：后置 Hook 的上下文复制失败不改变工具结果，Transcript 配对完整", async () => {
+  let sideEffects = 0;
+  const notifications = [];
+  const hooks = new ToolHooks({
+    postToolUse: [
+      () => {
+        notifications.push("post-1");
+      },
+      () => {
+        notifications.push("post-2");
+      },
+    ],
+  });
+  const registry = new ToolRegistry([{
+    name: "touch",
+    description: "Records one side effect.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      sideEffects++;
+      return "side effect done";
+    },
+  }], hooks);
+  const chat = createScriptedChat([callTool("c1", "touch", deepUndeclaredArguments()), finalReply("done")]);
+  const agent = new Agent({ llm: chat, tools: registry });
+
+  const reply = await agent.run("do it");
+
+  assert.equal(reply.content, "done");
+  assert.equal(sideEffects, 1, "工具已经跑过且只跑一次");
+  assert.deepEqual(notifications, [], "上下文复制失败时后置 Hook 拿不到上下文");
+  assert.equal(hooks.failureCount, 2, "两个后置 Hook 的复制失败各记一次");
+  const messages = agent.transcript;
+  const assistantCall = messages.find((message) => message.role === "assistant" && message.tool_calls?.length > 0);
+  const toolResult = messages.find((message) => message.role === "tool");
+  assert.ok(assistantCall, "Transcript 里应有发起工具调用的 assistant 消息");
+  assert.ok(toolResult, "Transcript 里应有配对的工具结果");
+  assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0].id);
+  assert.equal(toolResult.content, "side effect done");
+});
+
+test("失败 Run：失败 Hook 的上下文复制失败不外泄，isError 结果原样保留", async () => {
+  let sideEffects = 0;
+  const notifications = [];
+  const observed = [];
+  const hooks = new ToolHooks({
+    postToolUseFailure: [(context) => {
+      notifications.push(context.error);
+    }],
+  });
+  const registry = new ToolRegistry([{
+    name: "touch",
+    description: "Fails after one side effect.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      sideEffects++;
+      return { content: "ERROR: tool failed", isError: true };
+    },
+  }], hooks);
+  const chat = createScriptedChat([callTool("c1", "touch", deepUndeclaredArguments()), finalReply("done")]);
+  const agent = new Agent({
+    llm: chat,
+    tools: registry,
+    onToolResult: (call, content, isError) => {
+      observed.push([call.id, content, isError]);
+    },
+  });
+
+  const reply = await agent.run("do it");
+
+  assert.equal(reply.content, "done");
+  assert.equal(sideEffects, 1, "工具已经跑过且只跑一次");
+  assert.deepEqual(notifications, [], "上下文复制失败时失败 Hook 拿不到通知");
+  assert.equal(hooks.failureCount, 1);
+  const messages = agent.transcript;
+  const assistantCall = messages.find((message) => message.role === "assistant" && message.tool_calls?.length > 0);
+  const toolResult = messages.find((message) => message.role === "tool");
+  assert.ok(assistantCall, "Transcript 里应有发起工具调用的 assistant 消息");
+  assert.ok(toolResult, "工具结果必须留在 Transcript 里");
+  assert.equal(toolResult.tool_call_id, assistantCall.tool_calls[0].id);
+  assert.equal(toolResult.content, "ERROR: tool failed");
+  assert.deepEqual(observed, [["c1", "ERROR: tool failed", true]], "宿主侧看到的仍是 isError 结果");
 });
