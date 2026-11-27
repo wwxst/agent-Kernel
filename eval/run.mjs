@@ -51,7 +51,7 @@ const resultsDir = path.join(here, "results");
 const INFRA_SETTLE_MS = 20;
 
 // 修改任务提示、夹具或检查器的验收语义时递增；不同版本的成绩不能直接混算。
-export const EVAL_SUITE_VERSION = "2026-11-21-eval-system-v4";
+export const EVAL_SUITE_VERSION = "2026-11-27-eval-system-v5";
 
 /** 直接运行检测比较真实路径，避免 macOS 的 /var 与 /private/var 等符号链接别名造成漏判。 */
 function sameFilePath(left, right) {
