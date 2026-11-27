@@ -23,6 +23,7 @@
 ### 想知道为什么这样设计
 
 - [ADR](./adr/)：架构决定、理由、代价和不变量。
+- [外部 Agent 驱动客户端](./design/agent-as-developer.md)：让 Claude、Codex 等外部 Agent 操控我们的客户端；明确中央决策模型、执行模型、Kernel 和用户的职责边界。
 
 ### 想研究完整的 Agent 能力路线
 
