@@ -9,7 +9,7 @@
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "../protocol/chat-request.ts";
-import { describeError } from "../protocol/errors.ts";
+import { ChatResponseError, describeError } from "../protocol/errors.ts";
 import type { Message, ToolDefinition } from "../protocol/types.ts";
 import { ContextArchive } from "./context-archive.ts";
 import type { ContextArchiveRef } from "./context-archive.ts";
@@ -135,6 +135,19 @@ interface ContextHost {
 type SummaryReply =
   | { text: string; chars: number }
   | { rejection: string; chars: number };
+
+/**
+ * 摘要回复是否被端点截断（`finish_reason "length"`）。
+ *
+ * 截断和「自己写超长」是同一类问题：内容没写完，只是原因不同 —— 一个是被输出上限切断，
+ * 一个是模型写多了。两者都能靠收紧要求长度重问一次解决，所以走同一条纠正路径。
+ *
+ * 判定必须同时限定错误类型和 finish_reason 原文：网络、鉴权、响应形状等其他请求错误
+ * 不会因为摘要写短一点就消失，原样记一次失败即可。取消是独立的取消错误，不在这里处理。
+ */
+function isTruncatedSummary(error: unknown): boolean {
+  return error instanceof ChatResponseError && /finish_reason "length"/.test(error.message);
+}
 
 export class SessionContext {
   private readonly host: ContextHost;
@@ -675,9 +688,9 @@ export class SessionContext {
   /**
    * 摘要请求独立计数；Agent 统一记账。响应只有在任务仍有效且结构合格时才能提交。
    *
-   * 已知边界：只有「摘要太长」会纠正一次 —— 按观测到的超出比例收紧要求长度再问一次，
-   * 因为模型通常只是把「不超过 N 字符」写宽了一点，同一份请求重发不会有不同结果。
-   * 空、太短、结构错说明它没照结构写，不重试。一次尝试最多两次请求，失败配额仍只记一笔。
+   * 已知边界：只有「摘要太长」和「回复被截断」会纠正一次 —— 两者都是没写完，只是
+   * 一个写多了、一个被输出上限切断。空、太短、结构错说明它没照结构写，其他请求错误
+   * 也不是收紧长度能治好的，它们不重试。一次尝试最多两次请求，失败配额仍只记一笔。
    */
   private async summarizeRemoved(
     removed: readonly Message[],
@@ -691,6 +704,16 @@ export class SessionContext {
     try {
       reply = await this.requestSummary(request.messages, request.outputChars);
     } catch (error) {
+      // 端点把摘要截断了：和「写超长」一样是没写完，值得用更紧的要求再试一次。
+      // 已知边界：固定收紧到原硬上限的 0.6 倍 —— 截断说明模型这次写到了输出上限，
+      // 没有「超写比例」可算，只能选一个明显更小的目标。
+      if (isTruncatedSummary(error)) {
+        const truncatedTighter = Math.max(
+          MIN_SUMMARY_STRUCTURE_CHARS,
+          Math.floor(request.outputChars * 0.6),
+        );
+        return this.retrySummary(removed, archivePath, request.outputChars, truncatedTighter, describeError(error));
+      }
       this.recordSummaryFailure(describeError(error));
       // 用户取消要往上抛：不能把「被停掉」降级成「摘要失败，继续跑」。
       this.host.checkCancelled();
@@ -711,27 +734,45 @@ export class SessionContext {
       MIN_SUMMARY_STRUCTURE_CHARS,
       Math.floor(request.outputChars * (request.outputChars / reply.chars) * 0.95),
     );
+    return this.retrySummary(removed, archivePath, request.outputChars, tighter, reply.rejection);
+  }
+
+  /**
+   * 一次纠正重试：用更紧的要求长度重建请求，再发一次；校验仍用第一次的硬上限。
+   *
+   * `hardLimit` 是这次摘要被批准的输出预算。收紧的只是提示词里要求的目标长度，所以
+   * 重试结果不会比第一次允许的更大 —— 安全边界没有放宽，候选也不会反而变大。
+   *
+   * 重试发不出去（上限没有更紧、窗口装不下、预算用完）或仍然不合格时，只记一次失败；
+   * 重试成功不消耗失败配额。调用方保证这里最多发一次请求，不递归重试。
+   */
+  private async retrySummary(
+    removed: readonly Message[],
+    archivePath: string,
+    hardLimit: number,
+    tighter: number,
+    firstRejection: string,
+  ): Promise<string | undefined> {
     // 计算出来的上限不比原来更小（已经贴着结构下限）：再发一次就是同一份请求，白花一次钱。
-    if (tighter >= request.outputChars) {
-      this.recordSummaryFailure(reply.rejection);
+    if (tighter >= hardLimit) {
+      this.recordSummaryFailure(firstRejection);
       return undefined;
     }
     const retry = this.prepareSummaryRequest(removed, archivePath, tighter);
     if (retry === undefined) {
-      this.recordSummaryFailure(reply.rejection);
+      this.recordSummaryFailure(firstRejection);
       return undefined;
     }
     // 第一次摘要可能已经把本 Run 的预算花光：付不起就不发第二次。
     this.host.checkCancelled();
     if (!this.host.canSummarize()) {
-      this.recordSummaryFailure(reply.rejection);
+      this.recordSummaryFailure(firstRejection);
       return undefined;
     }
     let retried: SummaryReply;
     try {
       // 校验仍用第一次请求的 outputChars：那是这次摘要被批准的输出预算，安全边界没有放宽。
-      // 收紧的只是提示词要求的目标长度；重试结果最多与第一次的硬上限一样大，候选不会反而变大。
-      retried = await this.requestSummary(retry.messages, request.outputChars);
+      retried = await this.requestSummary(retry.messages, hardLimit);
     } catch (error) {
       this.recordSummaryFailure(describeError(error));
       this.host.checkCancelled();
