@@ -18,8 +18,8 @@ Hook 挂**工具执行的唯一入口** `ToolRegistry.executeWithStatus()`，围
 ```
 executeWithStatus(): 找工具 → 解析参数 → 校验参数 → PreToolUse → tool.run()
                                                               ├─ isError:false → PostToolUse
-                                                              └─ isError:true  → PostToolUseFailure(new Error(content))
-                                                              ↘ 抛错 → PostToolUseFailure(原始错误)
+                                                              ├─ isError:true  → PostToolUseFailure(new Error(content), thrown:false)
+                                                              ↘ 抛错 → PostToolUseFailure(原始错误, thrown:true)
 ```
 
 - `ToolRegistry` 构造函数多一个可选参数 `hooks: ToolHooks`；不传就是空执行器，行为与以前完全一致。
@@ -28,10 +28,12 @@ executeWithStatus(): 找工具 → 解析参数 → 校验参数 → PreToolUse 
 
 ## 两种失败通知
 
-失败事件有两条来源，交给 Hook 的错误对象不同：
+失败事件有两条来源，交给 Hook 的错误对象与 `thrown` 标记都不同：
 
-- **工具抛出错误**：折成 `ERROR: ...` 文本回灌模型，同时把**原始错误对象**原样交给 `PostToolUseFailure`。Hook 能读到真实异常类型（例如 `ProcessCleanupError`），而不是折过的字符串。
-- **工具返回结构化失败 `{ isError:true }`**：结果文本本身已经是失败原因（例如前台 `shell` 的 `exit 3`），没有原始异常对象，因此用 `new Error(content)` 合成一个错误交给 Hook。Hook 拿到的 `error.message` 与模型读到的结果原文逐字一致。
+- **工具抛出错误**（`thrown: true`）：折成 `ERROR: ...` 文本回灌模型，同时把**原始错误对象**原样交给 `PostToolUseFailure`。Hook 能读到真实异常类型（例如 `ProcessCleanupError`），而不是折过的字符串。
+- **工具返回结构化失败 `{ isError:true }`**（`thrown: false`）：结果文本本身已经是失败原因（例如前台 `shell` 的 `exit 3`），没有原始异常对象，因此用 `new Error(content)` 合成一个错误交给 Hook。Hook 拿到的 `error.message` 与模型读到的结果原文逐字一致。
+
+`PostToolUseFailureContext.thrown` 是必填字段。两条路的 `error` 形状不同（一条是原始异常，一条是合成错误），只看 `instanceof` 或 `error.stack` 会误判；需要区分来源的 Hook 直接读 `thrown`。
 
 ## Hook 自己的失败
 

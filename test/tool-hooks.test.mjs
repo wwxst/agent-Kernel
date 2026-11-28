@@ -7,7 +7,7 @@
  *
  * 内容目录：
  *   - 基本顺序：成功时 Pre → Post；失败时 Pre → PostToolUseFailure；多个 Hook 按登记顺序；异步 Hook 被等待。
- *   - 上下文：拿到工具名、参数、结果、原始错误；拿到的是副本，改不动真实调用。
+ *   - 上下文：拿到工具名、参数、结果、原始错误与 `thrown` 标记；拿到的是副本，改不动真实调用。
  *   - 阻止：返回 `{ block }` 后工具不执行、结果是带原因的 `ERROR` 文本、后面的前置 Hook 不再跑；
  *     原因写空、写 `false` 时怎么判定。
  *   - 故障隔离：Hook 同步抛错、返回 rejected Promise、决定字段 getter 抛错、上下文复制失败、工具也失败时，
@@ -103,6 +103,7 @@ test("失败：Pre 之后触发 PostToolUseFailure，拿到的是原始错误对
   // Hook 的异常会被有意隔离；断言放在回调外，否则上下文错了也可能被当作 Hook 故障吞掉。
   assert.ok(failureContext.error instanceof Error);
   assert.equal(failureContext.error.message, "disk on fire");
+  assert.equal(failureContext.thrown, true, "工具抛错时 thrown 必须是 true");
   assert.equal(failureContext.call.function.name, "boom");
 });
 
@@ -304,13 +305,14 @@ test("ProcessCleanupError：先触发失败事件，异常照旧抛出", async (
     },
   }], new ToolHooks({
     postToolUseFailure: [(context) => {
-      seen.push(context.error);
+      seen.push(context);
     }],
   }));
 
   await assert.rejects(() => registry.execute(call("shell")), ProcessCleanupError);
   assert.equal(seen.length, 1);
-  assert.ok(seen[0] instanceof ProcessCleanupError, "Hook 看到的必须是原始错误，不是折过的文本");
+  assert.ok(seen[0].error instanceof ProcessCleanupError, "Hook 看到的必须是原始错误，不是折过的文本");
+  assert.equal(seen[0].thrown, true);
 });
 
 test("不登记 Hook：行为与以前一致，失败计数为 0", async () => {
@@ -400,6 +402,7 @@ test("真实 shell：非零退出只触发 PostToolUseFailure，成功命令只�
     // 结构化失败没有原始异常对象：Hook 拿到的是用结果原文合成的 Error，原文一字不改。
     assert.ok(failureContext.error instanceof Error);
     assert.equal(failureContext.error.message, failed.content);
+    assert.equal(failureContext.thrown, false, "结构化失败时必须标成 thrown:false");
     assert.equal(failed.content.split("\n")[1], "boom");
   });
 });

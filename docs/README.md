@@ -55,7 +55,7 @@
 ### 想回顾某次审查结论
 
 - [docs/reviews/](./reviews/)：某一时间点的审查结论与过程，是记录而不是规格。
-- [2026-11-20 Tool Registry / Tool Execution 审查](./reviews/2026-11-20-tool-registry-execution.md)：Review Only 记录，7 条确认问题（含 F-001、F-002）**尚未修复**，代码未因此报告改动。
+- [2026-11-20 Tool Registry / Tool Execution 审查](./reviews/2026-11-20-tool-registry-execution.md)：Review Only 历史记录；F-001/F-002 已由 #69/#70 修复，F-003/F-005/F-009/F-011 由 #73 处理，报告正文保留原文。
 - [2026-11-20 评测基线报告](./reviews/2026-11-20-eval-baseline.md)：checkers-v2 三轮真实基线的环境、稳定性、Token 归因与优化建议；是记录，不是新成绩。
 
 ### 想知道 Agent 到底好不好用

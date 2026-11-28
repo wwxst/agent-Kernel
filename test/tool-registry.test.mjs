@@ -9,6 +9,8 @@
  *   - `call()`：造一次工具调用；`recordingTool()`：记录收到的参数的假工具。
  *   - `definitions`：只投影说明书字段，`run` 不外泄；修改说明书不能绕过参数校验。
  *   - `execute` 正常路径：命中就执行、参数齐全才真的执行、空 `arguments` 当空对象。
+ *   - `executeWithStatus` 结果形状：字符串与合法结构化结果是成功；非法形状一律折成 ERROR 并只执行一次，
+ *     失败 Hook 收到 `thrown:true`；结构化失败走失败 Hook 且 `thrown` 为 false。
  *   - `execute` 失败分支：未知工具、坏 JSON、参数非对象、缺必填（只认对象自身字段）、类型不对、
  *     工具抛任何东西，一律折成非空的 `ERROR:` 文本；只有 `ProcessCleanupError` 必须继续往外抛。
  *   - 未知参数：声明 `strictArguments` 的工具拒绝并列出可用参数；未声明的仍按老规矩忽略。
@@ -22,6 +24,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ProcessCleanupError } from "../src/protocol/errors.ts";
 import { ToolRegistry } from "../src/core/tool-registry.ts";
+import { ToolHooks } from "../src/core/tool-hooks.ts";
 import { Workspace, createWorkspaceTools } from "../src/tools/workspace.ts";
 import { echoTool, makeRegistry, withWorkspace } from "./support/harness.mjs";
 
@@ -100,6 +103,89 @@ test("executeWithStatus：文件正文以 ERROR: 开头仍是成功结果", asyn
   const outcome = await registry.executeWithStatus(call("read"));
   assert.deepEqual(outcome, { content: "ERROR: this is literal file content", isError: false });
   assert.equal((await registry.executeWithStatus(call("missing"))).isError, true);
+});
+
+test("executeWithStatus：工具返回非法执行结果一律折成 ERROR，isError 为 true，且只执行一次", async () => {
+  const invalidShapes = [
+    undefined,
+    null,
+    42,
+    { content: 123 },
+    { content: "x", isError: "yes" },
+    { content: "x", isError: false, isWaiting: "yes" },
+  ];
+
+  for (const shape of invalidShapes) {
+    let runs = 0;
+    const failureContexts = [];
+    const registry = new ToolRegistry([{
+      name: "odd",
+      description: "Returns an invalid execution result.",
+      parameters: { type: "object", properties: {} },
+      run: async () => {
+        runs++;
+        return shape;
+      },
+    }], new ToolHooks({
+      postToolUseFailure: [(context) => {
+        failureContexts.push(context);
+      }],
+    }));
+
+    const outcome = await registry.executeWithStatus(call("odd"));
+
+    assert.deepEqual(outcome, {
+      content: "ERROR: tool returned an invalid execution result",
+      isError: true,
+    });
+    assert.equal(runs, 1, "工具只执行一次，不因结果形状非法重跑");
+    assert.equal(failureContexts.length, 1, "非法结果内部抛错，必须走失败 Hook");
+    assert.equal(failureContexts[0].thrown, true);
+  }
+});
+
+test("executeWithStatus：字符串与合法结构化结果仍然成功，isWaiting 原样保留", async () => {
+  const cases = [
+    ["plain text", { content: "plain text", isError: false }],
+    [{ content: "structured", isError: false }, { content: "structured", isError: false }],
+    [{ content: "waiting", isError: false, isWaiting: true }, { content: "waiting", isError: false, isWaiting: true }],
+  ];
+
+  for (const [raw, expected] of cases) {
+    const failures = [];
+    const registry = new ToolRegistry([{
+      name: "ok",
+      description: "Returns a valid execution result.",
+      parameters: { type: "object", properties: {} },
+      run: async () => raw,
+    }], new ToolHooks({
+      postToolUseFailure: [() => failures.push("failure")],
+    }));
+
+    assert.deepEqual(await registry.executeWithStatus(call("ok")), expected);
+    assert.deepEqual(failures, []);
+  }
+});
+
+test("executeWithStatus：结构化失败走失败 Hook，thrown 为 false，错误文本就是结果原文", async () => {
+  const failureContexts = [];
+  const registry = new ToolRegistry([{
+    name: "structured-failure",
+    description: "Returns a structured failure.",
+    parameters: { type: "object", properties: {} },
+    run: async () => ({ content: "exit 3\nboom", isError: true }),
+  }], new ToolHooks({
+    postToolUseFailure: [(context) => {
+      failureContexts.push(context);
+    }],
+  }));
+
+  const outcome = await registry.executeWithStatus(call("structured-failure"));
+
+  assert.deepEqual(outcome, { content: "exit 3\nboom", isError: true });
+  assert.equal(failureContexts.length, 1);
+  assert.equal(failureContexts[0].thrown, false);
+  assert.equal(failureContexts[0].error.message, "exit 3\nboom");
 });
 
 test("executeWithStatus：前台 shell 非零退出与超时是失败，后台启动不是失败", async () => {
