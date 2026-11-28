@@ -16,6 +16,9 @@
  *   - 历史摘要：折叠旧轮次、单轮多步、多次替换、失败/不合格/取消都不提交；
  *     摘要以 system 之后的一条 user 消息承载（不抬高指令等级、不被当成用户轮次）；
  *     存档失败与候选被拒都回滚存档，不留孤儿文件。
+ *   - 超长与截断纠正：按比例写超时用收紧的上限重试一次并提交；端点截断（finish_reason
+ *     "length"）同样只纠正一次并记账；始终失败时一次尝试最多两次请求、不提交；恰好等于上限
+ *     不重试；空、结构不合格与其他响应错误不触发纠正重试。
  *   - 提交原子性：在提交块唯一的失败点注入异常，验证「要么全提交、要么全不提交」，
  *     以及成功提交后存档清单、摘要消息、上下文与磁盘文件一一对应。
  *   - 摘要请求自己的预算：序列化后的真实体积、输出预留为 0 时的合法结构下限、装不下就不发。
@@ -33,7 +36,7 @@ import { Agent } from "../src/core/agent.ts";
 // 整个模块导入：这条用例要验证的正是「摘要长度下限与九节结构一致」。写成命名导入的话，
 // 旧版本缺这个导出时整个文件会加载失败，反而看不出是哪条断言不成立。
 import * as compact from "../src/core/context-compact.ts";
-import { ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
+import { ChatResponseError, ModelHttpError, ProcessCleanupError } from "../src/protocol/errors.ts";
 import {
   CANNED_SUMMARY,
   SUMMARY_PROMPT_MARKER,
@@ -204,6 +207,38 @@ function summaryWithinStatedLimit(_count, messages) {
   const limit = stated === null ? Number.POSITIVE_INFINITY : Number(stated[1]);
   const full = compactNineSections();
   return full.length <= limit ? full : full.slice(0, limit);
+}
+
+/** 从摘要请求的系统提示里读出这次要求的长度上限（提示词自己写的那个数字）。 */
+function statedSummaryLimit(messages) {
+  const stated = /under (\d+) characters/.exec(String(messages[0].content ?? ""));
+  assert.ok(stated !== null, "摘要提示词里必须给出这次的长度上限");
+  return Number(stated[1]);
+}
+
+/**
+ * 一份形状合格、长度恰好为 `chars` 的摘要。
+ *
+ * 在九节结构的末尾补正文即可：补的是最后一节的正文，不会多出小节，也不会破坏标题顺序。
+ * 长度比最小合法结构还短时直接失败 —— 这个夹具只用来造「刚好合格」或「刚好超长」的回复。
+ */
+function paddedSummary(chars) {
+  const base = compactNineSections();
+  assert.ok(chars >= base.length, `合法九节摘要至少要 ${base.length} 字符（要求 ${chars}）`);
+  return base.padEnd(chars, "p");
+}
+
+/**
+ * 真实端点把摘要截断时的错误形状。
+ *
+ * `Llm` 看到 `finish_reason: "length"` 会抛 `ChatResponseError`，并把已经产生的 usage 带出来；
+ * 这里的 message 与它保持一致，这样测的就是真实的识别条件，而不是测试自己编的分类。
+ */
+function truncatedSummaryError(usage) {
+  return new ChatResponseError(
+    'LLM response is invalid: finish_reason "length": the response was truncated (max output tokens reached)',
+    usage,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1408,6 +1443,313 @@ test("历史摘要：格式合格但没缩小的摘要也只给两次机会，�
   assert.equal(chat.summaryRequests.length, 2,
     "格式合格不算成功：候选被拒仍要计入失败配额，一个 Run 最多两次");
   assert.match(agent.compactionStats.lastError, /did not shrink/);
+});
+
+test("摘要纠正：按比例写超 6% 时用收紧的上限重试一次并成功提交", async () => {
+  // v5 真实运行里的模型行为：把「不超过 N 字符」写成约 N 的 1.06 倍。
+  // 第一次按原上限判超长；纠正请求把要求收紧，模型照比例写出来的长度就落回硬上限以内。
+  const replies = [
+    callTool("c1", "echo", { value: "a" }),
+    finalReply("first answer " + "a".repeat(9_000)),
+    callTool("c2", "echo", { value: "b" }),
+    finalReply("second answer"),
+  ];
+  const chat = createModel({
+    replies,
+    summary: (_count, messages) => paddedSummary(Math.floor(statedSummaryLimit(messages) * 1.06)),
+  });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    contextWindowTokens: 3_000,
+    outputTokenReserve: 500,
+  });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "second answer", "纠正成功后主请求必须能继续");
+  assert.equal(chat.summaryRequests.length, 2, "第一次超长后用收紧的上限再问一次，不能拿同一份请求重发");
+  assert.equal(agent.compactionStats.compactions, 1, "纠正成功后压缩必须提交");
+  assert.equal(agent.compactionStats.summaryFailures, 0, "纠正成功不消耗失败配额");
+  assert.equal(agent.compactionStats.lastError, "");
+
+  // 两次请求要求的上限必须一次比一次紧，且第一次确实写超了。
+  const limits = chat.summaryRequests.map((request) => statedSummaryLimit(request.messages));
+  assert.ok(limits[1] < limits[0], `纠正请求必须收紧要求长度（${limits.join(" → ")}）`);
+  assert.ok(Math.floor(limits[0] * 1.06) > limits[0], "这个用例的前提是第一次确实写超了");
+
+  // 当前任务与工具配对必须完整保留。
+  const transcript = agent.transcript;
+  assert.equal(transcript[2].content, "second task", "当前任务必须留在原始消息里");
+  assert.ok(!transcript.some((message) => message.content === "first task"), "旧轮次被折进摘要");
+  for (let index = 1; index < transcript.length; index++) {
+    const message = transcript[index];
+    if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+    for (const call of message.tool_calls) {
+      const result = transcript[index + 1];
+      assert.equal(result?.role, "tool");
+      assert.equal(result?.tool_call_id, call.id);
+      index++;
+    }
+  }
+
+  // 两次摘要都真实发出、都计费；统计里的请求数与之一致。
+  assert.equal(agent.stats.summaryRequests, 2);
+  assert.equal(agent.sessionStats.summaryRequests, 2);
+  assert.ok(agent.stats.usage.totalTokens >= 120, "两次摘要的用量都要记账");
+});
+
+test("摘要纠正：模型始终写超长摘要时，一次尝试最多两次请求且不提交", async () => {
+  // 完全无视提示词里的长度：这样的摘要任何上限下都不合格，纠正重试只允许发生一次。
+  const fixed = summaryWith("oversized") + "x".repeat(20_000);
+  const replies = [
+    finalReply("first answer " + "a".repeat(3_000)),
+    callTool("c1", "echo", { value: "1" }),
+    callTool("c2", "echo", { value: "2" }),
+    finalReply("done"),
+  ];
+  const chat = createModel({ replies, summary: fixed });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    maxTranscriptChars: 2_500,
+  });
+
+  await agent.run("first task");
+  const before = structuredClone(agent.transcript);
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "done", "压缩失败不能拖垮这次 Run");
+  assert.equal(agent.compactionStats.compactions, 0, "超长摘要不能提交");
+  assert.match(agent.compactionStats.lastError, /summary is too long/);
+  // 每个 Run 的失败配额是两次尝试，每次尝试最多「首发 + 一次纠正」：2 × 2 = 4。
+  assert.equal(chat.summaryRequests.length, 4,
+    "始终超长时也要有界：两次失败尝试、每次最多两次请求");
+  assert.equal(agent.compactionStats.summaryFailures, 2, "一次尝试只记一次失败，不能按请求数记");
+
+  // 每次尝试内部最多两次摘要请求，配额用完后不再尝试。
+  let summariesSinceBusiness = 0;
+  for (const request of chat.requests) {
+    if (!request.summary) {
+      summariesSinceBusiness = 0;
+      continue;
+    }
+    summariesSinceBusiness++;
+    assert.ok(summariesSinceBusiness <= 2,
+      `一次压缩尝试最多发两次摘要请求（这里是第 ${summariesSinceBusiness} 次）`);
+  }
+
+  // 没提交就不能改动已有历史：只在末尾追加本次 Run 的消息，工具配对仍然完整。
+  const transcript = agent.transcript;
+  assert.deepEqual(transcript.slice(0, before.length), before, "压缩没提交就不能改动原历史");
+  assert.equal(transcript.length, before.length + 6,
+    "本次 Run 只追加 user + 两组 tool 配对 + 收尾，一条旧消息都不能少");
+  for (let index = 1; index < transcript.length; index++) {
+    const message = transcript[index];
+    if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+    for (const call of message.tool_calls) {
+      const result = transcript[index + 1];
+      assert.equal(result?.role, "tool");
+      assert.equal(result?.tool_call_id, call.id);
+      index++;
+    }
+  }
+});
+
+test("摘要纠正：恰好等于上限的摘要不重试，直接提交", async () => {
+  const replies = [
+    callTool("c1", "echo", { value: "a" }),
+    finalReply("first answer " + "a".repeat(9_000)),
+    finalReply("second answer"),
+  ];
+  const chat = createModel({
+    replies,
+    // 提示词说「under N characters」，N 本身是合格的：`>` 才算超长。
+    summary: (_count, messages) => paddedSummary(statedSummaryLimit(messages)),
+  });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    contextWindowTokens: 3_000,
+    outputTokenReserve: 500,
+  });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "second answer");
+  assert.equal(chat.summaryRequests.length, 1, "恰好等于上限是合格的，不能多花一次纠正请求");
+  assert.equal(agent.compactionStats.compactions, 1, "合格摘要必须提交");
+  assert.equal(agent.compactionStats.summaryFailures, 0);
+});
+
+test("摘要纠正：空摘要与结构不合格不触发重试，只发一次请求并记一次失败", async () => {
+  const cases = [
+    ["空摘要", "", /summary is empty/],
+    ["结构不合格", "x".repeat(800), /missing summary section/],
+  ];
+  for (const [label, summary, expectedError] of cases) {
+    const chat = createModel({
+      replies: [finalReply("first answer " + "a".repeat(3_000)), finalReply("done")],
+      summary,
+    });
+    const agent = makeAgent({
+      llm: chat,
+      tools: makeRegistry([echoTool()]),
+      maxTranscriptChars: 2_500,
+    });
+
+    await agent.run("first task");
+    const reply = await agent.run("second task");
+
+    assert.equal(reply.content, "done", `${label}：摘要失败不能拖垮这次 Run`);
+    assert.equal(chat.summaryRequests.length, 1,
+      `${label}：只有「太长」值得纠正，其他不合格原样重发一次也没用`);
+    assert.equal(agent.compactionStats.compactions, 0);
+    assert.equal(agent.compactionStats.summaryFailures, 1, `${label}：一次尝试只记一次失败`);
+    assert.match(agent.compactionStats.lastError, expectedError);
+  }
+});
+
+test("摘要纠正：首次摘要被端点截断时，用收紧的上限重试一次并成功提交", async () => {
+  // 真实端点达到输出上限时用 finish_reason "length" 报错，而不是返回一段超长文本。
+  // 它和「写超长」一样是没写完，所以必须走同一条纠正路径；区别只在收紧多少。
+  const replies = [
+    callTool("c1", "echo", { value: "a" }),
+    finalReply("first answer " + "a".repeat(9_000)),
+    callTool("c2", "echo", { value: "b" }),
+    finalReply("second answer"),
+  ];
+  const truncatedUsage = { prompt_tokens: 30, completion_tokens: 10, total_tokens: 40 };
+  const chat = createModel({
+    replies,
+    summary: (count) => count === 1
+      ? truncatedSummaryError(truncatedUsage)
+      : summaryWith("after-truncation"),
+  });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    contextWindowTokens: 3_000,
+    outputTokenReserve: 500,
+  });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "second answer", "纠正成功后主请求必须能继续");
+  assert.equal(chat.summaryRequests.length, 2, "截断后用收紧的上限再问一次，不能拿同一份请求重发");
+  assert.equal(agent.compactionStats.compactions, 1, "纠正成功后压缩必须提交");
+  assert.equal(agent.compactionStats.summaryFailures, 0, "纠正成功不消耗失败配额");
+  assert.equal(agent.compactionStats.lastError, "");
+
+  // 两次请求都被内核真实发出（含被截断的那次），且纠正目标按 0.6 倍收紧。
+  const limits = chat.summaryRequests.map((request) => statedSummaryLimit(request.messages));
+  assert.ok(limits[1] < limits[0], `纠正请求必须收紧要求长度（${limits.join(" → ")}）`);
+  assert.equal(limits[1], Math.max(compact.MIN_SUMMARY_STRUCTURE_CHARS, Math.floor(limits[0] * 0.6)),
+    "截断路径按原硬上限的 0.6 倍收紧");
+
+  // 被截断的那次请求也带着 usage：失败请求的花费不能漏记。
+  assert.equal(agent.stats.usage.reported, 2, "截断请求 + 成功重试各记一次已报告用量");
+  assert.equal(agent.stats.usage.totalTokens, truncatedUsage.total_tokens + 60);
+  assert.equal(agent.stats.summaryRequests, 2);
+  assert.equal(agent.sessionStats.summaryRequests, 2);
+
+  // 当前任务与工具配对必须完整保留。
+  const transcript = agent.transcript;
+  assert.equal(transcript[2].content, "second task", "当前任务必须留在原始消息里");
+  for (let index = 1; index < transcript.length; index++) {
+    const message = transcript[index];
+    if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+    for (const call of message.tool_calls) {
+      const result = transcript[index + 1];
+      assert.equal(result?.role, "tool");
+      assert.equal(result?.tool_call_id, call.id);
+      index++;
+    }
+  }
+});
+
+test("摘要纠正：摘要始终被截断时，一次尝试最多两次请求且不提交", async () => {
+  const replies = [
+    finalReply("first answer " + "a".repeat(3_000)),
+    callTool("c1", "echo", { value: "1" }),
+    callTool("c2", "echo", { value: "2" }),
+    finalReply("done"),
+  ];
+  const chat = createModel({ replies, summary: truncatedSummaryError() });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    maxTranscriptChars: 2_500,
+  });
+
+  await agent.run("first task");
+  const before = structuredClone(agent.transcript);
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "done", "摘要反复截断不能拖垮这次 Run");
+  assert.equal(agent.compactionStats.compactions, 0, "截断摘要不能提交");
+  assert.match(agent.compactionStats.lastError, /finish_reason "length"/);
+  // 每个 Run 的失败配额是两次尝试，每次尝试最多「首发 + 一次纠正」：2 × 2 = 4。
+  assert.equal(chat.summaryRequests.length, 4,
+    "始终截断时也要有界：两次失败尝试、每次最多两次请求");
+  assert.equal(agent.compactionStats.summaryFailures, 2, "一次尝试只记一次失败，不能按请求数记");
+
+  // 每次尝试内部最多两次摘要请求，配额用完后不再尝试。
+  let summariesSinceBusiness = 0;
+  for (const request of chat.requests) {
+    if (!request.summary) {
+      summariesSinceBusiness = 0;
+      continue;
+    }
+    summariesSinceBusiness++;
+    assert.ok(summariesSinceBusiness <= 2,
+      `一次压缩尝试最多发两次摘要请求（这里是第 ${summariesSinceBusiness} 次）`);
+  }
+
+  // 没提交就不能改动已有历史：只在末尾追加本次 Run 的消息，工具配对仍然完整。
+  const transcript = agent.transcript;
+  assert.deepEqual(transcript.slice(0, before.length), before, "压缩没提交就不能改动原历史");
+  assert.equal(transcript.length, before.length + 6,
+    "本次 Run 只追加 user + 两组 tool 配对 + 收尾，一条旧消息都不能少");
+  for (let index = 1; index < transcript.length; index++) {
+    const message = transcript[index];
+    if (message.role !== "assistant" || message.tool_calls === undefined) continue;
+    for (const call of message.tool_calls) {
+      const result = transcript[index + 1];
+      assert.equal(result?.role, "tool");
+      assert.equal(result?.tool_call_id, call.id);
+      index++;
+    }
+  }
+});
+
+test("摘要纠正：非截断的响应错误不重试，只发一次请求", async () => {
+  // 只有「达到输出上限被截断」才值得收紧摘要再试；其他响应错误收紧长度治不好。
+  const chat = createModel({
+    replies: [finalReply("first answer " + "a".repeat(3_000)), finalReply("done")],
+    summary: new ChatResponseError(
+      "LLM response is invalid: stream ended before the model finished",
+      undefined,
+      "stream_incomplete",
+    ),
+  });
+  const agent = makeAgent({
+    llm: chat,
+    tools: makeRegistry([echoTool()]),
+    maxTranscriptChars: 2_500,
+  });
+
+  await agent.run("first task");
+  const reply = await agent.run("second task");
+
+  assert.equal(reply.content, "done");
+  assert.equal(chat.summaryRequests.length, 1, "只有 finish_reason length 才算截断，其他响应错误不重试");
+  assert.equal(agent.compactionStats.compactions, 0);
+  assert.equal(agent.compactionStats.summaryFailures, 1, "非截断错误仍按原样记一次失败");
+  assert.match(agent.compactionStats.lastError, /stream ended before the model finished/);
 });
 
 // ---------------------------------------------------------------------------

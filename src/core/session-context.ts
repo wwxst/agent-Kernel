@@ -9,7 +9,7 @@
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { DEFAULT_MAX_OUTPUT_TOKENS } from "../protocol/chat-request.ts";
-import { describeError } from "../protocol/errors.ts";
+import { ChatResponseError, describeError } from "../protocol/errors.ts";
 import type { Message, ToolDefinition } from "../protocol/types.ts";
 import { ContextArchive } from "./context-archive.ts";
 import type { ContextArchiveRef } from "./context-archive.ts";
@@ -129,6 +129,24 @@ interface ContextHost {
   summarize(messages: readonly Message[]): Promise<Message>;
   canSummarize(): boolean;
   checkCancelled(): void;
+}
+
+/** 一次摘要请求的回复：合格时给出正文；不合格时给出原因和收到的长度（纠正重试要用）。 */
+type SummaryReply =
+  | { text: string; chars: number }
+  | { rejection: string; chars: number };
+
+/**
+ * 摘要回复是否被端点截断（`finish_reason "length"`）。
+ *
+ * 截断和「自己写超长」是同一类问题：内容没写完，只是原因不同 —— 一个是被输出上限切断，
+ * 一个是模型写多了。两者都能靠收紧要求长度重问一次解决，所以走同一条纠正路径。
+ *
+ * 判定必须同时限定错误类型和 finish_reason 原文：网络、鉴权、响应形状等其他请求错误
+ * 不会因为摘要写短一点就消失，原样记一次失败即可。取消是独立的取消错误，不在这里处理。
+ */
+function isTruncatedSummary(error: unknown): boolean {
+  return error instanceof ChatResponseError && /finish_reason "length"/.test(error.message);
 }
 
 export class SessionContext {
@@ -645,7 +663,35 @@ export class SessionContext {
     return { messages: buildSummaryMessages(previousSummary, history, outputChars), outputChars };
   }
 
-  /** 摘要请求独立计数；Agent 统一记账。响应只有在任务仍有效且结构合格时才能提交。 */
+  /**
+   * 发一次摘要请求并校验回复。
+   *
+   * 计数、取消检查与结构校验只在这里做一次，首发和纠正重试共用，避免两份请求代码走偏。
+   * 不合格和请求异常都不在这里记账：失败配额按「一次尝试」记一笔，由调用方决定。
+   *
+   * `limit` 是这次摘要的硬上限。纠正重试传的仍是首发请求的上限 —— 收紧的只是提示词里
+   * 要求的长度，实际能接受多长没有放宽（见 summarizeRemoved）。
+   */
+  private async requestSummary(messages: readonly Message[], limit: number): Promise<SummaryReply> {
+    this.host.checkCancelled();
+    this.summaryRequestsThisRun++;
+    this.sessionSummaryRequests++;
+    const response = await this.host.summarize(messages);
+    // 取消可能发生在摘要请求返回之后：此时不提交、不继续发新请求。
+    // 这一句在 try 之外，所以它抛出的取消不会被记成一次「请求失败」。
+    this.host.checkCancelled();
+    const text = (response.content ?? "").trim();
+    const rejection = validateSummary(text, limit);
+    return rejection === undefined ? { text, chars: text.length } : { rejection, chars: text.length };
+  }
+
+  /**
+   * 摘要请求独立计数；Agent 统一记账。响应只有在任务仍有效且结构合格时才能提交。
+   *
+   * 已知边界：只有「摘要太长」和「回复被截断」会纠正一次 —— 两者都是没写完，只是
+   * 一个写多了、一个被输出上限切断。空、太短、结构错说明它没照结构写，其他请求错误
+   * 也不是收紧长度能治好的，它们不重试。一次尝试最多两次请求，失败配额仍只记一笔。
+   */
   private async summarizeRemoved(
     removed: readonly Message[],
     archivePath: string,
@@ -654,28 +700,87 @@ export class SessionContext {
     const request = this.prepareSummaryRequest(removed, archivePath, summaryBudget);
     if (request === undefined) return undefined;
     this.host.checkCancelled();
-    this.summaryRequestsThisRun++;
-    this.sessionSummaryRequests++;
-    let response: Message;
+    let reply: SummaryReply;
     try {
-      response = await this.host.summarize(request.messages);
+      reply = await this.requestSummary(request.messages, request.outputChars);
     } catch (error) {
+      // 端点把摘要截断了：和「写超长」一样是没写完，值得用更紧的要求再试一次。
+      // 已知边界：固定收紧到原硬上限的 0.6 倍 —— 截断说明模型这次写到了输出上限，
+      // 没有「超写比例」可算，只能选一个明显更小的目标。
+      if (isTruncatedSummary(error)) {
+        const truncatedTighter = Math.max(
+          MIN_SUMMARY_STRUCTURE_CHARS,
+          Math.floor(request.outputChars * 0.6),
+        );
+        return this.retrySummary(removed, archivePath, request.outputChars, truncatedTighter, describeError(error));
+      }
       this.recordSummaryFailure(describeError(error));
       // 用户取消要往上抛：不能把「被停掉」降级成「摘要失败，继续跑」。
       this.host.checkCancelled();
       return undefined;
     }
-    // 取消可能发生在摘要请求返回之后：此时不提交、不继续发新请求。
-    // 这一句在 try 之外，所以它抛出的取消不会被记成一次「请求失败」。
-    this.host.checkCancelled();
-    const text = (response.content ?? "").trim();
-    const rejection = validateSummary(text, request.outputChars);
-    if (rejection === undefined) {
+    if (!("rejection" in reply)) {
       // 这里只判断「摘要本身合不合格」。成功计数要等候选真正提交之后才清
       // （见 compactHistory）：格式合格但没缩小的摘要，仍是一次失败的尝试。
-      return text;
+      return reply.text;
     }
-    this.recordSummaryFailure(rejection);
+    // 只有「太长」值得纠正。用观测到的超出比例反算一个更紧的要求长度，再留 5% 余量：
+    // 按同一比例超写的模型这次会落在原硬上限的 95% 附近，压缩仍然成立。
+    if (!reply.rejection.startsWith("summary is too long (")) {
+      this.recordSummaryFailure(reply.rejection);
+      return undefined;
+    }
+    const tighter = Math.max(
+      MIN_SUMMARY_STRUCTURE_CHARS,
+      Math.floor(request.outputChars * (request.outputChars / reply.chars) * 0.95),
+    );
+    return this.retrySummary(removed, archivePath, request.outputChars, tighter, reply.rejection);
+  }
+
+  /**
+   * 一次纠正重试：用更紧的要求长度重建请求，再发一次；校验仍用第一次的硬上限。
+   *
+   * `hardLimit` 是这次摘要被批准的输出预算。收紧的只是提示词里要求的目标长度，所以
+   * 重试结果不会比第一次允许的更大 —— 安全边界没有放宽，候选也不会反而变大。
+   *
+   * 重试发不出去（上限没有更紧、窗口装不下、预算用完）或仍然不合格时，只记一次失败；
+   * 重试成功不消耗失败配额。调用方保证这里最多发一次请求，不递归重试。
+   */
+  private async retrySummary(
+    removed: readonly Message[],
+    archivePath: string,
+    hardLimit: number,
+    tighter: number,
+    firstRejection: string,
+  ): Promise<string | undefined> {
+    // 计算出来的上限不比原来更小（已经贴着结构下限）：再发一次就是同一份请求，白花一次钱。
+    if (tighter >= hardLimit) {
+      this.recordSummaryFailure(firstRejection);
+      return undefined;
+    }
+    const retry = this.prepareSummaryRequest(removed, archivePath, tighter);
+    if (retry === undefined) {
+      this.recordSummaryFailure(firstRejection);
+      return undefined;
+    }
+    // 第一次摘要可能已经把本 Run 的预算花光：付不起就不发第二次。
+    this.host.checkCancelled();
+    if (!this.host.canSummarize()) {
+      this.recordSummaryFailure(firstRejection);
+      return undefined;
+    }
+    let retried: SummaryReply;
+    try {
+      // 校验仍用第一次请求的 outputChars：那是这次摘要被批准的输出预算，安全边界没有放宽。
+      retried = await this.requestSummary(retry.messages, hardLimit);
+    } catch (error) {
+      this.recordSummaryFailure(describeError(error));
+      this.host.checkCancelled();
+      return undefined;
+    }
+    if (!("rejection" in retried)) return retried.text;
+    // 纠正只做一次：上限已经收紧、钱已经花过，再套一层只会失控。
+    this.recordSummaryFailure(retried.rejection);
     return undefined;
   }
 

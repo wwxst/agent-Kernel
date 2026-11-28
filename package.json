@@ -22,6 +22,7 @@
     "eval:ab": "node --env-file-if-exists=.env eval/ab.mjs",
     "eval:review": "node eval/quality-review.mjs",
     "eval:scenarios": "node eval/scenarios/run.mjs",
+    "eval:compaction": "node --env-file-if-exists=.env eval/compaction.mjs",
     "eval:cross-day": "node --env-file-if-exists=.env eval/cross-day.mjs"
   },
   "devDependencies": {
