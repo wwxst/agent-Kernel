@@ -16,8 +16,9 @@
  *   - `ToolRegistry`：注册表本体，构造时先挡掉形状不合格的工具，再挡掉重名与不支持的 Schema。
  *   - `ToolRegistry.definitions`：发给模型的说明书副本，没有执行函数，也不能改写注册后的校验规则。
  *   - `ToolRegistry.executeWithStatus()`：**唯一权威的执行入口**，按名字执行一次调用并返回宿主侧
- *     `{ content, isError }`；四个失败分支全部折成 `ERROR:` 文本，结构化失败（`isError:true`）
- *     用 `Error(content)` 通知 `PostToolUseFailure`，工具抛出的错误则把原始错误对象交给 Hook。
+ *     `{ content, isError }`；所有失败分支都折成 `ERROR:` 文本（包括工具返回非法的执行结果形状），
+ *     结构化失败（`isError:true`）用 `Error(content)` 并以 `thrown:false` 通知 `PostToolUseFailure`，
+ *     工具抛出的错误则把原始错误对象以 `thrown:true` 交给 Hook。
  *   - `ToolRegistry.execute()`：兼容旧调用方的包装层，只返回 `content`，把 `isError` 丢掉。
  *   - 内部：`assertToolShape()` 注册时先查基本形状（对象、非空名字、description、run）、
  *     `assertSupportedSchema()` 注册时体检、`assertObjectSchema()` 根对象与嵌套对象
@@ -257,8 +258,8 @@ export class ToolRegistry {
    * 返回值里的 `isError` 是宿主侧唯一的失败信号，不会序列化进发给模型的 Message。
    * 通知 Hook 时分两条路，不能混：
    *   - 工具正常返回 `{ isError: true }`（例如前台 shell 非零退出）：这是结构化失败，
-   *     没有原始异常对象，用 `new Error(content)` 把结果原文交给 `PostToolUseFailure`；
-   *   - 工具抛出错误：折成 `ERROR:` 文本回灌模型，同时把**原始错误对象**交给 Hook，
+   *     没有原始异常对象，用 `new Error(content)` 把结果原文交给 `PostToolUseFailure`，并标 `thrown:false`；
+   *   - 工具抛出错误：折成 `ERROR:` 文本回灌模型，同时把**原始错误对象**交给 Hook、标 `thrown:true`，
    *     Hook 看到的不是折过的文本（`ProcessCleanupError` 在通知之后仍原样抛出）。
    *
    * 这里是唯一的执行入口，所以 Hook 也只需要挂在这里：所有工具自动经过它，
@@ -305,14 +306,14 @@ export class ToolRegistry {
         throw new Error("tool returned an invalid execution result");
       }
       if (result.isError) {
-        await this.hooks.runPostToolUseFailure(call, args, new Error(result.content));
+        await this.hooks.runPostToolUseFailure(call, args, new Error(result.content), false);
       } else {
         await this.hooks.runPostToolUse(call, args, result.content);
       }
       return result;
     } catch (error) {
       const content = `ERROR: ${describeError(error)}`;
-      await this.hooks.runPostToolUseFailure(call, args, error);
+      await this.hooks.runPostToolUseFailure(call, args, error, true);
       if (error instanceof ProcessCleanupError) throw error;
       return failed(content);
     }

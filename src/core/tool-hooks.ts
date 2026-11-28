@@ -13,7 +13,8 @@
  *
  * 内容目录：
  *   - `ToolUseContext`：三个事件共用的上下文 —— 哪一次调用、什么参数。
- *   - `PostToolUseContext` / `PostToolUseFailureContext`：成功时多一个结果，失败时多一个原始错误。
+ *   - `PostToolUseContext` / `PostToolUseFailureContext`：成功时多一个结果，失败时多一个错误和一个
+ *     `thrown` 标记（区分「工具抛错」与「结构化失败」）。
  *   - `PreToolUseDecision`：前置 Hook 唯一的出口；返回 `{ block: 原因 }` 就阻止这次调用。
  *   - `PreToolUseHook` / `PostToolUseHook` / `PostToolUseFailureHook`：回调形状，同步和异步都收。
  *   - `ToolHooksOptions`：一次登记的三个事件列表，缺哪个就表示那个事件没人关心。
@@ -21,7 +22,7 @@
  *   - 内部：`cloneContext()` 让每个事件拿到独立副本；`readBlockReason()` 把返回值读成阻止原因。
  *
  * 模块关系：只依赖 `protocol/types.ts` 的 `ToolCall`，是 `core/` 里一个不带副作用的旁路模块。
- * 由 `core/tool-registry.ts` 持有，在 `execute()` 里围着 `tool.run()` 调用；
+ * 由 `core/tool-registry.ts` 持有，在 `executeWithStatus()` 里围着 `tool.run()` 调用；
  * `cli.ts` 与测试构造 `ToolHooks` 后交给 `ToolRegistry` 构造函数。
  */
 import type { ToolCall } from "../protocol/types.ts";
@@ -40,13 +41,22 @@ export interface PostToolUseContext extends ToolUseContext {
   result: string;
 }
 
-/** 失败之后能看到的上下文：在共用上下文之外，多一个工具抛出的原始错误。 */
+/** 失败之后能看到的上下文：在共用上下文之外，多一个错误对象和一个区分失败来源的 `thrown` 标记。 */
 export interface PostToolUseFailureContext extends ToolUseContext {
   /**
-   * 工具抛出的原始错误 —— 折成 `ERROR:` 文本之前的那个东西，可能是 `Error`，也可能是别的。
+   * 失败原因。两种来源的形状不同：
+   *   - `thrown:true`：工具抛出的原始错误 —— 折成 `ERROR:` 文本之前的那个东西，可能是 `Error`，也可能是别的；
+   *   - `thrown:false`：工具返回 `{ isError:true }` 时由结果原文合成的 `Error(content)`，没有原始异常对象。
    * 只读：不要改写它，回灌给模型的文本在通知 Hook 之前就已经定下来了。
    */
   error: unknown;
+  /**
+   * 失败是工具抛出来的，还是工具返回的结构化失败。
+   * `true` = 工具抛出错误（`error` 是原始错误对象）；`false` = 结构化 `{ isError:true }`
+   * （`error` 是合成错误，`message` 与模型读到的结果原文逐字一致）。
+   * 必填：Hook 不该靠 `error.stack` 或 `instanceof` 猜来源。
+   */
+  thrown: boolean;
 }
 
 /**
@@ -169,10 +179,18 @@ export class ToolHooks {
     }
   }
 
-  /** 跑失败后的链：全部执行完；错误对象原样传下去，不复制也不改写。 */
-  async runPostToolUseFailure(call: ToolCall, args: Record<string, unknown>, error: unknown): Promise<void> {
+  /**
+   * 跑失败后的链：全部执行完；错误对象原样传下去，不复制也不改写。
+   * `thrown` 由调用方（`ToolRegistry`）按失败来源给出，Hook 据此区分两条路。
+   */
+  async runPostToolUseFailure(
+    call: ToolCall,
+    args: Record<string, unknown>,
+    error: unknown,
+    thrown: boolean,
+  ): Promise<void> {
     for (const hook of this.postToolUseFailure) {
-      await this.runQuietly(hook, () => ({ ...cloneContext(call, args), error }));
+      await this.runQuietly(hook, () => ({ ...cloneContext(call, args), error, thrown }));
     }
   }
 
