@@ -103,6 +103,79 @@ function hasLocalHelper(sourceFile, name) {
   return Boolean(findLocalCallable(sourceFile, name));
 }
 
+/** 取表达式里的根标识符：只穿过属性访问、调用、括号和可选链，其它形式一律不推导。 */
+function expressionRoots(node) {
+  if (ts.isIdentifier(node)) return new Set([node.text]);
+  if (ts.isPropertyAccessExpression(node)) return expressionRoots(node.expression);
+  if (ts.isCallExpression(node)) return expressionRoots(node.expression);
+  if (ts.isParenthesizedExpression(node)) return expressionRoots(node.expression);
+  if (ts.isNonNullExpression(node)) return expressionRoots(node.expression);
+  if (ts.isElementAccessExpression(node)) return expressionRoots(node.expression);
+  return new Set();
+}
+
+/**
+ * 有界、简单的数据流：把局部变量归到它派生自的参数，支持多级局部变量
+ * （`const trimmed = value.trim(); const clean = trimmed;`）。
+ * 只读声明里的简单表达式，最多迭代「声明数 + 1」轮；推不出来就不算派生，
+ * 宁可漏认（仍按规则没实现报错），也不把无关变量算成参数。
+ */
+function derivedParameterBindings(callable, parameterNames) {
+  const declarations = [];
+  function collect(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      declarations.push({ name: node.name.text, initializer: node.initializer });
+    }
+    ts.forEachChild(node, collect);
+  }
+  collect(callable.body);
+
+  const bindings = new Map([...parameterNames].map((name) => [name, new Set([name])]));
+  for (let pass = 0; pass <= declarations.length; pass += 1) {
+    let changed = false;
+    for (const declaration of declarations) {
+      const parameters = new Set();
+      for (const root of expressionRoots(declaration.initializer)) {
+        for (const parameter of bindings.get(root) ?? []) parameters.add(parameter);
+      }
+      if (parameters.size === 0) continue;
+      const existing = bindings.get(declaration.name);
+      if (existing === undefined) {
+        bindings.set(declaration.name, parameters);
+        changed = true;
+        continue;
+      }
+      for (const parameter of parameters) {
+        if (!existing.has(parameter)) {
+          existing.add(parameter);
+          changed = true;
+        }
+      }
+    }
+    if (!changed) break;
+  }
+  return bindings;
+}
+
+/** 规则作用在哪个标识符上：直接是标识符，或 `.trim()` 返回值的来源。 */
+function ruleReceiverNames(expression) {
+  if (ts.isIdentifier(expression)) return [expression.text];
+  if (ts.isCallExpression(expression) && ts.isPropertyAccessExpression(expression.expression) &&
+      expression.expression.name.text === "trim" &&
+      ts.isIdentifier(expression.expression.expression)) {
+    return [expression.expression.expression.text];
+  }
+  return [];
+}
+
+/** `.length` 与 0/1 比较是在判空，不是「最大长度」规则；其余 `.length` 用法都算长度规则。 */
+function isEmptinessLengthAccess(node) {
+  const comparison = node.parent;
+  if (!comparison || !ts.isBinaryExpression(comparison)) return false;
+  const other = comparison.left === node ? comparison.right : comparison.left;
+  return ts.isNumericLiteral(other) && Number(other.text) <= 1;
+}
+
 export default async function check(root) {
   const source = await readTaskFile(path.join(root, "validate.mjs"), "validate.mjs");
   const parsed = ts.createSourceFile("validate.mjs", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -133,22 +206,27 @@ export default async function check(root) {
       .map((parameter) => [parameter.name.text, { type: 0, trim: 0, length: 0 }]),
   );
   assert.ok(helper && parameterChecks.size > 0, "共享校验函数必须接收待校验的值");
+  const bindings = derivedParameterBindings(helper, parameterChecks.keys());
+
+  // 一条规则可以写在参数上，也可以写在由参数派生的局部变量上；都记到派生来源参数头上。
+  function countRule(identifier, rule) {
+    for (const parameter of bindings.get(identifier) ?? []) {
+      const counts = parameterChecks.get(parameter);
+      if (counts) counts[rule] += 1;
+    }
+  }
 
   function countValidationRules(node) {
     if (ts.isTypeOfExpression(node) && ts.isIdentifier(node.expression)) {
-      const counts = parameterChecks.get(node.expression.text);
-      if (counts) counts.type++;
+      countRule(node.expression.text, "type");
     }
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === "trim" &&
-        ts.isIdentifier(node.expression.expression)) {
-      const counts = parameterChecks.get(node.expression.expression.text);
-      if (counts) counts.trim++;
+        node.expression.name.text === "trim") {
+      for (const receiver of ruleReceiverNames(node.expression.expression)) countRule(receiver, "trim");
     }
     if (ts.isPropertyAccessExpression(node) && node.name.text === "length" &&
-        ts.isIdentifier(node.expression)) {
-      const counts = parameterChecks.get(node.expression.text);
-      if (counts) counts.length++;
+        !isEmptinessLengthAccess(node)) {
+      for (const receiver of ruleReceiverNames(node.expression)) countRule(receiver, "length");
     }
     ts.forEachChild(node, countValidationRules);
   }

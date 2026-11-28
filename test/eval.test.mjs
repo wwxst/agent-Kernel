@@ -8,6 +8,8 @@
  * 内容目录：
  *   - `runFixture()`：用子进程跑 `test/support/eval-floating-check.mjs`，读它最后一行 JSON。
  *   - `withRoundFixture()`：临时任务与假 HTTP 端点，验证并发校验、首错收尾、网络分类和夹具清理。
+ *   - 付费 token 预算：上限用完后不再启动新任务、记录 `budgetStop`、非法值在发请求前拒绝；
+ *     预算充足时正常路径不变。
  *   - 入口别名：通过符号链接启动脚本，确保真实路径判断不会漏掉 CLI 执行。
  *   - `withSummaryFixture()`：隔离的汇总输入，验证轮数及完整任务集合校验。
  *   - 异步错误：没有泄漏时整轮通过；有泄漏时任务虽过、整轮仍判失败。
@@ -39,7 +41,11 @@ async function withRoundFixture(run) {
       requests++;
       setTimeout(() => {
         finished++;
-        response.end(JSON.stringify({ choices: [{ message: { role: "assistant", content: "done" }, finish_reason: "stop" }] }));
+        response.end(JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "done" }, finish_reason: "stop" }],
+          // 每条任务一次请求，固定 110 tokens；预算测试靠这个累计值判断何时停止。
+          usage: { prompt_tokens: 100, completion_tokens: 10, total_tokens: 110 },
+        }));
       }, 80);
     });
   });
@@ -60,6 +66,44 @@ async function withRoundFixture(run) {
   }
 }
 
+/** 在临时目录复制一份最小评测项目，供子进程 CLI 测试使用。 */
+async function stageEvalProject(tasksDir) {
+  const root = await mkdtemp(path.join(tmpdir(), "agent-eval-project-"));
+  await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
+  await mkdir(path.join(root, "eval"));
+  for (const file of [
+      "run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs",
+      "compare.mjs", "ab.mjs", "checker-helpers.mjs",
+    ]) {
+    await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
+  }
+  await cp(tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
+  await copyFile(path.join(projectRoot, "package.json"), path.join(root, "package.json"));
+  await copyFile(path.join(projectRoot, "package-lock.json"), path.join(root, "package-lock.json"));
+  return root;
+}
+
+/** 在临时项目里跑真实 CLI，返回退出码与输出；预算变量默认清空，避免宿主环境影响用例。 */
+function runEvalCli(root, baseUrl, env = {}) {
+  const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
+    cwd: root,
+    env: {
+      ...process.env, EVAL_BUDGET_TOKENS: "", BASE_URL: baseUrl, API_KEY: "test", OPENAI_API_KEY: "", MODEL: "mock",
+      ...env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 15_000,
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  return new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code) => resolve({ code, stdout, stderr }));
+  });
+}
+
 test("评测记录：每轮都写入当前评测套件版本", () => {
   const record = summarize({
     results: [{
@@ -74,7 +118,7 @@ test("评测记录：每轮都写入当前评测套件版本", () => {
     infra: [],
   });
   assert.equal(record.suiteVersion, EVAL_SUITE_VERSION);
-  assert.equal(record.suiteVersion, "2026-11-27-eval-system-v6");
+  assert.equal(record.suiteVersion, "2026-11-28-eval-system-v7");
 });
 
 test("评测：并发任务报错后停止领取，等待已经启动的任务收尾再拒绝", async () => {
@@ -94,6 +138,61 @@ test("评测：非法并发数在启动任务前拒绝，不能留下未执行�
       await assert.rejects(() => runRound({ ...options, names: ["first"], jobs }), /jobs must be a positive safe integer/);
     }
     assert.equal(endpoint.requests(), 0);
+  });
+});
+
+test("评测：非法付费 token 上限在启动任务前拒绝", async () => {
+  await withRoundFixture(async (options, endpoint) => {
+    for (const budgetTokens of [0, -1, 0.5, NaN, Infinity]) {
+      await assert.rejects(
+        () => runRound({ ...options, names: ["first"], jobs: 1, budgetTokens }),
+        /budgetTokens must be a positive safe integer/,
+      );
+    }
+    assert.equal(endpoint.requests(), 0);
+  });
+});
+
+test("评测：付费 token 达到上限后不再启动新任务，并记录停止证据", async () => {
+  await withRoundFixture(async (options, endpoint) => {
+    const round = await runRound({ ...options, names: ["first", "queued"], jobs: 1, budgetTokens: 100 });
+    assert.deepEqual(round.results.map((result) => result.name), ["first"],
+      "第一个任务跑完就到上限，后面的任务不能再启动");
+    assert.deepEqual(round.budgetStop, { cap: 100, spent: 110, stoppedBefore: "queued" });
+    assert.equal(endpoint.requests(), 1, "未启动的任务不能发出模型请求");
+    assert.equal(endpoint.finished(), 1, "已经在跑的任务要跑完");
+
+    // 少跑了任务的轮次不能被当成完整轮次：results.length 小于任务数时 summary 会跳过它。
+    const record = summarize({
+      results: round.results,
+      elapsed: round.elapsed,
+      model: "mock",
+      commit: "test-commit",
+      infra: round.infra,
+      metadata: { taskNames: ["first", "queued"] },
+      budgetStop: round.budgetStop,
+    });
+    assert.equal(record.ok, false);
+    assert.equal(record.total, 1);
+    assert.deepEqual(record.budgetStop, round.budgetStop);
+  });
+});
+
+test("评测：预算充足时照常跑完所有任务且没有停止记录", async () => {
+  await withRoundFixture(async (options) => {
+    const round = await runRound({ ...options, names: ["first", "queued"], jobs: 1, budgetTokens: 10_000 });
+    assert.deepEqual(round.results.map((result) => result.name), ["first", "queued"]);
+    assert.equal(round.budgetStop, undefined);
+    const record = summarize({
+      results: round.results,
+      elapsed: round.elapsed,
+      model: "mock",
+      commit: "test-commit",
+      infra: round.infra,
+      budgetStop: round.budgetStop,
+    });
+    assert.equal(record.ok, true);
+    assert.equal("budgetStop" in record, false);
   });
 });
 
@@ -121,41 +220,16 @@ test("评测入口：通过符号链接路径启动仍执行 CLI", {
 
 test("评测：EVAL_OUTPUT_FILE 指定结果路径并写入完整记录", async () => {
   await withRoundFixture(async (options) => {
-    const root = await mkdtemp(path.join(tmpdir(), "agent-output-path-test-"));
+    const root = await stageEvalProject(options.tasksDir);
     try {
-      await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
-      await mkdir(path.join(root, "eval"));
-      for (const file of [
-          "run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs",
-          "compare.mjs", "ab.mjs", "checker-helpers.mjs",
-        ]) {
-        await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
-      }
-      await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
-      await copyFile(path.join(projectRoot, "package.json"), path.join(root, "package.json"));
-      await copyFile(path.join(projectRoot, "package-lock.json"), path.join(root, "package-lock.json"));
       const outputFile = "eval/results/experiments/test-run.json";
-      const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
-        cwd: root,
-        env: {
-          ...process.env, BASE_URL: options.baseUrl, API_KEY: "test", OPENAI_API_KEY: "", MODEL: "mock",
-          EVAL_OUTPUT_FILE: outputFile,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 10_000,
-      });
-      child.stdout.resume();
-      let stderr = "";
-      child.stderr.on("data", (chunk) => { stderr += chunk; });
-      const code = await new Promise((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
-      });
+      const { code, stderr } = await runEvalCli(root, options.baseUrl, { EVAL_OUTPUT_FILE: outputFile });
       assert.equal(code, 0, stderr);
       const record = JSON.parse(await readFile(path.join(root, outputFile), "utf8"));
       assert.equal(record.model, "mock");
       assert.deepEqual(record.taskNames, ["first", "queued"]);
       assert.equal(record.results.length, 2);
+      assert.equal(record.budgetTokens, null);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -164,36 +238,51 @@ test("评测：EVAL_OUTPUT_FILE 指定结果路径并写入完整记录", async 
 
 test("评测：成绩文件保存失败必须非零退出", async () => {
   await withRoundFixture(async (options) => {
-    const root = await mkdtemp(path.join(tmpdir(), "agent-report-test-"));
+    const root = await stageEvalProject(options.tasksDir);
     try {
-      await cp(path.join(projectRoot, "src"), path.join(root, "src"), { recursive: true });
-      await mkdir(path.join(root, "eval"));
-      for (const file of [
-          "run.mjs", "selfcheck.mjs", "diagnostics.mjs", "cost.mjs",
-          "compare.mjs", "ab.mjs", "checker-helpers.mjs",
-        ]) {
-        await copyFile(path.join(projectRoot, "eval", file), path.join(root, "eval", file));
-      }
-      await cp(options.tasksDir, path.join(root, "eval", "tasks"), { recursive: true });
-      await copyFile(path.join(projectRoot, "package.json"), path.join(root, "package.json"));
-      await copyFile(path.join(projectRoot, "package-lock.json"), path.join(root, "package-lock.json"));
       // 只在临时副本制造 ENOTDIR，不触碰仓库原有成绩。
       await writeFile(path.join(root, "eval", "results"), "blocking file");
-      const child = spawn(process.execPath, [path.join(root, "eval", "run.mjs"), "--jobs", "1"], {
-        cwd: root,
-        env: { ...process.env, BASE_URL: options.baseUrl, API_KEY: "test", OPENAI_API_KEY: "", MODEL: "mock",
-          EVAL_OUTPUT_FILE: "eval/results/custom.json" },
-        stdio: ["ignore", "pipe", "pipe"], timeout: 10_000,
-      });
-      child.stdout.resume();
-      let stderr = "";
-      child.stderr.on("data", (chunk) => { stderr += chunk; });
-      const code = await new Promise((resolve, reject) => {
-        child.once("error", reject);
-        child.once("close", resolve);
+      const { code, stderr } = await runEvalCli(root, options.baseUrl, {
+        EVAL_OUTPUT_FILE: "eval/results/custom.json",
       });
       assert.match(stderr, /could not write results/);
       assert.equal(code, 1, "任务全过也不能把成绩保存失败伪装成成功退出");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test("评测：预算停止时 CLI 非零退出并写入 budgetStop 与 budgetTokens", async () => {
+  await withRoundFixture(async (options) => {
+    const root = await stageEvalProject(options.tasksDir);
+    try {
+      const { code, stdout, stderr } = await runEvalCli(root, options.baseUrl, {
+        EVAL_BUDGET_TOKENS: "100",
+        EVAL_OUTPUT_FILE: "eval/results/budget-stop.json",
+      });
+      assert.equal(code, 1, stderr);
+      assert.match(stdout, /付费 token 预算停止/);
+      const record = JSON.parse(await readFile(path.join(root, "eval/results/budget-stop.json"), "utf8"));
+      assert.equal(record.budgetTokens, 100);
+      assert.deepEqual(record.budgetStop, { cap: 100, spent: 110, stoppedBefore: "queued" });
+      assert.equal(record.results.length, 1);
+      assert.equal(record.taskNames.length, 2);
+      assert.equal(record.ok, false, "少跑任务的轮次不能看起来像完整轮次");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+test("评测：CLI 收到非法 EVAL_BUDGET_TOKENS 时在发请求前非零退出", async () => {
+  await withRoundFixture(async (options, endpoint) => {
+    const root = await stageEvalProject(options.tasksDir);
+    try {
+      const { code, stderr } = await runEvalCli(root, options.baseUrl, { EVAL_BUDGET_TOKENS: "0" });
+      assert.equal(code, 1, stderr);
+      assert.match(stderr, /invalid EVAL_BUDGET_TOKENS/);
+      assert.equal(endpoint.requests(), 0);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
