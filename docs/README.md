@@ -62,7 +62,7 @@
 
 - [整体评测体系](./evaluation-system.md)：P1 数据采集、P2 费用与盲审、P3 A/B、P4 复杂任务。
 - [eval/README.md](../eval/README.md)：评测方法、P1–P4 评测体系、归档格式和成本口径。
-- [eval/baseline.md](../eval/baseline.md)：当前套件 v6 三轮真实基线与上一套件 checkers-v2 历史基线。
+- [eval/baseline.md](../eval/baseline.md)：当前套件 v7（尚无真实模型基线）、上一套件 v6 三轮历史基线与更早的 checkers-v2 历史基线。
 - [docs/eval-diagnostics.md](./eval-diagnostics.md)：固定基线和诊断。
 
 ## 文档怎么分工

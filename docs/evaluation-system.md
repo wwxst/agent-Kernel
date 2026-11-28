@@ -10,7 +10,7 @@
 
 评测是内核的证据层，不替代单元测试、类型检查、安全审查，也不根据单次分数自动决定架构方向。
 
-当前评测套件版本：`2026-11-27-eval-system-v6`。04-create-doc 检查器允许两列「命令 + 说明」或三列「npm script + 命令 + 说明」，但仍核实每个 npm script 和实际命令。22-multi-tool-refactor 检查器比较测试文件前统一换行符，接受语义等价的新增测试标题，但仍要求原始测试逐字保留。
+当前评测套件版本：`2026-11-28-eval-system-v7`。这一版把 `04-create-doc` 的表格契约写进任务描述（`命令` 列必须写完整 npm 命令，允许额外的 `脚本` 列，检查器不变），并让 `08-extract-duplication` 检查器沿参数派生的局部变量识别三种校验规则（合法的局部变量重构不再被误判，判定标准没有放宽）。`22-multi-tool-refactor` 检查器比较测试文件前统一换行符，接受语义等价的新增测试标题，但仍要求原始测试逐字保留。
 
 ## P1：评测数据采集
 
@@ -32,20 +32,31 @@
 
 结果默认写入 `eval/results/`，该目录不进入 Git。可通过 `EVAL_OUTPUT_FILE` 指定结果文件，供 A/B 实验分别保存。
 
+真实任务轮次可以用 `EVAL_BUDGET_TOKENS=<正整数>` 设付费 Token 上限：每个任务结束后累计该任务的 token，累计值达到上限就不再启动新任务，已经在跑的任务会跑完；记录里写入 `budgetTokens` 与 `budgetStop`（`cap` / `spent` / `stoppedBefore`），进程非零退出。由于 `results.length` 小于任务总数，`eval:summary` 不会把它算作完整轮次。非法值在发出第一个请求前报错。
+
 ## P2：费用估算与代码质量盲审
 
 ### Token 与费用
 
 入口：`eval/cost.mjs`、`eval/pricing.example.json`。
 
-- 费用只按用户自己填写的价格表计算，不内置、猜测或自动更新模型价格。
-- 价格按每百万输入、缓存输入和输出 Token 配置。
-- 没有价格配置时，金额为未知。
-- 请求 usage 缺失时，只能报告已知请求的小计，并标记不完整。
-- 缓存价格与普通输入价格不同、但缓存命中量未知时，不给出费用金额。
-- 费用字段使用价格表声明的币种，不把人民币等其他币种误标成美元。
+费用只按用户自己填写的价格表计算，**仓库不内置、猜测或自动更新任何服务商价格**。可复制的流程：
 
-价格表示例中的费率是占位字符串，必须替换成真实数字后才能使用。
+1. 复制示例（`eval/pricing.json` 不要提交）：`cp eval/pricing.example.json eval/pricing.json`；Windows PowerShell 用 `Copy-Item eval/pricing.example.json eval/pricing.json`。
+2. 编辑 `eval/pricing.json`：
+   - `models` 的键改成 `MODEL` 的精确名字（大小写和日期后缀都要一致），也可以用 `"*"` 作为所有模型的兜底费率；
+   - 把 `inputPerMillion`、`cachedInputPerMillion`、`outputPerMillion` 三个占位字符串 `REPLACE_WITH_REAL_PRICE` 换成该模型真实的每百万 Token 价格（普通输入 / 缓存命中输入 / 输出），单位是价格表币种；
+   - 把 `currency` 改成价格表使用的币种（例如 `USD`、`CNY`），不把人民币价格标成美元。
+   只想按普通输入价计算缓存输入时，可以删掉 `cachedInputPerMillion`，它会回退到 `inputPerMillion`。
+3. 运行时指定文件：`EVAL_PRICING_FILE=eval/pricing.json npm run eval`；Windows PowerShell 用 `$env:EVAL_PRICING_FILE = "eval/pricing.json"; npm run eval`。
+
+口径与边界：
+
+- 占位字符串、负数、非数字或缺少必填字段时，加载价格表直接报错，避免把示例值当成 0 元。
+- 没有价格配置、或价格表里没有该模型且没有 `"*"` 兜底时，金额为未知（`cost.amount: null`），不用 0 代替。
+- `cost.complete: false` 表示金额不是整轮真实账单：有请求没返回 usage 时只能报告已知请求的小计（`coverage: reported_requests_only`），缓存命中量未知且缓存价与普通输入价不同时不给出金额（`reason: cache_usage_unknown`）。
+- 缓存命中量超过输入 Token 时判为不完整，不给出金额。
+- 费用字段使用价格表声明的币种，不把人民币等其他币种误标成美元。
 
 ### 代码质量盲审
 
@@ -116,7 +127,7 @@ A/B 工具只运行已经准备好的目录，不会创建或删除 Git 分支�
 - `serial-tool-batch`：验证同一批工具调用严格串行执行；
 - `tool-error-feedback`：验证工具错误状态返回模型后，Agent 能继续处理。
 
-真实模型压缩专项评测（`eval/compaction.mjs`，`npm run eval:compaction`）只把摘要请求发给真实模型：业务回合由脚本化 ChatClient 回放。单次与连续压缩使用 32768 token 窗口、2048 token 输出预留；超长纠正与持续超长使用 8192 / 1024（对齐 v5 真实场景）。超长故障由脚本合成固定 1.5 倍硬上限的合法摘要，纠正重试才调用真实模型，持续超长完全不调用端点。它验证单次压缩、同一 Run 连续压缩、超长摘要纠正重试，以及持续超长时的有界失败、不提交和原历史不变。它按 `EVAL_BUDGET_TOKENS`（默认 200000）统计付费摘要 token，超限即中止剩余场景；不改变 v6 任务集。
+真实模型压缩专项评测（`eval/compaction.mjs`，`npm run eval:compaction`）只把摘要请求发给真实模型：业务回合由脚本化 ChatClient 回放。单次与连续压缩使用 32768 token 窗口、2048 token 输出预留；超长纠正与持续超长使用 8192 / 1024（对齐 v5 真实场景）。超长故障由脚本合成固定 1.5 倍硬上限的合法摘要，纠正重试才调用真实模型，持续超长完全不调用端点。它验证单次压缩、同一 Run 连续压缩、超长摘要纠正重试，以及持续超长时的有界失败、不提交和原历史不变。它按 `EVAL_BUDGET_TOKENS`（默认 200000）统计付费摘要 token，超限即中止剩余场景；不改变 v7 任务集。
 
 这些离线场景验证内核行为，不代表真实模型在所有任务上的成功率。
 
@@ -167,6 +178,7 @@ CI 在 Linux、Windows、macOS 上运行类型检查、单元测试、架构边�
 - P1～P4 的评测工具、任务和规范已落地。
 - 离线测试和 CI 可以证明评测工具自身按预期工作。
 - CI 通过不等于 Agent 的真实模型任务通过。
-- 当前套件 v6 已有三轮真实模型基线（提交 `dfcaf8a`、`hy3`、22 个任务、并发 4）：63/66 通过（95.5%），逐轮 20/22、22/22、21/22；中位数 147 次请求 / 652,130 tokens / 112.6 秒。`04-create-doc` 只有 1/3（表格格式契约），`08-extract-duplication` 2/3，其余 20 个任务 3/3。
-- 该基线没有触发上下文压缩：`summaryRequests` 与 `compactions` 均为 0，32768 的上下文窗口只配在 `21-long-context-compaction` 上；压缩由离线专项场景 `context-compaction` 覆盖，不是这三轮的证据。记录里没有价格表（`pricing.configured: false`），费用未知，不能由 Token 直接换算。
-- 历史旧套件的分数不能直接当成新套件成绩：checkers-v2 的 57/60（20 题、`76a024a`）和 v1/v2 的六轮数字都使用不同的任务口径与提交。
+- 当前套件 v7 还没有真实模型基线：这一版只改了 `04-create-doc` 的任务描述和 `08-extract-duplication` 的检查器语义，没有跑付费基线，不能从上一版数字直接推导。
+- 上一套件 v6 的三轮真实模型基线（提交 `dfcaf8a`、`hy3`、22 个任务、并发 4）是历史对照：63/66 通过（95.5%），逐轮 20/22、22/22、21/22；中位数 147 次请求 / 652,130 tokens / 112.6 秒。`04-create-doc` 只有 1/3（当时的表格格式契约），`08-extract-duplication` 2/3，其余 20 个任务 3/3。
+- v6 基线没有触发上下文压缩：`summaryRequests` 与 `compactions` 均为 0，32768 的上下文窗口只配在 `21-long-context-compaction` 上；压缩由离线专项场景 `context-compaction` 覆盖，不是这三轮的证据。记录里没有价格表（`pricing.configured: false`），费用未知，不能由 Token 直接换算。
+- 历史旧套件的分数不能直接当成新套件成绩：v6 的 63/66（`dfcaf8a`）、checkers-v2 的 57/60（20 题、`76a024a`）和 v1/v2 的六轮数字都使用不同的任务口径与提交。

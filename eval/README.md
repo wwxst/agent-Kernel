@@ -22,9 +22,11 @@ npm run eval:check           # 自检：不需要 API Key
 npm run eval:summary         # 汇总最近 3 轮完整评测的中位数
 ```
 
-需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前评测套件为 `2026-11-27-eval-system-v6`，已有三轮真实模型基线（提交 `dfcaf8a`、`hy3`、22 个任务、并发 4）：63/66（95.5%），中位数 147 次请求 / 652,130 tokens / 112.6 秒。原始记录归档在 [`baselines/2026-11-27-eval-system-v6/`](./baselines/2026-11-27-eval-system-v6/)，逐轮数字见 [baseline.md](./baseline.md)；不能把旧套件的成绩当作 v6 的成绩。
+需要 `.env` 里的 `BASE_URL` / `API_KEY` / `MODEL`，跑一次会真的调用模型、真的花钱。当前评测套件为 `2026-11-28-eval-system-v7`，**还没有用真实模型跑过 v7 基线**：这一版只改了 `04-create-doc` 的任务描述和 `08-extract-duplication` 的检查器语义，没有做付费基线。上一套件 `2026-11-27-eval-system-v6` 的三轮真实模型基线（提交 `dfcaf8a`、`hy3`、22 个任务、并发 4）是**上一套件的历史基线**：63/66（95.5%），中位数 147 次请求 / 652,130 tokens / 112.6 秒。原始记录归档在 [`baselines/2026-11-27-eval-system-v6/`](./baselines/2026-11-27-eval-system-v6/)，逐轮数字见 [baseline.md](./baseline.md)；不能把 v6 的成绩当作 v7 的成绩。
 
-上一套件 `2026-11-19-checkers-v2` 的历史基线固定在同一提交 `76a024a`、同一模型 `hy3`：三轮 57/60（每轮 19/20），中位数 132 次请求 / 542,515 tokens / 79.5 秒。它是**上一套件的历史基线**，不能和 v6 的结果混算；旧套件的 6 轮 120/120 属于不同提交，同样不能混算。详见 [baseline.md](./baseline.md)，其中旧套件的结果不代表当前代码。
+一轮评测可以用 `EVAL_BUDGET_TOKENS=<正整数>` 设付费 Token 上限（不设置表示不设上限；`eval:compaction` 另有一个同名的 200000 默认上限）：每个任务结束后累计它的 token，累计值达到上限就不再启动新任务；已经在跑的任务会跑完，不会被打断。停止时记录里写 `budgetTokens` 和 `budgetStop`（`cap` / `spent` / `stoppedBefore`），进程以非零码退出，`eval:summary` 不会把它当成完整轮次。非法值（0、负数、小数、非数字）在发出第一个请求前就报错。
+
+上一套件 `2026-11-19-checkers-v2` 的历史基线固定在同一提交 `76a024a`、同一模型 `hy3`：三轮 57/60（每轮 19/20），中位数 132 次请求 / 542,515 tokens / 79.5 秒。它是**更早一套的历史基线**，不能和 v6 或 v7 的结果混算；旧套件的 6 轮 120/120 属于不同提交，同样不能混算。详见 [baseline.md](./baseline.md)，其中旧套件的结果不代表当前代码。
 
 历史 v2 套件的 20 个任务互不依赖，曾通过默认并发 4 将墙钟从约 226 秒降到约 74 秒。这个历史数据不是新套件的实测结果。单任务时间主要花在等待模型返回，工具执行和内核开销占比较小。
 
@@ -95,7 +97,24 @@ npm run eval:review -- --scores eval/results/review-packs/scorecards.json
 
 ### 缓存 Token 与费用估算
 
-模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。费用只使用用户提供的价格表，不内置服务商价格：复制 `eval/pricing.example.json` 为本地 `eval/pricing.json`，填写准确的每百万 Token 价格，并设置 `EVAL_PRICING_FILE=eval/pricing.json`。示例里的费率是字符串占位符，没替换成真实数字会直接报错，避免把示例的 0 误当成真实价格。缺少价格或缓存用量不完整时，费用会标记为未知/不完整。
+模型返回 `prompt_tokens_details.cached_tokens` 或 `prompt_cache_hit_tokens` 时，会额外记录缓存命中输入 Token。端点不返回缓存字段时记为未知，不补 0。
+
+费用只使用你自己填的价格表，仓库**不内置任何服务商价格**，也不自动更新价格。完整流程：
+
+1. 复制示例（`eval/pricing.json` 不要提交）：`cp eval/pricing.example.json eval/pricing.json`；Windows PowerShell 用 `Copy-Item eval/pricing.example.json eval/pricing.json`。
+2. 打开 `eval/pricing.json`，改三处：
+   - `models` 的键改成 `MODEL` 的**精确名字**（大小写、日期后缀都要一致；也可以用 `"*"` 作为所有模型的兜底费率）；
+   - 把三个占位字符串 `REPLACE_WITH_REAL_PRICE` 换成该模型真实的每百万 Token 价格：`inputPerMillion`（普通输入）、`cachedInputPerMillion`（缓存命中输入）、`outputPerMillion`（输出），币种由 `currency` 声明；
+   - 把 `currency` 改成价格表使用的币种（例如 `USD`、`CNY`），不要拿人民币价格标成美元。
+   只想按普通输入价计算缓存输入时，可以删掉 `cachedInputPerMillion`，它会回退到 `inputPerMillion`。
+3. 跑评测时指定文件：`EVAL_PRICING_FILE=eval/pricing.json npm run eval`；Windows PowerShell 用 `$env:EVAL_PRICING_FILE = "eval/pricing.json"; npm run eval`。
+
+记录怎么读：
+
+- 费率还是字符串占位符、为负数、不是数字，或缺少必填字段时，加载价格表会直接报错，不会把示例的占位值当成 0 元。
+- `cost.complete: false` 表示金额**不是整轮真实账单**：可能是模型没有价格条目（`reason: model_price_not_configured`）、有请求没返回 usage（`coverage: reported_requests_only`，金额只是已知请求的小计），或缓存命中量未知而缓存价与普通输入价不同（`reason: cache_usage_unknown`，此时干脆不给金额）。`totals.cost.pricedTasks` / `totalTasks` 说明有多少任务算出了金额。
+- 价格表里没有该模型、也没有 `"*"` 兜底时，`cost.amount` 为 `null`，不要用 0 代替。
+- 缓存命中量超过输入 Token 时直接判为不完整，不给金额。
 
 任务可选提供 `task.json`，单独设置 `maxSteps`、`maxToolCalls`、`maxTotalTokens`、`contextWindowTokens`、`outputTokenReserve`、`maxTranscriptChars` 和 `tags`。没有配置的任务沿用原有默认值。
 
@@ -141,9 +160,14 @@ tasks/01-add-health-route/
 
 ## 评测套件版本和检查器质量
 
-每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-27-eval-system-v6`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
+每轮结果都会写入 `suiteVersion`。当前套件标识为 `2026-11-28-eval-system-v7`，定义在 `eval/run.mjs` 的 `EVAL_SUITE_VERSION`。
 
 只要修改任务提示、初始夹具或检查器的验收语义，就必须更新套件标识。不同套件版本的成绩不能直接混算。旧结果没有 `suiteVersion` 字段，会被标记为 `legacy`。
+
+### v7 的验收契约变化
+
+- `04-create-doc`：检查器不变；任务描述现在明确要求表格有 `命令` 列和说明列，`命令` 列必须写完整 npm 命令（`npm test` 或 `npm run <script>`），并允许额外的 `脚本` 列。此前任务描述没写这条契约，模型会稳定写成脚本名。
+- `08-extract-duplication`：检查器会沿参数派生的局部变量（例如 `const trimmed = value.trim()`、多级局部变量）识别类型、空字符串和最大长度三种规则，合法的局部变量重构不再被误判；判定标准没有放宽，仍要求两个导出调用同一个本地 helper，且 helper 内不能按 label 复制两套规则。
 
 ### v2 已加强的检查器
 

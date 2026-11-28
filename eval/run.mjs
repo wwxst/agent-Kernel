@@ -15,11 +15,14 @@
  * 不负责诊断单次运行的细节（那是 `diagnostics.mjs`）、不负责汇总跨天结果（那是 `summary.mjs`）。
  *
  * 内容目录：
- *   - `runRound()`：跑一轮（可并发），返回每条任务的记录与整体汇总。
+ *   - `runRound()`：跑一轮（可并发），返回每条任务的记录与整体汇总；
+ *     `EVAL_BUDGET_TOKENS` 用完后不再启动新任务，并记录 `budgetStop`。
  *   - `runTask()`：单条任务 —— 复制到临时目录、起 Agent、跑断言、收拾现场。
  *   - `summarize()`：把一轮结果压成成功率、请求数、工具调用、token、耗时。
- *   - `runPool()`：有并发上限的任务池；`classifyRunFailure()`：把失败分到上面四类。
- *   - `cli()`：命令行入口；`report()`：逐条打印；`currentCommit()`：记下跑的是哪个提交。
+ *   - `runPool()`：有并发上限的任务池，启动新任务前检查付费 token 预算；
+ *     `classifyRunFailure()`：把失败分到上面四类。
+ *   - `readBudgetTokens()`：读取并校验 `EVAL_BUDGET_TOKENS`；`cli()`：命令行入口；
+ *     `report()`：逐条打印；`currentCommit()`：记下跑的是哪个提交。
  *
  * 模块关系：依赖 `src/` 的 `Agent`、`Llm`、`ToolRegistry`、`Workspace` 与 `createWorkspaceTools`，
  * 以及同目录的 `diagnostics.mjs`、`selfcheck.mjs`。被 `test/support/eval-floating-check.mjs` 引用。
@@ -51,7 +54,7 @@ const resultsDir = path.join(here, "results");
 const INFRA_SETTLE_MS = 20;
 
 // 修改任务提示、夹具或检查器的验收语义时递增；不同版本的成绩不能直接混算。
-export const EVAL_SUITE_VERSION = "2026-11-27-eval-system-v6";
+export const EVAL_SUITE_VERSION = "2026-11-28-eval-system-v7";
 
 /** 直接运行检测比较真实路径，避免 macOS 的 /var 与 /private/var 等符号链接别名造成漏判。 */
 function sameFilePath(left, right) {
@@ -96,6 +99,16 @@ async function cli() {
     return;
   }
 
+  // 预算配错了必须在发出第一个请求之前报出来，不能等跑了一半才发现。
+  let budgetTokens;
+  try {
+    budgetTokens = readBudgetTokens();
+  } catch (error) {
+    console.error(describe(error));
+    process.exitCode = 1;
+    return;
+  }
+
   const baseUrl = process.env.BASE_URL ?? "https://api.openai.com/v1";
   const model = process.env.MODEL ?? "gpt-4o-mini";
   const pricing = process.env.EVAL_PRICING_FILE
@@ -120,10 +133,13 @@ async function cli() {
 
   console.log(`model:  ${model}`);
   console.log(`commit: ${commit}`);
-  console.log(`tasks:  ${names.length}  并发: ${Math.min(jobs, names.length)}\n`);
+  console.log(
+    `tasks:  ${names.length}  并发: ${Math.min(jobs, names.length)}` +
+      `${budgetTokens === undefined ? "" : `  付费 token 上限: ${budgetTokens}`}\n`,
+  );
 
   const startedAt = Date.now();
-  const { results, elapsed, infra } = await runRound({
+  const { results, elapsed, infra, budgetStop } = await runRound({
     tasksDir: defaultTasksDir,
     names,
     baseUrl,
@@ -133,6 +149,7 @@ async function cli() {
     keep,
     trace,
     pricing,
+    budgetTokens,
   });
 
   const metadata = {
@@ -150,6 +167,7 @@ async function cli() {
     },
     jobs,
     taskNames: names,
+    budgetTokens: budgetTokens ?? null,
     trace,
     keep,
     promptSha256: createHash("sha256").update(DEFAULT_SYSTEM_PROMPT).digest("hex"),
@@ -173,15 +191,19 @@ async function cli() {
       factor: process.env.EVAL_EXPERIMENT_FACTOR ?? "unspecified",
     },
   };
-  await report(summarize({ results, elapsed, model, commit, infra, metadata }), process.env.EVAL_OUTPUT_FILE);
+  await report(summarize({ results, elapsed, model, commit, infra, metadata, budgetStop }), process.env.EVAL_OUTPUT_FILE);
 }
 
 /** 跑一轮：并发执行任务，并在结算窗口内收集检查器留下的未处理 rejection。 */
 export async function runRound({
-  tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false, trace = false, pricing,
+  tasksDir, names, baseUrl, apiKey, model, jobs = 4, keep = false, trace = false, pricing, budgetTokens,
 }) {
   // 非法并发数会让任务池生成零个 runner，留下从未执行的稀疏结果；必须在启动前拒绝。
   if (!Number.isSafeInteger(jobs) || jobs <= 0) throw new Error("jobs must be a positive safe integer");
+  if (budgetTokens !== undefined &&
+      (!Number.isSafeInteger(budgetTokens) || budgetTokens <= 0)) {
+    throw new Error("budgetTokens must be a positive safe integer");
+  }
   const infra = [];
   const onUnhandled = (reason) => {
     infra.push(describe(reason));
@@ -191,25 +213,34 @@ export async function runRound({
   process.on("unhandledRejection", onUnhandled);
   const startedAt = Date.now();
   try {
+    // 预算按已完成任务累计；达到上限后池子不再领取新任务，已经在跑的不打断。
+    const budget = budgetTokens === undefined ? undefined : { cap: budgetTokens, spent: 0 };
     let results;
+    let stoppedBefore;
     try {
-      results = await runPool(names, jobs, (name) =>
-        runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pricing }),
-      );
+      ({ results, stoppedBefore } = await runPool(
+        names,
+        jobs,
+        (name) => runTask(name, { tasksDir, baseUrl, apiKey, model, keep, trace, pricing }),
+        budget,
+      ));
     } finally {
       // 池失败也先等已启动任务结束，再留一个窗口收集检查器没 await 的 promise。
       // 更晚才炸的 rejection 仍走 Node 默认行为，不能静默通过。
       await new Promise((resolve) => setTimeout(resolve, INFRA_SETTLE_MS));
     }
 
-    return { results, elapsed: (Date.now() - startedAt) / 1000, infra };
+    const budgetStop = stoppedBefore === undefined
+      ? undefined
+      : { cap: budget.cap, spent: budget.spent, stoppedBefore };
+    return { results, elapsed: (Date.now() - startedAt) / 1000, infra, budgetStop };
   } finally {
     process.off("unhandledRejection", onUnhandled);
   }
 }
 
-/** 把一轮的原始结果折成可落盘的记录；`ok` 同时要求任务全过且没有基础设施错误。 */
-export function summarize({ results, elapsed, model, commit, infra, metadata = {} }) {
+/** 把一轮的原始结果折成可落盘的记录；`ok` 同时要求任务全过、没有基础设施错误且没有因预算提前停止。 */
+export function summarize({ results, elapsed, model, commit, infra, metadata = {}, budgetStop }) {
   const requests = results.reduce((total, result) => total + result.requests, 0);
   const toolCalls = results.reduce((total, result) => total + result.toolCalls, 0);
   const summaryRequests = results.reduce((total, result) => total + (result.summaryRequests ?? 0), 0);
@@ -233,7 +264,7 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
     model,
     commit,
     ...metadata,
-    ok: infra.length === 0 && passed === results.length,
+    ok: infra.length === 0 && passed === results.length && budgetStop === undefined,
     passed,
     total: results.length,
     elapsed: Number(elapsed.toFixed(1)),
@@ -250,23 +281,35 @@ export function summarize({ results, elapsed, model, commit, infra, metadata = {
       },
     },
     infraErrors: infra,
+    ...(budgetStop === undefined ? {} : { budgetStop }),
     results,
   };
 }
 
-/** 首错后不再领取任务，已启动任务全部收尾后才传播首错；结果按原顺序返回。 */
-async function runPool(items, limit, worker) {
+/**
+ * 首错后不再领取任务；付费 token 达到上限后也不再启动新任务，已启动任务全部收尾。
+ * 结果按原顺序返回，并给出第一个没启动的任务名（没有预算停止时为空）。
+ */
+async function runPool(items, limit, worker, budget) {
   const results = new Array(items.length);
   let cursor = 0;
   let failed = false;
   let failure;
+  let stoppedBefore;
 
   const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (!failed && cursor < items.length) {
+      // 只看已完成任务累计的 token；达到上限就停止领取，正在跑的任务不打断。
+      if (budget !== undefined && budget.spent >= budget.cap) {
+        stoppedBefore ??= items[cursor];
+        return;
+      }
       const index = cursor;
       cursor += 1;
       try {
-        results[index] = await worker(items[index]);
+        const result = await worker(items[index]);
+        results[index] = result;
+        if (budget !== undefined) budget.spent += result.tokens.total;
       } catch (error) {
         if (!failed) failure = error;
         failed = true;
@@ -276,7 +319,8 @@ async function runPool(items, limit, worker) {
 
   await Promise.all(runners);
   if (failed) throw failure;
-  return results;
+  // 预算停止时后面是空位，只返回真正跑过的任务。
+  return { results: results.filter((result) => result !== undefined), stoppedBefore };
 }
 
 /** 跑一个任务：复制夹具 → 真跑一遍 → 跑检查 → 清理。 */
@@ -438,6 +482,17 @@ function describe(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** 只认正整数的付费 token 上限；没设置或为空表示不设上限。 */
+function readBudgetTokens() {
+  const raw = process.env.EVAL_BUDGET_TOKENS;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`invalid EVAL_BUDGET_TOKENS: ${JSON.stringify(raw)} (expected a positive integer)`);
+  }
+  return value;
+}
+
 function firstNonEmpty(...values) {
   for (const value of values) {
     const trimmed = value?.trim() ?? "";
@@ -560,9 +615,10 @@ async function readTaskConfig(taskDir) {
 }
 
 async function report(record, outputFile) {
-  const { passed, total, totals, elapsed, results, infraErrors, ok } = record;
+  const { passed, total, totals, elapsed, results, infraErrors, ok, budgetStop } = record;
   const unknown = totals.unknownResponses;
   const busy = results.reduce((sum, result) => sum + result.seconds, 0);
+  const planned = Array.isArray(record.taskNames) ? record.taskNames.length : total;
 
   // 并发跑时「任务耗时之和」会大于墙钟，两个都写出来，避免误读。
   // usage 有缺失时 tokens 前加 at least：那是已统计到的下限，不是实际账单。
@@ -591,6 +647,15 @@ async function report(record, outputFile) {
       console.log(`\n${label}（${failed.length}）：`);
       for (const result of failed) console.log(`  - ${result.name}: ${result.error ?? "?"}`);
     }
+  }
+
+  // 预算停止是「主动少跑」而不是任务失败：必须单独说明，不能看起来像跑完了。
+  if (budgetStop !== undefined) {
+    console.log(
+      `\n付费 token 预算停止：EVAL_BUDGET_TOKENS ${budgetStop.cap} 已累计 ${budgetStop.spent} tokens，` +
+        `从 ${budgetStop.stoppedBefore} 起不再启动新任务；这一轮只跑了 ${results.length}/${planned} 个任务，不是完整轮次。`,
+    );
+    process.exitCode = 1;
   }
 
   if (infraErrors.length > 0) {

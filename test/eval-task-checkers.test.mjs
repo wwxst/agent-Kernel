@@ -5,6 +5,7 @@
  *
  * 内容目录：
  *   - Task 02 / 04 / 05 / 08 / 09：保护测试、文档、常量和共享校验的真实要求。
+ *   - Task 08：共享校验写在由参数派生的局部变量上也算数，但 helper 内按 label 分两套规则仍失败。
  *   - Task 03 / 10：确认递归目录里的旧引用和死代码也会被发现。
  *   - Task 17：允许额外测试，同时用变异实现验证测试确实能抓住回归。
  *   - Task 19：验证 guard clause 结构和权限判断行为。
@@ -456,6 +457,66 @@ test("评测题 08：两个导出校验必须委托给同一个共享函数", as
       "",
     ].join("\n"));
     await assert.rejects(() => checkExtractDuplication(root), /直接把校验交给共享函数/);
+  });
+});
+
+test("评测题 08：规则校验写在参数派生的局部变量上也算每种规则只实现一次", async () => {
+  await withTaskFiles("08-extract-duplication", async (root) => {
+    // 合法重构：trim 结果先存进局部变量，长度规则也作用在这个局部变量上。
+    await writeFile(path.join(root, "validate.mjs"), [
+      "function shared(value, label) {",
+      '  if (typeof value !== "string") return `${label} must be a string`;',
+      "  const trimmed = value.trim();",
+      '  if (trimmed.length === 0) return `${label} must not be empty`;',
+      '  if (trimmed.length > 40) return `${label} must be at most 40 characters`;',
+      "  return null;",
+      "}",
+      'export function validateName(value) { return shared(value, "name"); }',
+      'export function validateTitle(value) { return shared(value, "title"); }',
+      "",
+    ].join("\n"));
+    await assert.doesNotReject(() => checkExtractDuplication(root));
+
+    // 多级局部变量：派生两次以后仍要认回原来的参数。
+    await writeFile(path.join(root, "validate.mjs"), [
+      "function shared(value, label) {",
+      '  if (typeof value !== "string") return `${label} must be a string`;',
+      "  const trimmed = value.trim();",
+      "  const clean = trimmed;",
+      '  if (clean.length === 0) return `${label} must not be empty`;',
+      '  if (clean.length > 40) return `${label} must be at most 40 characters`;',
+      "  return null;",
+      "}",
+      'export function validateName(value) { return shared(value, "name"); }',
+      'export function validateTitle(value) { return shared(value, "title"); }',
+      "",
+    ].join("\n"));
+    await assert.doesNotReject(() => checkExtractDuplication(root));
+  });
+});
+
+test("评测题 08：helper 内按 label 分成两套规则仍然失败", async () => {
+  await withTaskFiles("08-extract-duplication", async (root) => {
+    await writeFile(path.join(root, "validate.mjs"), [
+      "function shared(value, label) {",
+      '  if (label === "name") {',
+      '    if (typeof value !== "string") return `${label} must be a string`;',
+      "    const trimmed = value.trim();",
+      '    if (trimmed.length === 0) return `${label} must not be empty`;',
+      '    if (trimmed.length > 40) return `${label} must be at most 40 characters`;',
+      "  } else {",
+      '    if (typeof value !== "string") return `${label} must be a string`;',
+      "    const trimmed = value.trim();",
+      '    if (trimmed.length === 0) return `${label} must not be empty`;',
+      '    if (trimmed.length > 40) return `${label} must be at most 40 characters`;',
+      "  }",
+      "  return null;",
+      "}",
+      'export function validateName(value) { return shared(value, "name"); }',
+      'export function validateTitle(value) { return shared(value, "title"); }',
+      "",
+    ].join("\n"));
+    await assert.rejects(() => checkExtractDuplication(root), /三种规则都必须只实现一次/);
   });
 });
 
