@@ -147,11 +147,11 @@ PreToolUse
     ↓
 Tool.run()
     ├─ isError:false → PostToolUse
-    ├─ isError:true  → PostToolUseFailure(new Error(content))
-    └─ 抛错          → PostToolUseFailure(原始错误)
+    ├─ isError:true  → PostToolUseFailure(new Error(content), thrown:false)
+    └─ 抛错          → PostToolUseFailure(原始错误, thrown:true)
 ~~~
 
-`PreToolUse` 可以阻止一次调用；后两个只观察结果。结构化失败用结果原文合成 `Error(content)`，工具抛出的错误则把原始错误对象交给 Hook。
+`PreToolUse` 可以阻止一次调用；后两个只观察结果。失败事件有两条来源：结构化失败用结果原文合成 `Error(content)`，以 `thrown:false` 通知；工具抛出的错误把原始错误对象交给 Hook，以 `thrown:true` 通知。`thrown` 是必填字段，Hook 不必靠 `error.stack` 或 `instanceof` 猜来源。
 
 Hook 自己出错不会把 Tool 变成失败，也不会修改 Transcript，只增加诊断计数；上下文复制失败同样只计数（F-001）。
 
